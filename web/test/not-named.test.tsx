@@ -159,6 +159,27 @@ describe("a name DMbot already knows", () => {
     await waitFor(() => expect(screen.queryByText("Ken's sister")).toBeNull());
   });
 
+  it("finds a name DMbot knows, asks once, and joins them on Yes", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "mira" } });
+    fireEvent.click(await screen.findByRole("button", { name: w.pickFor("Mira Voss") }, slow));
+    expect(await screen.findByText(w.known("Ken's sister", "Mira Voss"), {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")).toHaveLength(0); // asking changes nothing
+    fireEvent.click(screen.getByRole("button", { name: w.sameYes }));
+    expect(await screen.findByText(w.joined("Ken's sister", "Mira Voss"), {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")[0]).toContain('"action":"name-join"');
+  });
+
+  it("says so when no known name matches", async () => {
+    await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "zzzzqq" } });
+    expect(await screen.findByText(w.findNone, {}, slow)).toBeTruthy();
+  });
+
   it("goes back to the name box on No, and sends nothing more", async () => {
     const api = await open();
     openEditor("Ken's sister");

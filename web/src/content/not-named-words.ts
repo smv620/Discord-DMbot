@@ -14,6 +14,15 @@ export const notNamedWords = {
   // DMbot knows someone with that name: the game master decides whether they are the same person.
   known: (who: string, other: string): string =>
     `DMbot already knows someone called ${other}. Is ${who} the same person? Yes joins the two into one. No changes nothing.`,
+  // Picking a name DMbot already knows instead of typing one (#3597, owner request).
+  samePick: "Same as someone DMbot knows…",
+  findLabel: "Find the name they match",
+  findHint: "Type part of a name or a nickname.",
+  findNone: "DMbot doesn't know a name like that.",
+  findWorking: "Looking…",
+  findFailed: "DMbot couldn't look that up. Try again.",
+  pickFor: (name: string): string => `Same person as ${name}`,
+  findClose: "Never mind",
   sameYes: "Yes, the same person",
   sameNo: "No, a different person",
   sameNoNote: (who: string): string => `Okay, nothing changed. Pick a different name for ${who}.`,

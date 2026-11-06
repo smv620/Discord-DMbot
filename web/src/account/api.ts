@@ -1800,6 +1800,8 @@ export interface NameRow {
   unnamedWhat?: string;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
+  /** For an unnamed person: a short who, where and what from the story, when the API sends one (#3596). Missing from an older API. */
+  scene?: string | null;
   /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
    * from an older API. */
   playersText?: string | null;

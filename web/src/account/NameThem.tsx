@@ -4,7 +4,7 @@
 // page asks whether they are the same person, and only "Yes" joins the two. Every step waits for the bot and shows
 // what it is doing, how long it has run and when it last moved (#2564). One press at a time: a second press while a
 // step is on its way is ignored. Shown only for a DM, only while NOT_NAMED_LIVE (the Names page decides).
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
 import { REMOVE_UNNAMED_LIVE } from "../content/remove-unnamed-switch";
@@ -50,6 +50,12 @@ export default function NameThem({
   const [declined, setDeclined] = useState(false);
   const [asking, setAsking] = useState(false); // "Remove this person?", asked once
   const [removing, setRemoving] = useState(false);
+  // "Same as someone DMbot knows…": a search of the names DMbot knows; picking one asks the same question as typing it (#3597).
+  const [finding, setFinding] = useState(false);
+  const [find, setFind] = useState("");
+  const [matches, setMatches] = useState<{ id: string; name: string }[] | null>(null);
+  const [findFailed, setFindFailed] = useState(false);
+  const findBox = useRef<HTMLInputElement>(null);
   const askBox = useRef<HTMLParagraphElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const questionBox = useRef<HTMLParagraphElement>(null);
@@ -88,6 +94,30 @@ export default function NameThem({
     if (done) await onDone(done).catch(() => undefined);
   }
 
+  // The search waits for a pause in the typing and asks for the first few names; a late answer to an old word is dropped.
+  useEffect(() => {
+    const wanted = find.trim();
+    if (!finding || wanted === "" || !api.allNames) {
+      setMatches(null);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      api
+        .allNames?.(refId, { q: wanted, kind: "", sort: "name", page: 1, size: 20 })
+        .then((got) => {
+          if (!live) return;
+          setFindFailed(false);
+          setMatches(got.names.filter((n) => !n.unnamed && n.id !== row.id).slice(0, 8).map((n) => ({ id: n.id, name: n.name })));
+        })
+        .catch(() => live && setFindFailed(true));
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [find, finding, api, refId, row.id]);
+
   async function remove(): Promise<void> {
     if (working || removing) return;
     setRemoving(true);
@@ -113,6 +143,8 @@ export default function NameThem({
   return (
     <div class="stack name-them" id={id}>
       <p class="small muted">{w.hint}</p>
+      {/* A short who, where and what from the story, when the API has one (#3596): room is kept for it. */}
+      {row.scene && <p class="small">{row.scene}</p>}
       {question ? (
         <div class="stack" role="group" aria-label={w.known(row.name, question.name)}>
           <p role="status" tabIndex={-1} ref={questionBox}>
@@ -156,6 +188,57 @@ export default function NameThem({
             </button>
           </p>
         </form>
+      )}
+      {!question && (
+        <div class="stack">
+          {finding ? (
+            <div class="stack">
+              <label class="field" for={`${id}-find`}>
+                {w.findLabel}
+              </label>
+              <input id={`${id}-find`} ref={findBox} type="text" value={find} autoComplete="off" aria-describedby={`${id}-find-hint`} onInput={(e) => setFind((e.target as HTMLInputElement).value)} />
+              <p class="small muted" id={`${id}-find-hint`}>
+                {w.findHint}
+              </p>
+              {matches !== null && matches.length > 0 && (
+                <ul class="stack plain-list">
+                  {matches.map((m) => (
+                    <li key={m.id}>
+                      <button
+                        type="button"
+                        class="button secondary"
+                        aria-label={w.pickFor(m.name)}
+                        aria-disabled={working}
+                        onClick={() => {
+                          if (working) return;
+                          setQuestion({ id: m.id, name: m.name });
+                          setFinding(false);
+                          setTimeout(() => questionBox.current?.focus(), 0);
+                        }}
+                      >
+                        {m.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p class="small" role="status">
+                {findFailed ? w.findFailed : matches !== null && matches.length === 0 ? w.findNone : ""}
+              </p>
+              <p>
+                <button type="button" class="button secondary" onClick={() => { setFinding(false); setFind(""); setMatches(null); }}>
+                  {w.findClose}
+                </button>
+              </p>
+            </div>
+          ) : (
+            <p>
+              <button type="button" class="button secondary" aria-disabled={working} onClick={() => { if (working) return; setFinding(true); setTimeout(() => findBox.current?.focus(), 0); }}>
+                {w.samePick}
+              </button>
+            </p>
+          )}
+        </div>
       )}
       {/* Always there (a screen reader hears what is put in it), but drawn only when it says something. */}
       <p class={report ? "warn small" : "visually-hidden"} role="alert">
