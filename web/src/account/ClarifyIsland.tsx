@@ -38,7 +38,7 @@ export default function ClarifyIsland() {
   return (
     <>
       <SignedInLine api={api} />
-      <Clarify api={api} refId={campaign} nameId={name} />
+      <Clarify key={`${campaign}:${name}`} api={api} refId={campaign} nameId={name} />
     </>
   );
 }

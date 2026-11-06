@@ -10,11 +10,15 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { clarifyWords as w } from "../content/name-clarify-words";
 import { ApiError, type AccountApi, type ClarifyName, type NameAnswerResult, type NameCheckAnswer } from "./api";
 import NamePlaces from "./NamePlaces";
+import { campaignRefOf } from "./RecapNames"; // the ref is a recap's (<server>.<campaign>.<session>); transcripts link by campaign
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 1500;
-const POLL_LIMIT = 40;
+// The bot normally answers within seconds. The page waits 90 s before it gives up, so the panel's own "no news for a
+// minute" warning is on screen before the last look.
+const POLL_LIMIT = 60;
+// Ask for 20 and show 8: names that are unnamed people or the name itself are dropped from the 20 first.
 const MATCHES = 8;
 type Match = { id: string; name: string; kind: string; scene: string };
 
@@ -41,7 +45,16 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
   const askBox = useRef<HTMLParagraphElement>(null);
   const trivialBox = useRef<HTMLParagraphElement>(null);
   const resultBox = useRef<HTMLDivElement>(null);
-  const seen = useObservedWait(working, String(last?.text ?? ""));
+  const [stage, setStage] = useState<"waiting" | "working">("waiting");
+  const [looks, setLooks] = useState(0);
+  const alive = useRef(true); // the loops below outlive a press: they stop when the page closes or another name opens
+  const seen = useObservedWait(working, `${stage}:${looks}:${last?.text ?? ""}`);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, [refId, nameId]);
 
   async function load(): Promise<void> {
     if (!api.clarifyName) return;
@@ -110,21 +123,31 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
     setAskTrivial(false);
     try {
       await api.answerNameCheck(refId, nameId, answer);
-      for (let looks = 0; looks < POLL_LIMIT; looks += 1) {
+      for (let look = 0; look < POLL_LIMIT; look += 1) {
         await new Promise((r) => setTimeout(r, POLL_MS));
+        if (!alive.current) return;
+        setLooks(look + 1);
         let got: NameAnswerResult;
         try {
           got = await api.nameAnswerResult!(refId, nameId);
         } catch (error) {
-          if (error instanceof ApiError && error.kind === "not-found") {
-            // No answer on record: it was applied and cleared.
-            setLast({ text, batch: null });
-            setName(null);
-            setGone(true);
-            return;
+          if (!(error instanceof ApiError && error.kind === "not-found")) throw error;
+          // No answer row: either the bot has not written it yet, or the answer was applied and cleared. Only the
+          // name itself can tell which: once it has left the list, the answer went through.
+          try {
+            await api.clarifyName!(refId, nameId);
+            continue;
+          } catch (again) {
+            if (!(again instanceof ApiError && again.kind === "not-found")) throw again;
           }
-          throw error;
+          if (!alive.current) return;
+          setLast({ text, batch: null });
+          setName(null);
+          setGone(true);
+          return;
         }
+        if (!alive.current) return;
+        setStage(got.state === "working" ? "working" : "waiting");
         if (got.state === "done") {
           setLast({ text, batch: got.batch });
           setName(null);
@@ -152,8 +175,12 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
     setReport("");
     try {
       await api.answerNameCheck(refId, nameId, { action: "undo", batch: last.batch });
-      for (let looks = 0; looks < POLL_LIMIT; looks += 1) {
+      // Only "no answer on record" proves the Undo went through: the answer's own row stays "done" until the bot takes it back.
+      let taken = false;
+      for (let look = 0; look < POLL_LIMIT && !taken; look += 1) {
         await new Promise((r) => setTimeout(r, POLL_MS));
+        if (!alive.current) return;
+        setLooks(look + 1);
         try {
           const got = await api.nameAnswerResult!(refId, nameId);
           if (got.state === "failed") {
@@ -161,9 +188,13 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
             return;
           }
         } catch (error) {
-          if (error instanceof ApiError && error.kind === "not-found") break;
-          throw error;
+          if (error instanceof ApiError && error.kind === "not-found") taken = true;
+          else throw error;
         }
+      }
+      if (!taken) {
+        setReport(w.quiet); // not confirmed: Undo stays, and the line above still says what was done
+        return;
       }
       setUndoneWho(lastWho.current);
       setLast(null);
@@ -202,7 +233,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
       )}
       {undone && <p class="small" role="status">{w.undone(undoneWho)}</p>}
       {working && seen.startedAt !== null && (
-        <WorkProgress stage={w.stage.working} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} whatToDo={w.quiet} />
+        <WorkProgress stage={w.stage[stage]} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} whatToDo={w.quiet} />
       )}
       {report && <p class="warn small" role="alert">{report}</p>}
       {gone && !last && !undone && <p class="muted">{w.none}</p>}
@@ -214,7 +245,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
           <section class="stack" aria-labelledby="clarify-scene">
             <h3 id="clarify-scene">{w.sceneHeading}</h3>
             <p>{name.scene ? name.scene : <span class="muted">{w.noScene}</span>}</p>
-            <NamePlaces places={name.places} more={name.morePlaces} campaignRef={refId.split(".")[0] ?? refId} />
+            <NamePlaces places={name.places} more={name.morePlaces} campaignRef={campaignRefOf(refId)} />
           </section>
           <section class="stack" aria-labelledby="clarify-top">
             <h3 id="clarify-top">{w.topHeading}</h3>
