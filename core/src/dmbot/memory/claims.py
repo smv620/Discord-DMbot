@@ -795,7 +795,8 @@ def _a_kind_of_creature(name: str) -> bool:
 
     # said as a kind, not as a name: lower case ("owlbears", "an owlbear", "three goblins"); a
     # capitalised word ("Azer", "Wolf", "The Owlbear", "Owlbear Mama") may be somebody's name and
-    # is left to the DM. A lower-case article may stand before the kind; nothing else may be capital.
+    # is left to the DM. A lower-case article may stand before the kind; nothing else may be a
+    # capital.
     rest = name
     for article in ("a ", "an ", "the "):
         if name.startswith(article):
