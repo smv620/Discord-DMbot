@@ -439,7 +439,7 @@ class TheFeelingScore(unittest.TestCase):
         self.assertEqual(report.feelings, [("m081", "over_read")])
         self.assertIn("over-read 1", gkc.render(report, counts_only=True))
 
-    def feelings(self, key_feeling: str, rows: list[tuple[str, str, str]], **tie: Any) -> Any:
+    def feelings(self, key_feeling: str, rows: list[tuple[str, str, str, str]], **tie: Any) -> Any:
         key = {
             "nodes": [{"name": "A", "kind": "person"}, {"name": "B", "kind": "person"}],
             "pairs": [
