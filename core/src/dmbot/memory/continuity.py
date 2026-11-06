@@ -425,8 +425,10 @@ def _make(
 
 def _predicate_words(onto: Ontology, key: str, detail: str, directional: bool = False) -> str:
     term = onto.predicates.get(key)
-    if key == "kin_of" and directional and (role := kin.role_of(detail)):
-        return kin.forward(role)  # "is the niece of", not "is family of" (#2457)
+    # "is the niece of", not "is family of" (#2457); a role true of both names (sibling, cousin,
+    # spouse) reads so whatever its stored direction is (#3102, #3111)
+    if key == "kin_of" and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
+        return kin.forward(role)
     return detail if key == "associated_with" and detail else (term.label if term else key)
 
 

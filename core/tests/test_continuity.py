@@ -443,3 +443,19 @@ class Crossing(ConfirmedMemoryTest):
             await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
             await ContinuityStore(self.memory).check(GUILD_A, self.c, opted_in=AGREED, levels=SMALL)
         self.assertEqual(len(logged.output), 1)
+
+
+class FamilyWords(unittest.TestCase):
+    def test_a_two_way_role_keeps_its_role_even_stored_undirected(self) -> None:
+        """#3111: continuity's wording uses the same rule as the cards (#3106): the role when the
+        link is directional or the role is true of both names."""
+        from types import SimpleNamespace
+
+        from dmbot.memory.continuity import _predicate_words
+
+        onto: Any = SimpleNamespace(predicates={})
+        for role in ("sibling", "cousin", "spouse"):
+            self.assertEqual(_predicate_words(onto, "kin_of", role), f"is the {role} of")
+        # a one-way role is told only when its direction is known
+        self.assertEqual(_predicate_words(onto, "kin_of", "niece", True), "is the niece of")
+        self.assertEqual(_predicate_words(onto, "kin_of", "niece"), "kin_of")
