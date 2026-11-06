@@ -13,10 +13,10 @@ export const workWords = {
   progressAbout: (done: number, total: number, unit?: string): string => `about ${done} of ${total}${unit ? ` ${unit}` : ""}`,
   /** The running counts line (#3534), one phrase per count the API sends; a code the page doesn't know is left out. */
   countPhrase: {
-    words: (n: number): string => `${n} ${n === 1 ? "word" : "words"} processed`,
-    calls: (n: number): string => `${n} ${n === 1 ? "call" : "calls"} made`,
-    checks: (n: number): string => `${n} ${n === 1 ? "check" : "checks"} completed`,
-    names: (n: number): string => `${n} ${n === 1 ? "name" : "names"} confirmed`,
+    words: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "word" : "words"} processed`,
+    calls: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "call" : "calls"} made`,
+    checks: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "check" : "checks"} completed`,
+    names: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "name" : "names"} found`,
   } as Record<string, (n: number) => string>,
   /** A running count that is an estimate between two readings. */
   aboutCount: (phrase: string): string => `about ${phrase}`,

@@ -6,6 +6,7 @@
 // shows it, the same way on every page. The stage is read out when it changes (role="status"); the clocks
 // are not in a live region, so they are not announced every second. Times are the server's seconds; the
 // browser's clock is corrected by `serverNow` so a wrong clock on the computer does not show a wrong age.
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { workWords as words } from "../content/work-progress";
@@ -58,10 +59,10 @@ export function RunningCounts({ counts, running, reading }: { counts: Record<str
   return (
     <span class="small muted">
       {shown.map((code, i) => (
-        <>
+        <Fragment key={code}>
           {i > 0 && " · "}
           <CountItem code={code} value={counts[code] as number} running={running} reading={reading} />
-        </>
+        </Fragment>
       ))}
     </span>
   );

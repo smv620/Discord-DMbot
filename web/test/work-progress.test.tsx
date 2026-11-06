@@ -260,9 +260,14 @@ describe("running counts (#3534)", () => {
     const { container } = render(
       <WorkProgress stage="Reading" state="running" counts={{ calls: 1, words: 1200, mystery: 9, checks: 0 }} serverNow={100} />,
     );
-    expect(container.textContent).toContain("1200 words processed · 1 call made");
+    expect(container.textContent).toContain("1,200 words processed · 1 call made");
     expect(container.textContent).not.toContain("mystery");
     expect(container.textContent).not.toContain("checks completed");
+  });
+  it("says names found, and groups thousands", () => {
+    const { container } = render(<WorkProgress stage="Reading" state="running" counts={{ words: 1200, names: 3 }} serverNow={100} />);
+    expect(container.textContent).toContain("1,200 words processed · 3 names found");
+    expect(container.textContent).not.toContain("confirmed");
   });
   it("shows nothing when no count has started, or when it failed", () => {
     const a = render(<WorkProgress stage="Reading" state="running" counts={{ words: 0 }} serverNow={100} />);
