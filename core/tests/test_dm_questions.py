@@ -295,7 +295,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me = self.bot({7: True, 8: True})
         sent: list[tuple[int, str]] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append((user_id, text))
             return "forbidden" if user_id == 7 else "sent"
 

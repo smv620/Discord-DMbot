@@ -4846,7 +4846,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return self._clean(table, text, unsure=False).text
 
     async def sidebar_send_dm(
-        self, user_id: int, text: str, view: discord.ui.View | None = None
+        self,
+        user_id: int,
+        text: str,
+        view: discord.ui.View | None = None,
+        *,
+        link_to_itself: bool = False,
     ) -> str:
         """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
@@ -4858,6 +4863,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
                 if keep is not None:
                     keep(sent)
+                if link_to_itself:  # "Open in Discord" on a question the message itself holds
+                    await dm_links.point_at_itself(sent, view)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"
@@ -10797,17 +10804,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
             for user_id in order:
                 try:  # one DM failing must not stop the others
-                    message = await self._dm_message(
-                        user_id,
-                        marked,
-                        dm_links.for_campaign(
-                            make_view(),
-                            self.settings.site_url,
-                            table.guild_id,
-                            table.campaign_id or campaign.id,
-                            dm_links.DMLinks(),
-                        ),
+                    copy = dm_links.for_campaign(
+                        make_view(),
+                        self.settings.site_url,
+                        table.guild_id,
+                        table.campaign_id or campaign.id,
+                        dm_links.DMLinks(),
                     )
+                    message = await self._dm_message(user_id, marked, copy)
+                    await dm_links.point_at_itself(message, copy)  # (its own jump link)
                 except Exception:
                     log.exception("Couldn't ask a DM a live question privately")
                     continue
@@ -10935,7 +10940,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
                 try:
-                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
+                    if (
+                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=True)
+                        == "sent"
+                    ):
                         sent = True
                 except Exception:
                     log.exception("Couldn't ask a DM privately")

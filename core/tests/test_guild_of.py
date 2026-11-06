@@ -42,7 +42,7 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
         campaign = SimpleNamespace(name="The *Test* Table", dm_user_ids=dms)
         sent: list[tuple[int, str]] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append((user_id, text))
             outcome = results[user_id]
             if isinstance(outcome, Exception):
@@ -100,7 +100,7 @@ class AskPrivatelyLinksTest(unittest.IsolatedAsyncioTestCase):
 
         seen: list[Any] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             seen.append(view)
             return "sent"
 
@@ -116,7 +116,7 @@ class AskPrivatelyLinksTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(seen[0], seen[1])
         labels = [getattr(c, "label", "") for c in view.children]
         self.assertEqual(labels, ["Open on the website"])  # added once, not once for each DM
-        self.assertEqual(view.children[0].url, "https://dmbot.example.com/account/questions/1.ab")  # type: ignore[attr-defined]
+        self.assertEqual(view.children[0].url, "https://dmbot.example.com/account/questions")  # type: ignore[attr-defined]
 
 
 class LiveLinksTest(unittest.IsolatedAsyncioTestCase):
@@ -129,7 +129,7 @@ class LiveLinksTest(unittest.IsolatedAsyncioTestCase):
             sent.append(view)
             return SimpleNamespace(id=1)
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append(view)
             return "sent"
 

@@ -15,7 +15,7 @@ SITE = "https://getdmbot.example.com"
 class TheAddress(unittest.TestCase):
     def test_a_page_names_the_campaign_and_the_item_by_ids_only(self) -> None:
         url = dl.site_link(SITE, "questions", 7, "ab12", item="q9")
-        self.assertEqual(url, f"{SITE}/account/questions/7.ab12?item=q9")
+        self.assertEqual(url, f"{SITE}/account/questions?item=q9")  # one page for every campaign
 
     def test_a_recap_page_carries_its_session_number(self) -> None:
         url = dl.site_link(SITE, "recaps", 7, "ab12", tail="1700000000")
@@ -92,7 +92,7 @@ class TheCampaignHelper(unittest.IsolatedAsyncioTestCase):
         assert shown is not None
         [button] = shown.children
         self.assertEqual(button.label, "Open on the website")  # type: ignore[attr-defined]
-        self.assertEqual(button.url, f"{SITE}/account/questions/7.ab12")  # type: ignore[attr-defined]
+        self.assertEqual(button.url, f"{SITE}/account/questions")  # type: ignore[attr-defined]
 
     async def test_no_site_and_no_discord_message_means_nothing_is_added(self) -> None:
         view = discord.ui.View()
@@ -140,3 +140,58 @@ class TheHostIsRebuiltNotCopied(unittest.TestCase):
     def test_a_port_is_kept(self) -> None:
         url = dl.site_link("https://dmbot.example.com:8443/", "names", 7, "ab12")
         self.assertEqual(url, "https://dmbot.example.com:8443/account/names/7.ab12")
+
+
+class EveryPageIsServed(unittest.TestCase):
+    """A link that 404s is worse than none (#3673): each page a message may point at has a page
+    file, and a page that takes a `<ref>` also has a rewrite in web/public/_redirects."""
+
+    def test_every_page_has_a_page_file_and_a_rewrite_when_it_takes_a_ref(self) -> None:
+        from pathlib import Path
+
+        web = Path(__file__).resolve().parents[2] / "web"
+        redirects = (web / "public" / "_redirects").read_text(encoding="utf-8")
+        for page in sorted(dl.PAGES):
+            self.assertTrue(
+                (web / "src" / "pages" / "account" / f"{page}.astro").is_file(),
+                f"{page}: no page file",
+            )
+            if page not in dl.NO_REF:
+                self.assertIn(f"/account/{page}/*", redirects, f"{page}: no rewrite for its ref")
+
+
+class PointAtItself(unittest.IsolatedAsyncioTestCase):
+    async def test_the_sent_message_is_edited_once_with_discord_first_and_the_button_comes_off(
+        self,
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        view = dl.add_links(None, site_url="https://s/x")
+        assert view is not None
+        view.add_item(discord.ui.Button(label="Answer", custom_id="a"))
+        shown: list[list[str]] = []
+
+        async def edit(*, view: discord.ui.View) -> None:
+            shown.append([getattr(c, "label", "") for c in view.children])
+
+        message = SimpleNamespace(
+            jump_url="https://discord.com/channels/@me/2/3", edit=AsyncMock(side_effect=edit)
+        )
+        await dl.point_at_itself(message, view)  # type: ignore[arg-type]
+        self.assertEqual(shown, [["Answer", "Open in Discord", "Open on the website"]])
+        # taken off again, so the next DM's copy gets its own address
+        self.assertEqual(
+            [getattr(c, "label", "") for c in view.children], ["Answer", "Open on the website"]
+        )
+
+    async def test_a_failed_edit_is_never_fatal(self) -> None:
+        from unittest.mock import AsyncMock
+
+        view = dl.add_links(None, site_url="https://s/x")
+        message = SimpleNamespace(
+            jump_url="https://discord.com/channels/@me/2/3",
+            edit=AsyncMock(side_effect=RuntimeError),
+        )
+        await dl.point_at_itself(message, view)  # type: ignore[arg-type]
+        await dl.point_at_itself(None, view)
+        await dl.point_at_itself(SimpleNamespace(jump_url="", edit=AsyncMock()), view)  # type: ignore[arg-type]
