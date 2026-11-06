@@ -1185,3 +1185,16 @@
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
+
+/* A slider is a thumb's target too: 44 px tall, whatever the browser draws inside it (#3657). */
+.account input[type="range"] {
+  height: var(--tap);
+}
+
+/* The tick boxes of the graph settings: the whole row is the target, 44 px tall (#3657). */
+.account #graph-settings label:has(> input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
