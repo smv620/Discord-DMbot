@@ -73,7 +73,7 @@ class TheClear(Offers):
         self.assertEqual((await self.poll(answer))["state"], "done")
         self.assertEqual([o["words"] for o in await self.listed()], [OTHER])
 
-    async def test_lifting_twice_is_done_not_a_failure(self) -> None:
+    async def test_a_press_after_it_was_done_is_not_found_at_the_door(self) -> None:
         await self.queue_clear(WORDS)
         await self.apply_all()
         refused = await self.refused_clear(WORDS)

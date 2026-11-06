@@ -20,12 +20,11 @@ from __future__ import annotations
 # anchor must be found the exact number of times, so a drift stops the migration instead of
 # widening the wrong rule, as 0343, 0354 and 0358 do. No row is changed.
 _SWAPS = (
-    # the allowed actions (with the line's own indent: the same words in the other lists differ)
+    # the allowed actions (read with the lines around it: the same words sit in other lists too)
     (
-        "\n                'name', 'name-join', 'name-undo', 'spelling-yes', 'spelling-no',"
-        " 'players-line',",
-        "\n                'name', 'name-join', 'name-undo', 'spelling-yes', 'spelling-no',"
-        " 'players-line', 'offer-clear',",
+        "'spelling-no', 'players-line',\n                'told-add', 'told-remove')\n        THEN",
+        "'spelling-no', 'players-line', 'offer-clear',\n"
+        "                'told-add', 'told-remove')\n        THEN",
         1,
     ),
     # the words may be as long as the table's own limit

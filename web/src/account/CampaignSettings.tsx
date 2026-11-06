@@ -11,6 +11,7 @@ import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
+import { KIND_OFFERS_LIVE } from "../content/kind-offers-switch";
 import { RULESETS_LIVE } from "../content/rulesets-switch";
 import { STORY_MODE_LIVE } from "../content/story-mode-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
@@ -286,6 +287,9 @@ export default function CampaignSettings({
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
+      )}
+      {KIND_OFFERS_LIVE && api.campaignKindOffers && (
+        <LazyPanel load={() => import("./KindOffersPanel")} what="the words DMbot stopped asking about" props={{ api, campaignRef }} />
       )}
       {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
         <LazyPanel

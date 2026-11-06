@@ -41,6 +41,7 @@ import type {
   WebGroup,
   WebLink,
   WebLinkSource,
+  KindOffer,
   WebLinkChange,
   WebNode,
   WebQuery,
@@ -835,6 +836,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
+  // Words DMbot stopped asking about (#3577): the table's own words and the DM's answer.
+  const kindOfferRows: KindOffer[] = [
+    { words: "sworn on the ashes of", state: "never" },
+    { words: "carries the lantern for", state: "later" },
+  ];
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
@@ -2753,6 +2759,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async campaignKindOffers(ref) {
+      calls.push(`campaignKindOffers:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed"); // a player is never sent the words
+      return kindOfferRows.map((x) => ({ ...x }));
+    },
+    async liftKindOffer(ref, words) {
+      calls.push(`liftKindOffer:${ref}:${words}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.lift-fails$/.test(ref)) throw new ApiError("server");
+      const at = kindOfferRows.findIndex((x) => x.words === words);
+      if (at < 0) throw new ApiError("not-found");
+      kindOfferRows.splice(at, 1);
     },
     async nameThem(ref, id, step: NameThemStep): Promise<NameThemResult> {
       calls.push(`nameThem:${ref}:${id}:${JSON.stringify(step)}`);
