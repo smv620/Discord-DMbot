@@ -10,6 +10,7 @@ import type {
   NameCheckList,
   NamesFixed,
   NamesPage,
+  ToldName,
   NpcPage,
   CampaignNameChecks,
   QuestionCounts,
@@ -152,6 +153,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       // was changed", so nobody tries a merge or remove twice.
       throw new ApiError("still-waiting");
     },
+    toldPanel: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/told-panel`)) as { names: ToldName[] }).names,
     nameThem: async (ref, id, step, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
       const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, step)) as { answer: string };
