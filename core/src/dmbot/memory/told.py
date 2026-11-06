@@ -13,7 +13,7 @@ character learns no fact they did not know (#3037: a join never teaches anyone a
 from __future__ import annotations
 
 from dmbot.memory import knowers
-from dmbot.memory._changes import ALIASES, ENTITIES, KNOWERS, PERSPECTIVES, TOLD, Changes
+from dmbot.memory._changes import ALIASES, ENTITIES, KNOWERS, PERSPECTIVES, TOLD, Changes, Scope
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, new_id
 
 NOT_A_SECRET_NAME = "Only a secret name can be told to one character."
@@ -68,6 +68,14 @@ async def tell(w: Changes, alias_id: str, character_id: str) -> bool:
          "added_entry": not has_entry, "created_at": w.now},
     )  # fmt: skip
     return True
+
+
+async def told_characters(scope: Scope, alias_id: str) -> list[str]:
+    """The characters (entry ids) told that this secret name is its entry, for the DM's page
+    (#3542): who can be taken back. A read, in any scope."""
+    return [
+        str(r["character_id"]) for r in await scope.select(TOLD, " AND alias_id = %s", [alias_id])
+    ]
 
 
 async def take_back(w: Changes, alias_id: str, character_id: str) -> None:

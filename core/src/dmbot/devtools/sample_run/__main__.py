@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dmbot.devtools.sample_run import plan, steps
+from dmbot.devtools.sample_run import characters, plan, steps
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
 
@@ -102,6 +102,7 @@ async def run(
     # Everything that can refuse the run without a database comes first, so a mistake costs
     # nothing: the players, the files, the choice, the date.
     players = plan.parse_players(args.players)
+    plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
@@ -130,6 +131,7 @@ async def run(
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
     from dmbot.devtools import common
+    from dmbot.memory.store import MemoryStore
 
     commit = common.commit(
         args.commit, tool="sample_run"
@@ -137,7 +139,7 @@ async def run(
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
     try:
-        campaigns = steps.campaign_store(db)
+        campaigns, memory = steps.campaign_store(db), MemoryStore(db)
         today = dt.date.today().isoformat()
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
@@ -149,12 +151,6 @@ async def run(
         planned = await steps.preflight_session(
             gid, players, session_text, agreed, refused, started_at=started
         )
-
-        async def timed(name: str, work: Awaitable[Mapping[str, int | str]]) -> None:
-            began = time.monotonic()
-            counts = await work
-            done.append(Step(name, time.monotonic() - began, counts))
-            say(f"{name}: done")
 
         campaign = await steps.fresh_campaign(
             db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
@@ -177,18 +173,19 @@ async def run(
                 say(line)
             return {"lines": len(lines)}
 
-        await timed("lore read", lore_step())
-        await timed("accept all (lore)", accept_step())
-        await timed("backup and score (lore)", score_step("lore", "lore"))
+        async def found_step() -> Mapping[str, int | str]:
+            n = await characters.found_by_the_read(db, memory, gid, cid)
+            say(f"player characters found by the read: {n} of 4")
+            return {"found by the read": f"{n} of 4"}
+
+        async def correct_step() -> Mapping[str, int | str]:
+            got = await characters.correct_player_characters(db, memory, gid, cid, players)
+            return {"corrected": got.corrected, "of those made": got.made}
 
         async def import_step() -> Mapping[str, int | str]:
             sid = await steps.store_import(db, gid, cid, dm, planned, started_at=started, now=now)
             got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
             return {**got, "kept": planned.kept}
-
-        await timed("session import", import_step())
-        await timed("accept all (session)", accept_step())
-        await timed("backup and score (both)", score_step("both", "both"))
 
         async def recap_step() -> Mapping[str, int | str]:
             code = await steps.write_recap(gid, cid, started)
@@ -196,7 +193,21 @@ async def run(
                 raise SampleError(f"the recap was not made (recap_run exit {code})")
             return {"made": 1}
 
-        await timed("recap (no audio)", recap_step())
+        await steps.run_steps(
+            {
+                "lore read": lore_step,
+                "player characters found by the read": found_step,
+                "accept all (lore)": accept_step,
+                "backup and score (lore)": lambda: score_step("lore", "lore"),
+                "player characters corrected": correct_step,
+                "session import": import_step,
+                "accept all (session)": accept_step,
+                "backup and score (both)": lambda: score_step("both", "both"),
+                "recap (no audio)": recap_step,
+            },
+            done,
+            say,
+        )
     finally:
         await db.close()
         for line in plan.report(

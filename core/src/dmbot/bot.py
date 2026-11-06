@@ -313,6 +313,7 @@ from dmbot.memory.exposures import (
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.importance_backup import ImportanceSection
+from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
@@ -505,6 +506,7 @@ from dmbot.ui import (
     contradiction_notes,
     image_fix,
     kept_pictures,
+    kind_offer,
     looked_at,
     name_pass_undo,
     player_id,
@@ -1663,6 +1665,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
+        self.add_dynamic_items(  # make the table's repeated words a kind of connection (#3033)
+            kind_offer.OpenButton, kind_offer.AnswerButton, kind_offer.UndoButton
+        )
         self.add_dynamic_items(theatre_button.OldScriptButton)  # a question from before #3478
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
@@ -3084,6 +3089,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("family links", lambda: self.warn_about_family(table)),
             # The script of the session, if the DM wants it (#3244): only a question here.
             ("script offer", lambda: self.offer_script(table)),
+            # Words the table keeps using for a connection can become a kind (#3033).
+            ("kind offer", lambda: self.offer_kind(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -9760,6 +9767,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
+    async def offer_kind(self, table: Table) -> None:
+        """After a session (#3033): one more question for the DM, "make these words a kind of
+        connection?", when the table has kept using the same words (3 or more times) on
+        connections that have no kind of their own. At most one a session, only for a campaign
+        whose plan has story memory. Counts only in the log, never the words."""
+        if self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            offer = await self.memory.kind_offer(gid, cid)
+            if offer is None:
+                return
+            log.info("Kind offer: words said %d times offered to the DM", offer.count)
+            await self.ask_dm(table, kind_offer.ask_for(gid, cid, offer))
+
     async def offer_script(self, table: Table) -> None:
         """After a session (#3244), only with DMBOT_THEATRE_ON: one more question for the DM,
         "make a script of this session?", with a button. Nothing is spent until the DM confirms.
@@ -13615,6 +13642,7 @@ def register_backup_sections(
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
+    campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
 
 
 async def run(settings: Settings) -> None:

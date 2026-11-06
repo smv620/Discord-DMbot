@@ -46,6 +46,8 @@ READERS = {
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
     "viewer learns, and only for connections its list says that viewer knows",
+    "memory/kind_offers.py": DM_ONLY
+    + ": counts live, confirmed catch-all connections by their words; no player sees it",
     "memory/knowers.py": DM_ONLY + ": who knows a connection; only checks it exists, any status",
     "memory/as_of.py": "what a point of view believed at a game time: the DM any view, live "
     "connections; a player only their own characters', on confirmed connections the gate lets "
@@ -76,6 +78,10 @@ STORE = {
     "_threads": CONFIRMED_ONLY,
     "_standing_index": CONFIRMED_ONLY,
     "_deed_rows": CONFIRMED_ONLY,
+    "make_kind_of_words": CONFIRMED_ONLY
+    + ": moves the confirmed catch-all connections of the DM's words",
+    "_covered_words": CONFIRMED_ONLY
+    + ": the words of live catch-all connections, for the DM's offer",
     "_audience": CONFIRMED_ONLY + ": who may be told",
     "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
     "_recheck_led_to_after_undo": CONFIRMED_ONLY

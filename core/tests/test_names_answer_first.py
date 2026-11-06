@@ -227,6 +227,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
                       "add_alias", "set_unique", "party_on_assignment"):  # fmt: skip
             setattr(memory, write, self.slow())
         memory.alias_knowers = self.slow({})  # (the Who-knows page reads these first, #2935)
+        memory.told_characters = self.slow([])  # (and who was told, #3542)
         memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))

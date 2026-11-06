@@ -20,6 +20,16 @@ from dmbot.devtools.graph_key_check import SAMPLE_CAMPAIGN
 NAME = SAMPLE_CAMPAIGN
 
 # (a label is the speaker as the file writes it: "ist", or Craig's "Mira (mira_v)")
+# The four player characters of the sample (the README's table): the character's full name, and the
+# `--players` label of the test account that plays it. Beside the campaign name, since both belong
+# to the one sample.
+PLAYER_CHARACTERS: tuple[tuple[str, str], ...] = (
+    ("Cerric Vanya'elen", "ist"),
+    ("Belleros Stormgrace", "jac"),
+    ("Okthandom Korran", "eri"),
+    ("Claude Ambere", "owe"),
+)
+
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_ ()#.\-]{0,79}")
 MAX_PLAYERS = 12
 
@@ -48,6 +58,32 @@ def parse_players(text: str) -> dict[str, int]:
     if len(set(out.values())) != len(out):
         raise SampleError("two labels cannot be the same account")
     return out
+
+
+# The run's steps, in order (owner, 2026-11-06, #3554): the lore is scored exactly as the reader
+# left it, and only then are the four player characters corrected, before the session import (whose
+# speakers and recap need them). `steps.run_steps` refuses to run if the actions do not match this.
+STEPS: tuple[str, ...] = (
+    "lore read",
+    "player characters found by the read",
+    "accept all (lore)",
+    "backup and score (lore)",
+    "player characters corrected",
+    "session import",
+    "accept all (session)",
+    "backup and score (both)",
+    "recap (no audio)",
+)
+
+
+def require_character_players(players: Mapping[str, int]) -> None:
+    """The run sets the four player characters itself, so `--players` must name their accounts."""
+    missing = [label for _name, label in PLAYER_CHARACTERS if label not in players]
+    if missing:
+        raise SampleError(
+            "--players must give the four test accounts: "
+            + ", ".join(f"{label}=ID" for _n, label in PLAYER_CHARACTERS)
+        )
 
 
 @dataclass(frozen=True, slots=True)
