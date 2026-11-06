@@ -16,6 +16,8 @@ from dmbot.db import Database
 OFFERED, APPLYING = "offered", "applying"
 SET, DISMISSED, MOVED_ON, SPLIT, EXPIRED = "set", "dismissed", "moved_on", "split", "expired"
 ENDS = (SET, DISMISSED, MOVED_ON, SPLIT, EXPIRED)
+APPLY_STALE_S = 600  # a press holding an offer this long died; the next one may take it (the read
+# door calls it expired after the same time)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,10 @@ class ImportClockOffers:
                 " state, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT (guild_id, campaign_id, session_id) DO UPDATE SET"
                 " minute = EXCLUDED.minute, state = EXCLUDED.state,"
-                " updated_at = EXCLUDED.updated_at",
+                " created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at"
+                # (a press holding the offer, or an answer already given, is not reopened by the
+                # step running again for the same session)
+                " WHERE import_clock_offers.state IN ('offered', 'split', 'expired')",
                 (guild_id, campaign_id, session_id, minute, state, now, now),
             )
 
@@ -81,10 +86,22 @@ class ImportClockOffers:
                 "UPDATE import_clock_offers SET state = 'applying', updated_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_id = ("
                 " SELECT session_id FROM import_clock_offers WHERE guild_id = %s"
-                f" AND campaign_id = %s AND state = 'offered' AND created_at >= %s AND {where}"
-                " ORDER BY created_at DESC LIMIT 1) AND state = 'offered'"
+                " AND campaign_id = %s AND created_at >= %s AND"
+                " (state = 'offered' OR (state = 'applying' AND updated_at < %s))"
+                f" AND {where} ORDER BY created_at DESC LIMIT 1)"
+                " AND (state = 'offered' OR (state = 'applying' AND updated_at < %s))"
                 " RETURNING session_id, minute, state",
-                (now, guild_id, campaign_id, guild_id, campaign_id, now - 7 * 86400, value),
+                (
+                    now,
+                    guild_id,
+                    campaign_id,
+                    guild_id,
+                    campaign_id,
+                    now - 7 * 86400,
+                    now - APPLY_STALE_S,
+                    value,
+                    now - APPLY_STALE_S,
+                ),
             )
             row = await cur.fetchone()
         return None if row is None else Offer(row["session_id"], int(row["minute"]), row["state"])
@@ -130,9 +147,20 @@ class ImportClockOffers:
             )
             return bool(cur.rowcount)
 
+    async def dismiss_minute(self, guild_id: int, campaign_id: str, minute: int) -> bool:
+        """Discord's Not now, from a button that carries the minute it was offered at: it ends that
+        offer only, so an old message's button never closes a newer offer. False: not waiting."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE import_clock_offers SET state = 'dismissed', updated_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND minute = %s AND state = 'offered'",
+                (int(self._now()), guild_id, campaign_id, minute),
+            )
+            return bool(cur.rowcount)
+
     async def dismiss_all(self, guild_id: int, campaign_id: str) -> int:
-        """Discord's Not now: its button does not say which session, and only the newest session
-        is ever offered, so it ends whatever is waiting for the campaign. How many."""
+        """Discord's Not now from a button made before it carried the minute: it ends whatever is
+        waiting for the campaign (only the newest session is ever live). How many."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE import_clock_offers SET state = 'dismissed', updated_at = %s"

@@ -56,16 +56,16 @@ _APPLIED_KEPT = 500
 def offer_view(campaign_id: str, minute: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(ImportTimeButton(campaign_id, str(minute)))
-    view.add_item(ImportTimeButton(campaign_id, "no"))
+    view.add_item(ImportTimeButton(campaign_id, f"no:{minute}"))
     return view
 
 
 class ImportTimeButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=rf"dmbot:itime:{_ID}:(?P<what>no|[0-9]{{1,{MINUTE_DIGITS}}})",
+    template=rf"dmbot:itime:{_ID}:(?P<what>no(?::[0-9]{{1,{MINUTE_DIGITS}}})?|[0-9]{{1,{MINUTE_DIGITS}}})",
 ):
     def __init__(self, campaign_id: str, what: str) -> None:
-        no = what == "no"
+        no = what.startswith("no")
         super().__init__(
             discord.ui.Button(
                 label="Not now" if no else "Set it",
@@ -95,10 +95,15 @@ class ImportTimeButton(
             if interaction.user.id not in campaign.dm_user_ids:
                 await _reply(interaction, NOT_A_DM)
                 return
-            if self.what == "no":
+            if self.what.startswith("no"):
                 store = getattr(client, "import_clock_offers", None)
                 if store is not None:  # the website's page reads the same row
-                    await store.dismiss_all(campaign.guild_id, campaign.id)
+                    if ":" in self.what:  # (this offer's own minute: never a newer offer's row)
+                        await store.dismiss_minute(
+                            campaign.guild_id, campaign.id, int(self.what.partition(":")[2])
+                        )
+                    else:
+                        await store.dismiss_all(campaign.guild_id, campaign.id)
                 await self._close(interaction, "Not now.")
                 return
             await interaction.response.defer()
@@ -145,7 +150,8 @@ class ImportTimeButton(
         self, interaction: discord.Interaction, client: Any, campaign: Any, minute: int
     ) -> str | None:
         """Set the clock through the same path as a DM's manual set. The note to put on the offer,
-        or None if nothing moved (the presser has been told why)."""
+        or None if nothing moved (the presser has been told why). An offer the website answered, or
+        a newer session's offer replaced, is "already done" here too: the row is the truth."""
         offers = getattr(client, "import_clock_offers", None)
         offer = None
         if offers is not None:
@@ -153,7 +159,14 @@ class ImportTimeButton(
             if offer is None and await offers.known_minute(campaign.guild_id, campaign.id, minute):
                 await _reply(interaction, ALREADY)  # answered on the website, or replaced
                 return None
-        done = await set_clock(client, campaign, minute, interaction.user.id)
+        try:
+            done = await set_clock(client, campaign, minute, interaction.user.id)
+        except BaseException:  # a failure (or a cancel) must not leave the offer held
+            if offers is not None and offer is not None:
+                await offers.finish(
+                    campaign.guild_id, campaign.id, offer.session_id, clock_offers.OFFERED
+                )
+            raise
         if offers is not None and offer is not None:
             await offers.finish(campaign.guild_id, campaign.id, offer.session_id, done.state)
         if done.code != SET:

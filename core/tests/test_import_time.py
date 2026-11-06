@@ -418,6 +418,49 @@ class Pressing(sp.Party):
         await self.press_button(str(self.target))
         self.assertEqual(await self.state(), "split")
 
+    async def test_a_failure_while_moving_puts_the_offer_back_for_a_second_try(self) -> None:
+        async def boom(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("down")
+
+        original = screen.set_clock
+        screen.set_clock = boom
+        try:
+            await self.press_button(
+                str(self.target)
+            )  # (the button answers FAILED, it does not raise)
+        finally:
+            screen.set_clock = original
+        self.assertEqual(await self.state(), "offered")
+        await self.press_button(str(self.target))
+        self.assertEqual((await self.minute(), await self.state()), (self.target, "set"))
+
+    async def test_an_old_offers_button_after_a_newer_session_replaced_it_is_already_done(
+        self,
+    ) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s2', %s, %s, 2000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s2", self.target + 600)  # replaces s1's
+        done = await self.press_button(str(self.target))
+        self.assertEqual(done.followup.send.await_args.args[0], screen.ALREADY)
+        self.assertEqual(await self.minute(), EVENING4)
+
+    async def test_not_now_on_an_old_message_leaves_the_newer_offer_alone(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s2', %s, %s, 2000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s2", self.target + 600)
+        await self.press_button(f"no:{self.target}")  # the first offer's own button
+        newer = await self.offers.get(GUILD_A, self.a.id, "s2")
+        assert newer is not None
+        self.assertEqual(newer.state, "offered")
+
     async def test_not_now_changes_nothing(self) -> None:
         done = await self.press_button("no")
         self.assertEqual(await self.minute(), EVENING4)

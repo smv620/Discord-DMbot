@@ -190,6 +190,32 @@ class TheStore(Offered):
         await self.offers.finish(self.g, self.one.id, S1, "offered")  # refused: back it goes
         self.assertIsNotNone(await self.offers.take_minute(self.g, self.one.id, MINUTE))
 
+    async def test_the_step_running_again_does_not_reopen_a_held_or_answered_offer(self) -> None:
+        taken = await self.offers.take(self.g, self.one.id, S1)
+        assert taken is not None
+        await self.offers.offer(self.g, self.one.id, S1, MINUTE)  # (a retry after a restart)
+        held = await self.offers.get(self.g, self.one.id, S1)
+        assert held is not None
+        self.assertEqual(held.state, "applying")
+        await self.offers.finish(self.g, self.one.id, S1, "set")
+        await self.offers.offer(self.g, self.one.id, S1, MINUTE)
+        done = await self.offers.get(self.g, self.one.id, S1)
+        assert done is not None
+        self.assertEqual(done.state, "set")
+
+    async def test_a_press_that_died_holding_the_offer_is_taken_again_after_ten_minutes(
+        self,
+    ) -> None:
+        await self.offers.take(self.g, self.one.id, S1)
+        self.assertIsNone(await self.offers.take(self.g, self.one.id, S1))  # held just now
+        await self.sql("UPDATE import_clock_offers SET updated_at = updated_at - 700")
+        self.assertIsNotNone(await self.offers.take(self.g, self.one.id, S1))
+
+    async def test_not_now_by_minute_ends_only_that_offer(self) -> None:
+        self.assertFalse(await self.offers.dismiss_minute(self.g, self.one.id, MINUTE + 1))
+        self.assertTrue(await self.offers.dismiss_minute(self.g, self.one.id, MINUTE))
+        self.assertFalse(await self.offers.dismiss_minute(self.g, self.one.id, MINUTE))
+
     async def test_a_newer_offer_expires_an_older_one_still_waiting(self) -> None:
         await self.offers.offer(self.g, self.one.id, S2, MINUTE + 600)
         old = await self.offers.get(self.g, self.one.id, S1)

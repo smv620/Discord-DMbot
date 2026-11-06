@@ -67,6 +67,7 @@ async def choose(db: Database, session: Session, ref: str, import_id: str, body:
         rows = (await cur.fetchone() or {}).get("r")
         if not isinstance(rows, list):
             raise RecapError("not_a_dm")
+        # (a file name is one session of an import: the import page refuses two with one name)
         mine = next((r for r in rows if r["file"] == file and r["state"] == "offered"), None)
         if mine is None:
             raise RecapError("not_found")
