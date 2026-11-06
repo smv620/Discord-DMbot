@@ -930,7 +930,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
-  // characters: the first has a Discord avatar and a D&D Beyond portrait, the second only a portrait, the third none.
+  // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
   const pcHas = (id: string): { discord: boolean; dndbeyond: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2" });
   const pretendIcons = (ref: string, n: WebNode, dm: boolean): WebNode => {
