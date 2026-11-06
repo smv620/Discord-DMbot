@@ -127,3 +127,19 @@ describe("the Icon row on the page", () => {
     expect(screen.queryByRole("group", { name: w.heading })).toBeNull();
   });
 });
+
+describe("the real door", () => {
+  it("reads a 409 unavailable as a picture that is gone, and posts the choice to the character's own address", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const calls: { url: string; body: string }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url, body: String(init.body ?? "") });
+      return new Response(JSON.stringify({ error: "unavailable" }), { status: 409, headers: { "content-type": "application/json" } });
+    });
+    const api = httpApi("/api");
+    await expect(api.setPcIcon!("100.cmp1", "e1", "discord")).rejects.toMatchObject({ kind: "unavailable" });
+    expect(calls[0]!.url).toBe("/api/me/campaigns/100.cmp1/pc-icons/e1");
+    expect(JSON.parse(calls[0]!.body)).toEqual({ choice: "discord" });
+    vi.unstubAllGlobals();
+  });
+});

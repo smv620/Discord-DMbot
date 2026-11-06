@@ -7,7 +7,7 @@
 // readers. For the keyboard each name is a stop (Enter puts it in the middle, arrow keys move it), and
 // the lines of the name in focus become stops too, so a map of hundreds of lines is not hundreds of Tabs.
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 
 import { mapReadLine } from "./webReading";
 
@@ -115,10 +115,13 @@ function Shape({ kind, r }: { kind: string; r: number }) {
 function PcIcon({ node, r }: { node: WebNode; r: number }) {
   const [failed, setFailed] = useState<string | null>(null);
   const icon = node.icon;
+  const clipId = useId();
   if (icon?.kind === "hidden") return null;
-  const url = icon?.url ?? null;
+  // Only an https address is ever drawn (the door sends Discord's and D&D Beyond's, never one a person typed); a failed
+  // picture is remembered until its address changes, so a bad link is not retried on every draw.
+  const url = icon?.url && /^(https:|data:image\/)/.test(icon.url) ? icon.url : null;
+  const clip = `pcc-${clipId.replace(/[^A-Za-z0-9_-]/g, "_")}`; // (one per drawing of one name, never shared)
   if (url && failed !== url) {
-    const clip = `pcc-${node.id.replace(/[^A-Za-z0-9_-]/g, "_")}`;
     const k = r * 0.78;
     return (
       <g class="web-pc-icon" pointer-events="none">
@@ -198,9 +201,9 @@ export default function WebMap({
   /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
   onNodePick?: () => void;
   /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
-  onIcon?: (id: string, choice: IconChoice) => Promise<string | null>;
+  onIcon?: ((id: string, choice: IconChoice) => Promise<string | null>) | undefined;
   /** The id of the character whose last icon change can be taken back, and the Undo itself. */
-  iconUndo?: { id: string; undo: () => Promise<string | null> } | null;
+  iconUndo?: { id: string; now: IconChoice; undo: () => Promise<string | null> } | null;
   /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
   look?: GraphLook;
   /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
@@ -854,7 +857,7 @@ export default function WebMap({
               key={detail.id}
               load={() => import("./PcIconRow")}
               what="the icon choices"
-              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id, onUndo: iconUndo?.undo ?? (async () => null) }}
+              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
             />
           )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}

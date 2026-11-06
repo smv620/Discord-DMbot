@@ -111,7 +111,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [look, setLookState] = useState<GraphLook>(readLook);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The last icon change, so one Undo can post the old choice back (#3622).
-  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice } | null>(null);
+  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice; now: IconChoice } | null>(null);
   const setLook = (next: GraphLook): void => {
     setLookState(next);
     saveLook(next);
@@ -454,16 +454,18 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   /** A player character's icon (#3622): instant, then the web is read again so the circle shows it. Returns a plain-words problem. */
   async function chooseIcon(id: string, choice: IconChoice): Promise<string | null> {
     if (!ref || !api.setPcIcon) return words.errorFallback;
+    let got: { previous: IconChoice; now: IconChoice };
     try {
-      const got = await api.setPcIcon(ref, id, choice);
-      setIconBack(got.previous === got.now ? null : { id, previous: got.previous });
-      await load(center, hops, true);
-      return null;
+      got = await api.setPcIcon(ref, id, choice);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
-      void load(center, hops, true); // (a picture that went away: the page shows what is left)
+      if (kind === "unavailable" || kind === "not-found") void load(center, hops, true); // (the picture or character went away: show what is left)
       return pcIconWords.problems[kind] ?? pcIconWords.problems.server ?? words.errorFallback;
     }
+    // Undo only while the icon is still what this change made it: a change by someone else since must not be undone over.
+    setIconBack(got.previous === got.now ? null : { id, previous: got.previous, now: got.now });
+    void load(center, hops, true).catch(() => undefined); // (the change is saved: a failed re-read is not a failed save)
+    return null;
   }
 
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
@@ -759,8 +761,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               onLine={(a, b) => setLine({ a, b })}
               onNodePick={() => setLine(null)}
               look={look}
-              onIcon={chooseIcon}
-              iconUndo={iconBack ? { id: iconBack.id, undo: async () => {
+              onIcon={seeing ? undefined : chooseIcon}
+              iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
                 const back = iconBack;
                 const refused = await chooseIcon(back.id, back.previous);
                 if (!refused) setIconBack(null);

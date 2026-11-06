@@ -2373,7 +2373,6 @@ export const backupReasons: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   too_many_files: "backup-too-many-files",
   not_allowed: "not-allowed",
-  unavailable: "unavailable",
   not_found: "not-found",
 };
 
@@ -2934,6 +2933,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   doc_too_big: "doc-too-big",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
+  unavailable: "unavailable",
   sign_in_again: "sign-in-again",
   try_it_used: "try-it-used",
   try_it_has_plan: "has-plan",
