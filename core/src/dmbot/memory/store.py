@@ -245,7 +245,8 @@ THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise
 STANDING_VIEWERS = ("character", "faction", "place")
 STANDING_SUBJECTS = ("character", "faction", "people")
 STANDING_BETWEEN = (
-    "Standing is between a character, a group or a place and a character, a group or a people."
+    "Reputation is how a character, group or place feels about a character, group or people."
+    " Pick one of those."
 )
 ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole people."
 

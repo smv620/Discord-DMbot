@@ -441,7 +441,7 @@ Bryn Shander distrusts tabaxi (you set it), but has heard the party saved Ulfgar
 (Session 7)."
 - **Word spreads only with the DM's say-so:** a deed reaches groups and places beyond
   the witnesses as a "might have heard" suggestion the DM confirms.
-- **The DM always wins:** "Set standing…" works at any rung (a person, a group, a town,
+- **The DM always wins:** "Set reputation…" works at any rung (a person, a group, a town,
   a people) and is kept as a fact with its date.
 - Shown in the NPC channel and on name cards; never decides an NPC's behaviour, only
   reminds the DM.
@@ -1285,7 +1285,7 @@ Each step is useful on its own and ships behind the existing phases.
    toward a people the subject is of, decides the step, and the rungs above are only reasons;
    otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
    Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
-   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   place has **🤝 Reputation** (DM only) with the reasons, **Set reputation…** and, on a group or place,
    **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
    the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
    **Slice 4b is built (#1732): deeds the DM confirms move standing** (no AI, no extractor, nothing
@@ -1303,7 +1303,7 @@ Each step is useful on its own and ships behind the existing phases.
    than ten sessions counts at half weight (old news fades; the DM can always set it); the sessions
    counted are the ones names were heard in (`memory_heard`) and the ones deeds were recorded for; a deed
    recorded with no session running takes the newest one. The DM's own word
-   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Standing**
+   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Reputation**
    lists it: "⚔️ Saved the mill (session 4, helped)". Because Helped them (+20) is exactly the
    Friendly line, deeds alone take "No opinion yet" to Friendly at once, and mixed with a Wary word
    they move it only as far as the mean goes. A later slice may propose deeds from claims for the DM
