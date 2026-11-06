@@ -1147,7 +1147,7 @@
 .account .web-edge-text {
   fill: var(--text, currentColor);
   stroke: none;
-  font-size: 14px;
+  font-size: var(--web-text, 14px); /* (the viewer's text size from Graph settings, #3620) */
   paint-order: stroke;
 }
 

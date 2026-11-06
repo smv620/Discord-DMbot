@@ -70,6 +70,8 @@ export const webPage = {
   fullScreen: "Full screen",
   leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
+  settingsButton: "⚙️ Graph settings",
+  settingsLoading: "the graph settings",
   feelingLoading: "the feeling picker",
   // Where the details panel goes on a wide screen (a phone always puts it under the map).
   sideLabel: "Where the details go",
