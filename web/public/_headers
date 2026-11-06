@@ -1,6 +1,6 @@
 # Security headers for Cloudflare Pages (https://developers.cloudflare.com/pages/configuration/headers/).
 # Nothing loads from other sites, except the player characters' pictures on the Story Graph (#3622): img-src names exactly the three hosts
-# core's allow-list sends (Discord's avatars and D&D Beyond's portraits), no wildcards. An SVG image cannot take a referrer policy; the
+# core's allow-list sends (Discord's avatars and dndbeyond.com portraits), no wildcards. An SVG image cannot take a referrer policy; the
 # site's strict-origin-when-cross-origin keeps page addresses from them. Inline scripts (Astro's island loader) are allowed by
 # hash: scripts/csp-hashes.mjs adds them to script-src after the build. Astro inlines small
 # stylesheets, hence 'unsafe-inline' for styles only. The build adds the web API's address
