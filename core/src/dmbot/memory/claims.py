@@ -1286,7 +1286,10 @@ class ClaimStore:
                         "description": f"Heard {sum(times[k] for k in group)} times",
                         "status": PROPOSED, "merged_into": None, "source": EXTRACTOR,
                         "created_at": w.now, "played_by": None,
-                        "needs_look": False, "unique_item": None,
+                        "needs_look": False,
+                        # an item reaches here only when `_generic_items` judged it one particular
+                        # thing (#3618), so a second owner is flagged like a named item's
+                        "unique_item": True if onto.is_a(kind, "item") else None,
                     },
                 )  # fmt: skip
                 alias = await w.insert(

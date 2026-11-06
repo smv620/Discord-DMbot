@@ -2114,7 +2114,7 @@ class MemoryStore:
                         "source": entity_source or source,
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
-                        "unique_item": None,
+                        "unique_item": True if n.unique and onto.is_a(kind, "item") else None,
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
