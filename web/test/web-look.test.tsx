@@ -106,8 +106,8 @@ describe("a line's width", () => {
 describe("the size of names and words", () => {
   it("draws a name's shape bigger or smaller, and sets the words' size", () => {
     render(<WebMap nodes={nodes} edges={edges} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} look={{ ...DEFAULT_LOOK, nodeSize: 1.5, textSize: 1.2 }} />);
-    const shape = document.querySelector(".web-node circle, .web-node rect, .web-node polygon, .web-node path") as SVGElement;
-    expect(shape).toBeTruthy();
+    const shape = document.querySelector(".web-node:not(.centre) circle") as SVGElement;
+    expect(Number(shape.getAttribute("r"))).toBe(24 * 1.5);
     expect((document.querySelector(".web-svg") as SVGElement).style.getPropertyValue("--web-text")).toBe(`${14 * 1.2}px`);
   });
 });
@@ -131,6 +131,16 @@ describe("the settings on the page", () => {
     await waitFor(() => expect(document.querySelectorAll(".web-node").length).toBe(2)); // the middle name stays, and the place
     expect(document.querySelectorAll(".web-edge").length).toBe(1);
     expect(JSON.parse(window.localStorage.getItem("dmbot:web-look") ?? "{}").kinds).toHaveLength(1);
+  });
+
+  it("keeps the middle name when its kind is not ticked, and ignores a saved kind this campaign has no names of", async () => {
+    saveLook({ ...DEFAULT_LOOK, kinds: ["place"] });
+    await openPage();
+    await waitFor(() => expect(document.querySelectorAll(".web-node").length).toBe(2)); // the middle name (an NPC) and the place
+    cleanup();
+    saveLook({ ...DEFAULT_LOOK, kinds: ["vehicle"] });
+    await openPage();
+    await waitFor(() => expect(document.querySelectorAll(".web-node").length).toBe(4)); // nothing here is a vehicle: everything is shown
   });
 
   it("reset puts every choice back and says so", async () => {

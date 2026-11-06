@@ -559,7 +559,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
   // A kind the viewer left unticked in the graph settings drops its names, and so their lines; the middle name always stays.
-  const kindShown = (n: { id: string; kind: string }): boolean => look.kinds.length === 0 || look.kinds.includes(n.kind) || n.id === center;
+  // (A kind saved from another campaign, that this one has no names of, is ignored: it would otherwise hide everything.)
+  const activeKinds = look.kinds.filter((k) => graph.nodes.some((n) => n.kind === k));
+  const kindShown = (n: { id: string; kind: string }): boolean => activeKinds.length === 0 || activeKinds.includes(n.kind) || n.id === center;
   const nodes = graph.nodes.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges

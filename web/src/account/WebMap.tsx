@@ -259,7 +259,6 @@ export default function WebMap({
       firstSpacing.current = false;
       return;
     }
-    heat.current = { alpha: 1, steps: 0 };
     reheat(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [look.spacing]);
