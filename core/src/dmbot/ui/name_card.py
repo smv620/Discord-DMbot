@@ -36,6 +36,7 @@ from dmbot.memory.link_words import (
     KIN,
     back_after,
     back_words,
+    campaign_back,
     connection_words,
     link_words,
     reads_both_ways,
@@ -285,7 +286,9 @@ def _rows(
                         or "is connected to"
                     )
                     if r.predicate in ("kin_of", "located_in")
-                    else CARD_BACK.get(r.predicate, "is connected to")
+                    else CARD_BACK.get(r.predicate)
+                    or campaign_back(r.predicate)
+                    or "is connected to"
                 )
             )
         )
