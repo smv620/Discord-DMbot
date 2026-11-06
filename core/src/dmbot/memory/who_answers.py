@@ -14,6 +14,7 @@ words are read by `who_reading`; this is where its ranked answers live until the
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
 
 ENTITY, NEW = "entity", "new"
 MAX_RANK = 3
+CONFIDENCE = ("sure", "likely", "maybe")  # the table's own check; `who_reading.CONFIDENCE`
+KINDS = ("character", "place", "faction", "item", "event")  # the same as `who_reading.NEW_KINDS`
+_ID = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,25 +64,37 @@ class WhoAnswers:
         were kept."""
         if not set(speaker_ids) <= set(opted_in):
             return 0
-        good = [a for a in answers if _well_formed(a)][:MAX_RANK]
+        good = [a for a in answers if _well_formed(a, entity_id)][:MAX_RANK]
+        version = prompt_version.strip()[:40]
+        if not _ID.fullmatch(entity_id) or not version:
+            return 0
         async with self._store._read(guild_id, campaign_id) as scope:
-            await scope.conn.execute(
-                "DELETE FROM memory_who_answers WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s",
-                (*scope.ids, entity_id),
-            )
+            # one transaction; two steps for the same entry at once end as the last one's answers
+            # (an upsert by rank, then the ranks past the new count go), never a key clash
             for rank, a in enumerate(good, 1):
                 await scope.conn.execute(
                     "INSERT INTO memory_who_answers (guild_id, campaign_id, entity_id, rank, pick,"
                     " target_id, new_kind, confidence, speaker_ids, session_started_at,"
                     " prompt_version, model, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT (guild_id, campaign_id, entity_id, rank) DO UPDATE SET"
+                    " pick = EXCLUDED.pick, target_id = EXCLUDED.target_id,"
+                    " new_kind = EXCLUDED.new_kind, confidence = EXCLUDED.confidence,"
+                    " speaker_ids = EXCLUDED.speaker_ids,"
+                    " session_started_at = EXCLUDED.session_started_at,"
+                    " prompt_version = EXCLUDED.prompt_version, model = EXCLUDED.model,"
+                    " created_at = EXCLUDED.created_at",
                     (
                         *scope.ids, entity_id, rank, a.pick, a.target_id, a.new_kind, a.confidence,
-                        sorted(set(speaker_ids)), session_started_at, prompt_version[:40],
-                        model[:80], int(self._store._clock()),
+                        sorted(set(speaker_ids)), session_started_at, version,
+                        model[:80], max(1, int(self._store._clock())),
                     ),
                 )  # fmt: skip
+            await scope.conn.execute(
+                "DELETE FROM memory_who_answers WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND rank > %s",
+                (*scope.ids, entity_id, len(good)),
+            )
         return len(good)
 
     async def sweep(self, guild_id: int, campaign_id: str) -> int:
@@ -149,7 +165,8 @@ class WhoAnswers:
     async def missing(
         self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
     ) -> list[str]:
-        """Of these waiting entries, the ones with no answers yet (what the next step works out)."""
+        """Of these waiting entries, the ones with no answers yet (what the next step works out).
+        Call it after `of` (or `sweep` and `purge_stopped`): it does not clear stale answers."""
         if not entity_ids:
             return []
         async with self._store._read(guild_id, campaign_id) as scope:
@@ -162,11 +179,18 @@ class WhoAnswers:
         return [i for i in entity_ids if i not in have]
 
 
-def _well_formed(a: StoredAnswer) -> bool:
-    """The shape the table's checks allow, so one bad answer never fails the whole keep."""
+def _well_formed(a: StoredAnswer, entity_id: str) -> bool:
+    """The shape the table's checks allow, so one bad answer never fails the whole keep. An entry
+    is never its own answer."""
+    if a.confidence not in CONFIDENCE:
+        return False
     if a.pick == ENTITY:
-        return bool(a.target_id) and a.new_kind is None
-    return a.pick == NEW and a.target_id is None and bool(a.new_kind)
+        target = a.target_id
+        return (
+            target is not None and _ID.fullmatch(target) is not None
+            and target != entity_id and a.new_kind is None
+        )  # fmt: skip
+    return a.pick == NEW and a.target_id is None and a.new_kind in KINDS
 
 
 async def forget(conn: Conn, guild_id: int, user_id: int) -> int:

@@ -34,6 +34,7 @@ class Base(Web):
         speakers: tuple[int, ...] = (ALICE,),
         recorded: set[int] = RECORDED,
         entity: str | None = None,
+        prompt_version: str = "who-1",
     ) -> int:
         return await self.answers.keep(
             self.g,
@@ -43,7 +44,7 @@ class Base(Web):
             speaker_ids=speakers,
             opted_in=recorded,
             session_started_at=500,
-            prompt_version="who-1",
+            prompt_version=prompt_version,
             model="m",
         )
 
@@ -72,14 +73,21 @@ class Keeping(Base):
         four = [self.new(k) for k in ("character", "place", "faction", "item")]
         self.assertEqual(await self.put(*four), 3)
 
-    async def test_malformed_answers_are_left_out_and_never_fail_the_rest(self) -> None:
+    async def test_every_malformed_answer_is_left_out_and_never_fails_the_rest(self) -> None:
         bad = [
+            StoredAnswer(ENTITY, "95%", target_id=self.mira),  # (a confidence off the three)
+            StoredAnswer(NEW, "sure", new_kind="monster"),  # (a kind off the list)
+            StoredAnswer(ENTITY, "sure", target_id="not-an-id"),
+            StoredAnswer(
+                ENTITY, "sure", target_id=self.waiting
+            ),  # (an entry is not its own answer)
             StoredAnswer(ENTITY, "sure"),  # (no target)
             StoredAnswer(NEW, "sure"),  # (no kind)
             StoredAnswer(ENTITY, "sure", target_id=self.mira, new_kind="place"),
             StoredAnswer("other", "sure", target_id=self.mira),
         ]
         self.assertEqual(await self.put(*bad, self.same()), 1)
+        self.assertEqual(await self.put(self.same(), prompt_version=" "), 0)
 
     async def test_answers_worked_out_from_someone_not_recorded_now_are_not_kept(self) -> None:
         self.assertEqual(await self.put(self.same(), speakers=(ALICE, BOB_ID)), 0)
@@ -113,7 +121,49 @@ class UntilAnswered(Base):
         self.assertEqual(await self.of(), {})
 
 
+class OpenQuestions(Base):
+    async def test_a_confirmed_unnamed_person_keeps_its_answers_and_a_named_one_loses_them(
+        self,
+    ) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", self.waiting
+        )
+        await self.put(self.same())
+        self.assertEqual(len((await self.of())[self.waiting]), 1)  # (still unnamed: still open)
+        await self.sql(
+            "UPDATE memory_entities SET unnamed = false, unnamed_what = NULL,"
+            " unnamed_anchor = NULL, unnamed_role = NULL WHERE id = %s",
+            self.waiting,
+        )
+        self.assertEqual(await self.of(), {})  # (named now: answered)
+
+    async def test_an_answer_naming_an_entry_merged_away_is_swept(self) -> None:
+        await self.put(self.same(), self.new())
+        await self.sql(
+            "UPDATE memory_entities SET merged_into = %s, status = 'merged' WHERE id = %s",
+            self.waiting,
+            self.mira,
+        )
+        self.assertEqual((await self.of())[self.waiting], [self.new()])
+
+    async def test_a_second_keep_for_the_same_entry_replaces_and_trims_the_ranks(self) -> None:
+        await self.put(self.same(), self.new(), self.new("place"))
+        await self.put(self.new("item", "sure"))
+        self.assertEqual((await self.of())[self.waiting], [self.new("item", "sure")])
+
+
 class Consent(Base):
+    async def test_purge_stopped_deletes_by_speaker_and_counts(self) -> None:
+        await self.put(self.same(), self.new())
+        self.assertEqual(await self.answers.purge_stopped(self.g, self.one.id, RECORDED), 0)
+        self.assertEqual(await self.answers.purge_stopped(self.g, self.one.id, {DM_ID}), 2)
+
+    async def test_forgetting_a_speaker_leaves_another_servers_rows_alone(self) -> None:
+        await self.put(self.same())
+        async with self.db.guild(self.g) as conn:
+            self.assertEqual(await forget(conn, self.g + 1, ALICE), 0)
+        self.assertEqual(len((await self.of())[self.waiting]), 1)
+
     async def test_a_stopped_speaker_wipes_the_answers_before_they_are_read(self) -> None:
         await self.put(self.same())
         self.assertEqual(await self.of(recorded={DM_ID}), {})

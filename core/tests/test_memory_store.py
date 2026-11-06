@@ -38,6 +38,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.who_answers import NEW, StoredAnswer, WhoAnswers
 from dmbot.schema import ISOLATED_TABLES
 from tests import speed
 from tests.pg import DatabaseTest
@@ -158,8 +159,6 @@ class Isolation(MemoryTest):
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
         )
         # and the AI's ranked answers for a name waiting on "Who is this?" (#3602)
-        from dmbot.memory.who_answers import NEW, StoredAnswer, WhoAnswers
-
         await WhoAnswers(self.memory).keep(
             GUILD_A, self.c, a, [StoredAnswer(NEW, "maybe", new_kind="character")],
             speaker_ids=(DM,), opted_in={DM}, session_started_at=1, prompt_version="who-1",
