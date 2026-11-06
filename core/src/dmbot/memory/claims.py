@@ -31,6 +31,7 @@ from dmbot.memory import (
     place_words,
     reputation_words,
     unique_item,
+    who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
@@ -1683,6 +1684,7 @@ class ClaimStore:
         words produced goes with what it made. Returns how many claims went."""
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
+            readings += await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",

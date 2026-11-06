@@ -157,6 +157,14 @@ class Isolation(MemoryTest):
         await importance_rank.ImportanceStore(self.db).add(
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
         )
+        # and the AI's ranked answers for a name waiting on "Who is this?" (#3602)
+        from dmbot.memory.who_answers import NEW, StoredAnswer, WhoAnswers
+
+        await WhoAnswers(self.memory).keep(
+            GUILD_A, self.c, a, [StoredAnswer(NEW, "maybe", new_kind="character")],
+            speaker_ids=(DM,), opted_in={DM}, session_started_at=1, prompt_version="who-1",
+            model="m",
+        )  # fmt: skip
         # and the DM's answer about turning some words into a kind (#3033)
         await self.memory.answer_kind_offer(
             GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
