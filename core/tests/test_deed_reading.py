@@ -80,9 +80,21 @@ class TheShape(unittest.TestCase):
         self.assertEqual((got.deeds, got.refused), ((), 1))
 
     def test_it_takes_at_most_five_viewers_and_keeps_each_once(self) -> None:
-        names = [f"Place {i}" for i in range(8)] + ["place 0"]
+        names = [f"Place {i}" for i in range(8)]
         (d,) = parse(deed(mattered_to=names)).deeds
         self.assertEqual(len(d.viewers), DEED_VIEWERS_MAX)
+        (d,) = parse(deed(mattered_to=["Brindle", "brindle", "Oldmill"])).deeds
+        self.assertEqual(d.viewers, ("Brindle", "Oldmill"))  # (one name, however it is cased)
+
+    def test_the_doer_as_a_sixth_viewer_still_refuses_the_deed(self) -> None:
+        names = [f"Place {i}" for i in range(5)] + ["Cerric"]
+        self.assertEqual(parse(deed(doer="Cerric", mattered_to=names)).refused, 1)
+
+    def test_the_dm_line_is_kept_when_there_are_too_many_lines_cited(self) -> None:
+        refs = [str(i) for i in range(1, 16)]
+        text = json.dumps({"deeds": [deed(lines=list(range(1, 16)))]})
+        got = dr.parse_deeds(text, refs, dm_lines=["14"])
+        self.assertIn("14", got.deeds[0].lines)
 
     def test_text_is_cut_only_at_the_stored_limit_and_at_a_whole_word(self) -> None:
         long = " ".join(["word"] * 80)
@@ -126,6 +138,13 @@ class TheAnswer(unittest.TestCase):
         self.assertEqual(dr.parse_deeds("nope", REFS, dm_lines=DM_LINES, cut=True).refused, 0)
         self.assertEqual(dr.parse_deeds("[]", REFS, dm_lines=DM_LINES).refused, 1)
         self.assertEqual(dr.parse_deeds('{"deeds": []}', REFS, dm_lines=DM_LINES), dr.Parsed())
+
+    def test_a_cut_answer_keeps_the_deeds_before_the_broken_one(self) -> None:
+        whole = json.dumps(deed())
+        cut = '{"deeds": [' + whole + ', {"doer": "Ce'
+        got = dr.parse_deeds(cut, REFS, dm_lines=DM_LINES, cut=True)
+        self.assertEqual((len(got.deeds), got.refused), (1, 0))
+        self.assertEqual(dr.parse_deeds(cut, REFS, dm_lines=DM_LINES).refused, 1)  # (not cut)
 
     def test_the_prompt_names_the_four_words_and_calls_the_transcript_data(self) -> None:
         for verb in dr.VERBS:

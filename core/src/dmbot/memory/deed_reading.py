@@ -33,6 +33,7 @@ Counts only leave this module; the words of a transcript are never logged.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,7 @@ from dmbot.memory.models import DEED_TEXT_MAX, DEED_VIEWERS_MAX, NAME_MAX
 from dmbot.memory.readings import PRONOUNS
 from dmbot.memory.standing import DEED_VERB
 
+_LIST_START = re.compile(r'\s*\{\s*"deeds"\s*:\s*\[')
 MAX_DEEDS = 20  # one batch of the transcript names this many at most
 VERBS: dict[str, str] = {verb: effect for effect, verb in DEED_VERB.items()}
 PARTY_WORDS = frozenset({"the party", "party"})
@@ -99,7 +101,28 @@ def _fit(text: str) -> str:
     """The deed's words, at a whole word if they would not fit the stored column."""
     if len(text) <= DEED_TEXT_MAX:
         return text
-    return text[: DEED_TEXT_MAX - 1].rsplit(" ", 1)[0].rstrip(",;: ") + "…"
+    cut = text[: DEED_TEXT_MAX - 1]
+    if text[DEED_TEXT_MAX - 1] != " ":  # (a word is cut in two: drop its half)
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(",;: ") + "…"
+
+
+def _whole_items(text: str) -> list[object]:
+    """The complete deeds at the start of an answer that was cut off in the middle of its list:
+    every one before the broken one is as good as in a whole answer (as `readings` does)."""
+    found = _LIST_START.match(text)
+    if found is None:
+        return []
+    decoder, at = json.JSONDecoder(), found.end()
+    items: list[object] = []
+    while True:
+        while at < len(text) and text[at] in " \t\r\n,":
+            at += 1
+        try:
+            item, at = decoder.raw_decode(text, at)
+        except ValueError:  # the cut item, or the end of the list
+            return [] if text[at:].lstrip().startswith("]") else items
+        items.append(item)
 
 
 def parse_deeds(
@@ -112,7 +135,10 @@ def parse_deeds(
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
-        return Parsed(refused=0 if cut else 1)
+        salvaged = _whole_items(text) if cut else []
+        if not salvaged:
+            return Parsed(refused=0 if cut else 1)
+        data = {"deeds": salvaged}
     items = data.get("deeds") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return Parsed(refused=1)
@@ -147,21 +173,27 @@ def _deed(item: Any, known: set[str], dm: set[str]) -> DeedProposal | None:
     if not isinstance(item, dict):
         return None
     cited = item.get("lines")
-    lines = tuple(
+    every = tuple(
         dict.fromkeys(
             str(n)
             for n in (cited if isinstance(cited, list) else [])
             if isinstance(n, (int, str)) and not isinstance(n, bool) and str(n) in known
         )
-    )[:LINES_MAX]
+    )
+    # (the DM's lines are what make it a deed, so they are kept first when there are too many)
+    if len(every) > LINES_MAX:
+        every = tuple(sorted(every, key=lambda n: n not in dm))[:LINES_MAX]
+    lines = every
     if not lines or not set(lines) & dm:
         return None  # what the DM said happened is what happened
     doer, words = _text(item.get("doer")), _text(item.get("deed"))
     effect = VERBS.get(_text(item.get("effect")).casefold())
     raw = item.get("mattered_to")
-    viewers = tuple(
-        dict.fromkeys(_text(v) for v in (raw if isinstance(raw, list) else []) if _text(v))
-    )[:DEED_VIEWERS_MAX]
+    seen: dict[str, str] = {}  # one name however it is cased, the first spelling kept
+    for v in raw if isinstance(raw, list) else []:
+        if _text(v):
+            seen.setdefault(_text(v).casefold(), _text(v))
+    viewers = tuple(seen.values())
     if not doer or not words or effect is None or not viewers:
         return None
     names = [doer, *viewers]
@@ -173,7 +205,7 @@ def _deed(item: Any, known: set[str], dm: set[str]) -> DeedProposal | None:
         return None  # a deed never matters to its doer, and never to the party
     if any(reads_like_instruction(v) for v in (*names, words)):
         return None
-    return DeedProposal(doer, _fit(words), viewers, effect, lines)
+    return DeedProposal(doer, _fit(words), viewers[:DEED_VIEWERS_MAX], effect, lines)
 
 
 __all__ = ["DEED_SYSTEM", "MAX_DEEDS", "VERBS", "DeedProposal", "Parsed", "parse_deeds"]
