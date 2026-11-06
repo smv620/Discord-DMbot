@@ -6,8 +6,8 @@
 // every two seconds until the name leaves the list. DMbot never decides what a name is.
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
 import NamePlaces from "./NamePlaces";
-import SceneLine from "./SceneLine";
 import { campaignRefOf } from "./RecapNames";
+import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { nameGroupWords as gw } from "../content/name-group-words";

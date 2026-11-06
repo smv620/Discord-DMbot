@@ -7,8 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.web import all_names, scenes
-from dmbot.web.recaps import _scoped
-from tests.test_scenes import ALICE, TEXT, Base
+from dmbot.web.recaps import RecapError, _scoped
+from tests.test_scenes import TEXT, Base
 
 
 class OnTheList(Base):
@@ -47,10 +47,18 @@ class OnTheList(Base):
             await _scoped(conn, self.g)
             self.assertEqual(await scenes.read(conn, self.g, other, [self.someone]), {})
 
-    async def test_no_ids_or_too_many_are_handled(self) -> None:
+    async def test_no_ids_read_nothing_and_a_long_list_is_read_in_slices(self) -> None:
+        await self.put(self.scene())
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await _scoped(conn, self.g)
             self.assertEqual(await scenes.read(conn, self.g, self.one.id, []), {})
-            many = [f"{i:032x}" for i in range(scenes.MAX_IDS + 50)]
-            self.assertEqual(await scenes.read(conn, self.g, self.one.id, many), {})
-        self.assertEqual(ALICE, 8)
+            # the scene's entry is past the door's first 200: it is still read (a second call)
+            long = [f"{i:032x}" for i in range(scenes.MAX_IDS + 50)] + [self.someone]
+            self.assertEqual(
+                await scenes.read(conn, self.g, self.one.id, long), {self.someone: TEXT}
+            )
+
+    async def test_a_player_is_refused_the_list_so_no_scene_can_reach_them(self) -> None:
+        await self.put(self.scene())
+        with self.assertRaises(RecapError):
+            await all_names.read_page(self.web, self.player, self.cref, unnamed=True)

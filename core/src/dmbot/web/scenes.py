@@ -10,6 +10,7 @@ key and draws nothing. The text is plain text for the page to show as it is; it 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 MAX_IDS = 200  # as the database's door
@@ -20,21 +21,32 @@ async def read(conn: Any, guild_id: int, campaign_id: str, ids: list[str]) -> di
     """The scenes of these entries, by entry id. Empty for anyone who is not a DM of the campaign
     (the door says so by answering nothing), and for entries with no scene or an answered question.
     `conn` is a user connection already scoped to the guild (`recaps._scoped`)."""
-    wanted = [i for i in ids if isinstance(i, str)][:MAX_IDS]
-    if not wanted:
-        return {}
-    cur = await conn.execute(
-        "SELECT dmbot_web_scenes(%s, %s, %s, %s) AS r", (guild_id, campaign_id, ENTITY, wanted)
-    )
-    got = (await cur.fetchone() or {}).get("r")
-    scenes = got.get("scenes") if isinstance(got, dict) else None
-    if not isinstance(scenes, dict):
-        return {}
-    return {str(k): str(v) for k, v in scenes.items() if isinstance(v, str) and v.strip()}
+    wanted = [i for i in ids if isinstance(i, str)]
+    found: dict[str, str] = {}
+    # The door reads at most MAX_IDS a call, so a longer list (a recap with many names waiting) is
+    # read in slices: every row that has a scene gets it, and the number of calls stays small.
+    for start in range(0, len(wanted), MAX_IDS):
+        cur = await conn.execute(
+            "SELECT dmbot_web_scenes(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, ENTITY, wanted[start : start + MAX_IDS]),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+        scenes = got.get("scenes") if isinstance(got, dict) else None
+        if not isinstance(scenes, dict):
+            return {}  # (not a DM of the campaign: the door answers nothing, so nothing is shown)
+        found.update(
+            {str(k): str(v) for k, v in scenes.items() if isinstance(v, str) and v.strip()}
+        )
+    return found
 
 
 async def attach(
-    conn: Any, guild_id: int, campaign_id: str, rows: list[dict[str, Any]], *, only: Any = None
+    conn: Any,
+    guild_id: int,
+    campaign_id: str,
+    rows: list[dict[str, Any]],
+    *,
+    only: Callable[[dict[str, Any]], bool] | None = None,
 ) -> None:
     """Give each of `rows` (dicts with an `id`) its `scene` when it has one. `only` picks the rows
     to ask for (a list page asks only for its unnamed people); every other row is left as it is."""

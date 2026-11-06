@@ -147,6 +147,15 @@ class TheScene(WithChecks):
         self.assertNotIn("scene", cards["Veshla"])
         self.assertEqual(plain, cards["Veshla"]["id"])
 
+    async def test_a_player_is_refused_the_list_and_so_given_no_scene(self) -> None:
+        await self.suggest("Brannoch")
+        player = await sessions.find(
+            self.web, await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30), now=NOW
+        )
+        assert player is not None
+        with self.assertRaises(RecapError):
+            await web.read_checks(self.web, player, self.ref)
+
 
 class TheOldPronounRule(WithChecks):
     """The recap page and Discord's lists agree on the same stored rows (#2358): a pronoun the

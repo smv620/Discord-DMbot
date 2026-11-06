@@ -57,3 +57,10 @@ describe("on the Names page", () => {
     expect(screen.queryAllByText(w.label)).toHaveLength(0); // (the other person has no scene: no line, no empty box)
   });
 });
+
+describe("the real switch", () => {
+  it("is off until #3601 is deployed", async () => {
+    const real = await vi.importActual<typeof import("../src/content/scene-switch")>("../src/content/scene-switch");
+    expect(real.SCENES_LIVE).toBe(false);
+  });
+});
