@@ -198,8 +198,10 @@ def _role(detail: str, roles: frozenset[str]) -> bool:
 
 def _feeling_verdict(tie: Mapping[str, Any], graph: Graph, a: set[str], b: set[str]) -> str | None:
     """How the stored feeling of a key tie sits against the key's (see `reputation_words.compare`),
-    or None when the key expects none or nothing is stored in the key's direction. An old
-    `enemy_of` counts as "hostile", `ally_of` as "friendly"; a `knows` with no word is "neutral"."""
+    or None when the key expects none or nothing is stored for it. An old `enemy_of` (either end)
+    counts as "hostile"; a `knows` in the key's direction with no word is "neutral"; a waiting
+    (proposed) row is scored like a stored one, since it is what DMbot read; the closest of
+    several rows is the one scored."""
     rel = str(tie["relation"])
     wanted = str(tie.get("feeling") or "") if rel == "knows" else ""
     if rel == "enemy_of":
@@ -207,15 +209,26 @@ def _feeling_verdict(tie: Mapping[str, Any], graph: Graph, a: set[str], b: set[s
     if not wanted or tie.get("tier") == "by_rule":
         return None
     best: str | None = None
+    order = (
+        reputation_words.EXACT,
+        reputation_words.ONE_STEP,
+        reputation_words.OVER_READ,
+        reputation_words.UNDER_READ,
+        reputation_words.WRONG_SIDE,
+    )  # best first: when several rows are stored, the closest one is the one scored
     for r, forward in graph.between(a, b):
         pred, detail = str(r["predicate"]), str(r.get("detail") or "")
-        if not forward or pred not in ("knows", "enemy_of", "ally_of"):
+        if pred == "enemy_of":  # (reads the same from either end)
+            got = reputation_words.HOSTILE
+        elif pred == "knows" and forward:
+            got = reputation_words.word_of(detail) or ""
+            if detail and not got:
+                continue  # a detail that is no feeling word is not a feeling row
+            got = got or reputation_words.NEUTRAL
+        else:
             continue
-        got = {"enemy_of": "hostile", "ally_of": "friendly"}.get(pred) or (
-            reputation_words.word_of(detail) or reputation_words.NEUTRAL
-        )
         verdict = reputation_words.compare(wanted, got)
-        if best is None or verdict == reputation_words.EXACT:
+        if best is None or order.index(verdict) < order.index(best):
             best = verdict
     return best
 
@@ -493,10 +506,11 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Feelings scored: {len(report.feelings)} (exact {scored[reputation_words.EXACT]}, "
         f"one step off {scored[reputation_words.ONE_STEP]}, "
         f"over-read {scored[reputation_words.OVER_READ]}, "
-        f"under-read {scored[reputation_words.UNDER_READ]})"
+        f"under-read {scored[reputation_words.UNDER_READ]}, "
+        f"wrong side {scored[reputation_words.WRONG_SIDE]})"
     )
     for tie_id, verdict in report.feelings:
-        if verdict in (reputation_words.OVER_READ, reputation_words.UNDER_READ):
+        if verdict not in (reputation_words.EXACT, reputation_words.ONE_STEP):
             lines.append(f"  {tie_id}  {verdict}")
     left = [e for e in report.entries if e.status != FOUND]
     lines.append(f"Entries missing or of the wrong kind: {len(left)}")
