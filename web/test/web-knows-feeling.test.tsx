@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountApi, WebGraph, WebLink, WebLinkChange } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
-import { FEELINGS, feelingOf, feelingWords as w } from "../src/content/knows-feeling-words";
+import { FEELINGS, feelingOf } from "../src/content/knows-feeling-words";
+import { feelingWords as w } from "../src/content/knows-feeling-text";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/knows-feeling-switch", () => ({
@@ -124,6 +125,14 @@ describe("Why?", () => {
     const panel = await openPanel(pageWith(graph([knows({ source: { type: "unknown" }, quote: null })])));
     await within(panel).findByText(w.why("wary"));
     expect(within(panel).getByText(new RegExp(w.noSource))).toBeTruthy();
+  });
+});
+
+describe("a peeker's view", () => {
+  it("shows neither the picker nor the quote, even when the API sent it", async () => {
+    const api = pageWith(graph([knows()], false));
+    const panel = await openPanel(api);
+    expect(within(panel).queryByText(/They argued over the toll/)).toBeNull();
   });
 });
 

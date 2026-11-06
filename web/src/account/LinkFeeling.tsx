@@ -3,9 +3,10 @@
 // the nine words, saved as a feeling so the connection stays a "knows" (free words would turn it into a catch-all), and
 // "Why <feeling>?" with where it came from and the words it was read from. For the campaign's DM only: the quote is
 // never sent to, or drawn for, anyone else. Its own file so the Story Graph's page stays within its weight budget.
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
-import { FEELINGS, feelingWords as w } from "../content/knows-feeling-words";
+import { FEELINGS } from "../content/knows-feeling-words";
+import { feelingWords as w } from "../content/knows-feeling-text";
 import type { WebLink, WebLinkChange } from "./api";
 
 function fromLine(source: WebLink["source"]): string {
@@ -30,11 +31,21 @@ export default function LinkFeeling({
   const [problem, setProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const from = fromLine(link.source);
+  const alive = useRef(true); // a save outlives a press: the row may be gone when it ends
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
+  // The feeling changed without this panel (Undo, Discord, a fresh read): the choice follows it.
+  useEffect(() => setPicked(feeling), [feeling]);
   async function save(): Promise<void> {
     if (saving || picked === feeling) return;
     setSaving(true);
-    setProblem(await act({ action: "feeling", id: link.id, feeling: picked }, w.saved));
-    setSaving(false);
+    try {
+      const refused = await act({ action: "feeling", id: link.id, feeling: picked }, w.saved);
+      if (alive.current) setProblem(refused);
+    } finally {
+      if (alive.current) setSaving(false);
+    }
   }
   return (
     <div class="stack">
@@ -43,15 +54,16 @@ export default function LinkFeeling({
         <select value={picked} onChange={(e) => setPicked((e.target as HTMLSelectElement).value)}>
           {FEELINGS.map((f) => (
             <option key={f} value={f}>
-              {f}
+              {f.charAt(0).toUpperCase() + f.slice(1)}
             </option>
           ))}
         </select>
       </label>
       <div class="row">
         <button type="button" class="button secondary" aria-label={w.saveFor(n)} aria-disabled={saving || picked === feeling} onClick={() => void save()}>
-          {w.save}
+          {saving ? w.saving : w.save}
         </button>
+        {picked !== feeling && <span class="small muted">{w.notSaved}</span>}
       </div>
       {problem && (
         <p class="warn small" role="alert">
@@ -63,12 +75,15 @@ export default function LinkFeeling({
           <strong>{w.why(feeling)}</strong> {from || w.noSource}
         </p>
         {link.quote ? (
-          <blockquote>
-            <span class="visually-hidden">{w.quoteLabel}: </span>
-            {link.quote}
-          </blockquote>
+          <>
+            <p class="muted">{w.quoteCaption}</p>
+            <blockquote>
+              <span class="visually-hidden">{w.quoteLabel}: </span>
+              {link.quote}
+            </blockquote>
+          </>
         ) : from ? (
-          <p class="muted">{w.noSource}</p>
+          <p class="muted">{w.noQuote}</p>
         ) : null}
       </div>
     </div>
