@@ -255,7 +255,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "friends, allies and enemies: write the feeling in brackets, one of "
         f"{', '.join(feeling_words.WORDS)}, as in 'knows (friendly)', for how the FIRST name feels "
         "about the second; when the text says they feel it about each other, write the line "
-        "twice, once each way), "
+        "twice, once each way. Write a feeling only when the text says how they feel about "
+        "each other; an argument, a debate, a rivalry or a grudge is wary or distrusts at most. "
+        "Hostile and sworn enemy are for open enmity the text states (fighting, hatred, a vow "
+        "against); devoted needs love or loyalty in the text; else write neutral), "
         "is disguised as (a second character posing as another), "
         "travels with (a companion that goes along with a player character: a familiar, a "
         "hired guide; the second name is the player character, never 'the party'), "
@@ -347,7 +350,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         'place: say "is kept in" or "was kept in"; owns = a owns b; '
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
-        f"{', '.join(feeling_words.WORDS)}, else empty); "
+        f"{', '.join(feeling_words.WORDS)}, else empty; only when the text says how they feel: "
+        "an argument, a debate or a grudge is wary or distrusts at most, and hostile, sworn "
+        "enemy and devoted need open enmity, a vow, love or loyalty in the text); "
         "sworn to = a is sworn to b (an oath, a vow, a pact or fealty); "
         "mentor = a mentors b; apprentice = a is an apprentice of b; rival = a is a rival of b "
         "(competes with, does not want b harmed); founded = a founded b; parent = a is a parent "
