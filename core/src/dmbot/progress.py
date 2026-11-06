@@ -27,6 +27,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "cleaning": 10 * 60,  # a chunk of lines, then the next (waiting to be taken counts too)
     "checking_names": 15 * 60,  # the name scan's own retake window
     "finding_names": 15 * 60,
+    "finding_links": 15 * 60,  # a lore upload's connections (#3534; the door retakes it at 10)
     # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
     # waiting for the daily limit never stalls, it carries on by itself.
     "reading_connections": 15 * 60,

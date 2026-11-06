@@ -155,6 +155,50 @@ class TheDoors(Reading):
         [row] = await self.rows()
         self.assertEqual((row["text"], row["link"]), ("", ""))
 
+    async def progress_of(self) -> dict[str, Any]:
+        read = await lore.read(self.web, self.session, self.cref, None)
+        return dict(read["upload"]["progress"])
+
+    async def test_the_read_carries_the_shared_progress_beside_the_old_fields(self) -> None:
+        await self.add()
+        got = await self.progress_of()
+        self.assertEqual((got["stage"], got["state"]), ("waiting", "running"))
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertLessEqual(got["startedAt"], got["updatedAt"])
+        self.assertNotIn(WORDS, repr(got))
+
+    async def test_a_running_read_sends_done_of_total_with_what_it_counts(self) -> None:
+        await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'working', claimed_at = 1, stage = 'reading',"
+            " done = 2, total = 5"
+        )
+        got = await self.progress_of()
+        self.assertEqual((got["done"], got["total"], got["unit"]), (2, 5, "parts"))
+        await self.sql("UPDATE lore_uploads SET stage = 'finding_names', done = 9, total = 4")
+        got = await self.progress_of()  # (never past the total)
+        self.assertEqual((got["done"], got["total"], got["unit"]), (4, 4, "names"))
+        await self.sql("UPDATE lore_uploads SET stage = 'finding_links', done = 0, total = 0")
+        self.assertNotIn("done", await self.progress_of())  # no count at this stage
+
+    async def test_a_failed_read_says_why_by_code_and_a_quiet_one_is_stalled(self) -> None:
+        await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'failed', error = 'no_ai', stage = 'failed'"
+        )
+        got = await self.progress_of()
+        self.assertEqual((got["state"], got["reason"]), ("failed", "no_ai"))
+        # (a taken upload quiet for 10 minutes is put back to waiting by the door itself; what a
+        # page can see stall is an upload nobody took within a couple of minutes)
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'waiting', error = '', stage = 'waiting',"
+            " created_at = created_at - 400, updated_at = updated_at - 300"
+        )
+        got = await self.progress_of()
+        self.assertEqual((got["state"], got["reason"]), ("stalled", "stalled"))
+
     async def test_a_taken_upload_gone_quiet_goes_back_and_gets_its_own_half_hour(self) -> None:
         await self.add()
         await self.sql(

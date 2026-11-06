@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot import progress as progress_shape
 from dmbot.db import Database
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -88,6 +89,33 @@ async def add(db: Database, session: Session, ref: str, body: object) -> dict[st
     return await read(db, session, ref, str(got["id"]))
 
 
+# What a lore read's count measures at each stage (#3534): the pieces of the text, then the names
+# it is shaping. The connection stages report no count of their own.
+_UNITS = {"reading": "parts", "finding_names": "names"}
+
+
+def _progress(up: dict[str, Any]) -> dict[str, Any]:
+    """The upload in the shared shape (#2564), beside every old field: the stage with its
+    `done` of `total` while the read runs, `failed` with the stored code as the reason, and
+    `done` once it ends. Counts, codes and times only."""
+    stage, state = str(up["stage"]), str(up["state"])
+    if state in ("done", "failed"):
+        stage = state
+    elif state == "waiting":
+        stage = "waiting"
+    running = state == "working"
+    return progress_shape.shape(
+        stage,
+        started_at=int(up["createdAt"]),
+        updated_at=int(up["updatedAt"]),
+        now=int(up["serverNow"]),
+        done=int(up["done"]) if running else None,
+        total=int(up["total"]) if running else None,
+        unit=_UNITS.get(stage),
+        reason=(str(up["error"]) or None) if state == "failed" else None,
+    )
+
+
 async def read(db: Database, session: Session, ref: str, upload: str | None) -> dict[str, Any]:
     """One upload's progress (or the newest of the last day when `upload` is None): `{"upload":
     null}` when there is none. DM only."""
@@ -111,4 +139,6 @@ async def read(db: Database, session: Session, ref: str, upload: str | None) -> 
                 raise RecapError("not_allowed")
             if upload is not None:
                 raise RecapError("not_found")
+    if got is not None:
+        got["progress"] = _progress(got)
     return {"upload": got}
