@@ -262,6 +262,15 @@ async def keep_all(
                 await progress(tried, total)
             continue
         made = written.value[0]
+        # Where it came from, for the graph's line panel (#2946): only a connection made just now
+        # (an older twin's rows are not this upload's), and never a reason to lose the connection.
+        if c.upload and made.created_at >= now:
+            try:
+                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload)
+            except Exception as exc:
+                log.warning(
+                    "A kept connection's source could not be stored (%s)", type(exc).__name__
+                )
         # A feeling kept with a "knows" (#3175) is how the first name feels about the second: the
         # DM's press stores it as a reputation from the story (a standing the DM set still wins).
         # Its batch joins the ones Undo takes back, so one press and one Undo cover both.
