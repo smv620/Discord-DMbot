@@ -19,6 +19,11 @@ from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _te
 from dmbot.ui.names import _md, _memory, changed, sees_secrets
 
 ONLY_DMS = "Only the campaign's DMs can do that."
+NOT_ON_PAGE = "That character isn't one of the player characters on this page."
+# One page holds at most this many told lines, and this many characters of them; the rest are
+# counted, so the message never outgrows Discord's 2,000.
+MAX_LINES = 8
+LINES_BUDGET = 900
 PRIVATE_LINE = "Only the characters listed here were told. Nobody else sees this."
 GONE = "That name was removed or changed. Open the name card again."
 # The store's own messages, said for this feature (the store shares some with other pages).
@@ -65,7 +70,17 @@ def take_back_question(character: str, alias: str, entry: str) -> str:
 
 def told_lines(told: Sequence[str], names: dict[str, str], alias: str, entry: str) -> str:
     """The page's lines for who was told, escaped for Discord; "" when no one was."""
-    lines = [f"🗣️ {_md(was_told(names[c], alias, entry))}" for c in told if c in names]
+    shown = [c for c in told if c in names]
+    lines: list[str] = []
+    used = 0
+    for c in shown[:MAX_LINES]:
+        line = f"🗣️ {_md(was_told(names[c], alias, entry))}"
+        if lines and used + len(line) > LINES_BUDGET:  # a page never outgrows Discord's limit
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if len(shown) > len(lines):
+        lines.append(f"…and {len(shown) - len(lines)} more were told.")
     return "\n".join([*lines, PRIVATE_LINE]) if lines else ""
 
 
@@ -168,15 +183,22 @@ async def tell(
     page = await _checked(interaction, campaign_id, entity_id, alias_id)
     if page is None:
         return
+    if character_id not in page.names:  # only the page's own player characters are offered
+        await _tell(interaction, NOT_ON_PAGE)
+        return
     try:
-        await page.memory.tell_character(
+        written = await page.memory.tell_character(
             page.campaign.guild_id, page.campaign.id, alias_id, character_id, source=DM
         )
     except MemoryRuleError as exc:
         await _tell(interaction, plain(exc))
         return
+    who = page.names[character_id]
+    if not written.value:  # a double press or a stale page: nothing was written
+        note = f"{_md(who)} was already told."
+        await show_who_page(interaction, campaign_id, entity_id, alias_id, note=note)
+        return
     changed(interaction, page.campaign)
-    who = page.names.get(character_id, "That character")
     note = (
         f"✅ {_md(now_knows(who, page.alias.text, page.entry))}. Only {_md(who)} was told; "
         "everyone else still sees two names."
@@ -226,7 +248,8 @@ async def take_back(
             page.campaign.guild_id, page.campaign.id, alias_id, character_id, source=DM
         )
     except MemoryRuleError as exc:
-        await _tell(interaction, plain(exc))
+        # (the confirmation is finished: show the page as it is now, with why nothing changed)
+        await show_who_page(interaction, campaign_id, entity_id, alias_id, note=plain(exc))
         return
     changed(interaction, page.campaign)
     who = page.names.get(character_id, "That character")
