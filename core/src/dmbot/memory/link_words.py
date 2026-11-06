@@ -116,6 +116,18 @@ def link_words(
     return connection_words(predicate)
 
 
+def own_words(predicate: str, detail: str) -> bool:
+    """True for a connection that has no kind of its own (the catch-all) and carries the table's
+    own words: the website shows those in quotes, so they are not taken for DMbot's own wording
+    (#3574)."""
+    return predicate == FALLBACK_PREDICATE and bool(detail)
+
+
+def quoted(detail: str) -> str:
+    """The table's own words in curly quotes, for display only (the stored words stay raw)."""
+    return f"\u201c{detail}\u201d"
+
+
 def back_after(
     predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
 ) -> str:
