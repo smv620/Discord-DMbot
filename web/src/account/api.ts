@@ -1197,6 +1197,8 @@ export interface JobProgress {
   total?: number | null;
   /** What done and total count: a code (`sessions`, `parts` or `lines`). */
   unit?: string | null;
+  /** Running counts of what has been handled so far, by code: `words`, `calls`, `checks`, `names` (#3534). Counts only. */
+  counts?: Record<string, number> | null;
   startedAt?: number | null;
   /** The last time it moved forward (not a heartbeat). Only grows. */
   updatedAt?: number | null;
@@ -1232,6 +1234,8 @@ export interface LoreUpload {
   createdAt: number;
   updatedAt: number;
   serverNow: number;
+  /** The same wait in the shared shape (#3534): its own stage codes, a count with its unit, and the server's word on stalled. */
+  progress?: JobProgress | null;
 }
 /** The bot's answer to "Add all" or its Undo (#3222): counts and progress only, never a name. */
 export interface ConfirmAnswer {
