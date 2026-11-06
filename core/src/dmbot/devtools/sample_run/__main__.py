@@ -219,11 +219,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _accept_all() -> Accept:
     """'Accept all' (#3544, `devtools.accept_all`): what the DM would press Yes for, through the
-    store's own calls, on the sample campaign only. Counts only come back."""
+    store's own calls, on the sample campaign only. Counts only come back; a campaign that is not
+    the sample (which the tool itself would never make) is a plain refusal."""
     from dmbot.devtools import accept_all
+    from dmbot.memory.store import MemoryStore
 
     async def accept(db: Database, guild: int, campaign: str) -> Mapping[str, int]:
-        got = await accept_all.run(db, guild, campaign, dry_run=False)
+        try:
+            got = await accept_all.run(db, guild, campaign, dry_run=False, memory=MemoryStore(db))
+        except accept_all.WrongCampaign as exc:
+            raise SampleError(str(exc)) from exc
         return {
             "accepted": sum(got.accepted.values()),
             "left waiting": sum(got.waiting.values()),

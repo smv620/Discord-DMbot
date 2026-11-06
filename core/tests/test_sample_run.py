@@ -458,9 +458,7 @@ class Steps(DatabaseTest):
         got = await accept(self.db, GUILD, camp.id)
         self.assertEqual(sorted(got), ["accepted", "changes", "left waiting", "refused by a rule"])
         other = await self.made(name="Frostmaiden")
-        from dmbot.devtools.accept_all import WrongCampaign
-
-        with self.assertRaises(WrongCampaign):
+        with self.assertRaises(SampleError):  # (accept_all's WrongCampaign, said plainly)
             await accept(self.db, GUILD, other.id)
 
     async def test_the_backup_goes_to_a_private_file_and_scores_with_counts_only(self) -> None:
