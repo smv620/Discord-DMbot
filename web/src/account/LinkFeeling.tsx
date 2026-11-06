@@ -36,7 +36,12 @@ export default function LinkFeeling({
     alive.current = false;
   }, []);
   // The feeling changed without this panel (Undo, Discord, a fresh read): the choice follows it.
-  useEffect(() => setPicked(feeling), [feeling]);
+  const seen = useRef(feeling); // (not on the first draw, which would undo a choice made before the effect ran)
+  useEffect(() => {
+    if (seen.current === feeling) return;
+    seen.current = feeling;
+    setPicked(feeling);
+  }, [feeling]);
   async function save(): Promise<void> {
     if (saving || picked === feeling) return;
     setSaving(true);
