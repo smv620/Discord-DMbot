@@ -1185,3 +1185,9 @@
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
+
+/* DMbot's summary of the scene (#3644): long text wraps at any width, never past the box. */
+.account .scene-line {
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}

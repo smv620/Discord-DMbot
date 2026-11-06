@@ -19,6 +19,7 @@ from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
+from dmbot.web import scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -134,6 +135,7 @@ async def read_page(
         _label_unnamed(row)
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
+        await _add_scenes(db, session, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
@@ -185,6 +187,19 @@ async def _add_said_as(
         if mine is not None:
             row["aliasId"] = mine["aliasId"]
             row["saidAs"] = mine["saidAs"]
+
+
+async def _add_scenes(
+    db: Database, session: Session, guild_id: int, campaign_id: str, names: list[dict[str, Any]]
+) -> None:
+    """Give a DM's unnamed people their `scene` (#3644), when DMbot kept one: a short summary of
+    where the story mentioned them. Only the unnamed rows are asked about (a named entry's question
+    is not open), through the DM-only door, so a player's list never carries one."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        await scenes.attach(
+            conn, guild_id, campaign_id, names, only=lambda r: bool(r.get("unnamed"))
+        )
 
 
 # ---- the DM's actions: queued for the bot, read back by polling ----------------------------------

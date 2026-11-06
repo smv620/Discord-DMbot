@@ -6,6 +6,7 @@
 // every two seconds until the name leaves the list. DMbot never decides what a name is.
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
 import NamePlaces from "./NamePlaces";
+import SceneLine from "./SceneLine";
 import { campaignRefOf } from "./RecapNames";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -334,6 +335,7 @@ function NameRow({
             {words.noteFrom} {name.note}
           </p>
         )}
+        <SceneLine scene={name.scene} />
         {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>
