@@ -218,7 +218,7 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
   if (failed) return <p class="warn" role="alert">{failed}</p>;
   const who = name?.name ?? "";
   return (
-    <div class="stack clarify">
+    <div class="stack clarify panel">
       {last && (
         <div class="stack" role="status" tabIndex={-1} ref={resultBox}>
           <p>{last.text}</p>
