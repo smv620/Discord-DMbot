@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
-from dmbot.memory import extractor, readings
+from dmbot.memory import deed_reading, extractor, readings
 from dmbot.memory.claims import ClaimStore, Extracted, Proposed
 from dmbot.sidebar import answer as sidebar
 from dmbot.transcript.models import (
@@ -523,3 +523,122 @@ class Switch(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(campaign_id="c", transcript_session_id=None, guild_id=1),
         ):
             await DMBot.extract_claims(self.fake(True), table, 0)  # type: ignore[arg-type]
+
+
+class Deeding:
+    """A fake AI: no claims, and one deed (by the party, mattering to Brindle) citing the first
+    line it is sent, or whatever `answer` says."""
+
+    def __init__(self, answer: str | None = None, fail: Exception | None = None) -> None:
+        self.systems: list[str] = []
+        self.sent: list[str] = []
+        self.answer = answer
+        self.fail = fail
+
+    async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+        self.systems.append(system)
+        if system is extractor.SYSTEM:
+            return Reply(json.dumps({"claims": []}), False, 10, 5, "m-fast")
+        self.sent.append(text)
+        if self.fail is not None:
+            raise self.fail
+        first = text.split("\n")[1].split(" ")[0]
+        deed = {"doer": "the party", "deed": "Saved the mill", "mattered_to": ["Brindle"],
+                "effect": "helped", "lines": [int(first)]}  # fmt: skip
+        return Reply(self.answer or json.dumps({"deeds": [deed]}), False, 10, 5, "m-fast")
+
+
+def dm_session(count: int) -> list[Line]:
+    return [line(n, DM) for n in range(1, count + 1)]
+
+
+class DeedPass(unittest.IsolatedAsyncioTestCase):
+    async def test_off_by_default_nothing_is_asked(self) -> None:
+        ai = Deeding()
+        report = await go(ai, Kept(), dm_session(10))
+        self.assertEqual((report.calls, report.deeds), (1, 0))
+        self.assertNotIn(deed_reading.DEED_SYSTEM, ai.systems)
+
+    async def test_on_the_deed_is_proposed_and_nothing_is_stored(self) -> None:
+        store = Kept()
+        report = await go(Deeding(), store, dm_session(10), deeds=True)
+        self.assertEqual((report.calls, report.deeds, report.deeds_refused), (2, 1, 0))
+        self.assertEqual(report.deed_proposals[0].effect, "Helped them")
+        self.assertEqual(store.calls, [])  # (the claims pass has nothing; the deed is held back)
+        self.assertNotIn("Saved the mill", report.line())  # counts only in the log line
+        self.assertIn("deeds: 1 found", report.line())
+
+    async def test_a_deed_only_a_player_told_is_refused_and_counted(self) -> None:
+        report = await go(Deeding(), Kept(), session(10), deeds=True)  # (every line a player's)
+        self.assertEqual((report.deeds, report.deeds_refused), (0, 1))
+
+    async def test_one_deed_for_a_pair_holds_across_the_sessions_batches(self) -> None:
+        report = await go(Deeding(), Kept(), dm_session(25), deeds=True)
+        self.assertEqual(len(report.deed_proposals), 1)  # three batches told the same deed
+        self.assertEqual((report.deeds, report.deeds_repeated), (1, 2))
+
+    async def test_the_deed_call_is_counted_and_held_to_the_call_limit(self) -> None:
+        counted: list[int] = []
+
+        async def count() -> None:
+            counted.append(1)
+
+        one = await go(Deeding(), Kept(), dm_session(10), deeds=True, max_calls=1, count_call=count)
+        self.assertEqual((one.calls, len(counted), one.deeds), (1, 1, 0))
+
+    async def test_a_failed_deed_call_never_stops_the_claims(self) -> None:
+        report = await go(Deeding(fail=RuntimeError("down")), Kept(), dm_session(25), deeds=True)
+        self.assertEqual((report.deeds, report.deeds_failed), (0, 3))
+        self.assertEqual(report.calls, 6)  # (the claims calls were all made)
+
+    async def test_someone_who_stopped_meanwhile_is_left_out_of_the_deed_question(self) -> None:
+        asked: list[int] = []
+
+        async def consenting() -> Collection[int]:
+            asked.append(1)
+            # recorded for the claims call, stopped by the time the deed question is asked
+            return {DM, ALICE} if len(asked) == 1 else {ALICE}
+
+        ai = Deeding()
+        report = await go(ai, Kept(), dm_session(10), consenting, deeds=True)
+        self.assertEqual((report.deeds, ai.sent), (0, []))  # (nobody recorded: nothing is sent)
+
+    async def test_a_cut_answer_keeps_its_whole_deeds_and_counts_the_cut(self) -> None:
+        whole = {"doer": "the party", "deed": "Saved the mill", "mattered_to": ["Brindle"],
+                 "effect": "helped", "lines": [1]}  # fmt: skip
+        ai = Deeding(answer='{"deeds": [' + json.dumps(whole) + ', {"doer": "Ce')
+        original = ai.complete
+
+        async def cut(system: str, text: str, *, max_tokens: int = 0) -> Reply:
+            reply = await original(system, text, max_tokens=max_tokens)
+            return Reply(reply.text, True, 10, 5, "m-fast") if system != extractor.SYSTEM else reply
+
+        ai.complete = cut  # type: ignore[method-assign]
+        report = await go(ai, Kept(), dm_session(10), deeds=True)
+        self.assertEqual((report.deeds, report.deeds_cut, report.deeds_refused), (1, 1, 0))
+
+    async def test_an_ai_out_of_funds_on_the_deed_call_stops_the_run(self) -> None:
+        report = await go(Deeding(fail=AIOutOfFunds()), Kept(), dm_session(25), deeds=True)
+        self.assertEqual((report.stopped, report.deeds), ("out of funds", 0))
+        self.assertGreater(report.unsent, 0)  # (the batches after it were never sent)
+
+    async def test_someone_who_stops_during_the_deed_call_loses_their_deed(self) -> None:
+        asked: list[int] = []
+
+        async def consenting() -> Collection[int]:
+            asked.append(1)
+            return {DM, ALICE} if len(asked) <= 2 else {ALICE}  # (the DM stops during the call)
+
+        report = await go(Deeding(), Kept(), dm_session(10), consenting, deeds=True)
+        self.assertEqual(
+            (report.deeds, len(report.deed_proposals), report.deeds_refused), (0, 0, 1)
+        )
+
+    def test_the_deed_prompt_version_is_pinned_with_the_prompt(self) -> None:
+        # a change to deed_reading.DEED_SYSTEM bumps this (it is stored with each proposal)
+        self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-1")
+
+    async def test_family_only_asks_no_deeds(self) -> None:
+        ai = Deeding()
+        await go(ai, Kept(), dm_session(10), deeds=True, family_only=True)
+        self.assertNotIn(deed_reading.DEED_SYSTEM, ai.systems)

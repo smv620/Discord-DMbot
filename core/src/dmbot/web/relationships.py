@@ -122,6 +122,7 @@ def edges_from(
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,
+                    feeling=is_dm,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
                 # how it reads from the second name when that differs ("has a niece", "has as a
@@ -1227,6 +1228,7 @@ async def read_waiting(
                 str(b["detail"]),
                 kin.directional(str(b["detail"])),
                 str(b.get("subjectKind") or ""),
+                feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
         }
@@ -1242,6 +1244,7 @@ async def read_waiting(
                 # the named name is the subject only when the door says so; otherwise the subject
                 # is a list the DM has yet to choose from, and its kind is not known (old words)
                 str(w.get("otherKind") or "") if w.get("otherIsSubject") else "",
+                feeling=True,
             ),
             "check": check_words(w.get("decided")),
         }

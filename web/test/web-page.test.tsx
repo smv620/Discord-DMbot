@@ -235,7 +235,7 @@ describe("changing a name", () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^Change / })[0] as HTMLElement);
-    const group = screen.getByRole("group", { name: /^About / });
+    const group = await screen.findByRole("group", { name: /^About / });
     fireEvent.input(within(group).getByLabelText("Spelling"), { target: { value: "Zed the Bold" } });
     fireEvent.click(within(group).getByRole("button", { name: "Save spelling" }));
     await waitFor(() => expect(api.calls.some((c) => c.includes('"action":"spell"') && c.includes("Zed the Bold"))).toBe(true));
