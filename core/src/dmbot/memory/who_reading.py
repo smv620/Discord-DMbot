@@ -8,9 +8,10 @@ Rules held in code, not trust:
 - **The AI picks, code decides.** The AI never writes an id: each item offers numbered choices
   ("c1".."c5") and the answer is read against them, so a choice that was not offered is dropped and
   counted. It may offer "new" with a kind from a short list; anything else is dropped.
-- **Words in.** Confidence is one of three words, never a number; the scene and the cited lines are
-  data (quoted, so none can close the quote or pass for an instruction), and a pick whose words
-  read like an instruction is dropped.
+- **Words in.** Confidence is one of three words, never a number; every word sent that is not a
+  fixed one (the name, the scene, the cited lines, the choices' names, the kinds) is quoted, with
+  angle brackets turned into look-alikes, so none can close the quote or the item list or pass for
+  an instruction. What comes back is read against closed lists, so nothing unoffered gets through.
 - **One call for many names.** Items are numbered and sent together (`chunks` splits a long list);
   each answer is read item by item, so one bad item never loses the others, and a cut answer keeps
   its whole items (the caller reports the rest as stopped early, never as "nothing found").
@@ -24,16 +25,16 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-
-from dmbot.memory.claims import reads_like_instruction
 
 WHO_PROMPT_VERSION = "who-1"  # bump when WHO_SYSTEM changes (it is stored with each answer)
 ITEMS_PER_CALL = 30  # names in one request; more go in further calls
 CHARS_PER_CALL = 24_000  # the text one request carries, about
 LINE_CHARS = 300  # one cited line is cut to this when sent (a cap on the request)
 LINES_PER_ITEM = 3
+CHOICES_PER_ITEM = 5  # the most choices an item offers (what `who_ranking.LIMIT` gives)
+NAMES_PER_CHOICE = 4  # the most names sent for one choice
 ANSWERS_PER_ITEM = 3  # the best three of what the AI ranks are kept
 SURE, LIKELY, MAYBE = "sure", "likely", "maybe"
 CONFIDENCE = (SURE, LIKELY, MAYBE)  # best first
@@ -62,13 +63,15 @@ Reply with only JSON, in this shape:
 @dataclass(frozen=True, slots=True)
 class Choice:
     """One entry an item may be. `ref`: "c1".."c5" (what the AI answers with); `names`: what the
-    DM's ranking may send (the visible names, and the secret ones only of a hidden entry); `why`:
-    the fixed plain words `who_ranking` gave."""
+    DM's ranking may send (the visible names, and the secret ones only of a hidden entry);
+    `hidden`: the entry is the DM's eyes only, carried so the caller can keep it off any screen but
+    the DM's; `why` (not sent) the fixed plain words `who_ranking` gave."""
 
     ref: str
     kind: str
     names: tuple[str, ...]
     why: tuple[str, ...] = ()
+    hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,9 @@ class WhoItem:
     kind: str = ""  # what it sounds like, "" when unsure
     scene: str = ""
     lines: tuple[str, ...] = ()  # cited lines, only from people recorded now (the caller's)
+    # whose lines they are, carried so the caller asks again after the call whether each still
+    # agrees to be recorded (CLAUDE.md: consent is re-checked after every async step)
+    speaker_ids: tuple[int, ...] = ()
     choices: tuple[Choice, ...] = ()
 
 
@@ -98,22 +104,22 @@ class Parsed:
 
 
 def _quoted(text: str) -> str:
-    """A line as one quoted string: quotes and line breaks cannot close or split it."""
-    return json.dumps(" ".join(text.split())[:LINE_CHARS], ensure_ascii=False)
+    """Text as one quoted string: quotes and line breaks cannot close or split it, and angle
+    brackets become look-alikes so `</items>` cannot close the list (as `scene_reading` does)."""
+    flat = " ".join(text.split())[:LINE_CHARS].replace("<", "\u2039").replace(">", "\u203a")
+    return json.dumps(flat, ensure_ascii=False)
 
 
 def item_text(item: WhoItem) -> str:
-    out = [
-        f"Item {item.number}: {_quoted(item.name)}"
-        + (f" (sounds like a {item.kind})" if item.kind else "")
-    ]
+    sounds = f" (sounds like a {_quoted(item.kind)})" if item.kind else ""
+    out = [f"Item {item.number}: {_quoted(item.name)}{sounds}"]
     if item.scene:
         out.append(f"  Scene: {_quoted(item.scene)}")
     for line in item.lines[:LINES_PER_ITEM]:
         out.append(f"  Line: {_quoted(line)}")
-    for choice in item.choices:
-        names = ", ".join(_quoted(n) for n in choice.names)
-        out.append(f"  {choice.ref} ({choice.kind}): {names}")
+    for choice in item.choices[:CHOICES_PER_ITEM]:
+        names = ", ".join(_quoted(n) for n in choice.names[:NAMES_PER_CHOICE])
+        out.append(f"  {_quoted(choice.ref)} ({_quoted(choice.kind)}): {names}")
     return "\n".join(out)
 
 
@@ -122,7 +128,8 @@ def items_text(items: Sequence[WhoItem]) -> str:
 
 
 def chunks(items: Sequence[WhoItem]) -> list[list[WhoItem]]:
-    """The items in as few requests as `ITEMS_PER_CALL` and `CHARS_PER_CALL` allow, in order."""
+    """The items in as few requests as `ITEMS_PER_CALL` and `CHARS_PER_CALL` allow, in order. An
+    item too big for one request goes alone."""
     out: list[list[WhoItem]] = []
     current: list[WhoItem] = []
     size = 0
@@ -154,7 +161,7 @@ def _whole_items(text: str) -> list[object]:
         try:
             item, at = decoder.raw_decode(text, at)
         except ValueError:  # the cut item, or the end of the list
-            return [] if text[at:].lstrip().startswith("]") else items
+            return items
         items.append(item)
 
 
@@ -169,7 +176,7 @@ def parse_answers(text: str, items: Sequence[WhoItem], *, cut: bool = False) -> 
     try:
         data = json.loads(text)
         stopped = False
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         salvaged = _whole_items(text) if cut else []
         if not salvaged:
             if not cut:
@@ -191,13 +198,16 @@ def parse_answers(text: str, items: Sequence[WhoItem], *, cut: bool = False) -> 
         if item is None:
             dropped["not_asked"] += 1
             continue
-        if number in answers:
+        if answers.get(number):
+            dropped["duplicate_item"] += 1  # (the first ranking with answers is kept)
             continue
-        ranked = raw.get("ranked") if isinstance(raw, dict) else None
-        refs = {c.ref for c in item.choices}
+        ranked = raw.get("ranked")
+        if not isinstance(ranked, list):
+            dropped["bad_ranked"] += 1
+        refs = {c.ref for c in item.choices[:CHOICES_PER_ITEM]}
         kept: list[Answer] = []
         seen: set[str] = set()
-        for entry in ranked if isinstance(ranked, list) else []:
+        for entry in ranked if isinstance(ranked, list) else ():
             answer = _answer(entry, refs, dropped)
             if answer is None:
                 continue
@@ -220,12 +230,9 @@ def _answer(entry: object, refs: Collection[str], dropped: Counter[str]) -> Answ
     if not isinstance(pick, str) or not isinstance(confidence, str):
         dropped["bad_answer"] += 1
         return None
-    pick, confidence = pick.strip(), confidence.strip().casefold()
+    pick, confidence = pick.strip().casefold(), confidence.strip().casefold()
     if confidence not in CONFIDENCE:
         dropped["confidence_off_list"] += 1
-        return None
-    if reads_like_instruction(pick) or (isinstance(kind, str) and reads_like_instruction(kind)):
-        dropped["instruction_like"] += 1
         return None
     if pick == NEW:
         said = kind.strip().casefold() if isinstance(kind, str) else ""
@@ -233,14 +240,11 @@ def _answer(entry: object, refs: Collection[str], dropped: Counter[str]) -> Answ
             dropped["kind_off_list"] += 1
             return None
         return Answer(NEW, confidence, said)
-    if pick not in refs:
+    ref = next((r for r in refs if r.casefold() == pick), None)  # ("C1" is c1)
+    if ref is None:
         dropped["not_offered"] += 1  # (the AI named a choice that was not on the item)
         return None
-    return Answer(pick, confidence)
-
-
-def numbered(items: Iterable[WhoItem]) -> dict[int, WhoItem]:
-    return {i.number: i for i in items}
+    return Answer(ref, confidence)
 
 
 __all__ = [
@@ -257,6 +261,5 @@ __all__ = [
     "chunks",
     "item_text",
     "items_text",
-    "numbered",
     "parse_answers",
 ]
