@@ -72,6 +72,7 @@ These are for the lead to decide. The page does not pick a side.
 | `unnamed_anchor` | text | yes |  | The entry an unnamed person hangs off; empty for a hooded figure (models.py, `Entity`). |
 | `unnamed_role` | text | yes |  | The relationship of an unnamed person to its anchor (models.py, `Entity`). |
 | `unnamed_what` | text | yes |  | What the story calls an unnamed person (models.py, `Entity`). |
+| `players_text` | text | yes |  | The players' line for an entry, at most 120 letters, separate from the DM's `description` (#2967; models.py, `Entity`). |
 
 **Allowed values:**
 

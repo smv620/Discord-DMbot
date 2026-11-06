@@ -130,6 +130,7 @@ from dmbot.memory.models import (
     NPC,
     PARTY_SOURCE,
     PLAYER_CHARACTER,
+    PLAYERS_TEXT_MAX,
     PROPOSED,
     REJECTED,
     ROLES,
@@ -255,6 +256,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
         r["manipulated_by"],
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
+        r.get("players_text"),
     )  # fmt: skip
 
 
@@ -2453,6 +2455,32 @@ class MemoryStore:
             if current["status"] != PROPOSED:
                 raise MemoryRuleError(NOT_FOUND)
             row = await w.update(ENTITIES, entity_id, {"description": note})
+            return Written(_entity(row), w.batch)
+
+    async def set_players_text(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        text: str,
+        *,
+        source: str,
+    ) -> Written[Entity]:
+        """The players' line for an entry (#2967): one short line saying what the players know it
+        is or does, separate from the DM's own note, which never feeds it. Only the DM. Blank
+        clears it. One change, so one Undo. A line of more than `PLAYERS_TEXT_MAX` letters is
+        refused, not cut (the DM says what they mean). It is shown to a player only where the gate
+        lets them see the entry under its main name."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can write that.")
+        text = " ".join(text.split())
+        if len(text) > PLAYERS_TEXT_MAX:
+            raise MemoryRuleError(f"Keep it to {PLAYERS_TEXT_MAX} letters.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await _entity_row(w, entity_id)
+            if current["status"] in (REJECTED, MERGED) or current["type"] == PERSON:
+                raise MemoryRuleError(NOT_FOUND)
+            row = await w.update(ENTITIES, entity_id, {"players_text": text or None})
             return Written(_entity(row), w.batch)
 
     async def confirm_entity(
