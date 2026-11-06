@@ -633,7 +633,7 @@ class Stored(ConfirmedMemoryTest):
             entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)},
             guarded=frozenset(),
         )
-        self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
+        self.assertEqual(sentence(lookup, rel), "Bram “is blood-bound to” Hesper")  # type: ignore[arg-type]
 
     async def test_a_place_word_is_the_place_tie_with_that_word_kept(self) -> None:
         # (#3363) "works at" is no new relationship: it is `located_in` with its one wording

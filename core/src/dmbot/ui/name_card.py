@@ -160,7 +160,9 @@ def fact_words(r: Relation, subject_kind: str = "") -> str:
     `subject_kind` is the first name's kind, so a character's place reads "was last seen in",
     never "is in" (#3363)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return _md(r.detail)  # transcript words: never let them format or ping
+        # transcript words: never let them format or ping. In quotes, so the table's own words are
+        # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
+        return f"“{_md(r.detail)}”"
     return link_words(
         r.predicate, r.detail, r.directional, subject_kind
     )  # (family reads with its role: "is the niece of")
