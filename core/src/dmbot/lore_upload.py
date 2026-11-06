@@ -68,11 +68,15 @@ class _Reporter:
     def __init__(self, queue: LoreQueue, guild_id: int, claim: Claim) -> None:
         self._queue, self._guild, self._claim = queue, guild_id, claim
         self._latest: tuple[str, int, int] = (q.READING, 0, 0)
+        self._counts: tuple[int, int] = (0, 0)  # words and AI calls so far (#3534)
         self._task: asyncio.Task[None] | None = None
         self._reader: asyncio.Task[Any] | None = None  # the read this reports on
         self.lost = False  # the sweep gave the claim to another worker: this read must stop
 
     def __call__(self, stage: str, done: int, total: int) -> None:
+        if stage == "counts":  # not a stage: the words and calls so far (#3534)
+            self._counts = (done, total)
+            return
         self._latest = (_STAGES.get(stage, q.READING), done, total)
 
     async def __aenter__(self) -> _Reporter:
@@ -80,10 +84,23 @@ class _Reporter:
         self._task = asyncio.ensure_future(self._run())
         return self
 
-    async def __aexit__(self, *_: object) -> None:
+    async def __aexit__(self, exc_type: object, *_: object) -> None:
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        if exc_type is None:
+            # One last write, so a quick read still leaves its counts for the page (#3534); the
+            # row is ended by `finish` right after, which keeps them.
+            stage, done, total = self._latest
+            words, calls = self._counts
+            try:
+                await self._queue.progress(
+                    self._guild, self._claim, stage, done, total, words, calls
+                )
+            except Exception as exc:  # the type only: the counts are a nicety
+                log.warning(
+                    "A lore upload's last counts could not be written: %s", type(exc).__name__
+                )
 
     async def _run(self) -> None:
         while True:
@@ -91,7 +108,10 @@ class _Reporter:
             # taken for a dead one)
             stage, done, total = self._latest
             try:
-                if not await self._queue.progress(self._guild, self._claim, stage, done, total):
+                words, calls = self._counts
+                if not await self._queue.progress(
+                    self._guild, self._claim, stage, done, total, words, calls
+                ):
                     # Not its row any more (a quiet claim was taken back): reading on would
                     # propose every name twice.
                     self.lost = True
