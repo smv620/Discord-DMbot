@@ -1,7 +1,7 @@
 """Standing the DM sets (#1655): the pure rule (the five steps, the DM always wins, direct evidence
 outweighing prejudice, two rungs at most, no loops, the timing budget), the dated impressions and
 attitudes (history kept), the party, who may set them, isolation, backups, recall never reading
-them, and the 🤝 Standing screen."""
+them, and the 🤝 Reputation screen."""
 
 from __future__ import annotations
 
