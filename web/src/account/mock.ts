@@ -844,6 +844,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const nameSteps = new Map<string, { unnamed: NameRow; named?: NameRow; joined?: { into: NameRow; others: string[] } }>();
   // How each listed name is said (#2317), by the name's id; the id the said-as calls take is `al-<id>`.
   const memorySaid = new Map<string, string | null>();
+  // The line the players are told about each name (#3568), by the name's id.
+  const playersLines = new Map<string, string>();
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
   const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
     const recap = names.find((n) => n.id === id);
@@ -2647,7 +2649,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -2681,6 +2683,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       const row = memory.find((n) => n.id === id);
       if (!row) throw new ApiError("not-found");
+      if (change.action === "players-line") {
+        // The line the players are told (#3568): a blank clears it; over 120 letters is refused, never cut.
+        const line = change.line.split(/\s+/).filter(Boolean).join(" ");
+        if (line.includes("[fail]")) throw new ApiError("server"); // (a line with this in it is how a test makes the save fail)
+        if (line.length > 120) throw new ApiError("ticket-too-long");
+        if (line === "") playersLines.delete(id);
+        else playersLines.set(id, line);
+        return { ...row, others: [...row.others] };
+      }
       const taken = (text: string): boolean =>
         memory.some((n) => n.id !== id && [n.name, ...n.others].some((x) => x.toLowerCase() === text.trim().toLowerCase()));
       switch (change.action) {
