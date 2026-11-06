@@ -29,7 +29,7 @@ records (#3672), not a key.
 | Anthropic | `ANTHROPIC_API_KEY` | every AI job |
 | Google (Gemini) | `GEMINI_API_KEY` | only if the recap writer is moved to Gemini |
 | Google (sign-in) | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | "Sign in with Google" on the admin page |
-| Deepgram | `DEEPGRAM_API_KEY`, ✱ `DEEPGRAM_API_KEY_READ_ONLY` | speech to text; reading usage |
+| Deepgram | `DEEPGRAM_API_KEY`, ✱ `DEEPGRAM_API_KEY_READ_ONLY` | speech to text; reading usage and the bill |
 | Speechmatics | `SPEECHMATICS_API_KEY` | speech to text (comparison tests) |
 | Voyage AI | `VOYAGE_API_KEY` | search by meaning |
 | ElevenLabs | `ELEVENLABS_API_KEY`, ✱ `ELEVENLABS_API_KEY_READ_ONLY` | recap audio; reading usage |
@@ -109,12 +109,18 @@ https://developers.deepgram.com/reference/manage/keys/create)
 ### ✱ `DEEPGRAM_API_KEY_READ_ONLY` (new, for the Costs page)
 - **What for:** reading this month's usage and cost, nothing else. It cannot transcribe, make keys
   or change anything.
-- **The permission it needs:** only `usage:read`.
-- **How to make it:** if the console's **Create a New API Key** form lets you pick permissions,
-  tick only `usage:read`. If it offers only roles, ask dev1 to make it on the server with Deepgram's
-  "Create key" call (the API reference link above), with `"scopes": ["usage:read"]` and the comment
-  `DMbot costs (read only)`. dev1 then stores it with `scripts/set-key DEEPGRAM_API_KEY_READ_ONLY`.
-  Either way, the key's value never passes through chat.
+- **The permissions it needs:** only `usage:read` and `billing:read`. Both only read. The Costs
+  page reads Deepgram's bill in dollars, and that takes `billing:read`.
+- **How to make it:** sign in as the account's **Owner**. Deepgram gives `billing:read` only to
+  Owners and Admins, and a key can only get permissions its maker has. Then Console → your project →
+  **API Keys** → **Create a New API Key**, named `DMbot costs (read only)`. If the form lets you
+  choose permissions, tick only **`usage:read`** and **`billing:read`**. Never pick the
+  **Admin** or **Owner** role for this key.
+- **If the form offers only roles** (Member, Admin, Owner), don't make this key for now. The Costs
+  page then shows Deepgram as a link to its billing page. Tell Supervisor on #3671, and we'll find
+  another way without a key that can manage the account.
+- Give it to dev1, who stores it with `scripts/set-key DEEPGRAM_API_KEY_READ_ONLY`. If the Costs
+  page then says "Couldn't be read", dev1 checks the key's permissions.
 
 ---
 
