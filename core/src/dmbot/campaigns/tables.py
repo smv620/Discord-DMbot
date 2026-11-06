@@ -29,6 +29,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_perspectives",
         "memory_alias_knowers",
         "memory_knowers",
+        "memory_told",
         "memory_beliefs",
         "memory_evidence",
         "memory_impressions",

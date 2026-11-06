@@ -26,6 +26,7 @@ from dmbot.memory._changes import (
     PERSPECTIVES,
     RELATIONS,
     STATES,
+    TOLD,
     Changes,
     Scope,
 )
@@ -505,6 +506,11 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     # drawn on that name; through a name that is not secret, on the entry; through a name that was
     # rejected or is gone, or a secret one they do not hold, it is not shown.
     owner_of = {str(a["id"]): str(a["entity_id"]) for a in aliases}
+    # the names one of these characters was told are an entry (#3089): no person of their own
+    told_names = {
+        str(t["alias_id"])
+        for t in await scope.select(TOLD, " AND character_id = ANY(%s)", [list(mine)])
+    }
     via_ids = sorted({str(r["via_alias_id"]) for r in hidden if r.get("via_alias_id")})
     via_rows = (
         {str(a["id"]): a for a in await scope.select(ALIASES, " AND id = ANY(%s)", [via_ids])}
@@ -567,7 +573,11 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
 
     connections = []
     for r in hidden:
-        through = r.get("via_alias_id") if r.get("via_alias_id") in owner_of else None
+        through = (
+            r.get("via_alias_id")
+            if r.get("via_alias_id") in owner_of and r.get("via_alias_id") not in told_names
+            else None
+        )
         alias_end = owner_of.get(through) if through else None
 
         def end(
@@ -607,7 +617,7 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     )
     names = []
     for a in aliases:
-        if str(a["id"]) in joined_names:
+        if str(a["id"]) in joined_names and str(a["id"]) not in told_names:
             continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:
