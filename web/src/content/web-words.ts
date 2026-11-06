@@ -216,6 +216,9 @@ export const webPage = {
   peekCancel: "Cancel",
   peeking: "You are peeking. This shows what your DM hasn't told you. Turn the switch off to go back.",
   notRevealed: "players don't know yet",
+  /** Where a connection came from (#2946): nothing for an unknown source. The API sends upload and DM kinds to the DM only. */
+  sourceLine: (s?: { type: string; n?: number; label?: string }): string | null =>
+    s?.type === "session" && s.n ? `From session ${s.n}` : s?.type === "upload" && s.label ? `From your upload: ${s.label.slice(0, 80)}` : s?.type === "dm" ? "Added by you" : null,
   // Who knows a name or connection, in the DM's full view (#3167). Plain words; the mark is 🤫 for secret only.
   knowWords: {
     secret: "Secret: only you know this",

@@ -948,6 +948,29 @@ class ThePath(NamesTest):
         )  # fmt: skip
         self.assertEqual(queued, 0)  # neither was stored as a name: nothing to point at
 
+    async def test_a_connection_written_with_a_places_new_spelling_meets_that_place(self) -> None:
+        # #3037: "North Haven" is waiting as another way of writing "Northhaven"; a line that
+        # names it must not be dropped, and it points at the one place
+        from dmbot.memory.background import Connection
+
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Mirelle", "npc", CONFIRMED), NewName("Northhaven", "place", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        mira, haven = made.value
+        assert mira and haven
+        links = [[Connection("Mirelle", "knows", "North Haven", "q")]]
+        none = await ui_bg.queue_links(self.bot, self.memory, self.campaign, [], links, set())
+        self.assertEqual(none, 0)  # (the spelling is nobody's yet)
+        kept = await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], links, set(),
+            known_spellings=ui_bg._with_place_spellings(
+                {}, {haven: ("North Haven",)}, {haven: "Northhaven"}
+            ),
+        )  # fmt: skip
+        self.assertEqual(kept, 1)
+
     async def test_pairs_that_cannot_be_asked_do_not_use_up_the_cap(self) -> None:
         # the cap counts what will really be asked: a pair the campaign has, or one with an end
         # that was never stored, is left out before it, so it can't crowd out a good one

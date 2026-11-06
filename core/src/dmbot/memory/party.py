@@ -36,6 +36,14 @@ class PartyLinked:
     made_party: bool
 
 
+def party_notice(characters: int) -> str:
+    """One plain line for the DM screen after an import linked the party (#3036): how many player
+    characters, never which. The step takes moments, so it is told as a result, not as a wait."""
+    if characters == 1:
+        return "🎭 **The party** has 1 player character."
+    return f"🎭 **The party** is set up: {characters} player characters grouped together."
+
+
 async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
     """The confirmed player characters these players play (their newest each), by entry id: the
     ones who took part. A merged entry or an unconfirmed one is not one."""

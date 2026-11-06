@@ -31,6 +31,7 @@ from dmbot.memory._changes import (
     PERSPECTIVES,
     RELATIONS,
     STATES,
+    TOLD,
     Scope,
     Table,
 )
@@ -98,6 +99,8 @@ class Statements:
     connections: Mapping[str, tuple[str, str]] = field(default_factory=dict)  # id -> its two ends
     aliases: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # name id -> its entries
     player_characters: frozenset[str] = frozenset()
+    # other name id -> the characters the DM told that it is the entry it belongs to (#3089)
+    told: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +115,9 @@ class Visible:
     # How sure the viewer is of each statement it knows (the player's own characters' highest; the
     # table's lowest, since each must know it). Not set for the DM, who knows the truth.
     sureness: Mapping[tuple[str, str], float] = field(default_factory=dict)
+    # The secret other names this viewer was told are an entry (#3089): for them a connection that
+    # came through such a name is drawn on the entry, not on a person of its own. Empty for the DM.
+    told: frozenset[str] = frozenset()
 
     def how_sure(self, kind: str, statement_id: str) -> float | None:
         """The viewer's certainty (0.0 to 1.0) in a statement, or None when the viewer does not
@@ -297,12 +303,25 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
         entries.update(data.connections.get(connection, ()))
     for alias in aliases:
         entries.update(data.aliases.get(alias, ()))
+    # Told that a name is the entry (#3089): any one of a player's characters is enough; for the
+    # table or the party every one of them must have been told.
+    told = frozenset(
+        alias
+        for alias, characters in data.told.items()
+        if who
+        and (
+            any(c in characters for c in who)
+            if viewer.mode == "any"
+            else all(c in characters for c in who)
+        )
+    )
     return Visible(
         frozenset(entries),
         frozenset(properties),
         frozenset(connections),
         frozenset(aliases),
         sureness=sureness,
+        told=told,
     )
 
 
@@ -372,6 +391,10 @@ async def load(scope: Scope) -> Statements:
         or (key[0] == CONNECTION and key[1] in relations)
         or (key[0] == ALIAS and key[1] in aliases)
     }
+    told: dict[str, set[str]] = {}
+    for row in await scope.select(TOLD):
+        if str(row["alias_id"]) in aliases:
+            told.setdefault(str(row["alias_id"]), set()).add(str(row["character_id"]))
     return Statements(
         knowers=kept,
         groups={m: frozenset(g) for m, g in groups.items()},
@@ -379,6 +402,7 @@ async def load(scope: Scope) -> Statements:
         connections=relations,
         aliases=aliases,
         player_characters=pcs,
+        told={a: frozenset(c) for a, c in told.items()},
     )
 
 
@@ -653,7 +677,8 @@ def split_connections(
     held = {
         i
         for i, a in by_id.items()
-        if a["secret"] and a["status"] == CONFIRMED and seen.knows(ALIAS, i)
+        # (a name the viewer was told is the entry is no person of its own: #3089)
+        if a["secret"] and a["status"] == CONFIRMED and seen.knows(ALIAS, i) and i not in seen.told
     }
     chosen: dict[str, str] = {}
     for link in links:

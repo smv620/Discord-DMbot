@@ -28,7 +28,7 @@ from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import back_after, back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, which_choices
+from dmbot.web import all_names, graph_view, link_sources, which_choices
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -275,14 +275,17 @@ async def source_of(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k",
-            (guild_id, campaign_id, guild_id, campaign_id),
+            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k,"
+            " dmbot_web_told(%s, %s) AS t",
+            (guild_id, campaign_id) * 3,
         )
         found = await cur.fetchone()
         pages = await _page_ids(conn, guild_id, campaign_id)
-    if found is None or found["s"] is None or found["k"] is None:
+    if found is None or found["s"] is None or found["k"] is None or found["t"] is None:
         raise RecapError("not_found")
-    return dict(found["s"]), dict(found["k"]), pages
+    # who was told a secret name is an entry (#3089), already cut to the caller's own characters by
+    # the door; it joins the knowers, which go to the gate and no further
+    return dict(found["s"]), {**found["k"], "told": found["t"]["told"]}, pages
 
 
 def viewer_of(known: dict[str, Any]) -> gate.Viewer:
@@ -328,8 +331,12 @@ async def read_web(
             db, session, ref, center, hops, size_only=False, view=view, with_knowers=True
         )
     page = page_of(got)
-    if got["canEdit"] and got["seesAll"]:
+    own_view = got["canEdit"] and got["seesAll"]
+    if own_view:
         await with_know_words(db, session, ref, page, known)
+    # where each connection came from (#2946): the DM's own view gets the full value, any other
+    # look (a player's, or Players View) the player's
+    await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
     return page
 
 

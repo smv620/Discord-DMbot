@@ -17,7 +17,7 @@ from psycopg import errors as pg_errors
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import evidence, importance_rank, knowers
-from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
+from dmbot.memory._changes import ALIASES, ALL, TOLD, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
@@ -33,6 +33,7 @@ from dmbot.memory.models import (
     NewName,
     TooLateToUndo,
     Written,
+    new_id,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
 from dmbot.memory.sounds import sound_codes
@@ -145,6 +146,13 @@ class Isolation(MemoryTest):
         )
         async with self.memory._write(GUILD_A, self.c, "dm") as w:
             await knowers.set_alias_knowers(w, shade.value.id, [view])
+        # and a character the DM told that the secret name is an entry (#3089)
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.insert(
+                TOLD,
+                {"id": new_id(), "alias_id": shade.value.id, "character_id": view,
+                 "added_entry": False, "created_at": w.now},
+            )  # fmt: skip
         # and an internal importance assessment of a character (#3172)
         await importance_rank.ImportanceStore(self.db).add(
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
@@ -153,6 +161,8 @@ class Isolation(MemoryTest):
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        # and the upload a kept connection came from (#2946)
+        await self.memory.record_link_source(GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan")
         clue = await self.add("A map", type="clue")
         async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
             await evidence.add_in(

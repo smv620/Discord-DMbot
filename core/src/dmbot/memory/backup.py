@@ -37,6 +37,7 @@ from dmbot.memory._changes import (
     RULE_LINKS,
     SHEETS,
     STATES,
+    TOLD,
     TYPES,
     Table,
     row_of,
@@ -103,6 +104,7 @@ _TAGS: dict[str, Table] = {
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "knower": KNOWERS,  # which characters know each statement (#2995)
+    "told": TOLD,  # which character was told an other name is an entry (#3089)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
@@ -160,6 +162,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "change_kind": CHANGE_KINDS,
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
+        "character_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
         "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id",
         "via_alias_id", "derived_from", "subject_picked", "object_picked"}  # fmt: skip
@@ -224,6 +227,7 @@ def _valid(column: str, value: object) -> bool:
         "unrevealed",
         "directional",
         "pinned",
+        "added_entry",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -437,6 +441,12 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # point of view the file holds; anything else is damage. A row for a point of view that is not
     # a character's cannot exist (the party is never a knower), so it is damage too.
     _check_knowers(by_tag, views)
+    # Who was told an other name is an entry (#3089): a row for a name or a character the file does
+    # not hold is damage.
+    held_entities = {r["id"] for r in by_tag["entity"]}
+    if any(t["alias_id"] not in aliases or t["character_id"] not in held_entities
+           for t in by_tag["told"]):  # fmt: skip
+        raise CampaignError(DAMAGED)
     # A belief that someone lied names who: a source link beside it, as the writer requires (#3091).
     # One that lost it (an Undo and a redo once did) loads with a placeholder liar, "someone, no
     # longer known", never a reason to refuse the file.

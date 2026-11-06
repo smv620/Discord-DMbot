@@ -477,3 +477,62 @@ class TheSecrecyEdges(NamesTest):
         _ = done
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse([w for w in waiting if not w.secret])  # (never a public row)
+
+
+class ThePlaceSpellingQuestion(NamesTest):
+    """One place written two ways (#3037): asked in the words for a place, never joined silently."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Northhaven", type="place", status=CONFIRMED, source="dm"
+        )
+        self.haven = made.value.id
+        await ui_bg.save_place_spellings(
+            self.memory, self.campaign, {self.haven: ("North Haven",)}, None, "", ""
+        )
+
+    async def card(self) -> Any:
+        from dmbot.ui.name_questions import NameQuestions
+
+        view = NameQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        return view
+
+    async def test_it_is_asked_in_the_words_for_a_place(self) -> None:
+        view = await self.card()
+        self.assertIn(
+            "**North Haven** looks like another way of writing **Northhaven**.", view.text()
+        )
+        self.assertEqual(
+            [b.label for b in view.children][:2], ["✅ Yes, the same place", "❌ No, two places"]
+        )
+
+    async def test_yes_makes_it_another_way_of_writing_the_same_place(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes, the same place").callback(
+            self.it(DM)
+        )
+        found = await self.memory.aliases(GUILD, self.campaign.id, entity_id=self.haven)
+        self.assertEqual({(a.text, a.status) for a in found}, {
+            ("Northhaven", CONFIRMED), ("North Haven", CONFIRMED),
+        })  # fmt: skip
+
+    async def test_no_makes_a_second_place_and_is_never_asked_again(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "❌ No, two places").callback(self.it(DM))
+        names = {e.name for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.assertEqual(names, {"Northhaven", "North Haven"})
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+        self.assertIn("1 kept as places of their own", view.text())
+        again, _names, rest = await ui_bg._near_places(
+            self.memory, self.campaign, [lore_found("North Haven")]
+        )
+        self.assertEqual((again, len(rest)), ({}, 1))
+
+
+def lore_found(name: str) -> Any:
+    from dmbot.memory.background import Found
+
+    return Found(name, "place", (), (), "")
