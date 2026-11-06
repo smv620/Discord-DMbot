@@ -51,7 +51,17 @@ def statements_of(data: dict[str, Any]) -> gate.Statements:
         connections=connections,
         aliases=aliases,
         player_characters=frozenset(data["playerCharacters"]),
+        told=_told(data),
     )
+
+
+def _told(data: dict[str, Any]) -> dict[str, frozenset[str]]:
+    """Who was told that a secret other name is an entry (#3089): the door's `told` pairs (other
+    name, character), if the caller's data carries them (the DM's own page does not need them)."""
+    told: dict[str, set[str]] = {}
+    for alias, character in data.get("told", ()):
+        told.setdefault(str(alias), set()).add(str(character))
+    return {a: frozenset(c) for a, c in told.items()}
 
 
 @dataclass(frozen=True, slots=True)
