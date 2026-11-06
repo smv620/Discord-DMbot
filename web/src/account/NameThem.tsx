@@ -7,6 +7,7 @@
 import { useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
+import { REMOVE_UNNAMED_LIVE } from "../content/remove-unnamed-switch";
 import { notNamedWords as w } from "../content/not-named-words";
 import { ApiError, type AccountApi, type NameChange, type NameRow, type NameThemResult } from "./api";
 import { useObservedWait } from "./useObservedWait";
@@ -160,6 +161,7 @@ export default function NameThem({
       <p class={report ? "warn small" : "visually-hidden"} role="alert">
         {report ?? ""}
       </p>
+      {REMOVE_UNNAMED_LIVE && (
       <div class="stack">
         {asking ? (
           <div class="stack" role="group" aria-label={w.removeAsk(row.name)}>
@@ -191,6 +193,7 @@ export default function NameThem({
           </p>
         )}
       </div>
+      )}
       {working && (
         <WorkProgress
           stage={looks === 0 ? (w.stage["waiting"] as string) : (w.stage[joining ? "joining" : "working"] as string)}

@@ -12,16 +12,23 @@ import Names from "../src/account/Names";
 import { namesPage as names } from "../src/content/names-words";
 import { notNamedWords as w } from "../src/content/not-named-words";
 
-const live = vi.hoisted(() => ({ on: false }));
+const live = vi.hoisted(() => ({ on: false, remove: true }));
 vi.mock("../src/content/not-named-switch", () => ({
   get NOT_NAMED_LIVE() {
     return live.on;
   },
 }));
 
+vi.mock("../src/content/remove-unnamed-switch", () => ({
+  get REMOVE_UNNAMED_LIVE() {
+    return live.remove;
+  },
+}));
+
 afterEach(() => {
   cleanup();
   live.on = false;
+  live.remove = true;
 });
 
 const slow = { timeout: 8000 };
@@ -195,6 +202,14 @@ describe("accessibility", () => {
 });
 
 describe("removing a person who is not worth keeping", () => {
+  it("shows no Remove button while its switch is off", async () => {
+    live.remove = false;
+    await open();
+    openEditor("Ken's sister");
+    await screen.findByLabelText(w.nameLabel);
+    expect(screen.queryByRole("button", { name: w.removeButton })).toBeNull();
+  });
+
   it("asks once, removes them from the list and says so", async () => {
     const api = await open();
     openEditor("Ken's sister");
