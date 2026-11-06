@@ -1767,6 +1767,14 @@ export type WebLinkChange =
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
+/** A new spelling of a place the campaign already has, waiting for the game master's yes or no (#3533, core #3532). */
+export interface PlaceSpelling {
+  id: string;
+  /** The place as the campaign knows it ("Northhaven"). */
+  place: string;
+  /** The new spelling ("North Haven"). */
+  spelling: string;
+}
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow {
   id: string;
@@ -2571,6 +2579,10 @@ export interface AccountApi {
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
   /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
    * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
+  /** The spellings of places waiting for a yes or no (DM only; #3533). Not in the real client until core's doors are deployed. */
+  placeSpellings?(ref: string): Promise<PlaceSpelling[]>;
+  /** Yes: the spelling becomes another name of the place. No: it is turned down and not offered again. */
+  answerPlaceSpelling?(ref: string, id: string, yes: boolean): Promise<void>;
   nameThem?(ref: string, id: string, step: NameThemStep, onLook?: () => void): Promise<NameThemResult>;
   /** The Story Graph around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
