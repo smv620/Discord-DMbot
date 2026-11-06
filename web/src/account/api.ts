@@ -1627,6 +1627,9 @@ export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; l
 export interface WebLink {
   id: string;
   words: string;
+  /** The table's own words as said, without the curly quotes `words` shows them in (#3574): only for a connection with no kind
+   * of its own. The edit form starts from these. Missing for every other connection and from an older API. */
+  rawWords?: string;
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
