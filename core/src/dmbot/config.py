@@ -98,6 +98,10 @@ class Settings:
     # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
     # extractor does, inside the same call limits.
     story_readings_on: bool = False
+    # The scene of each waiting question (#3596): a short AI summary of who, where and what, written
+    # after the session from the lines the question came from. Off until the extractor is; it
+    # only runs when the extractor does, inside the same call limits.
+    story_scenes_on: bool = False
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -369,6 +373,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
         )
+    scenes_raw = (get("DMBOT_STORY_SCENES") or "0").lower()
+    if scenes_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_SCENES must be 1 (on) or 0 (off), got "' + scenes_raw + '".')
     contradictions_raw = (get("DMBOT_STORY_CONTRADICTIONS") or "0").lower()
     if contradictions_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -545,6 +552,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
+        story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
