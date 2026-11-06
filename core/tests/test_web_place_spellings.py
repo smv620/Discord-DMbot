@@ -80,6 +80,19 @@ class TheList(Spellings):
             await self.listed(bob)
         self.assertEqual(caught.exception.code, "not_allowed")
 
+    async def test_a_place_that_is_gone_or_merged_away_lists_nothing(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET status = 'rejected' WHERE campaign_id = %s AND id = %s",
+            self.one.id,
+            self.keep,
+        )
+        self.assertEqual(await self.listed(), [])
+
+    async def test_many_unrelated_proposals_do_not_hide_a_real_spelling(self) -> None:
+        for n in range(210):
+            await self.propose(self.mira, f"Nickname {n}")
+        self.assertEqual([x["id"] for x in await self.listed()], [self.spaced])
+
     async def test_a_confirmed_or_rejected_name_is_not_waiting(self) -> None:
         await self.memory.update_alias(
             self.g, self.one.id, self.spaced, source=DM_SOURCE, status=CONFIRMED
@@ -102,12 +115,23 @@ class TheAnswers(Spellings):
         self.assertEqual(await self.listed(), [])
         # (a turned-down name is what keeps the same pair from being offered again)
 
-    async def test_answering_twice_is_not_a_failure_but_the_other_way_is_gone(self) -> None:
+    async def test_answering_again_after_it_is_done_is_turned_away_at_the_door(self) -> None:
         await self.queue(self.keep, action="spelling-yes", alias=self.spaced)
         await self.apply_all()
-        # the same answer again: the wanted end state is already there, so nothing is changed
         refused = await self.refused_action(self.keep, action="spelling-yes", alias=self.spaced)
         self.assertEqual(refused, "not_found")  # the door no longer finds a proposed name
+
+    async def test_a_no_pressed_twice_before_the_bot_gets_to_it_is_done_both_times(self) -> None:
+        await self.queue(self.keep, action="spelling-no", alias=self.spaced)
+        await self.queue(self.keep, action="spelling-no", alias=self.spaced)
+        self.assertEqual([o.error for o in await self.apply_all()], ["", ""])
+        self.assertEqual(await self.status_of(self.spaced), REJECTED)
+
+    async def test_a_yes_after_a_no_is_gone(self) -> None:
+        await self.queue(self.keep, action="spelling-no", alias=self.spaced)
+        await self.queue(self.keep, action="spelling-yes", alias=self.spaced)
+        self.assertEqual([o.error for o in await self.apply_all()], ["", "gone"])
+        self.assertEqual(await self.status_of(self.spaced), REJECTED)
 
     async def test_the_bot_says_gone_when_it_was_answered_the_other_way_meanwhile(self) -> None:
         answer = await self.queue(self.keep, action="spelling-yes", alias=self.spaced)

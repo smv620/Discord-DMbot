@@ -96,16 +96,19 @@ READ_DOOR = r"""
             SELECT jsonb_agg(jsonb_build_object(
                        'id', a.id, 'placeId', e.id, 'place', e.name, 'spelling', a.text)
                    ORDER BY a.created_at, a.id)
-            FROM (SELECT * FROM memory_aliases x
+            FROM (SELECT x.* FROM memory_aliases x
+                  JOIN memory_entities pe ON pe.guild_id = x.guild_id
+                       AND pe.campaign_id = x.campaign_id AND pe.id = x.entity_id
                   WHERE x.guild_id = g AND x.campaign_id = c AND x.status = 'proposed'
+                    AND pe.type = 'place' AND pe.status = 'confirmed' AND pe.merged_into IS NULL
+                    AND EXISTS (SELECT 1 FROM memory_aliases m
+                                WHERE m.guild_id = g AND m.campaign_id = c
+                                  AND m.entity_id = pe.id AND m.id <> x.id
+                                  AND m.status = 'confirmed'
+                                  AND replace(m.key, ' ', '') = replace(x.key, ' ', ''))
                   ORDER BY x.created_at, x.id LIMIT 200) a
             JOIN memory_entities e ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
                  AND e.id = a.entity_id
-            WHERE e.type = 'place' AND e.status = 'confirmed' AND e.merged_into IS NULL
-              AND EXISTS (SELECT 1 FROM memory_aliases m
-                          WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = e.id
-                            AND m.id <> a.id AND m.status = 'confirmed'
-                            AND replace(m.key, ' ', '') = replace(a.key, ' ', ''))
         ), '[]'::jsonb);
     END
     $fn$;

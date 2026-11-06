@@ -464,7 +464,10 @@ async def _spelling(
             return _failed(GONE)  # answered the other way (in Discord, say) in the meantime
         await memory.update_alias(guild_id, campaign_id, alias.id, source=DM, status=wanted)
         return Outcome(result_id=entity_id)
-    return _failed(GONE)
+    # `aliases` leaves out a turned-down name, so a No that is applied a second time (pressed twice
+    # before the bot got to it; the door let both in, as the name was still proposed then) finds
+    # nothing and is done, not failed. A Yes that finds nothing is gone: the name was turned down.
+    return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
 
 
 @dataclass(frozen=True)
