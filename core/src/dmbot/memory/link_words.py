@@ -5,7 +5,7 @@ Pure: no Discord, no database."""
 from __future__ import annotations
 
 from dmbot.memory import kin, place_words, reputation_words
-from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
+from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
     "located_in": "is in",
@@ -55,6 +55,7 @@ def connection_words(predicate: str) -> str:
 
 
 KIN = "kin_of"
+CORE_KEYS = frozenset(p.key for p in CORE_PREDICATES)
 
 
 def reads_both_ways(predicate: str, detail: str = "", directional: bool = False) -> bool:
@@ -135,6 +136,14 @@ def back_after(
     return place_words.backward_after(detail, subject_kind) if predicate == "located_in" else ""
 
 
+def campaign_back(predicate: str) -> str | None:
+    """The back words of a kind this campaign made for itself (#3033): no reverse words are
+    invented, so it reads "is linked (“sworn on the ashes of”) to". None for any core kind."""
+    if predicate in CORE_KEYS:
+        return None
+    return f"is linked (“{connection_words(predicate)}”) to"
+
+
 def back_words(
     predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
 ) -> str | None:
@@ -144,4 +153,4 @@ def back_words(
         return place_words.backward(detail, subject_kind)
     if predicate == KIN and directional and kin.directional(detail):
         return kin.backward(kin.role_of(detail) or "")
-    return CONNECTION_BACK.get(predicate)
+    return CONNECTION_BACK.get(predicate) or campaign_back(predicate)
