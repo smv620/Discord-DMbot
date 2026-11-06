@@ -254,3 +254,20 @@ describe("a count that moves between two readings (#3534)", () => {
     }
   });
 });
+
+describe("running counts (#3534)", () => {
+  it("shows the counts it has words for, in a fixed order, and leaves unknown codes out", () => {
+    const { container } = render(
+      <WorkProgress stage="Reading" state="running" counts={{ calls: 1, words: 1200, mystery: 9, checks: 0 }} serverNow={100} />,
+    );
+    expect(container.textContent).toContain("1200 words processed · 1 call made");
+    expect(container.textContent).not.toContain("mystery");
+    expect(container.textContent).not.toContain("checks completed");
+  });
+  it("shows nothing when no count has started, or when it failed", () => {
+    const a = render(<WorkProgress stage="Reading" state="running" counts={{ words: 0 }} serverNow={100} />);
+    expect(a.container.textContent).not.toContain("processed");
+    const b = render(<WorkProgress stage="Reading" state="failed" counts={{ words: 50 }} serverNow={100} />);
+    expect(b.container.textContent).not.toContain("processed");
+  });
+});
