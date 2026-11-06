@@ -195,6 +195,7 @@ class ThePanel(Telling):
         rows = [r for r in await self.panel() if r["id"] == self.guard]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["entryId"], self.ken)
+        self.assertEqual(rows[0]["name"], self.label)  # (the secret name's own words)
         self.assertIn(self.okra, [h["id"] for h in rows[0]["holders"]])
         self.assertEqual(rows[0]["told"], [])
         await self.tell()

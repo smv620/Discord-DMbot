@@ -16,9 +16,10 @@ from dmbot.web.sessions import Session
 
 
 async def read_told_panel(db: Database, session: Session, ref: str) -> dict[str, Any]:
-    """`{"names": [{id, entryId, holders: [{id, name}], told: [{id, name}]}]}` for a DM of the
-    campaign: `holders` hold the secret name and were not told, `told` were. `not_allowed` for
-    anyone else in the server, `not_found` for a campaign that is not there."""
+    """`{"names": [{id, name, entryId, holders: [{id, name}], told: [{id, name}]}]}` for a DM of the
+    campaign: `name` is the secret name's own words, `holders` hold it and were not told, `told`
+    were. `not_allowed` for anyone else in the server, `not_found` for a campaign that is not
+    there."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:

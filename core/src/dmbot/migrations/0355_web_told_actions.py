@@ -113,7 +113,7 @@ READ_DOOR = r"""
             SELECT jsonb_agg(row ORDER BY row->>'entryId', row->>'id')
             FROM (
                 SELECT jsonb_build_object(
-                    'id', a.id, 'entryId', a.entity_id,
+                    'id', a.id, 'name', a.text, 'entryId', a.entity_id,
                     'holders', COALESCE((
                         SELECT jsonb_agg(jsonb_build_object('id', x.id, 'name', x.name)
                                          ORDER BY x.name, x.id)
@@ -123,10 +123,11 @@ READ_DOOR = r"""
                         WHERE x.guild_id = g AND x.campaign_id = c AND x.type = 'character'
                           AND x.role = 'player_character' AND x.status = 'confirmed'
                           AND x.merged_into IS NULL
-                          AND EXISTS (SELECT 1 FROM memory_knowers k
+                          AND EXISTS (SELECT 1
+                                      FROM (SELECT * FROM memory_knowers
+                                            WHERE cardinality(hidden_by) = 0) k
                                       WHERE k.guild_id = g AND k.campaign_id = c
-                                        AND k.alias_id = a.id AND k.perspective_id = v.id
-                                        AND cardinality(k.hidden_by) = 0)
+                                        AND k.alias_id = a.id AND k.perspective_id = v.id)
                           AND NOT EXISTS (SELECT 1 FROM memory_told t
                                           WHERE t.guild_id = g AND t.campaign_id = c
                                             AND t.alias_id = a.id AND t.character_id = x.id)
