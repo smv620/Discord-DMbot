@@ -998,18 +998,33 @@ async def read_lore(
     started = time.monotonic()
     tick: Callable[[], None] | None = None
     look: Callable[[int, int], None] | None = None
+    # What the read has handled so far, for the page's live counts (#3534): the words of the
+    # document once pass 1 has read it, and the AI calls made (pass 1's and the second look's, and
+    # a shaping slice for each one finished: at least one call each, a halved slice makes more).
+    # Counts only; the reporter writes the latest at its own pace.
+    words_read = [0]
+    shaped = [0]
+
+    def _counts() -> None:
+        if progress is not None:
+            progress("counts", words_read[0], stats.read_calls + stats.second_calls + shaped[0])
+
     if progress is not None:
         # Each pass-1 call is movement, so a working pass is not called stalled. The screen gets
         # no call number: "try 14" read like failures (#2932).
         def _tick() -> None:
             progress("reading", 0, 0)
+            _counts()
 
         def _look(done: int, total: int) -> None:
             progress("looking", done, total)
+            _counts()
 
         tick, look = _tick, _look
 
     listed, cut = await read_list(read_ai, text, own, gate, stats, tick, look)
+    words_read[0] = len(text.split())
+    _counts()
     if skip_name is not None:
         # A name the campaign already has is not offered again, but a line that gives it new
         # spellings stays for shaping: a relationship may be written with one (#2841). Those
@@ -1040,7 +1055,9 @@ async def read_lore(
             if task.cancelled():  # cut at the time limit: not a finished slice
                 return
             finished[0] += 1
+            shaped[0] = finished[0]
             progress("shaping", finished[0], len(tasks))
+            _counts()
 
         for task in tasks:
             task.add_done_callback(_one_done)

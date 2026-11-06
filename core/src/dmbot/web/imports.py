@@ -967,16 +967,20 @@ def _shapes(found: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
     for s in found:
         cleaning = s["stage"] == "cleaning"
         out.append(
-            progress_shape.shape(
-                s["stage"],
-                started_at=int(s["imported"]),
-                updated_at=max(newest, _moved_of(s)) if _queued(s) else _moved_of(s),
-                now=now,
-                done=int(s["stepDone"]) if cleaning else None,
-                total=int(s["stepTotal"]) if cleaning else None,
-                unit=progress_shape.UNITS.get(s["stage"]),
-                # Only a failure carries the job's own stored reason (a code).
-                reason=(s["reason"] or None) if s["stage"] == "failed" else None,
+            progress_shape.with_counts(
+                progress_shape.shape(
+                    s["stage"],
+                    started_at=int(s["imported"]),
+                    updated_at=max(newest, _moved_of(s)) if _queued(s) else _moved_of(s),
+                    now=now,
+                    done=int(s["stepDone"]) if cleaning else None,
+                    total=int(s["stepTotal"]) if cleaning else None,
+                    unit=progress_shape.UNITS.get(s["stage"]),
+                    # Only a failure carries the job's own stored reason (a code).
+                    reason=(s["reason"] or None) if s["stage"] == "failed" else None,
+                ),
+                words=int(s.get("wordsDone") or 0),
+                calls=int(s.get("callsMade") or 0),
             )
         )
     return out
