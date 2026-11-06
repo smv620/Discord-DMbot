@@ -10926,14 +10926,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The two link buttons (#3663), added once: every DM gets the same view.
             view = (
                 dm_links.for_campaign(
-                    view,
-                    self.settings.site_url,
-                    guild_id,
-                    campaign_id,
-                    links or dm_links.DMLinks(),
+                    view, self.settings.site_url, guild_id, campaign_id, links or dm_links.DMLinks()
                 )
                 or view
-            )
+            )  # (for_campaign gives the view back; `or` keeps the type a View)
             for user_id in sorted(campaign.dm_user_ids):
                 # Each DM in its own try: one that fails must not stop the others, nor discard a
                 # send that worked (the caller would then also post on the DM screen, asking

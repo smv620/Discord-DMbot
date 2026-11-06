@@ -106,3 +106,37 @@ class TheCampaignHelper(unittest.IsolatedAsyncioTestCase):
         shown = dl.for_campaign(view, SITE, 7, "ab12", dl.DMLinks())
         self.assertIs(shown, view)
         self.assertEqual(len(view.children), 5)
+
+    async def test_auto_placed_buttons_get_the_links_after_them_without_a_row(self) -> None:
+        view = discord.ui.View()
+        for n in range(3):
+            view.add_item(discord.ui.Button(label=str(n), custom_id=f"b{n}"))
+        shown = dl.add_links(view, site_url="https://s/x")
+        assert shown is not None
+        self.assertEqual(shown.children[-1].label, "Open on the website")  # type: ignore[attr-defined]
+        self.assertIsNone(shown.children[-1].row)
+
+    async def test_adding_twice_does_not_double_the_links(self) -> None:
+        view = discord.ui.View()
+        dl.add_links(view, site_url="https://s/x", discord_url="https://discord.com/a")
+        dl.add_links(view, site_url="https://s/x", discord_url="https://discord.com/a")
+        self.assertEqual(len(view.children), 2)
+
+    async def test_both_links_or_neither_when_there_is_one_place_left(self) -> None:
+        view = discord.ui.View()
+        for n in range(4):
+            view.add_item(discord.ui.Button(label=str(n), custom_id=f"b{n}", row=4))
+        dl.add_links(view, site_url="https://s/x", discord_url="https://discord.com/a")
+        self.assertEqual(len(view.children), 4)  # two links did not fit, so neither was added
+
+
+class TheHostIsRebuiltNotCopied(unittest.TestCase):
+    def test_user_info_spaces_and_a_trailing_newline_never_get_through(self) -> None:
+        for bad in ("https://good.example.com@evil.example.com", "https://a b.example.com"):
+            self.assertEqual(dl.site_link(bad, "names", 7, "ab12"), "")
+        self.assertEqual(dl.site_link(SITE, "names", 7, "ab12\n"), "")
+        self.assertEqual(dl.site_link(SITE, "names", 7, "ab12", item="n1\n"), "")
+
+    def test_a_port_is_kept(self) -> None:
+        url = dl.site_link("https://dmbot.example.com:8443/", "names", 7, "ab12")
+        self.assertEqual(url, "https://dmbot.example.com:8443/account/names/7.ab12")

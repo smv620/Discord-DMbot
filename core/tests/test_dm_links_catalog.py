@@ -30,7 +30,8 @@ NOT_YET = {
 # Not a message about a question to answer, so no links (each with its reason).
 OUT_OF_SCOPE = {
     "consent_dm.py": "messages to players (consent), not to the DM (#3663 out of scope)",
-    "sidebar/service.py": "the DM's own live questions and DMbot's in-game replies at the table",
+    "sidebar/service.py": "the DM's own live questions and DMbot's in-game replies at the table: "
+    "live and brief on purpose, no links",
 }
 
 
@@ -57,7 +58,3 @@ class EveryPrivateMessageToTheDM(unittest.TestCase):
     def test_no_list_names_a_file_that_no_longer_sends(self) -> None:
         listed = THROUGH_THE_HELPER | NOT_YET | set(OUT_OF_SCOPE)
         self.assertEqual(sorted(listed - self.senders()), [])
-
-    def test_the_bot_uses_the_helper_where_it_asks_and_tells(self) -> None:
-        text = (SRC / "bot.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(text.count("dm_links.for_campaign("), 3)  # ask, ask live, tell

@@ -47,6 +47,22 @@ PAGES = frozenset(
 )
 
 
+def _host(site_url: str) -> str:
+    """The site's host (and port) from its https address, or "" for anything else. Built from the
+    parsed host, never the raw text, so a user-info part (`good.com@evil.com`), a space or a
+    backslash can't ride along."""
+    try:
+        parts = urlsplit(site_url.strip())
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return ""
+    if parts.scheme.lower() != "https" or not host or parts.username or parts.password:
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host):
+        return ""
+    return f"{host}:{port}" if port else host
+
+
 def site_link(
     site_url: str,
     page: str,
@@ -58,30 +74,26 @@ def site_link(
 ) -> str:
     """The campaign's website page, opened on one item, or "" when there is no https address
     Discord would take, the page is unknown, or an id is not a plain id."""
-    parts = urlsplit(site_url.strip())
-    if parts.scheme.lower() != "https" or not parts.netloc or page not in PAGES:
+    host = _host(site_url)
+    if not host or page not in PAGES or not _TAIL.fullmatch(campaign_id):
         return ""
-    if not _PAGE.match(page) or not _TAIL.match(campaign_id):
+    if tail and not _TAIL.fullmatch(tail):
         return ""
-    if tail and not _TAIL.match(tail):
-        return ""
-    if item and not _ITEM.match(item):
+    if item and not _ITEM.fullmatch(item):
         return ""
     ref = f"{guild_id}.{campaign_id}" + (f".{tail}" if tail else "")
     query = f"?{ITEM_PARAM}={quote(item, safe='')}" if item else ""
-    return f"https://{parts.netloc}/account/{page}/{ref}{query}"
+    return f"https://{host}/account/{page}/{ref}{query}"
 
 
 def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -> str:
     """The clarify page for one name (#3604). It has its own address shape, not `?item=`; "" when
     there is no https address or an id is not a plain id."""
-    parts = urlsplit(site_url.strip())
-    if parts.scheme.lower() != "https" or not parts.netloc:
-        return ""
-    if not _TAIL.match(campaign_id) or not _ITEM.match(name_id):
+    host = _host(site_url)
+    if not host or not _TAIL.fullmatch(campaign_id) or not _ITEM.fullmatch(name_id):
         return ""
     ref = quote(f"{guild_id}.{campaign_id}", safe=".")
-    return f"https://{parts.netloc}/account/clarify?campaign={ref}&name={quote(name_id, safe='')}"
+    return f"https://{host}/account/clarify?campaign={ref}&name={quote(name_id, safe='')}"
 
 
 def jump_link(message: discord.Message | None) -> str:
@@ -111,11 +123,23 @@ def add_links(
     if not links:
         return view
     shown = view if view is not None else discord.ui.View(timeout=None)
-    row = max((item.row for item in shown.children if item.row is not None), default=-1) + 1
-    row = min(row, 4)
+    have = {getattr(c, "url", None) for c in shown.children}
+    links = [b for b in links if b.url not in have]  # (adding twice must not double them)
+    if not links:
+        return shown
+    # Room first, so it is both links or neither. Buttons laid out by discord.py have no row of
+    # their own: the links then follow them in order. Otherwise they take the row after the last.
+    explicit = [c.row for c in shown.children if c.row is not None]
+    placed = len(explicit) == len(shown.children)
+    row = min(max(explicit, default=-1) + 1, 4)
+    on_row = sum(1 for c in shown.children if c.row == row)
+    if len(shown.children) + len(links) > 25 or (placed and on_row + len(links) > 5):
+        log.info("A private message had no room for its link buttons")
+        return shown
     try:
         for link in links:
-            link.row = row
+            if placed:
+                link.row = row
             shown.add_item(link)
     except ValueError:
         # A full view (25 items, or the row is full): the message goes without the links rather
