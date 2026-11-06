@@ -14,12 +14,15 @@ export default function NameSources({
   campaignRef,
   picked,
   onPick,
+  canEdit = false,
 }: {
   api: AccountApi;
   campaignRef: string;
   /** The ids ticked; empty is the full campaign. */
   picked: string[];
   onPick: (ids: string[]) => void;
+  /** The campaign's DMs: only they are offered the uploaded lore (its titles are theirs), players get sessions. */
+  canEdit?: boolean;
 }) {
   const [partial, setPartial] = useState(false);
   const [load, setLoad] = useState<Load>({ kind: "idle" });
@@ -36,7 +39,7 @@ export default function NameSources({
     if (load.kind !== "idle" && load.kind !== "error") return;
     setLoad({ kind: "loading" });
     nameSources(campaignRef).then(
-      (sources) => setLoad({ kind: "ready", sources }),
+      (sources) => setLoad({ kind: "ready", sources: canEdit ? sources : sources.filter((s) => s.kind === "session") }),
       () => setLoad({ kind: "error" }),
     );
   };
@@ -58,7 +61,10 @@ export default function NameSources({
       )}
       {partial && load.kind === "error" && (
         <p class="warn" role="alert">
-          {words.failed}
+          {words.failed}{" "}
+          <button type="button" class="link-button" onClick={() => choose("partial")}>
+            {words.tryAgain}
+          </button>
         </p>
       )}
       {partial && load.kind === "ready" &&
@@ -69,25 +75,25 @@ export default function NameSources({
         ) : (
           <fieldset class="names-types">
             <legend>{words.legend}</legend>
-            <p class="small muted">{picked.length === 0 ? words.none : words.hint}</p>
-            <div class="names-type-list">
-              {(["session", "lore"] as const).flatMap((kind) =>
-                group(kind, load.sources).map((s) => (
-                  <label class="choice names-type" key={s.id}>
-                    <input type="checkbox" checked={picked.includes(s.id)} onChange={() => toggle(s.id)} />{" "}
-                    {kind === "lore" ? `${words.lore}: ${s.label}` : s.label}
-                  </label>
-                )),
-              )}
-              <button
-                type="button"
-                class="link-button small"
-                aria-disabled={picked.length === 0}
-                onClick={() => picked.length > 0 && onPick([])}
-              >
+            <p class="small muted">{picked.length === 0 ? words.none : words.hint(picked.length)}</p>
+            {picked.length > 0 && (
+              <button type="button" class="link-button small" onClick={() => onPick([])}>
                 {words.clear}
               </button>
-            </div>
+            )}
+            {(["session", "lore"] as const).map((kind) => {
+              const items = group(kind, load.sources);
+              return items.length === 0 ? null : (
+                <div key={kind} class="names-type-list" role="group" aria-label={kind === "lore" ? words.lore : words.sessions}>
+                  <p class="small">{kind === "lore" ? words.lore : words.sessions}</p>
+                  {items.map((s) => (
+                    <label class="choice names-type" key={s.id}>
+                      <input type="checkbox" checked={picked.includes(s.id)} onChange={() => toggle(s.id)} /> {s.label}
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
           </fieldset>
         ))}
     </div>

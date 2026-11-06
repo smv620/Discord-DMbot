@@ -95,6 +95,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   // Partial campaign (#3675): the sessions and lore ticked; none is the full campaign.
   const [sources, setSources] = useState<string[]>([]);
   const sourceKey = sources.join(",");
+  // Another campaign never inherits the ticks of this one.
+  useEffect(() => setSources([]), [ref]);
   // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
   // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
   // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
@@ -437,7 +439,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           <LazyPanel
             load={() => import("./NameSources")}
             what="the sessions and lore filter"
-            props={{ api, campaignRef: ref, picked: sources, onPick: setSources }}
+            props={{ api, campaignRef: ref, picked: sources, onPick: setSources, canEdit: data.canEdit }}
           />
         )}
         <fieldset class="names-types">

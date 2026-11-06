@@ -965,7 +965,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
-      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this campaign" props={{ api, recapRef: recap.ref, recapText: recap.text }} />}
+      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this recap" props={{ api, recapRef: recap.ref, recapText: recap.text }} />}
       {PRESENT_PER_SCENE_LIVE && !editing && (
         <LazyPanel
           key={`present-${recap.ref}`}

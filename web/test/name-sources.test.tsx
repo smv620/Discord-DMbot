@@ -32,11 +32,11 @@ describe("NameSources", () => {
   it("shows sessions and lore for Partial campaign and reports what is ticked", async () => {
     const api = mockApi("table");
     const onPick = vi.fn();
-    render(<NameSources api={api} campaignRef={REF} picked={["s2"]} onPick={onPick} />);
+    render(<NameSources api={api} campaignRef={REF} picked={["s2"]} onPick={onPick} canEdit />);
     pickScope("partial");
     expect(await screen.findByText(words.legend)).toBeTruthy();
     expect(screen.getByText("Session 1")).toBeTruthy();
-    expect(screen.getByText(`${words.lore}: The Brynwater handout`)).toBeTruthy();
+    expect(screen.getByText("The Brynwater handout")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Session 1"));
     expect(onPick).toHaveBeenLastCalledWith(["s2", "s1"]);
     fireEvent.click(screen.getByLabelText("Session 2"));
@@ -68,5 +68,20 @@ describe("NameSources", () => {
     const some = await api.allNames!(REF, { ...query, sources: ["l1"] });
     expect(some.total).toBeGreaterThan(0);
     expect(some.total).toBeLessThan(all.total);
+  });
+});
+
+describe("NameSources for players", () => {
+  it("offers sessions only, never the DM's uploaded lore", async () => {
+    render(<NameSources api={mockApi("table")} campaignRef={REF} picked={[]} onPick={() => {}} />);
+    pickScope("partial");
+    expect(await screen.findByText("Session 1")).toBeTruthy();
+    expect(screen.queryByText(/Brynwater handout/)).toBeNull();
+  });
+
+  it("offers the lore to a DM", async () => {
+    render(<NameSources api={mockApi("table")} campaignRef={REF} picked={[]} onPick={() => {}} canEdit />);
+    pickScope("partial");
+    expect(await screen.findByText(/Brynwater handout/)).toBeTruthy();
   });
 });

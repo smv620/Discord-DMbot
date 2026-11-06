@@ -232,6 +232,7 @@ describe("the recap's list (#3675)", () => {
     expect(appearsIn("Al", "Then AL spoke.")).toBe(true);
     expect(appearsIn("Ka'zeth", "Ka'zeth, the pale.")).toBe(true);
     expect(appearsIn("  ", "anything")).toBe(false);
+    expect(appearsIn("Ka'zeth", "Ka’zeth, the pale.")).toBe(true); // a curly apostrophe
   });
 
   it("lists only the names used in the recap, with a link to all of them", async () => {
@@ -245,7 +246,7 @@ describe("the recap's list (#3675)", () => {
 
   it("says so when no name is used", async () => {
     await open(withNames(names()), "Nobody here.");
-    expect(await screen.findByText(words.noneUsed)).toBeTruthy();
+    expect(await screen.findByText(words.noneUsedAlone)).toBeTruthy();
   });
 
   it("offers the names found in the episode when the API says which sessions", async () => {

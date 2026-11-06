@@ -31,9 +31,10 @@ const letters = (text: string): number => [...text].length;
 
 /** True when `name` appears in `text` as a whole word, in any case (so "Al" is not found in "also"). */
 export function appearsIn(name: string, text: string): boolean {
-  const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A curly apostrophe (’) in the recap is the same letter as a straight one in the name.
+  const escaped = name.trim().replace(/’/g, "'").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (escaped === "") return false;
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(text);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(text.replace(/’/g, "'"));
 }
 
 type Filter = "used" | "episode";
@@ -119,6 +120,7 @@ export default function RecapNames({
     );
   };
 
+  const hasSessions = load.kind === "ready" && load.names.some((n) => n.sessions);
   const shown = (names: CampaignName[]): CampaignName[] =>
     filter === "used"
       ? names.filter((n) => appearsIn(n.text, recapText))
@@ -167,7 +169,7 @@ export default function RecapNames({
           </p>
         ) : shown(load.names).length === 0 ? (
           <p class="muted" role="status">
-            {filter === "used" ? words.noneUsed : words.noneFound}
+            {filter === "used" ? (hasSessions ? words.noneUsed : words.noneUsedAlone) : words.noneFound}
           </p>
         ) : (
           <ul class="campaigns">
