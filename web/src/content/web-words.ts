@@ -71,6 +71,7 @@ export const webPage = {
   leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
   // Where the details panel goes on a wide screen (a phone always puts it under the map).
+  feelingLoading: "the feeling picker",
   sideLabel: "Where the details go",
   sideLeft: "Left",
   sideRight: "Right",

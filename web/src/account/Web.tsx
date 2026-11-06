@@ -25,6 +25,8 @@ import {
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
+import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
+import { feelingOf } from "../content/knows-feeling-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -558,10 +560,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     .map((e) => {
       // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
-      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, ...l }) => l) };
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, quote: _quote, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, pinned: _pinned, check: _check, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, check: _check, quote: _quote, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
@@ -1384,6 +1386,7 @@ function LinkRow({
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   const sourceWords = words.sourceLine(link.source);
+  const feeling = KNOWS_FEELING_LIVE ? feelingOf(link.words) : null;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
@@ -1428,19 +1431,26 @@ function LinkRow({
       )}
       {canEdit && (
         <div class="stack">
-          <label class="field">
-            {words.wordsLabel(n)}
-            <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-          </label>
+          {feeling !== null ? (
+            // A "knows (…)" connection takes one of the nine feelings, never free words (they would make it a catch-all).
+            <LazyPanel load={() => import("./LinkFeeling")} what={words.feelingLoading} props={{ n, link, feeling, act }} />
+          ) : (
+            <label class="field">
+              {words.wordsLabel(n)}
+              <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
+            </label>
+          )}
           <div class="row">
-            <button
-              type="button"
-              class="button secondary"
-              aria-label={words.saveWords(n)}
-              onClick={() => void run({ action: "words", id: link.id, words: text }, words.saved)}
-            >
-              {words.save}
-            </button>
+            {feeling === null && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.saveWords(n)}
+                onClick={() => void run({ action: "words", id: link.id, words: text }, words.saved)}
+              >
+                {words.save}
+              </button>
+            )}
             <button
               type="button"
               class="button secondary"
