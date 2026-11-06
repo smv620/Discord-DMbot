@@ -698,6 +698,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
+              onNodePick={() => setLine(null)}
             >
               {chosen && (
                 <LinePanel
@@ -1124,6 +1125,14 @@ function LinePanel({
   return (
     <section class="panel stack" aria-labelledby="web-line-h" tabIndex={-1} ref={box}>
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
+      {/* Connections are changed right here; the full editor is each name's own row on the Names page. */}
+      <p class="row small">
+        {[edge.a, edge.b].map((id) => (
+          <a key={id} class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(nameOf(id))}`}>
+            {words.editFull(nameOf(id))}
+          </a>
+        ))}
+      </p>
       {/* Every connection between the two names, in both directions (#2934): the two-way ones first, then
           one column for each way. The numbers stay the same in every group so "Words for connection 2" is unique. */}
       <div class="stack">
