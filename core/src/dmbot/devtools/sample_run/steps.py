@@ -296,7 +296,7 @@ async def store_import(
     file_name: str = "sample-session.txt",
 ) -> str:
     """Store the planned session as an imported one, in ONE transaction like the import door
-    (`dmbot_import_store`): the session, its lines, and the `session_imports` row the bot's
+    (the import page's store door): the session, its lines, and the `session_imports` row the bot's
     cleaning picks up. Either all of it is there or none, so a stop half way never leaves a
     session the guard would take for a played one. The test accounts have agreed, so no
     uploader confirmation is recorded. Returns the session's id."""
