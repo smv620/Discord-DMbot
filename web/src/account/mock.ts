@@ -41,6 +41,7 @@ import type {
   WebGroup,
   WebLink,
   WebLinkSource,
+  ToldName,
   WebLinkChange,
   WebNode,
   WebQuery,
@@ -835,6 +836,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
+  // Secret other names and who holds or was told them (#3542): "the guard" is a secret name of the entry n1, held by one
+  // player character and told to another.
+  const toldRows: ToldName[] = [
+    { id: "sn1", name: "the guard", entryId: "n1", holders: [{ id: "pc1", name: "Tavin" }], told: [{ id: "pc2", name: "Wen" }] },
+  ];
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
@@ -2681,6 +2687,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       const row = memory.find((n) => n.id === id);
       if (!row) throw new ApiError("not-found");
+      if (change.action === "told-add" || change.action === "told-remove") {
+        // Tell one character a secret other name is this entry, or take it back (#3542); repeating either is done.
+        if (/\.told-fails\b/.test(ref)) throw new ApiError("bad-target");
+        const secret = toldRows.find((x) => x.id === change.alias && x.entryId === id);
+        if (!secret) throw new ApiError("not-found");
+        const [from, to] = change.action === "told-add" ? [secret.holders, secret.told] : [secret.told, secret.holders];
+        const at = from.findIndex((x) => x.id === change.character);
+        if (at >= 0) to.push(...from.splice(at, 1));
+        else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
       const taken = (text: string): boolean =>
         memory.some((n) => n.id !== id && [n.name, ...n.others].some((x) => x.toLowerCase() === text.trim().toLowerCase()));
       switch (change.action) {
@@ -2742,6 +2759,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async toldPanel(ref) {
+      calls.push(`toldPanel:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return toldRows.map((x) => ({ ...x, holders: x.holders.map((h) => ({ ...h })), told: x.told.map((t) => ({ ...t })) }));
     },
     async nameThem(ref, id, step: NameThemStep): Promise<NameThemResult> {
       calls.push(`nameThem:${ref}:${id}:${JSON.stringify(step)}`);

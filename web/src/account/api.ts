@@ -1842,8 +1842,23 @@ export interface NamesQuery {
   unnamed?: boolean;
 }
 
+/** One secret other name in the Story Graph's name panel and who holds or was told it (#3542, core #3563). */
+export interface ToldName {
+  /** The secret name's id. */
+  id: string;
+  /** The secret name's words ("the guard"). */
+  name: string;
+  /** The entry it belongs to. */
+  entryId: string;
+  /** Player characters that hold the name and were not told. */
+  holders: { id: string; name: string }[];
+  /** Characters that were told it is this entry. */
+  told: { id: string; name: string }[];
+}
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
 export type NameChange =
+  // Tell one character a secret other name is this entry, or take that back (#3542): done, not an error, when repeated.
+  | { action: "told-add" | "told-remove"; alias: string; character: string }
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
   | { action: "kind"; kind: string; player?: string; confirmed?: true }
@@ -2571,6 +2586,8 @@ export interface AccountApi {
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
   /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
    * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
+  /** The secret other names of a campaign and who holds or was told each (DM only; #3542). */
+  toldPanel?(ref: string): Promise<ToldName[]>;
   nameThem?(ref: string, id: string, step: NameThemStep, onLook?: () => void): Promise<NameThemResult>;
   /** The Story Graph around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
@@ -3035,7 +3052,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "toldPanel", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
