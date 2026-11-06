@@ -313,6 +313,7 @@ from dmbot.memory.exposures import (
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.importance_backup import ImportanceSection
+from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
@@ -13615,6 +13616,7 @@ def register_backup_sections(
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
+    campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
 
 
 async def run(settings: Settings) -> None:
