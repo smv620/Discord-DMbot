@@ -18,7 +18,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
-from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
+from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -209,6 +209,11 @@ ACTIONS = (
     "alias-who",  # who knows an other name (#2999): {alias, who, characters}
     "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
     "confirm-undo",  # takes back one press of it: {answer}
+    "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
+    "spelling-no",  # ... or turn it down for good: {alias}
+    "told-add",  # tell one character a secret other name is this entry (#3542): {alias, character}
+    "told-remove",  # ... or take that telling back: {alias, character}
+    "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
 )
 
 KIND_WORD = re.compile(
@@ -320,6 +325,26 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             if len(set(kinds)) != len(kinds):
                 raise RecapError("bad_target")
             text = " ".join(kinds)
+    elif action == "players-line":  # the column's own limit; over it is refused, never cut
+        line = body.get("line")
+        if not isinstance(line, str):
+            raise RecapError("bad_name")
+        text = " ".join(line.split())
+        if text and not text.isprintable():
+            raise RecapError("bad_name")
+        if len(text) > PLAYERS_TEXT_MAX:
+            raise RecapError("too_long")
+    elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
+        target = str(body.get("alias") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+    elif action in ("told-add", "told-remove"):  # the other name is the target; the text is who
+        target = str(body.get("alias") or "")
+        text = str(body.get("character") or "")  # (only its shape here; the door and bot look)
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        if not ID_PATTERN.match(text):
+            raise RecapError("bad_target")
     elif action == "confirm-undo":  # the answer of the press to take back
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):

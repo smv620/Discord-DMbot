@@ -57,6 +57,9 @@ HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 PLAYER_CHARACTER, NPC = "player_character", "npc"
 ROLES = (PLAYER_CHARACTER, NPC)
 ROLE_LABELS = {PLAYER_CHARACTER: "PC", NPC: "NPC"}
+# The kinds a yes-to-all never covers: an idea needs a look, a player character its player (#3553).
+# Discord's Add all (`ui.name_background`) and the website's (`web_actions`) share this set.
+NEEDS_A_LOOK = frozenset({"concept", PLAYER_CHARACTER})
 
 # What a character links to in the rules (by source and name), never kinds of their own:
 # "race" is shown only as the 2014 name, `[Legacy 2014]`. One species and one creature type
@@ -78,6 +81,7 @@ LINK_EDITIONS = ("2014", "2024")
 
 NAME_MAX = 100
 DESCRIPTION_MAX = 300
+PLAYERS_TEXT_MAX = 120  # the players' line for an entry (#2967): the column's limit
 DETAIL_MAX = 100
 LINE_REF_MAX = 100
 LIST_MAX = 50  # examples, mention IDs: the same cap on write and in backups
@@ -295,6 +299,9 @@ class Entity:
     unnamed_anchor: str | None = None
     unnamed_role: str | None = None
     unnamed_what: str | None = None
+    # What the players know this entry is or does, one short line (#2967): separate from the DM's
+    # `description`, which never feeds it. None: no line.
+    players_text: str | None = None
     # Whether the players are shown this entry, worked out by the lookup from the gate (the party's
     # view of the lists of who knows what, #2995). None: not asked (a hand-made entry in a test, or
     # a campaign with no player character yet, or an entry still only suggested): the flags answer.

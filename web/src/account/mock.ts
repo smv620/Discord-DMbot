@@ -41,6 +41,7 @@ import type {
   WebGroup,
   WebLink,
   WebLinkSource,
+  ToldName,
   WebLinkChange,
   WebNode,
   WebQuery,
@@ -64,7 +65,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
@@ -772,6 +773,7 @@ function pronounWaiting(): Waiting {
 /** The pretend "Fix this line" answers' modes, by answer (#2858). */
 const fixes = new Map<string, FixMode>();
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
+  const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -840,6 +842,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" },
     { id: "sp2", placeId: "n25", place: "Greywatch", spelling: "Grey Watch" },
   ];
+  // Secret other names and who holds or was told them (#3542): "the guard" is a secret name of the entry n1, held by one
+  // player character and told to another.
+  const toldRows: ToldName[] = [
+    { id: "sn1", name: "the guard", entryId: "n1", holders: [{ id: "pc1", name: "Tavin" }], told: [{ id: "pc2", name: "Wen" }] },
+  ];
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
@@ -849,6 +856,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const nameSteps = new Map<string, { unnamed: NameRow; named?: NameRow; joined?: { into: NameRow; others: string[] } }>();
   // How each listed name is said (#2317), by the name's id; the id the said-as calls take is `al-<id>`.
   const memorySaid = new Map<string, string | null>();
+  // The line the players are told about each name (#3568), by the name's id.
+  const playersLines = new Map<string, string>();
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
   const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
     const recap = names.find((n) => n.id === id);
@@ -2091,11 +2100,22 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       look("queued");
       look("working");
       if (answer.action === "keep_all") for (let k = 1; k <= ids.length; k += 1) look("working", { progress: { done: k, total: ids.length } });
+      // Answers to a claim say which change they made, so a press of "All true" / "All secret" can be undone (#3645).
+      if (answer.kind === "claim" && answer.action === "undo") {
+        const back = removedClaims.get(`${ref}:${answer.id}`);
+        if (!back) throw new ApiError("gone");
+        removedClaims.delete(`${ref}:${answer.id}`);
+        waiting.claims.push(back);
+        return {};
+      }
+      if (answer.kind === "claim" && answer.action === "confirm" && ref.endsWith(".bulk-refuse") && answer.id === "c1") throw new ApiError("cannot-write");
       const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
+      for (const c of waiting.claims) if (ids.includes(c.id)) removedClaims.set(`${ref}:${c.id}`, c);
       waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
+      if (answer.kind === "claim" && answer.action === "confirm") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
@@ -2652,7 +2672,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -2686,6 +2706,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       const row = memory.find((n) => n.id === id);
       if (!row) throw new ApiError("not-found");
+      if (change.action === "told-add" || change.action === "told-remove") {
+        // Tell one character a secret other name is this entry, or take it back (#3542); repeating either is done.
+        if (/\.told-fails\b/.test(ref)) throw new ApiError("bad-target");
+        const secret = toldRows.find((x) => x.id === change.alias && x.entryId === id);
+        if (!secret) throw new ApiError("not-found");
+        const [from, to] = change.action === "told-add" ? [secret.holders, secret.told] : [secret.told, secret.holders];
+        const at = from.findIndex((x) => x.id === change.character);
+        if (at >= 0) to.push(...from.splice(at, 1));
+        else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "players-line") {
+        // The line the players are told (#3568): a blank clears it; over 120 letters is refused, never cut.
+        const line = change.line.split(/\s+/).filter(Boolean).join(" ");
+        if (line.includes("[fail]")) throw new ApiError("server"); // (a line with this in it is how a test makes the save fail)
+        if (line.length > 120) throw new ApiError("ticket-too-long");
+        if (line === "") playersLines.delete(id);
+        else playersLines.set(id, line);
+        return { ...row, others: [...row.others] };
+      }
       const taken = (text: string): boolean =>
         memory.some((n) => n.id !== id && [n.name, ...n.others].some((x) => x.toLowerCase() === text.trim().toLowerCase()));
       switch (change.action) {
@@ -2769,6 +2809,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const row = memory.find((n) => n.name === asked.place);
         if (row) row.others = [...row.others, asked.spelling];
       }
+    },
+    async toldPanel(ref) {
+      calls.push(`toldPanel:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return toldRows.map((x) => ({ ...x, holders: x.holders.map((h) => ({ ...h })), told: x.told.map((t) => ({ ...t })) }));
     },
     async nameThem(ref, id, step: NameThemStep): Promise<NameThemResult> {
       calls.push(`nameThem:${ref}:${id}:${JSON.stringify(step)}`);

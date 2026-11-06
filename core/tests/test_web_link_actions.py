@@ -141,7 +141,9 @@ class TheEdits(Editing):
         await self.apply_all()
         edge = self.edge_of(await self.poll(free), self.mira, self.hall)
         self.assertEqual(edge["more"], 1)
-        words = {x["words"]: x for x in edge["links"]}
+        words = {
+            x.get("rawWords", x["words"]): x for x in edge["links"]
+        }  # (own words come quoted, #3574)
         self.assertTrue(words["sworn on the ashes of"]["secret"])
         self.assertFalse(words["is a member of"]["secret"])
         self.assertEqual(edge["label"], "is a member of")  # never the secret one
@@ -249,7 +251,7 @@ class TheEdits(Editing):
         made = await self.add_link(self.mira, self.hall, words)
         await self.apply_all()
         edge = self.edge_of(await self.poll(made), self.mira, self.hall)
-        return str(next(x["id"] for x in edge["links"] if x["words"] == words))
+        return str(next(x["id"] for x in edge["links"] if x.get("rawWords", x["words"]) == words))
 
     async def test_changing_only_the_capitals_keeps_the_connection(self) -> None:
         link = await self.free_link("sworn to")
@@ -274,7 +276,9 @@ class TheEdits(Editing):
         )
         await self.apply_all()
         edge = self.edge_of(await self.poll(answer), self.mira, self.hall)
-        self.assertEqual([(x["words"], x["secret"]) for x in edge["links"]], [("sworn to", True)])
+        self.assertEqual(
+            [(x["words"], x["secret"]) for x in edge["links"]], [("\u201csworn to\u201d", True)]
+        )
 
     async def link_id(self, a: str, b: str, words: str) -> str:
         web = await relationships.read_web(self.web, self.session, self.cref, center=a)
@@ -284,7 +288,7 @@ class TheEdits(Editing):
                 for e in web["edges"]
                 if {e["a"], e["b"]} == {a, b}
                 for x in e["links"]
-                if x["words"] == words
+                if x.get("rawWords", x["words"]) == words
             )
         )
 

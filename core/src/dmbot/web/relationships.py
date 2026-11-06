@@ -25,7 +25,14 @@ from dmbot.db import Database
 from dmbot.memory import gate, kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
-from dmbot.memory.link_words import back_after, back_words, link_words, reads_both_ways
+from dmbot.memory.link_words import (
+    back_after,
+    back_words,
+    link_words,
+    own_words,
+    quoted,
+    reads_both_ways,
+)
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names, graph_view, link_sources, which_choices
@@ -101,19 +108,29 @@ def edges_from(
             direction = "both"
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
+        own = own_words(str(row["predicate"]), str(row["detail"] or ""))
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
-                "words": link_words(
+                # the table's own words (a connection with no kind of its own) are shown in quotes,
+                # for display only: `rawWords` is what the edit form and the stored words keep
+                # (#3574)
+                "words": quoted(str(row["detail"]))
+                if own
+                else link_words(
                     str(row["predicate"]),
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,
+                    feeling=is_dm,
                 ),
+                "rawWords": str(row["detail"]) if own else None,
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
                 # so the page can write each line from the name in the middle
-                "back": back_words(
+                "back": f"is linked ({quoted(str(row['detail']))}) to"
+                if own
+                else back_words(
                     str(row["predicate"]),
                     str(row["detail"] or ""),
                     directional,
@@ -155,6 +172,7 @@ def edges_from(
                     {
                         "id": x["id"],
                         "words": x["words"],
+                        **({"rawWords": x["rawWords"]} if x["rawWords"] is not None else {}),
                         "back": x["back"],
                         "backAfter": x["backAfter"],
                         "secret": x["secret"] if can_edit else False,
@@ -723,6 +741,9 @@ def _words(value: object) -> str:
     if not isinstance(value, str):
         raise RecapError("bad_name")
     clean = " ".join(value.split())
+    # the quotes the page shows around the table's own words are never part of them (#3574)
+    if len(clean) > 2 and clean[0] == "\u201c" and clean[-1] == "\u201d":
+        clean = clean[1:-1].strip()
     if not clean or not clean.isprintable():
         raise RecapError("bad_name")
     if len(clean) > WORDS_MAX:
@@ -1207,6 +1228,7 @@ async def read_waiting(
                 str(b["detail"]),
                 kin.directional(str(b["detail"])),
                 str(b.get("subjectKind") or ""),
+                feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
         }
@@ -1222,6 +1244,7 @@ async def read_waiting(
                 # the named name is the subject only when the door says so; otherwise the subject
                 # is a list the DM has yet to choose from, and its kind is not known (old words)
                 str(w.get("otherKind") or "") if w.get("otherIsSubject") else "",
+                feeling=True,
             ),
             "check": check_words(w.get("decided")),
         }

@@ -150,6 +150,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_names={},
         _import_reports={},
         _import_unhonoured={},
+        _import_party={},
         _import_queued={},
         _import_unchecked={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
@@ -246,6 +247,29 @@ class ThePlaysChoices(WithImports):
         await bot.run_import_followups(GUILD)
         members = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
         self.assertIn(cerric, {r.subject_id for r in members if r.predicate == "member_of"})
+
+    async def test_the_dm_is_told_once_how_many_player_characters_the_import_linked(self) -> None:
+        # #3036: the party link takes moments, so it is told as a result at the import's end, one
+        # counts-only line with the rest of its news
+        cerric = await self.character()
+        await self.wait(cerric)
+        bot, _ = fake_bot(self.store, memory=self.memory)
+        bot._apply_import_plays = partial(DMBot._apply_import_plays, bot)
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = partial(DMBot._link_the_party, bot)
+        bot._tell_import_news = partial(DMBot._tell_import_news, bot)
+        bot.transcripts = TranscriptStore(self.db)
+        bot.memory = self.memory
+        bot._scan_import = AsyncMock(return_value=[])
+        await self.imported(1)
+        await bot.run_import_followups(GUILD)
+        await bot._tell_import_news(GUILD, self.store)
+        told = [c.args[1] for c in bot.post.await_args_list if "🎭" in c.args[1]]
+        self.assertEqual(len(told), 1)
+        self.assertIn("1 player character", told[0])
+        self.assertNotIn("Cerric", told[0])  # counts only
+        await bot._tell_import_news(GUILD, self.store)
+        self.assertEqual(len([c for c in bot.post.await_args_list if "🎭" in c.args[1]]), 1)
 
     async def test_a_choice_for_someone_off_the_record_is_kept_not_dropped(self) -> None:
         """Off the record (#2466) has no lasting effect: Mira is paused (not recorded now) but

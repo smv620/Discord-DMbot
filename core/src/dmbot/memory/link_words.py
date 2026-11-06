@@ -5,7 +5,7 @@ Pure: no Discord, no database."""
 from __future__ import annotations
 
 from dmbot.memory import kin, place_words, reputation_words
-from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
+from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
     "located_in": "is in",
@@ -47,7 +47,22 @@ CONNECTION_BACK = {
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
+# The old friend and enemy connections are the same thing as a `knows` with a feeling: how a name
+# feels about another is the DM's Reputation, so a non-DM reads plain "knows" (#3611, #3610).
+OLD_FEELINGS = frozenset({"ally_of", "enemy_of"})
 BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of"})
+
+
+def for_reader(predicate: str, detail: str, *, feeling: bool) -> tuple[str, str]:
+    """The connection a reader is shown: for anyone but the DM, a `knows` with a feeling or an old
+    friend/enemy connection is a plain `knows` with no words (#3610, #3611)."""
+    if feeling:
+        return predicate, detail
+    if predicate in OLD_FEELINGS or (
+        predicate == "knows" and reputation_words.word_of(detail) in reputation_words.WORDS
+    ):
+        return "knows", ""
+    return predicate, detail
 
 
 def connection_words(predicate: str) -> str:
@@ -55,6 +70,7 @@ def connection_words(predicate: str) -> str:
 
 
 KIN = "kin_of"
+CORE_KEYS = frozenset(p.key for p in CORE_PREDICATES)
 
 
 def reads_both_ways(predicate: str, detail: str = "", directional: bool = False) -> bool:
@@ -94,19 +110,33 @@ def predicate_for_either(words: str) -> tuple[str, str, bool]:
 
 
 def link_words(
-    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+    predicate: str,
+    detail: str,
+    directional: bool = False,
+    subject_kind: str = "",
+    *,
+    feeling: bool = False,
 ) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
     role ("is the niece of"). A place tie reads by its word ("lives in"), and for something that
     moves with no word, "was last seen in", never "is in" (#3363); `subject_kind` is the first
-    name's kind ("" when the caller does not know it, which keeps the old "is in")."""
+    name's kind ("" when the caller does not know it, which keeps the old "is in").
+
+    `feeling` says the reader is the DM: how a name feels about another is the DM's Reputation, so
+    "knows (hostile)" is worded only for a DM-only screen, and everyone else reads plain "knows"
+    (#3610)."""
+    predicate, detail = for_reader(predicate, detail, feeling=feeling)
     if predicate == "located_in":
         return place_words.forward(detail, subject_kind)
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
     # "knows" with the feeling a reader gave it (#3175): "knows (hostile)", the old friend and enemy
-    if predicate == "knows" and reputation_words.word_of(detail) in reputation_words.WORDS:
+    if (
+        feeling
+        and predicate == "knows"
+        and reputation_words.word_of(detail) in reputation_words.WORDS
+    ):
         return f"knows ({detail})"
     # A role true of both names (sibling, cousin, spouse) reads the same from either card, so it is
     # shown whatever its stored direction is (#3102). A one-way role is shown only when directional.
@@ -115,12 +145,32 @@ def link_words(
     return connection_words(predicate)
 
 
+def own_words(predicate: str, detail: str) -> bool:
+    """True for a connection that has no kind of its own (the catch-all) and carries the table's
+    own words: the website shows those in quotes, so they are not taken for DMbot's own wording
+    (#3574)."""
+    return predicate == FALLBACK_PREDICATE and bool(detail)
+
+
+def quoted(detail: str) -> str:
+    """The table's own words in curly quotes, for display only (the stored words stay raw)."""
+    return f"\u201c{detail}\u201d"
+
+
 def back_after(
     predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
 ) -> str:
     """The words that follow the name when a connection reads from its second name ("was last
     seen" in "Aldmoor is where Tavin was last seen"); empty for every other connection."""
     return place_words.backward_after(detail, subject_kind) if predicate == "located_in" else ""
+
+
+def campaign_back(predicate: str) -> str | None:
+    """The back words of a kind this campaign made for itself (#3033): no reverse words are
+    invented, so it reads "is linked (“sworn on the ashes of”) to". None for any core kind."""
+    if predicate in CORE_KEYS:
+        return None
+    return f"is linked (“{connection_words(predicate)}”) to"
 
 
 def back_words(
@@ -132,4 +182,4 @@ def back_words(
         return place_words.backward(detail, subject_kind)
     if predicate == KIN and directional and kin.directional(detail):
         return kin.backward(kin.role_of(detail) or "")
-    return CONNECTION_BACK.get(predicate)
+    return CONNECTION_BACK.get(predicate) or campaign_back(predicate)

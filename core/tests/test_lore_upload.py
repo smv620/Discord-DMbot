@@ -93,6 +93,18 @@ class TheWorker(NamesTest):
         self.assertGreater(await self.entries(), 0)  # names wait in Check new names
         self.assertIsNone(await self.queue.claim_next(GUILD))  # nothing is read a second time
 
+    async def test_the_names_a_read_proposed_are_kept_on_the_row_for_add_all(self) -> None:
+        uid = await self.add()
+        await self.work()
+        found = (await self.row(uid))["found"]  # ids by kind, never a name (#3207)
+        waiting = {
+            e.id for e in await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        }
+        kept = {i for ids in found.values() for i in ids}
+        self.assertTrue(kept)
+        self.assertEqual(kept, waiting)
+        self.assertEqual(sum(len(v) for v in found.values()), (await self.row(uid))["names_found"])
+
     async def test_the_claims_choice_reaches_the_read_and_the_flags(self) -> None:
         await self.add()  # (the page said: world general knowledge)
         asked: list[dict[str, Any]] = []
