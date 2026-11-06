@@ -57,7 +57,7 @@ FULL = (
 )
 TOO_MANY = f"This campaign already has {DOCUMENTS_MAX} documents. Remove one, then add this one."
 NOT_DM = "Only this campaign's DMs can do that."
-NO_CAMPAIGN = "That campaign isn't here any more. Open ⚙️ Settings again."
+NO_CAMPAIGN = "That campaign isn't here any more. Open ⚙️ Manage DMbot again."
 NOT_ON = "Turn on Shared story and say you have the right to use the material first."
 GONE_DOC = "That document is already gone."
 

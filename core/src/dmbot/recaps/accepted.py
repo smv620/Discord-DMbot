@@ -60,15 +60,21 @@ class AcceptedStore:
     def __init__(self, db: Database) -> None:
         self._db = db
 
-    async def newest(self, guild_id: int, campaign_id: str) -> list[Accepted]:
-        """The newest accepted version of each session, oldest session first."""
+    async def newest(
+        self, guild_id: int, campaign_id: str, *, before: int | None = None, last: int | None = None
+    ) -> list[Accepted]:
+        """The newest accepted version of each session, oldest session first. `before` keeps only
+        sessions earlier than that one and `last` only the latest that many of them, so a long
+        campaign is not read whole for a few recaps (#2954)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT DISTINCT ON (session_at) {_COLUMNS} FROM recap_accepted"
-                " WHERE guild_id = %s AND campaign_id = %s ORDER BY session_at, version DESC",
-                (guild_id, campaign_id),
+                f"SELECT * FROM (SELECT DISTINCT ON (session_at) {_COLUMNS} FROM recap_accepted"
+                " WHERE guild_id = %s AND campaign_id = %s AND (%s::bigint IS NULL OR"
+                " session_at < %s) ORDER BY session_at, version DESC) AS newest"
+                " ORDER BY session_at DESC LIMIT %s",
+                (guild_id, campaign_id, before, before, last),
             )
-            return [_accepted(r) for r in await cur.fetchall()]
+            return [_accepted(r) for r in reversed(await cur.fetchall())]
 
     async def versions(self, guild_id: int, campaign_id: str, session_at: int) -> list[Accepted]:
         """Every accepted version of one session, oldest first."""

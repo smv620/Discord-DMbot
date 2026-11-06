@@ -219,7 +219,7 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
                 return {name_key("Lucian"): 12.0}
 
         bot = SimpleNamespace(memory=object(), importance=Scores())
-        with patch("dmbot.bot.RecallService", Service):
+        with patch("dmbot.recaps.discord.RecallService", Service):
             await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira", "Lucian", "Mira"])  # type: ignore[arg-type]
         self.assertEqual(seen[0], ["Lucian", "Mira"])  # the hub first, and no name twice
 
@@ -250,7 +250,7 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
                 return everything if k["audience"] == "dm_screen" else players
 
         bot = SimpleNamespace(memory=object(), importance=None)
-        with patch("dmbot.bot.RecallService", Service):
+        with patch("dmbot.recaps.discord.RecallService", Service):
             got = await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira"])  # type: ignore[arg-type]
         self.assertEqual([(m.id[:1], m.known) for m in got], [("a", True), ("b", False)])
         self.assertEqual(got[0].text, "Mira")  # never the DM's note on a known entry

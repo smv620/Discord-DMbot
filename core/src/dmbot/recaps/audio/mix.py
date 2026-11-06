@@ -53,6 +53,11 @@ def _fit(seconds: float) -> str:
     return f"atrim=0:{seconds:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={seconds:.3f}"
 
 
+def _tempo(factor: float) -> str:
+    """ffmpeg's `atempo` (0.5 to 2) when the factor is not 1; nothing otherwise."""
+    return f"atempo={min(2.0, max(0.5, factor)):.5f}," if abs(factor - 1.0) > 0.0005 else ""
+
+
 def _fade_out(seconds: float, ending: str) -> str:
     """The music's (and the ambience's) closing fade for this kind of ending."""
     length = min(CRESCENDO_FADE_S if ending == "crescendo" else DIMINUENDO_FADE_S, seconds)
@@ -75,12 +80,15 @@ def plan(
     with_music: bool = True,
     with_ambience: bool = True,
     ending: str = "diminuendo",
+    music_tempo: float = 1.0,
 ) -> MixPlan:
     """The filter graph. `ending`: "diminuendo" or "crescendo" (anything else fades down), how
     the music and the ambience close (#2629). Inputs are numbered in the order `command` adds
     them: the voice is 0, then the music (if any), then the ambience (if any). A missing track
     leaves its branch out;
-    the bed is then what is there (or silence if neither is)."""
+    the bed is then what is there (or silence if neither is). `music_tempo`: the speed a kept
+    piece of music is played at so that its composed ending lands at the end of a voice of a
+    different length (#2630); 1 for music made for this voice."""
     seconds = max(0.001, float(voice_seconds))
     music_at = 1 if with_music else None
     ambience_at = (2 if with_music else 1) if with_ambience else None
@@ -92,7 +100,7 @@ def plan(
     bed: list[str] = []
     if music_at is not None:
         graph.append(
-            f"[{music_at}:a]{_norm(MUSIC_LUFS, BED_PEAK_DB)},{_fit(seconds)},"
+            f"[{music_at}:a]{_tempo(music_tempo)}{_norm(MUSIC_LUFS, BED_PEAK_DB)},{_fit(seconds)},"
             f"{_fade_out(seconds, ending)}[music_raw]"
         )
         graph.append(

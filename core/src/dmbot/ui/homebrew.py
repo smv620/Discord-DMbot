@@ -1,6 +1,6 @@
-"""📚 Homebrew: a campaign's own spells, monsters, items and other game content, from ⚙️ Settings or
-`/dmbot homebrew` (#1520). A private menu for the campaign's DMs only; the store checks again that
-the person is a DM on every change.
+"""📚 Homebrew: a campaign's own spells, monsters, items and other game content, from
+⚙️ Manage DMbot or `/dmbot homebrew` (#1520). A private menu for the campaign's DMs only; the
+store checks again that the person is a DM on every change.
 
 DMbot never writes or decides homebrew: it only keeps what the DM typed. An entry is the DM's own
 creation, so the form says so in one line and points a published book to "Share a rulebook". Each
@@ -333,7 +333,7 @@ async def _redraw(
 
 
 async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> None:
-    """From ⚙️ Settings or the command, for a DM (the caller checked; each press checks again)."""
+    """From ⚙️ Manage DMbot or the command, for a DM (the caller checked; presses check again)."""
     await _answer_first(interaction)
     await show_list(interaction, campaign, first=True)
 

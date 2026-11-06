@@ -16,7 +16,8 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
+from dmbot.memory import evidence, importance_rank, knowers
+from dmbot.memory._changes import ALIASES, ALL, TOLD, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
@@ -32,11 +33,13 @@ from dmbot.memory.models import (
     NewName,
     TooLateToUndo,
     Written,
+    new_id,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.schema import ISOLATED_TABLES
+from tests import speed
 from tests.pg import DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
@@ -134,8 +137,41 @@ class Isolation(MemoryTest):
             GUILD_A, self.c, a, "species", "goblin", source="dm", rules_source="srd52", known=True
         )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
+        # and a character who knows a secret other name (#2935)
+        shade = await self.memory.add_alias(
+            GUILD_A, self.c, a, "Shade", kind="title", secret=True, source="dm"
+        )
+        view = await self.add(
+            "Tavin", type="character", role="player_character", played_by=DM, status="confirmed"
+        )
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await knowers.set_alias_knowers(w, shade.value.id, [view])
+        # and a character the DM told that the secret name is an entry (#3089)
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.insert(
+                TOLD,
+                {"id": new_id(), "alias_id": shade.value.id, "character_id": view,
+                 "added_entry": False, "created_at": w.now},
+            )  # fmt: skip
+        # and an internal importance assessment of a character (#3172)
+        await importance_rank.ImportanceStore(self.db).add(
+            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
+        )
+        # and the DM's answer about turning some words into a kind (#3033)
+        await self.memory.answer_kind_offer(
+            GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
+        )
+        # and a character who knows an entry exists (#2995)
+        await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
-        await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        # and the upload a kept connection came from (#2946)
+        await self.memory.record_link_source(GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan")
+        clue = await self.add("A map", type="clue")
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
+            await evidence.add_in(
+                w, kind=evidence.CLUE, target_id=clue, relation_id=known.value[0].id
+            )
         await self.memory.add_mention(
             GUILD_A,
             self.c,
@@ -153,12 +189,49 @@ class Isolation(MemoryTest):
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
+        # and PlotBot's grade of a clash one point of view holds (#2660)
+        from dmbot.memory.contradiction_grades import MAJOR, Graded, GradeStore
+        from dmbot.memory.contradictions import Contradictions
+
+        ally = await self.relate(a, "ally_of", b, status="confirmed")
+        enemy = await self.relate(a, "enemy_of", b, status="confirmed")
+        clash = (await Contradictions(self.memory).find(GUILD_A, self.c))[0]
+        await GradeStore(self.db).save(GUILD_A, self.c, [Graded(clash, MAJOR, "Both at once.")])
+        # and what the party has wrong, with PlotBot's sort, and a report being made (#2661)
+        from dmbot.memory.differences import CLASHES, Difference
+        from dmbot.memory.report_store import FALSE, ReportStore, SortedDifference
+
+        reports = ReportStore(self.db)
+        await reports.save_differences(
+            GUILD_A,
+            self.c,
+            [
+                SortedDifference(
+                    Difference(
+                        clash.perspective_id, "party", ally.value[0].id, enemy.value[0].id,
+                        CLASHES, False, False,
+                    ),
+                    FALSE,
+                    "Not so.",
+                )
+            ],
+        )  # fmt: skip
+        await reports.begin(GUILD_A, self.c, 1_000)
         from dmbot.memory.claims import ClaimStore, Extracted
 
         await ClaimStore(self.memory).propose(
             GUILD_A, self.c, [Extracted("Belleros", "knows", "Cerric", "", ("1",), "dm_said")],
             {"1": DM}, opted_in={DM}, prompt_version="p1", model="m1", session_started_at=1_000,
         )  # fmt: skip
+        # and the numbers meaning search compares (#2664)
+        from dmbot.memory import vectors
+
+        await vectors.VectorStore(self.db).save(
+            GUILD_A,
+            self.c,
+            "voyage-3.5",
+            [vectors.Item(vectors.ASSERTION, "x", vectors.text_hash("x"), [1.0, 0.0])],
+        )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -984,8 +1057,10 @@ class Undo(MemoryTest):
             undone = await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
             undo_statements = statements
         # Row by row, this was well over a thousand round trips each. Counted with
-        # execute, so the savepoints around bulk undo runs (their own round trips) aren't.
-        self.assertLess(merge_statements, 60)
+        # execute, so the savepoints around bulk undo runs (their own round trips) aren't. (59
+        # before the people who hang off a merged entry were moved with it, #2790: one statement;
+        # 60 before who-knows moved with it, #2995: one read for the whole list.)
+        self.assertLess(merge_statements, 62)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1107,7 +1182,9 @@ class Undo(MemoryTest):
             merge_statements, statements = statements, 0
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
-        self.assertLess(merge_statements, 60)
+        self.assertLess(
+            merge_statements, 61
+        )  # (60 with #2790: one statement for the people who hang off a merge)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 
@@ -1128,7 +1205,8 @@ class Undo(MemoryTest):
             )
         started = time.perf_counter()
         await self.memory.merge(GUILD_A, fresh, keep.value.id, gone.value.id, source="dm")
-        self.assertLess(time.perf_counter() - started, 2.0)  # the bad plan took over 3 s
+        # The bad plan took over 3 s; the limit stretches with how busy this machine is (#3525).
+        self.assertLess(time.perf_counter() - started, speed.allowed(2.0))
 
     async def fill_names(self, campaign: str, count: int) -> None:
         """`count` entries with one name each, written directly (quicker than the API)."""
@@ -1604,7 +1682,7 @@ class Lists(MemoryTest):
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
-        self.assertLess(statements, 34)
+        self.assertLess(statements, 35)  # (34 with #2790's unnamed-anchor link to check)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

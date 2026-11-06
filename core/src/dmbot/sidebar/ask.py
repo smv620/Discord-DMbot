@@ -165,6 +165,14 @@ def _called(line: str) -> Request | None:
     return None
 
 
+def is_table_question(text: str) -> bool:
+    """Whether a message typed in the table's chat asks DMbot something (#3209, #3212): it calls
+    DMbot ("Hey DMbot, …", or "DMbot" at the start of a question). A question mark alone does not:
+    the table's chat is the voice channel's own chat, where people talk to each other, and "anyone
+    got a spare d20?" is not for DMbot. Anything else is ordinary chat."""
+    return _called(" ".join(text.split())) is not None
+
+
 class AskLimiter:
     """The safety limit on one listening session's questions, spoken and typed alike: at most
     `per_minute` in any minute and `per_session` in all. It remembers only the last

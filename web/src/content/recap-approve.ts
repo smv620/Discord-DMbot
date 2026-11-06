@@ -74,6 +74,7 @@ export const approveErrors: Partial<Record<ApiErrorKind, string>> = {
   "audio-unavailable": "Audio can't be made right now. Go back and press Approve and post text only, or Approve but don't post.",
   "bad-choice": "That isn't one of the choices. Reload the page and try again.",
   "not-allowed": "This recap changed, maybe in Discord. Reload the page to see where it is now.",
+  "plot-open": "The Plot check still has a question you haven't answered. Answer it above (Leave it as is counts as an answer), then approve.",
   "not-found": "We can't find that recap. Reload the page, or open it again from your recaps.",
   "signed-out": "You were signed out. Sign in again, then approve the text again.",
   network: "We couldn't reach DMbot. Check your connection and try again.",

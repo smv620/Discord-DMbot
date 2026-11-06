@@ -9,7 +9,7 @@ import datetime as dt
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.config import ConfigError, load_settings
 from dmbot.recaps import allowance as al
@@ -172,6 +172,11 @@ class TheBotsCheck(text_tests.Base):
         self.bot.meter = None
         self.now = at(2026, 10, 16)
         self.clock.now = float(self.now)
+        # The code under test reads the real clock for "this month"; the rows below are dated
+        # `self.now`, so a test run in another month would count none of them (#3171).
+        pinned = patch("dmbot.recaps.discord.time.time", return_value=float(self.now))
+        pinned.start()
+        self.addCleanup(pinned.stop)
         for n in (1, 2):
             await self.store.enqueue(1, self.one.id, n, dm_user_id=fx.DM)
             await self.store.update(1, self.one.id, n, state="ready")

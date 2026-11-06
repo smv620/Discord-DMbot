@@ -12,14 +12,18 @@ export const fixWords = {
   send: "Send",
   sending: "Sending…",
   sorting: "Sorting your note…",
+  // The stage while DMbot has not picked the note up yet (#3355).
+  pickUp: "Waiting for DMbot to pick up your note…",
   slow: "This is taking longer than usual. Your note is still being sorted. Press Check again.",
   checkAgain: "Check again",
+  // The stalled wait panel's line (#3442): it does not name the Check again button, which shows only once the page gives up.
+  stalled: "This is taking longer than usual. DMbot may still finish it. Wait a little longer, or reload the page to check.",
   sorted: (n: number): string => `Done. ${n} ${n === 1 ? "point" : "points"} to look at.`,
   nothing: "DMbot found nothing to change. Say it another way and press Send.",
   correctionsHeading: "Changes to make",
   styleHeading: "Style notes",
   styleLead:
-    "Style notes you keep are saved for this campaign's later recaps too. The newest 10 are kept. You can remove them in ⚙️ Settings → 📜 Recaps → ✍️ Recap style. These start not kept: press Keep on the ones you want.",
+    "Style notes you keep are saved for this campaign's later recaps too. The newest 10 are kept. You can remove them in ⚙️ Manage DMbot → ✍️ Recap style. These start not kept: press Keep on the ones you want.",
   repliesHeading: "Answer from DMbot (nothing is changed by this)",
   remove: "Remove",
   removeOne: (text: string): string => `Remove: ${text}`,
@@ -42,7 +46,7 @@ export const fixWords = {
   startedNoApproval: "DMbot is writing the recap again. This page shows it when it is ready.",
   problem: {
     "not-allowed":
-      "Recaps are turned off for this campaign or its plan right now. Check ⚙️ Settings → 📜 Recaps.",
+      "Recaps are turned off for this campaign or its plan right now. Check the Recaps page on the website (🌐 Manage campaign).",
     "too-big": `That note is too long. Keep it under ${FIX_MAX_LETTERS.toLocaleString("en-US")} letters.`,
     "too-soon": "You sent a note a moment ago. Wait a minute, then press Send.",
     "too-soon-rewrite": "Wait a minute, then press Rewrite with these again.",

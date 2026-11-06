@@ -72,6 +72,9 @@ class CallEvent:
     checks: list[str] | None = None  # None: not checked; []: passed; else the kinds that failed
     grade: dict[str, int] = field(default_factory=dict)
     facts: dict[str, int] = field(default_factory=dict)  # the fact check: kind -> how many (#2064)
+    # How many words taken for names outside the beat sheet there were, by kind (#2741):
+    # pc_form, heard_as, plural, ordinary_word, unknown. Counts only, never the names.
+    names: dict[str, int] = field(default_factory=dict)
     outcome: str = ""  # on the prose call whose draft became the recap
 
 
@@ -89,6 +92,8 @@ def line(event: CallEvent) -> str:
         parts.append(f"{event.words} words")
     if event.checks is not None:
         parts.append("checks: " + (", ".join(event.checks) if event.checks else "passed"))
+    if event.names:
+        parts.append("names: " + ", ".join(f"{k} {n}" for k, n in sorted(event.names.items())))
     if event.stage == "facts":
         found = ", ".join(f"{k} {n}" for k, n in event.facts.items())
         parts.append("flagged: " + (found or "nothing"))

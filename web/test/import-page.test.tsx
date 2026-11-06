@@ -26,6 +26,10 @@ vi.mock("../src/content/import-words", async (original) => {
     get IMPORT_LIVE() {
       return live.on;
     },
+    // These tests drive the older choices (a member or Leave out); the consent step has its own tests (import-confirm).
+    get IMPORT_CONFIRM_LIVE() {
+      return false;
+    },
   };
 });
 
@@ -106,11 +110,7 @@ describe("the page", () => {
     await pick([s1]);
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     await screen.findByRole("heading", { name: w.matchHeading });
-    expect(
-      screen.getByText(
-        /A player agrees in Discord, the same as for a live session/,
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(w.matchLead)).toBeTruthy();
     const ash = await screen.findByLabelText(`Ash: ${w.matchHeading}`);
     fireEvent.change(ash, { target: { value: "2" } });
     expect(
@@ -142,6 +142,15 @@ describe("the page", () => {
       target: { value: "2026-09-21" },
     });
     expect(start.disabled).toBe(false);
+    // A day that hasn't happened yet is refused, however it got there (the picker's max only stops clicks).
+    const picker = screen.getByLabelText(w.dateLabel("session-2.txt")) as HTMLInputElement;
+    expect(picker.max).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    fireEvent.input(picker, { target: { value: "2999-01-01" } });
+    expect(start.disabled).toBe(true);
+    expect(screen.getByText(w.datesInFuture)).toBeTruthy();
+    fireEvent.input(picker, { target: { value: "2026-09-21" } });
+    expect(start.disabled).toBe(false);
+    expect(screen.queryByText(w.datesInFuture)).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: w.moveUp("session-2.txt") }),
     );
@@ -683,6 +692,20 @@ describe("a refusal", () => {
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
     // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
     expect(screen.queryByRole("link", { name: w.signIn })).toBeNull();
+  });
+
+  it("reads the API's future_date refusal as the date step's own sentence (#3491)", async () => {
+    const real = httpApi(
+      "https://api.example.test",
+      (async () =>
+        new Response(JSON.stringify({ detail: "future_date" }), {
+          status: 400,
+        })) as unknown as typeof fetch,
+    ).importPreview!("100.cmp1", []);
+    await expect(real).rejects.toMatchObject({ kind: "future-date" });
+    expect(w.problem["future-date"]).toBe(w.datesInFuture);
+    await refused(new ApiError("future-date"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.datesInFuture);
   });
 
   it("says what to do when every line in a file would be dropped", async () => {

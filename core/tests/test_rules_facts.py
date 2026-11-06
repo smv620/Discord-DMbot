@@ -7,10 +7,9 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-from dmbot.rules import facts
+from dmbot.rules import facts, rule_card
 from dmbot.rules.index import Entry, srd
 from dmbot.sidebar import answer as sidebar
-from dmbot.ui import rule_card
 from tests.sidebar_brevity_cases import reply
 from tests.test_sidebar_answer import FakeAI, campaign, engine, run
 
@@ -129,7 +128,7 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
 
     # file -> (reads of `.text` on a rules entry, why the text alone is right there)
     READS: ClassVar[dict[str, tuple[int, str]]] = {
-        "ui/rule_card.py": (1, "shows the facts on their own line above the text"),
+        "rules/rule_card.py": (1, "shows the facts on their own line above the text"),
         "sidebar/context.py": (1, "sends the facts in front of the text as FACTS:"),
         "sidebar/answer.py": (1, "the fallback's first sentences; a field question uses facts"),
         "recaps/draft.py": (1, "takes lower-case words for a vocabulary (#2013); shows nothing"),

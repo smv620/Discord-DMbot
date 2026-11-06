@@ -1,4 +1,4 @@
-"""📥 Import sessions on ⚙️ Settings and `/dmbot import` (#2154): the way to the website's import
+"""📥 Import sessions on ⚙️ Manage DMbot and `/dmbot import` (#2154): the way to the website's import
 page, and nothing more.
 
 Importing older sessions happens only on the website (owner decision, 2026-10-20); Discord takes no
@@ -108,7 +108,7 @@ class ImportButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:import:{_ID}",
 ):
-    """📥 Import sessions, on ⚙️ Settings. DMs only (the card is theirs); the DM check is made
+    """📥 Import sessions, on ⚙️ Manage DMbot. DMs only (the card is theirs); the DM check is made
     again on every press."""
 
     def __init__(self, campaign_id: str, *, row: int | None = None) -> None:

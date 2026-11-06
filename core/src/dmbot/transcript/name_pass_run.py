@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable, Collection
 from typing import TYPE_CHECKING, Any
 
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.models import name_key
 from dmbot.transcript import name_pass as np
 from dmbot.transcript.respell import contains, respell
 from dmbot.transcript.topics import GAME
@@ -62,17 +63,28 @@ async def run(
     session_id: str,
     *,
     people: Collection[str] = (),
+    known: Collection[str] = (),
     agreed: Collection[int] | None = None,
     now: int,
     forget_before: int,
     dry_run: bool = False,
     game_only: bool = False,
+    consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
 ) -> np.Report:
     texts = await pass_lines(store, guild_id, session_id, agreed, game_only)
     found = np.survey(texts, lookup, people)
     if not found.items:
         return np.Report(guarded=found.guarded)
+    # The words PlotBot was not sure of, and the ones it says are new names, are offered to the DM
+    # as name questions: what the campaign knows already (`known`, its keys) and the people at the
+    # table (`people`) are not, by the same rule as the name scan. Counted here, so the live pass
+    # and dev1's tool print the same numbers (#2655).
+    skip = set(known) | set(people)
     reply = await ask(np.SYSTEM, np.question(found.items))
+    if agreed is not None and consenting is not None:
+        # Consent is read again after the AI call (CLAUDE.md): a person who withdrew while it was
+        # answering has none of their lines written.
+        agreed = set(agreed) & set(await consenting())
     cut = bool(getattr(reply, "cut", False))
     verdict = np.decide(reply if isinstance(reply, str) else str(reply.text), found.items)
     hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]
@@ -92,6 +104,7 @@ async def run(
                 done = await store.respell_names(
                     guild_id, campaign_id, batch, old, decision.name, longer, hidden,
                     now=now, forget_before=forget_before, session_id=session_id,
+                    speakers=agreed, game_only=game_only,
                 )  # fmt: skip
                 forms.update(dict(done.forms))
         if forms:
@@ -106,8 +119,8 @@ async def run(
         log.warning("Name pass: the answer was cut off (%d words asked)", len(found.items))
     return np.Report(
         tuple(fixed),
-        tuple(verdict.unsure),
-        tuple(verdict.new),
+        tuple(c for c in verdict.unsure if name_key(c.heard) not in skip),
+        tuple(c for c in verdict.new if name_key(c.heard) not in skip),
         found.guarded,
         cut,
     )

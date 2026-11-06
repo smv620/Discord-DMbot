@@ -105,7 +105,7 @@ class Names(unittest.TestCase):
         self.assertTrue(text.endswith("more."))
 
     def test_the_table_has_the_field_and_it_starts_at_the_sessions_start(self) -> None:
-        from dmbot.bot import Table
+        from dmbot.table import Table
 
         (field,) = [f for f in fields(Table) if f.name == "clock_shown_at"]
         self.assertIsNotNone(field.default_factory)

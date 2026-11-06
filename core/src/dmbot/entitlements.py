@@ -194,6 +194,12 @@ def _priced(plan: Entitlement | None, now: int) -> str | None:
     return known.name
 
 
+def has_priced_plan(plan: Entitlement | None, now: int) -> bool:
+    """A plan that works and costs money. Not Try It (or its automatic extension, which only
+    lengthens the same plan row), not a grant and not the free list on their own."""
+    return _priced(plan, now) is not None
+
+
 def _paying(plan: Entitlement | None, now: int) -> str | None:
     """The name of a plan that is still being paid for, for "you're still paying for…" under
     free access. Not one that was cancelled (it ends on its own: `_ending`), and not one with
@@ -232,6 +238,12 @@ def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now:
         return Access(
             "free", FREE_ACCESS, None, None, True, recap_audio=True, **_covered(plan, now)
         )
+    return access_without_free_list(plan, grant, now)
+
+
+def access_without_free_list(plan: Entitlement | None, grant: Grant | None, now: int) -> Access:
+    """What the plan and the grant give, as if the person were not on the free list: for a rule
+    that wants the plan's own limits (a grant may raise them; the free list may not)."""
     paid = None
     if plan is not None and plan.usable(now):
         known = plans.load().get(plan.plan)
@@ -307,6 +319,12 @@ async def get(db: Database, user_id: int) -> Entitlement | None:
     """This person's plan, or None if they never had one."""
     async with db.user(user_id) as conn:
         return await read(conn, user_id)
+
+
+async def read_grant(conn: Conn, user_id: int) -> Grant | None:
+    """This person's grant, inside a transaction the caller already has open (as `read`)."""
+    async with _as_person(conn, user_id):
+        return await _read_grant(conn, user_id)
 
 
 async def read(conn: Conn, user_id: int) -> Entitlement | None:

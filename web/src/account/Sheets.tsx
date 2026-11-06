@@ -1,0 +1,470 @@
+/** @jsxImportSource preact */
+// "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554). A player sees their own
+// characters' sheets, links one, forgets it, or types in its class, level and names (#2832); a DM sees every sheet, read only, and can ask for them to
+// be read again. Each choice is queued for the bot and this waits for its answer, showing what DMbot is doing, how
+// long it has run and when it last moved (#2564). The page never fetches a character's link: the bot does. Loaded
+// lazily from the campaign page, and only while SHEETS_LIVE is on.
+import { useEffect, useRef, useState } from "preact/hooks";
+
+import { sheetWords as w } from "../content/sheets-words";
+import { stageWords } from "../content/work-progress";
+import {
+  ApiError,
+  type AccountApi,
+  type CharacterSheets,
+  type SheetCharacter,
+  type SheetChoice,
+} from "./api";
+import {
+  GIVE_UP_MS,
+  LATE_POLL_MS,
+  OFFLINE_AFTER_MS,
+  POLL_MS,
+} from "./settings-timing";
+import { useObservedWait } from "./useObservedWait";
+import { EMPTY_TYPED, checkTyped, type TypedValues } from "./sheets-typed";
+import TypedForm from "./TypedForm";
+import DocumentForm from "./DocumentForm";
+import { checkDocumentLink } from "./sheets-document";
+import WorkProgress from "./WorkProgress";
+
+type Report = { ok: boolean; text: string } | null;
+
+const problem = (kind: string): string =>
+  Object.hasOwn(w.problems, kind)
+    ? (w.problems[kind] as string)
+    : (w.problems.server as string);
+const ENDS = ["not-allowed", "not-found", "signed-out"]; // looking again will not mend these
+// The choice on its way for each campaign, kept here rather than in a copy of the section: switching campaign remounts
+// the section, and A, B, then A must still find A's choice going (#2881). Its value is when it was sent.
+const inFlight = new Map<string, number>();
+const onItsWay = (ref: string): boolean => {
+  const since = inFlight.get(ref);
+  if (since === undefined) return false;
+  if (Date.now() - since < GIVE_UP_MS) return true;
+  inFlight.delete(ref); // older than the give-up time: the page has already said so, so it no longer blocks
+  return false;
+};
+
+/** One copy of the section per campaign: switching campaign remounts it, so nothing from the campaign the page has left
+ * (a choice still going, a stage, a report, a late read) can reach the new one (#2851, #2852). */
+export default function CharacterSheetsSection({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+  return <CharacterSheetsInner key={campaignRef} api={api} campaignRef={campaignRef} />;
+}
+
+function CharacterSheetsInner({
+  api,
+  campaignRef,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+}) {
+  const [data, setData] = useState<CharacterSheets | "loading" | "failed">(
+    "loading",
+  );
+  const [report, setReport] = useState<Report>(null);
+  const [link, setLink] = useState<Record<string, string>>({});
+  // The section is remounted for each campaign (#2851), so every draft here is kept per character only: it starts
+  // empty on a return to a campaign and can never show under another.
+  // What a player has typed in per character, so a re-render does not clear a half-typed form.
+  const [typed, setTyped] = useState<Record<string, TypedValues>>({});
+  const [documents, setDocuments] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState<string | null>(null);
+  // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
+  // changing (not every poll), so a bot that has gone quiet shows as stalled (#2564).
+  const [moved, setMoved] = useState("");
+  const live = useRef(true);
+  // The campaign on screen now. An answer for a campaign the page has left is not drawn (#2845).
+  const current = useRef(campaignRef);
+  current.current = campaignRef;
+  const drawnFor = (asked: string) => live.current && current.current === asked;
+  const seen = useObservedWait(busy, moved);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  // A choice still going from an earlier copy of this section (the page went to another campaign and came back): this
+  // copy shows it as busy until the bot has answered or the give-up time has passed, then frees the controls.
+  useEffect(() => {
+    if (!onItsWay(campaignRef)) return;
+    setBusy(true);
+    setReport({ ok: true, text: w.stillOnItsWay });
+    const timer = setInterval(() => {
+      if (onItsWay(campaignRef)) return;
+      clearInterval(timer);
+      setBusy(false);
+      setStage(null);
+      setReport(null);
+      // The choice may have changed the list, and this copy read it before that: read it again.
+      void read();
+    }, POLL_MS[0]);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignRef]);
+
+  const read = async (): Promise<void> => {
+    if (!api.campaignSheets) return setData("failed");
+    const asked = campaignRef;
+    try {
+      const got = await api.campaignSheets(campaignRef);
+      if (drawnFor(asked)) setData(got);
+    } catch (error) {
+      if (drawnFor(asked)) setData("failed");
+      if (error instanceof ApiError && ENDS.includes(error.kind)) return;
+    }
+  };
+  useEffect(() => {
+    void read();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, campaignRef]);
+
+  // One choice at a time: a press while one is on its way is ignored. The answer is looked for until the bot has
+  // answered or the minute is up; then the page says so and reads the list again, so nothing is tried twice.
+  const send = async (
+    entity: string,
+    choice: SheetChoice,
+    done: string,
+    onDone?: () => void,
+  ): Promise<void> => {
+    if (!api.chooseSheet || !api.sheetAnswer) return;
+    // The busy gate in each control is what usually stops a second press; this check is the backstop for a press that
+    // gets through before the copy has re-rendered.
+    if (onItsWay(campaignRef)) {
+      setReport({ ok: true, text: w.stillOnItsWay });
+      return;
+    }
+    // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
+    const asked = campaignRef;
+    // Set before the send, not after it returns: a copy that mounts during a slow send must already see it going.
+    const started = Date.now();
+    inFlight.set(asked, started);
+    setBusy(true);
+    setReport(null);
+    setMoved("");
+    setStage(w.stage.waiting as string);
+    try {
+      const id = await api.chooseSheet(campaignRef, entity, choice);
+      // Kept going after this copy has left the page: the answer is still waited for, and only drawn while the
+      // campaign is the one on screen (drawnFor). It ends at the answer or the give-up time, whichever comes first.
+      for (let i = 0; ; i += 1) {
+        await new Promise((r) =>
+          setTimeout(
+            r,
+            Date.now() - started > OFFLINE_AFTER_MS
+              ? LATE_POLL_MS
+              : POLL_MS[Math.min(i, POLL_MS.length - 1)],
+          ),
+        );
+        const final = Date.now() - started > GIVE_UP_MS;
+        let got: Awaited<
+          ReturnType<NonNullable<AccountApi["sheetAnswer"]>>
+        > | null = null;
+        try {
+          got = await api.sheetAnswer(campaignRef, id);
+          if (got && drawnFor(asked)) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
+        } catch (error) {
+          if (error instanceof ApiError && ENDS.includes(error.kind))
+            throw error;
+        }
+        if (got?.state === "done") {
+          // onDone clears this section's draft. If the page has left the campaign, this copy is gone and there is
+          // nothing left to clear.
+          onDone?.();
+          if (drawnFor(asked)) {
+            setStage(null);
+            setReport({ ok: true, text: done });
+            await read();
+          }
+          return;
+        }
+        if (got?.state === "failed") throw new ApiError("server");
+        if (got && drawnFor(asked)) setStage(stageWords(w.stage, got.stage));
+        if (final) {
+          if (drawnFor(asked)) {
+            setReport({ ok: false, text: w.quiet });
+            await read();
+          }
+          return;
+        }
+      }
+    } catch (error) {
+      if (drawnFor(asked))
+        setReport({
+          ok: false,
+          text: problem(error instanceof ApiError ? error.kind : "server"),
+        });
+    } finally {
+      // Only this choice's own entry is removed: an old copy finishing late must not clear a newer choice's.
+      if (inFlight.get(asked) === started) inFlight.delete(asked);
+      // Not checked against the campaign on purpose: a new choice cannot start while one is on its way, so this cannot
+      // re-enable a button over a choice that is still going (#2845).
+      if (live.current) {
+        setBusy(false);
+        if (drawnFor(asked)) setStage(null);
+      }
+    }
+  };
+
+  if (data === "loading")
+    return (
+      <p class="muted" role="status">
+        {w.loading}
+      </p>
+    );
+  if (data === "failed")
+    return (
+      <p class="warn" role="alert">
+        {w.failedToLoad}
+      </p>
+    );
+
+  const mine = data.sheets.filter((s) => s.mine);
+  const others = data.sheets.filter((s) => !s.mine);
+  return (
+    <section class="stack" aria-labelledby="sheets-heading" id="sheets">
+      <h3 id="sheets-heading">{w.heading}</h3>
+      <p class="small">{w.lead}</p>
+      <p role="status">{report?.ok ? report.text : ""}</p>
+      <p class="warn small" role="alert">
+        {report && !report.ok ? report.text : ""}
+      </p>
+      {busy && (
+        <WorkProgress
+          stage={stage ?? (w.stage.waiting as string)}
+          startedAt={seen.startedAt}
+          updatedAt={seen.movedAt}
+          state={seen.quiet ? "stalled" : "running"}
+          progressUnknown
+          whatToDo={w.quiet}
+        />
+      )}
+      {data.sheets.length === 0 && <p class="muted">{w.none}</p>}
+      {mine.length > 0 && (
+        <ul class="stack" aria-label={w.heading}>
+          {mine.map((s) => (
+            <li key={s.entityId}>
+              <Character
+                sheet={s}
+                shown={true}
+                busy={busy}
+                linkValue={link[s.entityId] ?? ""}
+                onLinkValue={(v) =>
+                  setLink((now) => ({ ...now, [s.entityId]: v }))
+                }
+                onLink={() =>
+                  void send(
+                    s.entityId,
+                    {
+                      action: "link",
+                      url: (link[s.entityId] ?? "").trim(),
+                    },
+                    w.linkSaved,
+                  )
+                }
+                onForget={() =>
+                  void send(s.entityId, { action: "forget" }, w.forgetDone)
+                }
+                typedValue={typed[s.entityId] ?? EMPTY_TYPED}
+                onTypedValue={(patch) =>
+                  setTyped((now) => ({
+                    ...now,
+                    [s.entityId]: { ...(now[s.entityId] ?? EMPTY_TYPED), ...patch },
+                  }))
+                }
+                onTyped={(choice, done) => void send(s.entityId, choice, done)}
+                onProblem={(text) => setReport({ ok: false, text })}
+                documentValue={documents[s.entityId] ?? ""}
+                onDocumentValue={(v) =>
+                  setDocuments((now) => ({ ...now, [s.entityId]: v }))
+                }
+                onDocument={(url) =>
+                  void send(s.entityId, { action: "document", url }, w.documentSent, () =>
+                    setDocuments((now) => ({ ...now, [s.entityId]: "" })),
+                  )
+                }
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.isDm && (
+        <>
+          <p class="small muted">{w.dmOnly}</p>
+          {others.length > 0 && (
+            <ul class="stack" aria-label={w.heading}>
+              {others.map((s) => (
+                <li key={s.entityId}>
+                  <Character
+                    sheet={s}
+                    shown={false}
+                    busy={busy}
+                    linkValue=""
+                    onLinkValue={() => {}}
+                    onLink={() => {}}
+                    onForget={() => {}}
+                    typedValue={EMPTY_TYPED}
+                    onTypedValue={() => {}}
+                    onTyped={() => {}}
+                    onProblem={() => {}}
+                    documentValue=""
+                    onDocumentValue={() => {}}
+                    onDocument={() => {}}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          <p>
+            <button
+              type="button"
+              class="button secondary"
+              aria-disabled={busy}
+              onClick={() =>
+                !busy &&
+                void send("-", { action: "read_again" }, w.readAgainDone)
+              }
+            >
+              {w.readAgain}
+            </button>
+          </p>
+          <p class="small muted">{w.readAgainNote}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Character({
+  sheet,
+  shown,
+  busy,
+  linkValue,
+  onLinkValue,
+  onLink,
+  onForget,
+  typedValue,
+  onTypedValue,
+  onTyped,
+  onProblem,
+  documentValue,
+  onDocumentValue,
+  onDocument,
+}: {
+  sheet: SheetCharacter;
+  shown: boolean;
+  busy: boolean;
+  linkValue: string;
+  onLinkValue: (value: string) => void;
+  onLink: () => void;
+  onForget: () => void;
+  typedValue: TypedValues;
+  onTypedValue: (patch: Partial<TypedValues>) => void;
+  onTyped: (choice: SheetChoice, done: string) => void;
+  onProblem: (text: string) => void;
+  documentValue: string;
+  onDocumentValue: (value: string) => void;
+  onDocument: (url: string) => void;
+}) {
+  const summary = sheet.summary;
+  const classes =
+    summary?.classes.map((c) => `${c.name} ${c.level}`).join(", ") ?? "";
+  // A press while a choice is on its way is dropped without a word, as the link form does (#2832).
+  const submitTyped = () => {
+    if (busy) return;
+    const checked = checkTyped(typedValue);
+    if (!checked.ok) {
+      onProblem(checked.problem === "class" ? w.typedNeedsClass : w.typedBadLevel);
+      return;
+    }
+    onTyped(
+      {
+        action: "typed",
+        className: checked.className,
+        level: checked.level,
+        species: checked.species,
+        names: checked.names,
+      },
+      w.typedSaved + (sheet.source === "dndbeyond" ? w.typedReplacedLink : ""),
+    );
+  };
+  // The document link is checked here, so a wrong shape is refused with the plain words and nothing is sent (#2843).
+  const submitDocument = () => {
+    if (busy) return;
+    const checked = checkDocumentLink(documentValue);
+    if (!checked.ok) {
+      onProblem(w.documentProblems[checked.problem]);
+      return;
+    }
+    onDocument(checked.url);
+  };
+  return (
+    <div class="stack">
+      <p>
+        <strong>{shown ? w.mine(sheet.name) : sheet.name}</strong>{" "}
+        <span class="small">
+          {summary ? w.summary(summary.level, classes) : w.notYet}
+        </span>
+      </p>
+      {sheet.url && (
+        <p class="small">
+          {w.linkLabel(sheet.name)}: <a href={sheet.url}>{sheet.url}</a>{" "}
+          <span class="muted">{w.onlyYou}</span>
+        </p>
+      )}
+      {shown && (
+        <form
+          class="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && linkValue.trim() !== "") onLink();
+          }}
+        >
+          <label>
+            {w.linkLabel(sheet.name)}
+            <input
+              type="url"
+              value={linkValue}
+              placeholder={w.linkPlaceholder}
+              onInput={(e) => onLinkValue((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          <p class="small muted">{w.linkHelp}</p>
+          <button type="submit" class="button" aria-disabled={busy}>
+            {w.link}
+          </button>
+          {sheet.source && (
+            <button
+              type="button"
+              class="button secondary"
+              aria-disabled={busy}
+              onClick={() => !busy && onForget()}
+            >
+              {w.forget}
+            </button>
+          )}
+        </form>
+      )}
+      {shown && (
+        <TypedForm
+          sheet={sheet}
+          values={typedValue}
+          busy={busy}
+          onValues={onTypedValue}
+          onSubmit={submitTyped}
+        />
+      )}
+      {shown && (
+        <DocumentForm
+          sheet={sheet}
+          value={documentValue}
+          busy={busy}
+          onValue={onDocumentValue}
+          onSubmit={submitDocument}
+        />
+      )}
+    </div>
+  );
+}

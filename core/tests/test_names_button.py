@@ -1,4 +1,4 @@
-"""📇 Names on the DM Bot card and ⚙️ Settings, and the waiting reviews on the names home (#1986)."""
+"""📇 Names on ⚙️ Manage DMbot, and the waiting reviews on the names home (#1986)."""
 
 import dataclasses
 import unittest
@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.dm_screen.dm_bot_buttons import role_view
 from dmbot.dm_screen.dm_bot_panel import Role
 from dmbot.dm_screen.names_button import NamesButton
@@ -30,20 +29,15 @@ def _has_names(view: discord.ui.View) -> bool:
 
 
 class WhoGetsTheButton(unittest.TestCase):
-    def test_only_the_game_master_card_has_it(self) -> None:
-        for role in Role:
+    def test_no_role_has_it_on_the_main_menu_any_more(self) -> None:
+        for role in Role:  # (it waits on ⚙️ Manage DMbot until the website has it, #2986)
             with self.subTest(role):
-                got = _has_names(role_view(role, campaign(), sheets=True))
-                self.assertEqual(got, role is Role.GAME_MASTER)
+                self.assertFalse(_has_names(role_view(role, campaign())))
 
-    def test_it_comes_after_settings(self) -> None:
-        buttons = panel.buttons_for(Role.GAME_MASTER)
-        self.assertEqual(buttons[buttons.index(panel.Button.SETTINGS) + 1], panel.Button.NAMES)
-
-    def test_settings_has_it_for_a_dm_and_for_nobody_else(self) -> None:
-        for viewer, want in ((DM, True), (PLAYER, False), (999, False)):
+    def test_manage_dmbot_no_longer_has_it_the_website_has_names(self) -> None:
+        for viewer in (DM, PLAYER, 999):  # (#2986: the Names page is on the website)
             with self.subTest(viewer):
-                self.assertEqual(_has_names(settings_view(campaign(), None, viewer)), want)
+                self.assertFalse(_has_names(settings_view(campaign(), None, viewer)))
 
 
 class TheButtonCount(unittest.TestCase):
@@ -57,7 +51,7 @@ class TheButtonCount(unittest.TestCase):
                     self.assertLessEqual(len(view.children), DISCORD_MAX_BUTTONS)
 
     def test_the_game_master_card_is_small(self) -> None:
-        view = role_view(Role.GAME_MASTER, campaign(), sheets=True)
+        view = role_view(Role.GAME_MASTER, campaign())
         self.assertLessEqual(len(view.children), DISCORD_MAX_BUTTONS)
 
 

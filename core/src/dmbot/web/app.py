@@ -21,12 +21,13 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -46,16 +47,34 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    game_masters,
+    handover_accept,
+    handover_offer,
+    house_file,
     imports,
+    line_fixes,
+    lore,
+    my_lines,
+    names_smart,
     npc_pages,
     offers,
+    optional_rules,
     past_sessions,
+    pictures,
+    recap_style,
     relationships,
+    report,
+    restores,
+    rule_sharing,
+    see_as,
+    session_notes,
     sessions,
     shared_recaps,
     sharing,
+    sheets,
     strays,
     support,
+    theatre_script,
     timeline,
     tokens,
 )
@@ -85,8 +104,12 @@ from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
-from dmbot.web.name_checks import read_checks
+from dmbot.web.name_checks import read_answer as read_name_answer
+from dmbot.web.name_checks import read_campaign_checks, read_checks
 from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
+from dmbot.web.names_fixed import read_names_fixed
+from dmbot.web.node_summary_route import read_node_summary
 from dmbot.web.payments import (
     NotResumable,
     PaymentError,
@@ -94,8 +117,10 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
-from dmbot.web.plot import answer_issue, read_plot
+from dmbot.web.place_spellings import read_place_spellings
+from dmbot.web.plot import answer_issue, answer_proposal, read_chat, read_plot, send_chat
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
+from dmbot.web.question_counts import read_questions, read_total
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -116,6 +141,7 @@ from dmbot.web.recaps import (
     month_usage,
     read_recap,
     redo_recap,
+    set_beat_present,
     share_recap,
     upload_recap,
 )
@@ -131,6 +157,7 @@ from dmbot.web.support_mail import (
     ticket_of,
     verify_signature,
 )
+from dmbot.web.told_panel import read_told_panel
 
 log = logging.getLogger(__name__)
 
@@ -179,6 +206,8 @@ def create_app(
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
+    smart_names: names_smart.SmartNames | None = None,
+    smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -201,6 +230,10 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    if smart_limit is None:
+        # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
+        # so one person gets 20 a minute, counted by account.
+        smart_limit = RateLimit(60, count=20)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -606,6 +639,11 @@ def create_app(
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
+    handover_limit = RateLimit(  # offers by email, a minute's worth, by account
+        60, count=6, clock=lambda: float(clock())
+    )
+
+    handover_open_limit = RateLimit(60, count=30, clock=lambda: float(clock()))  # by account
 
     async def mail_change_link(user_id: int, new: str, token: str) -> bool:
         """Mail the confirm link to the NEW address. False if it could not be sent."""
@@ -687,11 +725,109 @@ def create_app(
         log.info("An email change was confirmed by user %s", session.user_id)
         return {"address": new}
 
+    @app.post("/me/handover/look")
+    async def me_handover_look(signed: Signed, request: Request) -> dict[str, Any]:
+        """What a hand-over link offers (#2532): `{"token"}`. Changes nothing; every link that
+        opens nothing now answers `{"status": "ended"}`."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        return await handover_accept.look(
+            db, session, (await small_json(request)).get("token"), now=int(clock())
+        )
+
+    @app.post("/me/handover/accept")
+    async def me_handover_accept(signed: Signed, request: Request) -> dict[str, str]:
+        """Accept: `{"token", "serverId"}`. Ownership moves to the signed-in DMbot account."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await small_json(request)
+        outcome, ref = await handover_accept.accept(
+            db,
+            session,
+            body.get("token"),
+            body.get("serverId"),
+            now=int(clock()),
+        )
+        if outcome == "accepted" and ref is not None:
+            return {"status": "accepted", "campaignRef": ref}
+        if outcome == "moving":  # asked for another server; the bot moves it (#2532, slice C)
+            return JSONResponse({"status": "moving"}, status_code=202)  # type: ignore[return-value]
+        refusals = {
+            "ended": (409, "ended"),
+            "no_plan": (402, "not_on_a_paid_plan"),
+            "try_it": (402, "not_on_a_paid_plan"),
+            "no_slot": (402, "no_free_slot"),
+            "owner": (403, "owner"),
+            "bad_server": (422, "bad_server"),
+            "shares_rules": (409, "shares_rules"),
+        }
+        status, code = refusals.get(outcome, (409, "ended"))
+        raise HTTPException(status_code=status, detail=code)
+
+    @app.post("/me/handover/decline")
+    async def me_handover_decline(signed: Signed, request: Request) -> dict[str, str]:
+        """No thanks: `{"token"}`."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_accept.decline(
+            db,
+            session,
+            (await small_json(request)).get("token"),
+        )
+        if outcome != "declined":
+            raise HTTPException(status_code=409, detail="ended")
+        return {"status": "declined"}
+
     @app.delete("/me/email/pending", status_code=204)
     async def cancel_me_email(signed: Signed) -> Response:
         session, _token = signed
         await email_change.cancel(db, session.user_id)
         return Response(status_code=204)
+
+    @app.post("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """The owner offers the campaign to an email address (#2532): `{"email"}`. The answer is
+        "emailed" whatever the address is; it never says whether it has an account or a plan."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the accept page is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        taken = handover_limit.take(str(session.user_id))
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_offer.offer(
+            db,
+            session,
+            mailer,
+            ref,
+            (await small_json(request)).get("email"),
+            site_url=settings.site_url,
+            now=int(clock()),
+        )
+        if outcome is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        if outcome != "emailed":
+            status = {"bad_email": 422, "too_soon": 429, "not_allowed": 409, "email_failed": 502}
+            raise HTTPException(status_code=status[outcome], detail=outcome)
+        return {"status": "emailed"}
+
+    @app.delete("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
+        """The owner takes back the campaign's open offer (#2532)."""
+        session, _token = signed
+        if not settings.handover_email_on or not await handover_offer.withdraw(
+            db, session, ref, now=int(clock())
+        ):
+            raise HTTPException(status_code=404, detail="not_found")
+        return {"status": "withdrawn"}
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:
@@ -725,9 +861,15 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
+        "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
+        "hour_full": (429, "hour_full"),  # thirty talk messages from the campaign this hour (#2545)
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
-        "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "stale": (409, "stale"),  # the recap changed since its plot check (#2122) or scenes (#2577)
+        "bad_present": (422, "bad_present"),  # a name that is not a character here (#2577)
+        # PlotBot is still answering the last message (#2123); a recap being written or sent (#2608)
+        "busy": (409, "busy"),
         "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
@@ -741,7 +883,16 @@ def create_app(
         "too_many_files": (413, "too_many_files"),
         "bad_files": (422, "bad_files"),
         "bad_mapping": (422, "bad_mapping"),
+        "blocked": (409, "blocked"),  # a member who said no cannot be ticked in (#3305)
+        "nothing": (409, "nothing"),  # a speaker with no lines left to remove (#3305)
+        "unknown_speaker": (404, "not_found"),  # a number that is nobody's in this campaign
+        "not_ticked": (409, "not_ticked"),
+        "stale_consent": (
+            409,
+            "stale_consent",
+        ),  # the consent words changed (not the recap's "stale")
         "bad_date": (422, "bad_date"),
+        "future_date": (422, "future_date"),  # a day that has not happened yet (#3483)
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
         "too_many_speakers": (413, "too_many_speakers"),
@@ -755,7 +906,6 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
-        "busy": (409, "busy"),  # being written or sent now (#2608)
         # Adding a recap written by someone at the table (#2609)
         "needs_rights": (409, "needs_rights"),  # the campaign's first: ask once, send `rights`
         "not_a_google_doc": (422, "not_a_google_doc"),
@@ -768,6 +918,18 @@ def create_app(
         "bad_sort": (400, "bad_sort"),
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
+
+    @app.get("/me/questions")
+    async def me_questions(signed: Signed) -> dict[str, Any]:
+        """What waits for the signed-in game master, by campaign and kind (#3438). Counts only."""
+        session, _token = signed
+        return await read_questions(db, session, now=clock())
+
+    @app.get("/me/questions/count")
+    async def me_questions_count(signed: Signed) -> dict[str, int]:
+        """Just the total across the signed-in game master's campaigns, for the account page."""
+        session, _token = signed
+        return await read_total(db, session, now=clock())
 
     @app.get("/me/recaps")
     async def me_recaps(signed: Signed) -> dict[str, Any]:
@@ -791,6 +953,24 @@ def create_app(
         session, _token = signed
         try:
             return await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/recaps/{ref}/beats/{n}/present")
+    async def me_recap_beat_present(
+        ref: str, n: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """Save who was in scene `n` (#2577): `{"present": [names]}`, the whole new list. The DM's
+        alone; the recap's text is not changed (the list is kept on the scene)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        present = body.get("present") if isinstance(body, dict) else None
+        try:
+            return await set_beat_present(db, session, ref, n, present)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -822,6 +1002,10 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    RESTORE_READ_S = 120  # the most a file may take to arrive (a phone on a poor line, 25 MB)
+    restore_reading = asyncio.Semaphore(2)  # files being read and checked at once (#2745)
+    restore_part_limit = RateLimit(3600, count=120)  # up to 24 files a copy, a few copies an hour
+    restore_limit = RateLimit(3600, count=10)  # copies loaded on the page: big, so few (#2745)
     upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
@@ -917,6 +1101,37 @@ def create_app(
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    # The campaign's recaps with names waiting, for the Questions page (#3438): ids and counts only.
+    @app.get("/me/campaigns/{ref}/names-to-check")
+    async def me_campaign_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_campaign_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The new spellings of a place waiting for the DM's yes or no (#3533): ids, the place, the
+    # spelling.
+    @app.get("/me/campaigns/{ref}/place-spellings")
+    async def me_campaign_place_spellings(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_place_spellings(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # Who holds and who was told each secret other name, for "Tell a character" (#3542).
+    @app.get("/me/campaigns/{ref}/told-panel")
+    async def me_campaign_told_panel(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_told_panel(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     # The recap's names to check, answered on its page (#2113): the list, and one answer at a time,
     # queued for the bot to apply like Discord's name check. The DM's words are never logged.
     @app.get("/me/recaps/{ref}/names-to-check")
@@ -942,6 +1157,40 @@ def create_app(
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    # The bot's word on the last answer to one name (#3406): the page follows a split or a group
+    # with it, and reads "not found" as done. The DM's alone, like the list.
+    @app.get("/me/recaps/{ref}/names-to-check/{entity_id}/answer")
+    async def me_recap_name_answer_read(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_name_answer(db, session, ref, entity_id)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # What the name pass fixed in the recap's session (#2684): the DM's alone. The spellings as
+    # heard are transcript words and are never logged.
+    @app.get("/me/recaps/{ref}/names-fixed")
+    async def me_recap_names_fixed(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_names_fixed(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/names-fixed/{fix_id}/undo", status_code=202)
+    async def me_recap_names_fixed_undo(ref: str, fix_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if name_answer_limit.take(f"name-answer:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            answer, poll = await queue_names_fixed_undo_polled(db, session, ref, fix_id)
+            return {"answer": answer, "poll": poll}
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/recaps/{ref}/audio")
     async def me_recap_audio(ref: str, signed: Signed) -> dict[str, Any]:
         """Short-lived links to this recap's narration and music (#1418). Only for a DM of the
@@ -956,6 +1205,19 @@ def create_app(
         if not recap["audio"]["current"]:
             return {"links": {}}
         return {"links": audio_links.links(recap_files, settings.secret_key, settings.api_url, ref)}
+
+    @app.get("/me/recaps/{ref}/audio/remake")
+    async def me_recap_audio_remake(ref: str, signed: Signed) -> dict[str, Any]:
+        """What "Make it again" would do for this recap now (#2630): only the voice (`how: "voice"`,
+        the changed paragraphs of `total`), everything again (`how: "all"` and `why`), nothing
+        (`same`) or a first making (`new`). A DM of the campaign only, like reading the recap."""
+        session, _token = signed
+        try:
+            recap = await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return audio_links.remake(recap_files, ref, recap, voice_tags=settings.recap_voice_tags)
 
     @app.post("/me/recaps/{ref}/audio/again")
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
@@ -985,6 +1247,272 @@ def create_app(
                 raise HTTPException(status_code=403, detail="not_allowed") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    @app.get("/me/campaigns/{ref}/session-notes")
+    async def me_session_notes(ref: str, signed: Signed) -> dict[str, Any]:
+        """Which sessions of a campaign have session notes (#3027), for its DMs alone: newest
+        first, each with its number and how many beats. A player gets `not_allowed`."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes_list(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/session-notes/{at}")
+    async def me_session_notes_of(ref: str, at: int, signed: Signed) -> dict[str, Any]:
+        """One session's notes (#3027): its numbered beats, in words only. DM only; a session
+        with no notes is a 404."""
+        session, _token = signed
+        try:
+            return await session_notes.read_notes(db, session, ref, at)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """One session's after-session report (#2661): the minor contradictions and what the party
+        has wrong, sorted, with the DM's answers. DM only: a player, a peek or another campaign's
+        DM gets 403 `not_allowed`; a time that is not a time, or a campaign that is not there, 404.
+        Nothing here is ever in a players' view."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.read_report(db, session, ref, when)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report_answer(
+        ref: str, at: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The DM's answer to one item of a session's report (#2661): `{id, action}` with action
+        `intended`, `not_a_problem`, `remind`, `fix` or `undo`. Written at once (it records a
+        decision and changes nothing in the story), answered `{answer}`. 409 `gone` when the item is
+        no longer in that session's report or already has an answer; 403 for anyone but the
+        campaign's DM."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        body = await bounded_json(request)
+        try:
+            return await report.answer_item(db, session, ref, when, body)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            if err.code == "gone":
+                raise HTTPException(status_code=409, detail="gone") from None
+            if err.code == "bad_action":
+                raise HTTPException(status_code=400, detail="bad_action") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/campaigns/{ref}/sessions/{at}/report/make", status_code=202)
+    async def me_session_report_make(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """Make the session's report, or make it again (#2661): queued for the bot, answered with
+        the report as it now stands (`making`, with its progress). DM only: 403 `not_allowed`; 404
+        for a session that is not the campaign's; 429 `too_soon` past five a campaign an hour. A
+        report being made right now is not queued again: the same report comes back. 404 while
+        DMBOT_WEB_REPORT_MAKE is off (the bot step that takes the request is #2805)."""
+        session, _token = signed
+        if not settings.report_make_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.make_again(db, session, ref, when)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            if err.code == "too_soon":
+                raise HTTPException(status_code=429, detail="too_soon") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    lore_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "needs_confirm": (409, "needs_confirm"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+        "bad_text": (422, "bad_text"),
+        "too_long": (422, "too_long"),
+        "bad_speaker": (422, "bad_speaker"),
+    }
+
+    @app.post("/me/campaigns/{ref}/lore", status_code=202)
+    async def me_lore_add(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Upload campaign lore (#3022): `{"source": "paste"|"file"|"link", "text"|"link": ...,
+        "choice": "world"|"spoilers"|"smart", "speaker": <character id or "">, "rights": true}`,
+        queued for the bot, answered with its progress. DM only (403); 409 `needs_confirm` until
+        `rights` is true, 409 `busy` while one is open, 429 `too_soon` past five an hour, 422 for
+        words the door refuses. 404 while DMBOT_WEB_LORE is off."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(
+                request, 1_200_000
+            )  # 262,144 characters at up to 4 bytes each
+            return await lore.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/lore")
+    async def me_lore_latest(ref: str, signed: Signed) -> dict[str, Any]:
+        """The newest upload of the last day, or `{"upload": null}`. DM only."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await lore.read(db, session, ref, None)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/lore/{upload}")
+    async def me_lore_read(ref: str, upload: str, signed: Signed) -> dict[str, Any]:
+        """One upload's progress: stage, counts, times; never its words. DM only; 404 if gone."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await lore.read(db, session, ref, upload)
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    house_file_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+        "bad_text": (422, "bad_text"),
+        "too_long": (422, "too_long"),
+    }
+
+    @app.post("/me/campaigns/{ref}/house-file", status_code=202)
+    async def me_house_file_add(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """A request about the campaign's house-rules file (#2985): `{"action": "link"|"unlink"|
+        "check"|"upload", "link": <https address>, "text": <the file's words>}`, queued for the
+        bot, answered with the file's state and the request's progress. DM only (403); 409 `busy`
+        while one is open, 429 `too_soon` past ten an hour, 422 for words the door refuses. 404
+        while DMBOT_WEB_HOUSE_FILE is off."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(request, 900_000)  # 200,000 characters at up to 4 bytes each
+            return await house_file.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/house-file")
+    async def me_house_file_latest(ref: str, signed: Signed) -> dict[str, Any]:
+        """Whether a file is connected, the site it is on and the newest request of the last day.
+        Never the address. DM only."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await house_file.read(db, session, ref, None)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/house-file/{request_id}")
+    async def me_house_file_read(ref: str, request_id: str, signed: Signed) -> dict[str, Any]:
+        """One request's progress: stage, counts, times; never its words. DM only; 404 if gone."""
+        session, _token = signed
+        if not settings.house_file_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await house_file.read(db, session, ref, request_id)
+        except RecapError as err:
+            status, detail = house_file_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    style_refusals = {
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_arg": (422, "bad_arg"),
+        "too_long": (422, "too_long"),
+        "too_soon": (429, "too_soon"),
+        "full": (409, "full"),
+        "empty": (422, "empty"),  # a blank must-have line (#3328)
+        "too_many": (422, "too_many"),  # more than 40 must-have lines
+    }
+
+    @app.get("/me/campaigns/{ref}/recap-style")
+    async def me_recap_style(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's recap style: the DM's example recaps and standing notes, and whether
+        DMbot's own examples are in use (#2985). DM only (403). 404 while DMBOT_WEB_RECAP_STYLE
+        is off."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.read(db, session, ref)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/recap-style", status_code=202)
+    async def me_recap_style_change(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Queue one change to the recap style for the bot: `{"action": "add_example" |
+        "remove_example" | "use_defaults" | "add_note" | "remove_note", "arg": words or an id}`.
+        Answers `{"id": ...}`; poll `GET …/recap-style/{id}`. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(
+                request, 128 * 1024
+            )  # 8,000 characters, all escaped, with room
+            return await recap_style.add(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_save(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Save the campaign's whole must-have list (#3328): `{"lines": [text, ...]}`. Answers
+        `{"id": ...}`; poll `GET …/recap-style/{id}`. An empty list or the defaults word for word
+        brings the defaults back. 422 `empty`, `too_long`, `too_many`, `bad_arg`. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await bounded_json(request, 256 * 1024)  # 40 lines of 300, all escaped
+            return await recap_style.save_musts(db, session, ref, body)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.delete("/me/campaigns/{ref}/recap-style/must-haves", status_code=202)
+    async def me_recap_musts_defaults(ref: str, signed: Signed) -> dict[str, Any]:
+        """Back to DMbot's own must-haves (#3328); answers `{"id": ...}` like a save. DM only."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.use_musts_defaults(db, session, ref)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/recap-style/{action_id}")
+    async def me_recap_style_action(ref: str, action_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one queued change stands: its state, error word and times; never its words."""
+        session, _token = signed
+        if not settings.recap_style_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await recap_style.action(db, session, ref, action_id)
+        except RecapError as err:
+            status, detail = style_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/again")
     async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
@@ -994,11 +1522,26 @@ def create_app(
         session, _token = signed
         if not settings.recaps_on:
             raise HTTPException(status_code=409, detail="not_allowed")
+        empty = False
         try:
             body = await request.json()
         except ValueError:
-            body = None
-        replace = body.get("replace", False) if isinstance(body, dict) else False
+            body, empty = None, True
+        if not empty and not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="bad_action")  # (a retry spends a try)
+        if empty:
+            # No body is the page's "Try again (N left)" (the generic decision route's `again`):
+            # retry the failed or finished draft in place. This path was shadowing it since #2608,
+            # so the retry came back 409 and the page said "Something went wrong" (#3387).
+            try:
+                return await decide(
+                    db, session, ref, "again",
+                    plot_gate=settings.plot_check_on, outside_engine=settings.outside_engine,
+                )  # fmt: skip
+            except RecapError as err:
+                status, detail = recap_refusals.get(err.code, (404, "not_found"))
+                raise HTTPException(status_code=status, detail=detail) from None
+        replace = body.get("replace", False)
         if not isinstance(replace, bool):
             raise HTTPException(status_code=422, detail="bad_action")
         try:
@@ -1053,6 +1596,57 @@ def create_app(
             raise HTTPException(status_code=422, detail="bad_answer")
         try:
             return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_send(
+        ref: str, issue: str, signed: Signed, request: Request
+    ) -> Any:
+        """The DM's message about one issue: `{"text"}`. Queued for PlotBot; poll the GET below.
+        The words are the DM's own: never logged, never in a transcript or on a public link."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        if not settings.plot_check_on:  # nothing would answer: the page says PlotBot is not on
+            raise HTTPException(status_code=409, detail="not_allowed")
+        try:
+            return await send_chat(db, session, ref, issue, text)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_read(ref: str, issue: str, signed: Signed) -> Any:
+        """The DM's own talk about one issue, with PlotBot's proposals and where each stands."""
+        session, _token = signed
+        try:
+            return await read_chat(db, session, ref, issue)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/proposals/{proposal}")
+    async def me_recap_plot_proposal(
+        ref: str, issue: str, proposal: str, signed: Signed, request: Request
+    ) -> Any:
+        """Save or Not that: `{"action": "save" | "decline"}`. Nothing is saved without Save."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_proposal(db, session, ref, issue, proposal, action)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1155,6 +1749,118 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"},
         )
 
+    # The link of a kept picture (#3274): no sign-in for a public one, the code is the key. Per
+    # address. The limit is looser than the recap link's (120 a minute, not 30) because a gallery
+    # page loads up to 24 previews through it. Whatever it answers, the code is never
+    # logged and never sent on to the bucket's address as a referrer.
+    picture_limit = RateLimit(60, count=120)
+
+    def picture_signer() -> Callable[[str], str] | None:
+        if not (
+            settings.pictures_r2_account
+            and settings.pictures_r2_bucket
+            and settings.pictures_r2_key
+            and settings.pictures_r2_secret
+        ):
+            return None
+        return lambda key: pictures.presign_get(
+            account=settings.pictures_r2_account,
+            bucket=settings.pictures_r2_bucket,
+            key=key,
+            access_key=settings.pictures_r2_key,
+            secret_key=settings.pictures_r2_secret,
+            now=datetime.fromtimestamp(clock(), UTC),
+        )
+
+    async def picture_link(code: str, request: Request, preview: bool) -> Response:
+        shared_gate(request, picture_limit)
+        viewer: Session | None = None
+        token = request.cookies.get(session_cookie)
+        if token:
+            viewer = await sessions.find(db, token, now=clock())
+        link = await pictures.resolve_link(db, code, viewer, sign=picture_signer(), preview=preview)
+        headers = {
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+            "Referrer-Policy": "no-referrer",
+        }
+        if link is None:
+            raise HTTPException(status_code=404, detail="not_found", headers=headers)
+        if link.kind == "redirect":
+            return RedirectResponse(link.url, status_code=302, headers=headers)
+        status = {"private": 403, "removed": 410, "not_open": 503}[link.kind]
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            f"<title>Picture</title><p style='font:16px system-ui;padding:2rem'>{link.words}</p>",
+            status_code=status,
+            headers=headers,
+        )
+
+    @app.get("/pictures/{code}")
+    async def picture_open(code: str, request: Request) -> Response:
+        return await picture_link(code, request, preview=False)
+
+    @app.get("/pictures/{code}/preview")
+    async def picture_preview(code: str, request: Request) -> Response:
+        return await picture_link(code, request, preview=True)
+
+    @app.post("/me/campaigns/{ref}/pictures/{code}")
+    async def me_picture_act(ref: str, code: str, signed: Signed, request: Request) -> JSONResponse:
+        """Make a picture private or public, mark it permanent or not, or delete it (#3274):
+        `{"action": "private" | "public" | "permanent" | "unpermanent" | "delete"}`. The change is
+        queued for the bot, which applies it with its locks and limits; this waits a few seconds for
+        its answer. 200 `done`, 202 `waiting` (it will happen), 409 with the reason and the words
+        for a refusal. The poster or a game master; a game master only for permanent."""
+        who, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str) or action not in pictures.ACTIONS:
+            raise HTTPException(status_code=400, detail="bad_action")
+        try:
+            got = await pictures.act_on_picture(db, who, ref, code, action)
+        except pictures.PictureRefused as err:
+            status = {"not_found": 404, "not_allowed": 403, "too_soon": 429, "bad_action": 400}.get(
+                err.code, 409
+            )
+            return JSONResponse({"detail": err.code, "note": err.words}, status_code=status)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+        return JSONResponse(got, status_code=200 if got["state"] == "done" else 202)
+
+    @app.get("/me/campaigns/{ref}/pictures")
+    async def me_pictures(
+        ref: str,
+        signed: Signed,
+        session: str = "",
+        poster: str = "",
+        q: str = "",
+        before: str = "0",
+    ) -> dict[str, Any]:
+        """A campaign's kept pictures for the gallery (#3274), newest first, to any member of its
+        server; `usage` is for the DMs only."""
+        who, _token = signed
+        try:
+            return await pictures.read_pictures(
+                db,
+                who,
+                ref,
+                session_number=session,
+                poster=poster,
+                q=q,
+                before=before,
+                storage_mb=settings.picture_storage_mb,
+                api_url=settings.api_url,
+            )
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.post("/me/recaps/{ref}/share")
     async def me_recap_share(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         """Turn the link of a posted recap on or off, or make a new one: `{"action": "on" |
@@ -1196,9 +1902,17 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
-        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
+        ref: str,
+        signed: Signed,
+        q: str = "",
+        kind: str = "",
+        sort: str = "name",
+        page: str = "1",
+        size: str = str(all_names.PAGE_SIZE),
+        unnamed: str = "",
     ) -> dict[str, Any]:
-        """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
+        """A page of the campaign's names for the All names page (#2294). `unnamed=1` asks for the
+        people the story never named too (#2803; a DM's list only). A DM gets everything; a
         server manager who is not a DM gets no secret names; anyone else gets "not found". A page
         that is not a number is the same plain refusal as one past the end (400 "bad_page"), not
         FastAPI's own 422 (#2376)."""
@@ -1207,10 +1921,47 @@ def create_app(
             # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
             # pages, and must not reach int() (which would raise a 500).
             number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
+            wanted = int(size) if re.fullmatch(r"[0-9]{1,4}", size) else 0  # (0 is refused)
             return await all_names.read_page(
-                db, session, ref, q=q, kind=kind, sort=sort, page=number
+                db,
+                session,
+                ref,
+                q=q,
+                kind=kind,
+                sort=sort,
+                page=number,
+                size=wanted,
+                unnamed=unnamed == "1",
             )
         except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/all-names/search")
+    async def me_campaign_all_names_search(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
+        words, best first, with `capped` (the campaign has more numbers than one search compares).
+        The words are in the body, never the address: an address is written to logs on the way.
+        A DM only ("not found" for anyone else). When the search cannot run (off, no credit,
+        Voyage AI not answering, too slow) the refusal is "not_available" and the page falls back
+        to the letters search."""
+        session, _token = signed
+        taken = smart_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("q") if isinstance(body, dict) else None
+        try:
+            if not isinstance(words, str):
+                raise RecapError("bad_text")
+            return await names_smart.search(db, session, ref, words, smart_names)
+        except RecapError as err:
+            smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
@@ -1235,6 +1986,35 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/see-as")
+    async def me_campaign_web_see_as(
+        ref: str,
+        signed: Signed,
+        viewer: str,
+        center: str | None = None,
+        hops: str = "2",
+    ) -> dict[str, Any]:
+        """The story graph the way the party, a player character or an NPC knows it (#2999): the
+        DM's graph with everything that viewer does not know removed. DM only."""
+        session, _token = signed
+        try:
+            steps = int(hops) if re.fullmatch(r"[0-9]{1,3}", hops) else 0  # (0 is refused)
+            return await see_as.read_see_as(db, session, ref, viewer, center=center, hops=steps)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/viewers")
+    async def me_campaign_web_viewers(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        """The characters a DM may "see as" (#2999), player characters first, searchable by name
+        for a big cast. DM only."""
+        session, _token = signed
+        try:
+            return await see_as.read_viewers(db, session, ref, q)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/overview")
     async def me_campaign_web_overview(
         ref: str, signed: Signed, view: str | None = None
@@ -1245,6 +2025,29 @@ def create_app(
         session, _token = signed
         try:
             return await relationships.read_overview(db, session, ref, view=view)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/characters")
+    async def me_campaign_web_characters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's player characters, for "Who knows this?" (#2935). DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_characters(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/find")
+    async def me_campaign_web_find(
+        ref: str, signed: Signed, q: str = "", view: str | None = None
+    ) -> dict[str, Any]:
+        """The names to offer under the Story graph's "Find a name" box: the names the caller may
+        see in this view, by main name (#2989)."""
+        session, _token = signed
+        try:
+            return {"names": await relationships.find_names(db, session, ref, q, view=view or None)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1264,6 +2067,29 @@ def create_app(
             return await relationships.read_size(
                 db, session, ref, center=center, hops=steps, view=view
             )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/version")
+    async def me_campaign_web_version(ref: str, signed: Signed) -> dict[str, int]:
+        """The Story Graph's version number only: the page reads the whole graph when it changes."""
+        session, _token = signed
+        try:
+            return await relationships.read_version(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/nodes/{node}/summary")
+    async def me_campaign_web_node_summary(
+        ref: str, node: str, signed: Signed, peek: str | None = None
+    ) -> dict[str, Any]:
+        """Who or what one name is, in two or three plain sentences (#3236). Only `text`, `more`,
+        `needsPeek` and `version`; a player's is built from what their characters know."""
+        session, _token = signed
+        try:
+            return await read_node_summary(db, session, ref, node, peek=peek == "1")
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1343,6 +2169,67 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/waiting")
+    async def me_campaign_web_waiting_list(ref: str, signed: Signed) -> dict[str, Any]:
+        """What waits for the DM (#2652): claims, a backstory's connections (with the upload each
+        came from) and "Which Mara?" questions, with the counts. DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_waiting(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/waiting", status_code=202)
+    async def me_campaign_web_waiting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """Answer a connection that waits for the DM, or Keep all from a backstory (#2635,
+        #2642): `{kind: "claim" | "backstory" | "which", action, id, secret}` (a "which" pick
+        also carries `entity`, #2652). Queued for the bot, which
+        makes the very calls the DM screen's buttons make; the answer is polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_waiting(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/readings")
+    async def me_campaign_web_readings(ref: str, signed: Signed) -> dict[str, Any]:
+        """What people believe, waiting for the DM (#2412): theories, reveals, frame-ups and what
+        a spell showed, kept as beliefs and never as facts. DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_readings(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/readings", status_code=202)
+    async def me_campaign_web_readings_answer(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Keep a reading as a belief, say no to it, or undo a keep: `{action: "place" | "no" |
+        "undo", id}`. Queued for the bot; the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_reading(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/answers/{answer}")
     async def me_campaign_web_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
         """Where one of the signed-in DM's own connection edits stands, with the edge as it now
@@ -1360,6 +2247,7 @@ def create_app(
         "bad_action": (400, "bad_action"),
         "bad_name": (400, "bad_name"),
         "bad_kind": (400, "bad_kind"),
+        "bad_player": (400, "bad_player"),
         "too_long": (400, "too_long"),
         "needs_confirm": (400, "needs_confirm"),
         "bad_target": (400, "bad_target"),
@@ -1383,6 +2271,23 @@ def create_app(
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/all-names-confirm", status_code=202)
+    async def me_campaign_names_confirm(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """ "Add all" for the names an upload found, or the Undo of one press (#3207): queued for
+        the bot; the answer is polled at `.../all-names/answers/{answer}` like any name action."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await all_names.queue_confirm(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/all-names/answers/{answer}")
     async def me_campaign_all_names_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
         """Where the signed-in DM's own action stands: waiting, working, done (with the changed
@@ -1399,6 +2304,19 @@ def create_app(
         "not_allowed": (403, "not_allowed"),
         "bad_setting": (400, "bad_setting"),
         "bad_value": (400, "bad_value"),
+        "too_soon": (429, "too_soon"),
+        # A game master change the website can turn away at once (#2768); the bot checks again.
+        "plan_holder": (409, "plan_holder"),
+        "too_many": (409, "too_many"),
+        "unknown_person": (400, "unknown_person"),
+        # Pause is the owner's alone (#2985): a game master who is not the owner is told so.
+        "not_owner": (403, "not_owner"),
+        # Turning the Shared story switch on needs the right-to-use confirmation (#2985).
+        "needs_confirm": (400, "needs_confirm"),
+    }
+
+    line_delete_refusals = {
+        "nothing_to_delete": (409, "nothing_to_delete"),  # no lines of theirs in that server
         "too_soon": (429, "too_soon"),
     }
 
@@ -1444,7 +2362,8 @@ def create_app(
     @app.get("/me/campaigns/{ref}/backup/{backup_id}")
     async def me_campaign_backup_status(ref: str, backup_id: str, signed: Signed) -> dict[str, Any]:
         """Where the person's own copy stands, in the shared progress shape (stage, startedAt,
-        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size` and `expiresAt`."""
+        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size`, `expiresAt` and the
+        transcripts files still to fetch (`parts`: number and size; `partsTotal`)."""
         session, _token = signed
         try:
             return await campaign_backup.status(db, session, ref, backup_id)
@@ -1462,7 +2381,186 @@ def create_app(
         except RecapError as err:
             status, detail = backup_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
-        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        safe = re.sub(r"[^A-Za-z0-9._#-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        return Response(
+            raw,
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    restore_refusals: dict[str, tuple[int, str]] = {
+        "not_found": (404, "not_found"),
+        "too_big": (413, "too_big"),
+        "not_a_backup": (422, "not_a_backup"),
+        "too_many_parts": (422, "too_many_parts"),
+        "bad_part": (422, "bad_part"),
+        "too_soon": (429, "too_soon"),
+        "busy": (409, "busy"),
+        "missing": (409, "missing"),
+        "not_receiving": (409, "not_receiving"),
+        "working": (409, "working"),
+        "plan": (402, "plan"),
+    }
+
+    def restore_refusal(err: RecapError) -> HTTPException:
+        status, detail = restore_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    async def restore_enabled() -> None:
+        """Off until the bot applies and sweeps staged restores (#2746): the routes say 404."""
+        if not settings.web_restore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+
+    async def bounded_bytes(request: Request, limit: int) -> bytes:
+        """A file's bytes, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        return bytes(data)
+
+    async def read_restore_body(request: Request) -> bytes:
+        """A file's bytes with a running cap and a time limit, so one slow sender cannot hold the
+        two places for everyone else."""
+        try:
+            async with asyncio.timeout(RESTORE_READ_S):
+                return await bounded_bytes(request, restores.MAX_BODY_BYTES)
+        except TimeoutError:
+            raise HTTPException(status_code=408, detail="too_slow") from None
+
+    @app.post("/me/restores/{server_id}", status_code=202, dependencies=[Depends(restore_enabled)])
+    async def me_restore_stage(
+        server_id: int, signed: Signed, request: Request, replace: str | None = None
+    ) -> Any:
+        """Load a backup from the website (#2745). The body is the copy itself (the file from
+        `/dmbot backup`, as bytes); `?replace=<server>.<campaign>` swaps one of the person's own
+        campaigns for it, otherwise it becomes a new campaign. Staged for the bot, which checks
+        the plan, the free slot and the rights again when it applies it. Answers `{id, name,
+        partsWanted, state}`. 413 `too_big`, 422 `not_a_backup` or `too_many_parts`, 409 `busy`
+        (with the id of the one pending), 429 `too_soon`, 404 `not_found`."""
+        session, _token = signed
+        if restore_limit.take(f"restore:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        # What the address alone can say (the server has DMbot, the campaign is theirs to replace,
+        # the plan allows it) is judged before any of a body of up to 25 MB is read. At most two
+        # files are read and decoded at once, and a slow sender gives up after RESTORE_READ_S, so
+        # memory and the two places stay free.
+        try:
+            await restores.authorize(
+                db,
+                session,
+                server_id,
+                replace,
+                now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        async with restore_reading:
+            raw = await read_restore_body(request)
+            try:
+                return await restores.stage(db, session, server_id, replace, raw)
+            except RecapError as err:
+                if err.code == "busy" and err.problems:
+                    # Says which one is pending, so the page can show that one instead.
+                    return JSONResponse(
+                        {"error": "busy", "id": err.problems[0].get("id")}, status_code=409
+                    )
+                raise restore_refusal(err) from None
+
+    @app.put(
+        "/me/restores/{server_id}/{restore_id}/parts/{number}",
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_part(
+        server_id: int, restore_id: str, number: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """One transcripts file of a staged copy (numbers 1 to the count it asked for; sending
+        a number again replaces it). Answers `{received}`."""
+        session, _token = signed
+        if restore_part_limit.take(f"restore-part:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        if not any(g.id == server_id for g in session.guilds):
+            raise HTTPException(status_code=404, detail="not_found")
+        async with restore_reading:
+            raw = await read_restore_body(request)
+            try:
+                return await restores.add_part(db, session, server_id, restore_id, number, raw)
+            except RecapError as err:
+                raise restore_refusal(err) from None
+
+    @app.post(
+        "/me/restores/{server_id}/{restore_id}/go",
+        status_code=202,
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_go(
+        server_id: int, restore_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Send the staged copy to the bot. `{"without": true}` restores without the transcripts
+        files (all of them or none, as in Discord). 409 `missing` while files are still to come."""
+        session, _token = signed
+        body = await bounded_json(request)
+        without = bool(body.get("without")) if isinstance(body, dict) else False
+        try:
+            await restores.go(db, session, server_id, restore_id, without=without)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return {"id": restore_id}
+
+    @app.get("/me/restores/{server_id}", dependencies=[Depends(restore_enabled)])
+    async def me_restore_latest(server_id: int, signed: Signed) -> dict[str, Any]:
+        """The person's latest restore in that server (so a closed page finds its way back), in
+        the shape of `GET /me/restores/{server_id}/{id}`. 404 when there is none."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, None)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.get("/me/restores/{server_id}/{restore_id}", dependencies=[Depends(restore_enabled)])
+    async def me_restore_status(server_id: int, restore_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own restore stands, in the shared progress shape (stage, startedAt,
+        updatedAt, serverNow, state, reason, done/total for the writing), with `name`, `replacing`,
+        `partsWanted`, `partsReceived`, `campaign` (once it is made), `leftOut`, `expiresAt`."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.delete(
+        "/me/restores/{server_id}/{restore_id}",
+        status_code=204,
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_cancel(server_id: int, restore_id: str, signed: Signed) -> Response:
+        """Take a restore back before the bot starts it, or clear one that has ended."""
+        session, _token = signed
+        try:
+            await restores.cancel(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return Response(status_code=204)
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}/file/{n}")
+    async def me_campaign_backup_part(ref: str, backup_id: str, n: int, signed: Signed) -> Response:
+        """One transcripts file of the copy (#2772), once; removed as it is sent. The status lists
+        the numbers still waiting. Same care as the main file: no store, a download."""
+        session, _token = signed
+        try:
+            raw, name = await campaign_backup.fetch_part(db, session, ref, backup_id, n)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:160] or "transcripts.dmbot.json.gz"
         return Response(
             raw,
             media_type="application/gzip",
@@ -1483,7 +2581,31 @@ def create_app(
         except ValueError:
             body = None
         try:
-            return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+            return {
+                "answer": await campaign_settings.queue_setting(
+                    db,
+                    session,
+                    ref,
+                    body,
+                    co_dms_on=settings.co_dms_on,
+                    pause_on=settings.pause_on,
+                    story_mode_on=settings.story_mode_on,
+                    invite_on=settings.invite_on,
+                    rulesets_on=settings.rulesets_on,
+                )
+            }
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/optional-rules")
+    async def me_campaign_optional_rules(ref: str, signed: Signed) -> dict[str, Any]:
+        """The optional rules that apply to the campaign's main rules and which are on (#2753), for
+        its DMs only: `{main, rules: [{id, book, name, summary, on, changed}], note, default}`.
+        A player or another campaign's DM gets 403 `not_allowed`; a bad address 404."""
+        session, _token = signed
+        try:
+            return await optional_rules.read_rules(db, session, ref)
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1495,6 +2617,36 @@ def create_app(
         session, _token = signed
         try:
             return await campaign_settings.read_setting(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/game-masters")
+    async def me_campaign_game_masters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's game masters (#2768), for its DMs only: `{max, gameMasters: [{userId,
+        name, plan, you}]}`. A player or another campaign's DM gets 403 `not_allowed`; a bad
+        address 404."""
+        session, _token = signed
+        if not settings.co_dms_on:  # off until the bot can apply a change (#2768)
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await game_masters.read_game_masters(db, session, ref)
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/game-masters/candidates")
+    async def me_campaign_game_master_candidates(
+        ref: str, signed: Signed, q: str = ""
+    ) -> dict[str, Any]:
+        """Who a DM can offer as one more game master, searched by name (#2768): `{people:
+        [{userId, name}]}`, at most 25, the campaign's own people and the server's members who
+        agreed to be recorded. DM only, as the list."""
+        session, _token = signed
+        if not settings.co_dms_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await game_masters.read_candidates(db, session, ref, q)
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1655,6 +2807,65 @@ def create_app(
                 db, session, ref, q, outside=settings.outside_engine,
                 now=int(clock()), enforce_plans=settings.enforce_plans,
             )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get("/me/campaigns/{ref}/imports/consent", dependencies=[Depends(imports_enabled)])
+    async def me_import_consent(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:  # only a DM of the campaign (on a plan that imports) is shown the words
+            await imports.authorize(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+        return imports.consent_words(
+            cloud=settings.outside_engine is not None,
+            company="Deepgram" if settings.outside_engine == "deepgram" else None,
+        )
+
+    @app.get("/me/campaigns/{ref}/speakers", dependencies=[Depends(imports_enabled)])
+    async def me_speakers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await imports.speakers(
+                db, session, ref, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post(
+        "/me/campaigns/{ref}/speakers/{speaker}/remove",
+        status_code=202,
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_remove(ref: str, speaker: str, signed: Signed) -> dict[str, Any]:
+        """Ask the bot to remove one speaker's lines from this campaign (#3305): `{status, id}`,
+        the same id again while one is open. 403 not a DM, 409 `nothing` when they have no lines
+        here, 429 `too_soon`. This campaign only; another campaign's lines of the same person are
+        not touched."""
+        session, _token = signed
+        try:
+            return await imports.remove_speaker(
+                db, session, ref, speaker, outside=settings.outside_engine,
+                now=int(clock()), enforce_plans=settings.enforce_plans,
+            )  # fmt: skip
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.get(
+        "/me/campaigns/{ref}/speakers/removals/{removal_id}",
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_speaker_removal(ref: str, removal_id: str, signed: Signed) -> dict[str, Any]:
+        """Where a removal stands, in the shared progress shape, with counts once done (#3305)."""
+        session, _token = signed
+        try:
+            return await imports.speaker_removal(
+                db, session, ref, removal_id, outside=settings.outside_engine, now=int(clock())
+            )
         except RecapError as err:
             raise import_refusal(err) from None
 
@@ -1822,6 +3033,72 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    line_fix_refusals = {
+        "bad_text": (400, "bad_text"),
+        "same": (400, "same"),
+        "bad_choice": (422, "bad_choice"),
+        "not_yours": (403, "not_yours"),
+        "not_recorded": (403, "not_recorded"),
+        "not_found": (404, "not_found"),
+        "open": (409, "open"),  # this line already has a fix waiting for the DM
+        "many": (409, "many"),  # three of this person's fixes are waiting
+        "no_dm_screen": (409, "no_dm_screen"),
+        "queue_full": (429, "queue_full"),  # twenty waiting in the campaign: a flood guard only
+    }
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/fix", status_code=202)
+    async def me_transcript_fix(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Fix one spoken line (#2858): the line's own speaker suggests new words for the DM to
+        check, a DM of the campaign rewrites any spoken line. `{answer, mode}`; poll
+        `.../fix/{answer}`. 404 while DMBOT_WEB_LINE_FIX is off."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = await small_json(request)
+        speaker, started, text = body.get("speaker"), body.get("startedMs"), body.get("text")
+        if not isinstance(speaker, str) or type(started) is not int or not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            made = await line_fixes.request(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                started,
+                text,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = line_fix_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": made["id"], "mode": made["mode"]}
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/fix/{answer}")
+    async def me_transcript_fix_status(
+        ref: str, number: int, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the person's own fix stands, in the shared progress shape (#2858), with `result`
+        ("sent" or "changed") once it is done."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await line_fixes.status(
+                db,
+                session,
+                ref,
+                number,
+                answer,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(
         ref: str, number: int, signed: Signed, version: str = "cleaned"
@@ -1848,6 +3125,29 @@ def create_app(
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
 
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/script")
+    async def me_transcript_script(ref: str, number: int, signed: Signed) -> Response:
+        """The session's theatrical script as a text file (#3244), for the campaign's DMs only: a
+        player gets 403 `not_allowed`, a session with no script 404 `no_script`."""
+        session, _token = signed
+        try:
+            name, text = await theatre_script.render_script(
+                db, session, ref, number, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            known = {"not_allowed": 403, "no_script": 404, "too_big": 413}
+            code = err.code if err.code in known else "not_found"
+            raise HTTPException(status_code=known.get(code, 404), detail=code) from None
+        return Response(
+            text.encode("utf-8"),
+            media_type="text/plain; charset=utf-8",
+            # `name` is a slug of letters, digits and dashes (theatre_script.file_name).
+            headers={
+                "Content-Disposition": f'attachment; filename="{name}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
     # A campaign's house rules, for anyone in the server (#1521): the table's rules, which every
     # member may read in Discord; no plan rule, as the bot has none for them.
     @app.get("/me/house-rules")
@@ -1857,6 +3157,129 @@ def create_app(
         return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
 
     # The Shared rules page (#2460 part 2): what the person's campaigns publish and follow.
+    @app.get("/me/campaigns/{ref}/rule-sharing")
+    async def me_campaign_rule_sharing(ref: str, signed: Signed) -> dict[str, Any]:
+        """What the campaign shares and follows, the sets it could follow in its server, how many
+        house rules it has and whether its plan lets it share (#2783), for its DMs only: a player
+        or another campaign's DM gets 403 `not_allowed`; a bad address 404. Never a share code."""
+        session, _token = signed
+        try:
+            return await rule_sharing.read_sharing(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    sharing_refusals = {
+        **setting_refusals,
+        "bad_action": (400, "bad_action"),
+        "bad_arg": (400, "bad_arg"),
+        "plan": (403, "plan"),
+        "no_rules": (409, "no_rules"),
+    }
+
+    @app.post("/me/campaigns/{ref}/rule-sharing", status_code=202)
+    async def me_campaign_rule_sharing_do(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One sharing choice of a DM, queued for the bot (#2783): publish the house rules, stop
+        sharing, look at a set by its share code, follow a set shared in the server or by code,
+        stop following. Re-checked by the bot when it applies it. Polled at
+        `.../rule-sharing/answers/{answer}`. 404 while DMBOT_WEB_RULE_SHARING is off."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            answer = await rule_sharing.queue_action(
+                db, session, ref, body, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = sharing_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
+
+    @app.get("/me/campaigns/{ref}/rule-sharing/answers/{answer}")
+    async def me_campaign_rule_sharing_answer(
+        ref: str, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the signed-in DM's own sharing choice stands, in the shared progress shape
+        (#2783)."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await rule_sharing.read_action(db, session, ref, answer, now=clock())
+        except RecapError as err:
+            status, detail = sharing_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    sheet_refusals = {
+        **setting_refusals,
+        "bad_action": (400, "bad_action"),
+        "bad_link": (400, "bad_link"),
+        "bad_document": (400, "bad_document"),
+        "bad_typed": (400, "bad_typed"),
+        "not_allowed": (403, "not_allowed"),
+        "too_soon": (429, "too_soon"),
+        "read_too_soon": (429, "read_too_soon"),
+        "queue_full": (429, "queue_full"),
+    }
+
+    @app.get("/me/campaigns/{ref}/sheets")
+    async def me_campaign_sheets(ref: str, signed: Signed) -> dict[str, Any]:
+        """The character sheets the person may see in a campaign (#2816): a player's own
+        characters' sheets, and for a DM every sheet, read only. A bad address or a server the
+        person isn't in is 404. 404 while DMBOT_WEB_SHEETS is off."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await sheets.read_sheets(db, session, ref)
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/sheets/{entity}", status_code=202)
+    async def me_campaign_sheets_do(
+        ref: str, entity: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One sheet choice, queued for the bot (#2816): a player links their character's D&D
+        Beyond sheet (`link`, with the character's link) or forgets it (`forget`); a DM asks for
+        the campaign's sheets to be read again (`read_again`, on the address's `-`). The bot
+        fetches and applies it, checking again who plays the character. Polled at
+        `.../sheets/answers/{answer}`. 404 while DMBOT_WEB_SHEETS is off."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            answer = await sheets.queue_action(db, session, ref, entity, body)
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
+
+    @app.get("/me/campaigns/{ref}/sheets/answers/{answer}")
+    async def me_campaign_sheets_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in person's own sheet choice stands, in the shared progress shape
+        (#2816)."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await sheets.read_action(db, session, ref, answer, now=clock())
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/shared-rules")
     async def me_shared_rules(signed: Signed) -> dict[str, Any]:
         """The campaigns the person runs that publish or follow a house-rules set or homebrew
@@ -2000,6 +3423,45 @@ def create_app(
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/mine")
+    async def my_lines_counts(server_id: str, signed: Signed) -> dict[str, Any]:
+        """How many lines the signed-in person has in one of their servers, in how many sessions,
+        and their "Delete my transcripts" that is open, if any (#2769). Their own lines only;
+        counts, never words. 404 while DMBOT_WEB_LINE_DELETE is off."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.counts(db, session, server_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/transcripts/{server_id}/delete", status_code=202)
+    async def my_lines_delete(server_id: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to delete the signed-in person's own lines in one of their servers, as
+        Discord's 🗑 button does (#2769): `{id}`, the same one again while a request is open.
+        409 `nothing` when they have no lines there, 429 `too_soon` past ten requests an hour."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"id": await my_lines.request(db, session, server_id)}
+        except RecapError as err:
+            status, detail = line_delete_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/delete/{deletion_id}")
+    async def my_lines_status(server_id: str, deletion_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own deletion stands, in the shared progress shape, with the counts it
+        removed once done (#2769)."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.status(db, session, server_id, deletion_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

@@ -1,0 +1,20 @@
+---
+import QuestionsIsland from "../../account/QuestionsIsland";
+import { questionsPage } from "../../content/questions-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Questions for you"
+  description="Everything DMbot is waiting for you to answer, for each campaign you run."
+  noindex
+>
+  <div class="account">
+    <h1>{questionsPage.heading}</h1>
+    <QuestionsIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your questions. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

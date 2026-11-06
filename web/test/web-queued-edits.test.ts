@@ -1,7 +1,7 @@
-// The relationship web's edits are queued for the bot (202 {answer}) and answered later (#2323,
+// The Story Graph's edits are queued for the bot (202 {answer}) and answered later (#2323,
 // #2405): the real client must wait for the answer, not read the 202 as the result. These run the
 // real client against a fake server.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi } from "../src/account/api";
 
@@ -25,6 +25,11 @@ const REF = "5.abc";
 const EDGE = { a: "x", b: "y", label: "knows", more: 0, links: [] };
 
 describe("a connection edit", () => {
+  // The API's calls load their file on first use (#3010); loaded already, a call needs no real waiting under fake timers.
+  beforeAll(async () => {
+    await import("../src/account/api-names");
+  });
+
   it("is queued, then waits for the bot's answer and gives back the edge", async () => {
     vi.useFakeTimers();
     const { api, seen } = server({

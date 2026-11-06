@@ -117,6 +117,16 @@ ALLOWED: list[tuple[str, str, str]] = [
         "null",
         "a piece of a database question (SQL) shared by two queries, never shown",
     ),
+    (
+        "recaps/notes.py",
+        "null",
+        "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
+    ),
+    (
+        "recaps/plot_talk_run.py",
+        "null",
+        "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
+    ),
     ("rules/index.py", "json", "a file pattern the bot searches for, never shown"),
     (
         "timebot/store.py",

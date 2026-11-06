@@ -1,4 +1,4 @@
-"""⏸️ Pause this campaign / ▶️ Unpause, in ⚙️ Settings → 🗂️ Campaign management (#957;
+"""⏸️ Pause this campaign / ▶️ Unpause, in ⚙️ Manage DMbot → 🗂️ Campaign management (#957;
 docs/PLAN.md, "Plans and pricing"). A paused campaign keeps everything, can't start and
 doesn't count toward its owner's plan. Only the owner has the button: it is their plan's
 room that changes. The other DMs see the state, and are told to ask the owner.

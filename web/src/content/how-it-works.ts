@@ -100,7 +100,7 @@ export const team = {
         {
           icon: "🧠",
           name: "The Story Memory",
-          job: "Everything the campaign remembers: people, places, things, and how they connect. On the website it is the Story graph. It keeps two views: The truth (what the DM knows) and The party (what the players know).",
+          job: "Everything the campaign remembers: people, places, things, and how they connect. On the website it is the Story Graph. It keeps two views: The truth (what the DM knows) and The party (what the players know).",
         },
         {
           icon: "👥",
@@ -212,7 +212,7 @@ export const duringChart: Chart = {
           boxes: [
             b("private", "🛡️ The DM's private screen (rules, time and plot)"),
             b("private", "📩 A private reminder to that player only (FightBot)"),
-            b("chat", "💬 A short answer in the campaign's chat: rules, never secrets (Hey DMbot)"),
+            b("chat", "💬 A short answer in the voice channel's chat: rules, never secrets (Hey DMbot)"),
           ],
         },
         { boxes: [b("dm", "👑 The DM decides")] },

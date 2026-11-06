@@ -1,4 +1,4 @@
-"""Sharing house rules between campaigns (#1190), from ⚙️ Settings: the DM's menu.
+"""Sharing house rules between campaigns (#1190), from ⚙️ Manage DMbot: the DM's menu.
 
 A paid campaign's DMs can share their house rules as a named set; another campaign's DM can
 follow it with a share code. Only rule text travels (never story, names or notes). Following

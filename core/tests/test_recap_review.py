@@ -287,15 +287,16 @@ class TheOutFolder(unittest.IsolatedAsyncioTestCase):
             recap = (folder / rv.RECAP_FILE).read_text(encoding="utf-8")
             report = (folder / rv.REPORT_FILE).read_text(encoding="utf-8")
             page = (folder / rv.PAGE_FILE).read_text(encoding="utf-8")
+            beats = (folder / "beats.json").read_text(encoding="utf-8")
         self.assertEqual(code, 0, said)
-        self.assertEqual(names, ["recap.txt", "report.txt", "review.html"])
+        self.assertEqual(names, ["beats.json", "recap.txt", "report.txt", "review.html"])
         self.assertEqual((folder_mode, modes), (0o700, {0o600}))
         self.assertIn("《Tense》", recap)  # the cues as the AI wrote them
         self.assertIn("Cues (3):", report)
         self.assertIn("Review page:", said)
         self.assertIn('class="cue mood"', page)
         for _, line in fx.LINES:
-            self.assertNotIn(line, recap + report + page)  # the transcript is never saved
+            self.assertNotIn(line, recap + report + page + beats)  # the transcript is never saved
 
     async def test_a_second_run_into_the_same_folder_leaves_nothing_of_the_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -306,7 +307,9 @@ class TheOutFolder(unittest.IsolatedAsyncioTestCase):
             await self.go(folder)
             names = sorted(p.name for p in folder.iterdir())
             recap = (folder / rv.RECAP_FILE).read_text(encoding="utf-8")
-        self.assertEqual(names, ["recap.txt", "report.txt", "review.html"])  # the old sound went
+        self.assertEqual(
+            names, ["beats.json", "recap.txt", "report.txt", "review.html"]
+        )  # the old sound went
         self.assertNotIn("OLD RECAP", recap)
 
     async def test_a_recap_that_failed_its_checks_is_not_saved(self) -> None:

@@ -12,6 +12,7 @@ restore check all ask here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from dmbot import entitlements
 from dmbot.db import Conn
@@ -62,3 +63,33 @@ async def has_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"dmbot.owner_slots:{user_id}",)
     )
     return (await room(conn, user_id, now)).fits(1)
+
+
+HandoverVerdict = Literal["ok", "no_plan", "try_it", "no_slot"]
+
+
+async def handover_verdict(conn: Conn, user_id: int, now: int) -> HandoverVerdict:
+    """May this person receive a campaign handed over by email (#2532; docs/PLAN.md)? Only a
+    priced plan that works, with room for one more: not Try It or its trial extension (the
+    same free plan, made longer). A grant or the free list on top of a priced plan does not
+    matter; on their own they do not qualify."""
+    # The plan row itself, not `effective` (which answers for the free list without reading it): a
+    # free-listed account with a priced plan has one, and it qualifies.
+    plan = await entitlements.read(conn, user_id)
+    if not entitlements.has_priced_plan(plan, now):
+        return "try_it" if plan is not None and plan.usable(now) else "no_plan"
+    # The room is the plan's own (a grant may raise it, the free list may not): a free-listed
+    # account that pays for a one-campaign plan has one campaign's room, not none and not all.
+    grant = await entitlements.read_grant(conn, user_id)
+    access = entitlements.access_without_free_list(plan, grant, now)
+    fits = Room(access.works, access.campaign_cap, await owned_count(conn, user_id)).fits(1)
+    return "ok" if fits else "no_slot"
+
+
+async def has_paid_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
+    """The campaign store's free-slot check for an accepted email offer: `handover_verdict`, with
+    the same one-at-a-time lock as `has_room_for_one_more`."""
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"dmbot.owner_slots:{user_id}",)
+    )
+    return await handover_verdict(conn, user_id, now) == "ok"

@@ -69,6 +69,14 @@ class Settings:
     # What the recap writer reads (#2590): the beat sheet (default) or the cleaned transcript with
     # PlotBot's guide. Apart from the provider, so each change is tested on its own.
     recap_writer_reads: str = "beats"
+    # The careful tier's last editing pass over each finished recap (#2952). On unless
+    # RECAP_FINAL_READ is 0.
+    recap_final_read: bool = True
+    # The split of a session's opening through the three-pass structured-output adapter (#2714):
+    # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
+    recap_structured_output_split: bool = False
+    # The same for the beat sheet. Off unless RECAP_STRUCTURED_OUTPUT_BEATS.
+    recap_structured_output_beats: bool = False
     gemini_key: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
@@ -86,15 +94,56 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    # The second question of each batch (#2412): theories, reveals, frame-ups and divinations,
+    # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
+    # extractor does, inside the same call limits.
+    story_readings_on: bool = False
+    # A third question of each batch (#3175 slice 4): deeds the party did, proposed for the DM to
+    # record. Off until the extractor is; it only runs when the extractor does, inside the same
+    # call limits. Nothing is stored yet while storing is not built.
+    story_deeds_on: bool = False
+    # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
+    # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
+    story_family_only: bool = False
+    # The theatrical transcript (#3244, stage 1 of #3242): a DM-only working copy of a session with
+    # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
+    # is asked of the AI and the session is exactly as it was.
+    theatre_on: bool = False
+    # The relationship reader beside the old one (#3244), on the test server only.
+    rel_read_on: bool = False
+    # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
+    # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
+    # extractor's plan check and call limits (at most a few calls a session).
+    story_contradictions_on: bool = False
+    # After a session, the report for the website (#2661): PlotBot grades the minor contradictions
+    # and sorts what the party has wrong, and the DM answers on the page. Same gates as the grades.
+    story_report_on: bool = False
     # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
     # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
     # most images one campaign has described in a day (each counts toward its AI use); past it an
     # image is noted as not described.
     table_images_on: bool = False
     table_images_per_day: int = 40
+    # Kept pictures (#3274): a picture posted by someone who agreed under consent version 7 is kept
+    # with the campaign in a private Cloudflare R2 bucket and gets a link. Off until the consent
+    # wording is live; with it off nothing is stored. `picture_storage_mb` is what one campaign may
+    # keep (a setting so it can change later; the oldest non-permanent pictures go first, and
+    # permanent ones may total 80% of it). The R2 keys come from `.env` and are never logged.
+    pictures_kept: bool = False
+    picture_storage_mb: int = 500
+    r2_account_id: str = ""
+    r2_access_key: str = field(default="", repr=False)
+    r2_secret_key: str = field(default="", repr=False)
+    r2_bucket: str = ""
+    # Hand-over by email (#2532): off until slices B to D and the accept page are live. While it is
+    # off, 🤝 Hand over keeps its member picker and the email route answers 404.
+    handover_email_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # PlotBot's check of each recap before it is accepted (#2122); needs recaps on. Off by default.
     plot_check_on: bool = False
+    # "Questions for you" (#3435): the private notices and reminders. Off by default until the
+    # Questions message they point to is live; the counts for the website are written either way.
+    questions_on: bool = False
     # Importing older sessions (#2105): off for everyone until dev1 has checked a real import,
     # and on for the listed servers alone (#2259). The web API reads the same two settings.
     imports_on: bool = False
@@ -107,6 +156,13 @@ class Settings:
     elevenlabs_key: str = field(default="", repr=False)
     elevenlabs_voice_id: str = ""
     elevenlabs_speech_model: str = "eleven_v3"  # the voice model; dev1 compares models by ear
+    # Meaning search (#2664): the campaign's own text turned into numbers by Voyage AI, so PlotBot's
+    # starting points find what a note means, not only its words. Off until the switch is 1 and a
+    # key is set (scripts/set-key VOYAGE_API_KEY, by dev1 once the privacy page names Voyage).
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
     # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
     # pauses, so dev1 can compare the two narrations by ear.
@@ -115,8 +171,19 @@ class Settings:
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
 
+    @property
+    def pictures_ready(self) -> bool:
+        """Kept pictures are on and the bucket is fully set up (#3274)."""
+        return self.pictures_kept and all(
+            (self.r2_account_id, self.r2_access_key, self.r2_secret_key, self.r2_bucket)
+        )
+
     def imports_enabled_for(self, guild_id: int) -> bool:
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def recap_audio_on(self) -> bool:
@@ -132,6 +199,8 @@ class Settings:
     continuity: Levels = field(default_factory=Levels)
     # A story thread (#1662) is stalled when this many sessions have started since it last moved.
     thread_stalled_sessions: int = 3
+    # Settle open pronouns in a lore read with the AI (#2790); off until the calibration run.
+    who_is_it: bool = False
     # The most characters of story the recall service hands one helper (#1350).
     recall_budget: int = DEFAULT_BUDGET
     # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
@@ -231,6 +300,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             f'DMBOT_THREAD_STALLED_SESSIONS must be a whole number from 1 up, got "{stalled_raw}".'
         )
+    who_raw = (get("DMBOT_WHO_IS_IT") or "0").lower()
+    if who_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_WHO_IS_IT must be 1 (on) or 0 (off), got "' + who_raw + '".')
     recall_budget = _recall_budget(get)
     sidebar_recall_raw = (get("DMBOT_SIDEBAR_RECALL") or "1").lower()
     if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -283,6 +355,37 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
         )
+    family_raw = (get("DMBOT_STORY_FAMILY_ONLY") or "0").lower()
+    if family_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_FAMILY_ONLY must be 1 (on) or 0 (off), got "' + family_raw + '".'
+        )
+    theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
+    if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
+    rel_read_raw = (get("DMBOT_REL_READ_ON") or "0").lower()
+    if rel_read_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_REL_READ_ON must be 1 (on) or 0 (off), got "' + rel_read_raw + '".'
+        )
+    readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
+    if readings_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
+        )
+    deeds_raw = (get("DMBOT_STORY_DEEDS") or "0").lower()
+    if deeds_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_DEEDS must be 1 (on) or 0 (off), got "' + deeds_raw + '".')
+    contradictions_raw = (get("DMBOT_STORY_CONTRADICTIONS") or "0").lower()
+    if contradictions_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_CONTRADICTIONS must be 1 (on) or 0 (off), got "'
+            + contradictions_raw
+            + '".'
+        )
+    report_raw = (get("DMBOT_STORY_REPORT") or "0").lower()
+    if report_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_STORY_REPORT must be 1 (on) or 0 (off), got "{report_raw}".')
     extractor_tier = (get("DMBOT_STORY_EXTRACTOR_TIER") or "fast").lower()
     if extractor_tier not in ("fast", "careful", "deep"):
         raise ConfigError(
@@ -317,6 +420,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "' + handover_email_raw + '".'
+        )
     imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
     if imports_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_IMPORTS must be 1 (on) or 0 (off), got "' + imports_raw + '".')
@@ -350,6 +458,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     speech_model = get("ELEVENLABS_SPEECH_MODEL") or "eleven_v3"
     if not (speech_model.isascii() and speech_model.replace("_", "").replace(".", "").isalnum()):
         raise ConfigError("ELEVENLABS_SPEECH_MODEL must be a model id such as eleven_v3.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{name} must be a model name such as {default}.")
+        voyage_models.append(model)
     images_raw = (get("DMBOT_TABLE_IMAGES") or "0").lower()
     if images_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_TABLE_IMAGES must be 1 (on) or 0 (off), got "' + images_raw + '".')
@@ -360,6 +482,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_TABLE_IMAGES_PER_DAY must be a whole number from 1 to 1000, got "'
             + images_day_raw
+            + '".'
+        )
+    kept_raw = (get("DMBOT_PICTURES_KEPT") or "0").lower()
+    if kept_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_PICTURES_KEPT must be 1 (on) or 0 (off), got "' + kept_raw + '".')
+    storage_raw = get("DMBOT_PICTURE_STORAGE_MB") or "500"
+    if not (storage_raw.isascii() and storage_raw.isdigit()) or not (
+        1 <= int(storage_raw) <= 1_000_000
+    ):
+        raise ConfigError(
+            'DMBOT_PICTURE_STORAGE_MB must be a whole number of megabytes from 1 to 1000000, got "'
+            + storage_raw
             + '".'
         )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
@@ -405,6 +539,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_model_notice=ai_notice,
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
+        recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
+        recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
+        recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
@@ -414,14 +551,33 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        story_readings_on=readings_raw in ("1", "true", "on"),
+        story_deeds_on=deeds_raw in ("1", "true", "on"),
+        story_family_only=family_raw in ("1", "true", "on"),
+        theatre_on=theatre_raw in ("1", "true", "on"),
+        rel_read_on=rel_read_raw in ("1", "true", "on"),
+        story_contradictions_on=contradictions_raw in ("1", "true", "on"),
+        story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
+        pictures_kept=kept_raw in ("1", "true", "on"),
+        picture_storage_mb=int(storage_raw),
+        r2_account_id=get("R2_ACCOUNT_ID"),
+        r2_access_key=get("R2_ACCESS_KEY_ID"),
+        r2_secret_key=get("R2_SECRET_ACCESS_KEY"),
+        r2_bucket=get("R2_BUCKET"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
+        questions_on=(get("DMBOT_QUESTIONS") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         time_suggestions=suggestions_raw in ("1", "true", "on"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,
@@ -435,6 +591,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cleaner_rank_max=int(rank_raw),
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
+        who_is_it=who_raw in ("1", "true", "on"),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
         live_heads_up=live_raw in ("1", "true", "on"),
@@ -520,6 +677,27 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def _on_off(get: Callable[[str], str], name: str) -> bool:
+    """A switch that is off unless set: 1/on/true or 0/off/false (also when empty). Anything else
+    is an error, so a typo never silently leaves a switch where it was."""
+    raw = _unquote(get(name)).lower()
+    if raw in ("", "0", "off", "false"):
+        return False
+    if raw in ("1", "on", "true"):
+        return True
+    raise ConfigError(f"{name} in .env must be 1 (on) or 0 (off).")
+
+
+def _on_unless_off(get: Callable[[str], str], name: str) -> bool:
+    """A switch that is on unless turned off: 0/off/false. Empty is on; anything else errors."""
+    raw = _unquote(get(name)).lower()
+    if raw in ("", "1", "on", "true"):
+        return True
+    if raw in ("0", "off", "false"):
+        return False
+    raise ConfigError(f"{name} in .env must be 1 (on) or 0 (off).")
 
 
 def _recap_writer_reads(get: Callable[[str], str]) -> str:

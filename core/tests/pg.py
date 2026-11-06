@@ -314,7 +314,21 @@ def _forget(schema: str) -> None:
     _BUILT.pop(schema, None)
     with psycopg.connect(TEST_URL, autocommit=True) as conn:
         conn.execute("SET lock_timeout = '10s'")
-        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+        drop = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        try:
+            conn.execute(drop)
+        except psycopg.errors.OutOfMemory:  # out of lock slots (#3030): the tables, one at a time
+            rows = conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = %s ORDER BY tablename",
+                (schema,),
+            ).fetchall()
+            for (name,) in rows:
+                conn.execute(
+                    sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                        sql.Identifier(schema), sql.Identifier(name)
+                    )
+                )
+            conn.execute(drop)
 
 
 WHY = ""  # why the last schema was not reused (a test failure message needs to say)
@@ -359,6 +373,15 @@ def _drop_reusable() -> None:
         with contextlib.suppress(Exception):
             _forget(schema)
     _FREE.clear()
+
+
+def sender_pids(*dbs: Database) -> set[int]:
+    """The backend pids of the connections these test pools hold. NOTIFY is cluster-wide, and
+    every worker of a parallel run shares the one database server: a test that LISTENs on a channel
+    hears the same-looking notices (same server id, same first offer number) that other workers'
+    tests send from their own schemas. A notice carries its sender's pid, so a test keeps only the
+    ones sent by its own pools (read this once the work is done, when its connections are idle)."""
+    return {conn.info.backend_pid for db in dbs for conn in db._pool._pool}
 
 
 class DatabaseTest(unittest.IsolatedAsyncioTestCase):

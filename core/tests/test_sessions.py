@@ -26,6 +26,7 @@ from dmbot.sessions import SessionStore
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.ui.logic import NO_CAMPAIGN_ACCESS
+from tests.asking import live_on_screen
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN, OTHER_TEXT, TRANSCRIPT = 1, 2, 3, 4, 5
@@ -80,6 +81,7 @@ class SessionTests(DatabaseTest):
             self.campaigns,
             self.sessions,
         )
+        live_on_screen(self.bot)  # live questions are asked on the screen here (#3210)
         self.ears = FakeEarsConnection()
         self.bot.ears._active = self.ears  # type: ignore[assignment]
 
@@ -370,7 +372,7 @@ class SaveAndResume(SessionTests):
         await self.consent.grant(GUILD, PLAYER)
         await self.consent.grant(GUILD, DM)
         await self.start()
-        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        self.bot.tables[GUILD].chat_channel_id = 555
         done = await self.bot.pause_recording(GUILD, PLAYER, 15)
         assert done.ok
         saved = await self.sessions.get(GUILD)
@@ -730,7 +732,7 @@ class SaveAndResume(SessionTests):
             self.posts.clear()
             await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         self.assertFalse(any("listening again" in t for t in self.screen_posts()))
-        # #553 (a decision): no new ⚙️ Settings message on a quiet resume either; the
+        # #553 (a decision): no new ⚙️ Manage DMbot message on a quiet resume either; the
         # help card is refreshed at the next /dmbot start. Don't "fix" this into a
         # card re-post on every restart.
         posted = [ids for _, ids in each[-1]]  # the second, quick one (the first is announced)
@@ -1310,7 +1312,7 @@ class SaveAndResume(SessionTests):
         self.assertNotIn(GUILD, self.bot.tables)
 
     async def test_settings_change_how_much_dmbot_says_mid_session(self) -> None:
-        # #515: ⚙️ Settings → Quiet saves it and the running session follows at once.
+        # #515: ⚙️ Manage DMbot → Quiet saves it and the running session follows at once.
         from dmbot.dm_screen.settings import LevelButton
 
         await self.start()
@@ -2513,8 +2515,13 @@ class SaveAndResume(SessionTests):
         table = await self.filtered("1 other")
         table.topics.window_lines, table.topics.window_s = 6, 0.01
         self.said(table, "my boss called again")
-        await asyncio.sleep(0.05)
-        await self.settle()
+        # wait for the window to close rather than a fixed 50 ms: on a loaded runner the 10 ms
+        # timer can fire late, and the question is then asked a moment after the sleep ended
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            await self.settle()
+            if self.ai_calls:
+                break
         self.assertEqual(len(self.ai_calls), 1)
         self.assertEqual(table.heard, [])
 
@@ -3478,7 +3485,7 @@ class SaveAndResume(SessionTests):
         with self.assertRaises(RuntimeError):
             await first
         self.assertTrue(table.questions.is_open(asked.id))  # open again, buttons still work
-        self.assertIsNotNone(table.question_message)
+        self.assertTrue(table.question_messages)
 
     async def test_someone_who_stops_while_the_answer_saves_stays_hidden(self) -> None:
         table, message, _, memory = await self.asked_about_marin()

@@ -72,7 +72,7 @@ describe("the Shared rules page", () => {
     expect(screen.getAllByText(text.changeRules).length).toBe(2); // the shared set and the followed set
     expect(screen.getAllByText(text.changePacks).length).toBe(2);
     expect(screen.queryAllByRole("button")).toEqual([]);
-    expect(text.changePacks).toContain("⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs");
+    expect(text.changePacks).toContain("⚙️ Manage DMbot → 📚 Shared rules → 📦 Homebrew packs");
   });
 
   it("never shows a share code", async () => {
@@ -85,7 +85,7 @@ describe("the Shared rules page", () => {
   it("says plainly when there is nothing, and how to start", async () => {
     page({ ...mockApi("table"), sharedRules: async () => [] } as AccountApi);
     expect(await screen.findByText(text.empty)).toBeTruthy();
-    expect(text.empty).toContain("⚙️ Settings");
+    expect(text.empty).toContain("⚙️ Manage DMbot");
   });
 
   it("sends a signed-out person to sign in, and says a failure in words", async () => {

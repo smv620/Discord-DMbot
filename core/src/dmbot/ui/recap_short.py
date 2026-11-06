@@ -22,6 +22,7 @@ GONE = "I can't find this campaign any more. Nothing was changed."
 EXPIRED = "Expired: a newer session started."
 EXPIRED_TELL = "This question has expired: a newer session has started. Nothing was changed."
 NOT_NOW = "No recap was written. Recaps are off for this campaign, or not in your plan."
+NO_SCREEN = "Set up the DM screen first (in the server, press ⚙️ Manage DMbot), then try again."
 WRITING = "Writing the recap."
 ALREADY = "Already being written."
 HELD = "Waiting for your answers about names."
@@ -61,11 +62,15 @@ class ShortRecapButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
-        guild = interaction.guild
+        # In the DM's private chat a press has no server (#3210): the database says where the
+        # campaign is.
+        guild_id = interaction.guild.id if interaction.guild is not None else None
+        if guild_id is None:
+            guild_id = await bot.campaigns.guild_of(self.campaign_id)
         campaign = (
-            await bot.campaigns.get(guild.id, self.campaign_id) if guild is not None else None
+            await bot.campaigns.get(guild_id, self.campaign_id) if guild_id is not None else None
         )
-        if guild is None or campaign is None:
+        if campaign is None:
             await _tell(interaction, GONE)
             return
         # Only a DM of this campaign, on every press.
@@ -78,7 +83,7 @@ class ShortRecapButton(
         key = ask_key(self.campaign_id, self.session_at)
         message = interaction.message
         bot.decision_lines.remember_pressed(key, interaction)
-        if await bot.recap_short_expired(guild.id, campaign.id, self.session_at):
+        if await bot.recap_short_expired(campaign.guild_id, campaign.id, self.session_at):
             await self._close(interaction, EXPIRED)
             await _tell(interaction, EXPIRED_TELL)
             await bot.decision_lines.close(
@@ -86,18 +91,26 @@ class ShortRecapButton(
             )
             return
         if self.act == "go":
-            if interaction.channel_id is None:
-                await _tell(interaction, NOT_NOW)
+            # The DM screen, where the recap's own notes go; in a private chat this channel is the
+            # chat, so it is the campaign's, not the press's.
+            channel_id = campaign.dm_screen_channel_id or (
+                interaction.channel_id if interaction.guild is not None else None
+            )
+            if channel_id is None:
+                await _tell(interaction, NO_SCREEN)
                 return
             result = await bot.recap_write_anyway(
-                guild.id, campaign.id, self.session_at, interaction.channel_id
+                campaign.guild_id, campaign.id, self.session_at, channel_id
             )
             if result == "refused":
                 await _tell(interaction, NOT_NOW)  # the buttons stay: the DM can try again
                 return
             outcome = {"queued": WRITING, "held": HELD}.get(result, ALREADY)
         else:
-            outcome = NONE_WRITTEN  # nothing is written and nothing is counted
+            # Nothing is written and nothing is counted, so nothing is recorded either: two DMs
+            # pressing "No recap" and "Write a recap" at the same moment end with a recap. The
+            # DM can delete it; recording a "no" would need a stored row, for little gain.
+            outcome = NONE_WRITTEN
         await self._close(interaction, outcome)
         await bot.decision_lines.close(
             key, outcome, pressed_id=message.id if message is not None else None

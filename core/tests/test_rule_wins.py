@@ -42,6 +42,21 @@ class TheStore(DatabaseTest):
         self.assertEqual(await self.wins.winner_of(GUILD_A, self.one.id, OWN, SET_RULE), SET_RULE)
         self.assertEqual(len(await self.wins.all(GUILD_A, self.one.id)), 2)
 
+    async def test_the_database_refuses_a_pair_stored_larger_side_first(self) -> None:
+        """The pair is kept once, smaller side first (#2284): a row the other way round, or a
+        rule against itself, is refused by the table itself, not only by the store."""
+        import psycopg
+
+        sql = (
+            "INSERT INTO house_rule_wins (guild_id, campaign_id, a_set, a_number, b_set,"
+            " b_number, winner, decided_by, decided_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, 'a', 1, 1)"
+        )
+        for sides in (("", 2, "", 1), ("Red Table", 1, "", 1), ("", 1, "", 1)):
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(sql, (GUILD_A, self.one.id, *sides))
+
     async def test_a_rule_cannot_win_over_itself(self) -> None:
         with self.assertRaises(ValueError):
             await self.wins.record(GUILD_A, self.one.id, winner=OWN, loser=OWN, by=DM)

@@ -8,6 +8,7 @@
 // for a campaign). The API decides everything; this only sends what the DM chose and says what came back.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
 import { RECAP_MAKE_LIVE, makeWords as w } from "../content/recap-make";
 import { sessionDay } from "../content/recaps";
 import { stageWords, workWords } from "../content/work-progress";
@@ -21,13 +22,20 @@ export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
 /** What was chosen when the API asked its one question. */
-type Asking = { ref: string; what: "again" | "replace"; kept: boolean; input?: AddRecapInput } | null;
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; finished?: boolean | undefined; lists?: "yes" | "maybe" | undefined; checking?: boolean | undefined; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
 }
 // An unknown kind gets the general sentence, never the code itself.
 const say = (error: unknown): string => w.errors[kindOf(error)] ?? w.errors["server"] ?? "";
+
+/** The question: a recap that is not finished (it failed) has nothing to keep, so the words do not talk about an old one. */
+function askWords(q: NonNullable<Asking>): string {
+  if (q.what === "again") return q.finished === false ? w.askAgainUnfinished : w.askAgain(q.kept);
+  if (q.finished === false) return w.askReplaceUnfinished;
+  return q.kept ? w.askReplaceExisting : w.askReplaceDraft;
+}
 
 function length(seconds: number | null | undefined): string {
   if (!seconds) return "";
@@ -54,6 +62,9 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  // The session whose replacement the DM already said yes to: the rights box can come after that yes, and
+  // the form must not ask the question a second time.
+  const confirmedReplace = useRef<string | null>(null);
 
   const load = async (): Promise<void> => {
     if (!api.pastSessions) return setList("hidden");
@@ -76,6 +87,45 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       </p>
     );
 
+  /** Whether the recap has "who was there" lists the DM saved: "yes", "maybe" when it could not be read, else nothing. */
+  const savedLists = async (s: PastSession): Promise<"yes" | "maybe" | undefined> => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) return undefined;
+    try {
+      return (await api.recap(s.ref)).beats?.some((b) => b.saved) ? "yes" : undefined;
+    } catch {
+      return "maybe";
+    }
+  };
+
+  /** Show the question at once. A rewrite or a replacement clears the "who was there" lists the DM saved, so the
+   * buttons wait (a moment) until the recap has been looked at and the question can say so (#2684). */
+  const ask = (next: NonNullable<Asking>, s: PastSession): void => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) {
+      setAsking(next);
+      return;
+    }
+    setAsking({ ...next, checking: true });
+    void savedLists(s).then((lists) => setAsking((now) => (now && now.ref === next.ref ? { ...now, lists, checking: false } : now)));
+  };
+
+  /** Whether the question comes before anything is sent (#2764): the session has a recap of any kind, even a
+   * failed one that the API would replace without a word, and its scenes have saved "who was there" lists.
+   * Matches the question Discord asks (#2763). A finished recap is also asked about by the API itself. */
+  const listsFirst = async (s: PastSession, next: NonNullable<Asking>): Promise<boolean> => {
+    if (!s.recap || !PRESENT_PER_SCENE_LIVE || !api.recap) return false;
+    const lists = await savedLists(s);
+    if (!lists) return false;
+    setAsking({ ...next, finished: s.recap.state !== "failed", lists, checking: false });
+    return true;
+  };
+
+  /** The yes to a replacement lives only as long as the form it was said in: closing the form forgets it, so a later
+   * Add on the same session asks again. */
+  const closeForm = (): void => {
+    confirmedReplace.current = null;
+    setAdding(null);
+  };
+
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
   const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
@@ -83,12 +133,13 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     setBusy(true);
     setProblem("");
     try {
+      if (!replace && (await listsFirst(s, { ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") }))) return;
       const got = await api.makeRecap(s.ref, replace);
       setAsking(null);
       setRunning({ at: s.sessionAt, ref: got.ref });
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") });
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") }, s);
       else if (kind === "busy") await load(); // the list then shows it being made and watches it
       else {
         setAsking(null);
@@ -107,16 +158,25 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     setBusy(true);
     setProblem("");
     try {
-      const got = await api.addRecap(campaignRef, input);
+      if (input.replace) confirmedReplace.current = s.ref;
+      const sure = confirmedReplace.current === s.ref;
+      const kept = !!(s.recap?.approved || s.recap?.status === "posted");
+      if (!sure && (await listsFirst(s, { ref: s.ref, what: "replace", kept, input }))) return false;
+      const got = await api.addRecap(campaignRef, sure ? { ...input, replace: true } : input);
+      confirmedReplace.current = null;
       setAsking(null);
       setAdding(null);
       setRunning({ at: s.sessionAt, ref: got.ref });
       return true;
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "replace", kept: false, input });
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "replace", kept: !!(s.recap?.approved || s.recap?.status === "posted"), input }, s);
       else {
-        if (kind === "needs-rights") setNeedRights(true);
+        // The rights box is in the form, which the question hides: take the question away, the yes is kept.
+        if (kind === "needs-rights") {
+          setNeedRights(true);
+          setAsking(null);
+        }
         setProblem(say(error));
       }
       return false;
@@ -166,14 +226,22 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       void load();
                     }}
                   />
-                ) : question ? (
-                  <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
-                    <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
+                ) : question || adding?.ref === s.ref ? (
+                  <>
+                  {question && (
+                  <div class="stack" role="group" aria-label={askWords(question)}>
+                    <p>{askWords(question)}</p>
+                    {question.checking && (
+                      <p class="small muted" role="status">
+                        {w.checkingLists}
+                      </p>
+                    )}
+                    {question.lists && <p>{question.lists === "yes" ? w.askAgainLists : w.askAgainMaybeLists}</p>}
                     <div class="row">
                       <button
                         type="button"
                         class="button"
-                        disabled={busy}
+                        disabled={busy || !!question.checking}
                         onClick={() => void (question.what === "again" ? start(s, true) : submit(s, { ...question.input!, replace: true }))}
                       >
                         {question.what === "again" ? w.yesAgain : w.yesReplace}
@@ -184,6 +252,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                         disabled={busy}
                         onClick={() => {
                           if (question.what === "replace") setAdding(null); // a clean cancel, not an empty form
+                          confirmedReplace.current = null;
                           setAsking(null);
                         }}
                       >
@@ -191,14 +260,14 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       </button>
                     </div>
                   </div>
-                ) : adding?.ref === s.ref ? (
-                  <AddForm
-                    session={s}
-                    needRights={needRights}
-                    busy={busy}
-                    onCancel={() => setAdding(null)}
-                    onSubmit={(input) => submit(s, input)}
-                  />
+                  )}
+                  {/* The form stays, out of sight, while the question is asked: the words typed are still there when the rights box comes after the yes. */}
+                  {adding?.ref === s.ref && (
+                    <div hidden={!!question}>
+                      <AddForm session={s} needRights={needRights} busy={busy} onCancel={() => closeForm()} onSubmit={(input) => submit(s, input)} />
+                    </div>
+                  )}
+                  </>
                 ) : (
                   <div class="stack">
                     {!s.recap && !s.held && !s.hasTranscript && <p class="small muted">{w.noTranscript}</p>}
@@ -215,6 +284,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                           disabled={busy}
                           onClick={() => {
                             setProblem("");
+                            confirmedReplace.current = null;
                             setAdding(s);
                           }}
                         >

@@ -72,12 +72,29 @@ class WebSettings:
     ai_key: str = field(default="", repr=False)
     support_ai_model: str = ""
     mail_inbound_secret: str = field(default="", repr=False)
+    # Search by meaning on the Names page (#2733): the same switch, key and models the bot reads
+    # (#2664), so the search words are turned into numbers with the model the kept numbers were
+    # made with. Off until the switch is 1 and a key is set.
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
     # service receives. Empty: the support sender's own domain.
     mail_reply_domain: str = ""
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # Kept pictures (#3274). The campaign's picture storage, in MB, as the bot reads it
+    # (DMBOT_PICTURE_STORAGE_MB), for the gallery's usage line. And the read-only key to the one
+    # private bucket the open link signs short-lived addresses with (WEB_PICTURES_R2_*): all four
+    # empty means the link answers "not open yet" instead of guessing, and nothing is ever written
+    # to the bucket from here (the bot applies every change).
+    picture_storage_mb: int = 500
+    pictures_r2_account: str = ""
+    pictures_r2_bucket: str = ""
+    pictures_r2_key: str = ""
+    pictures_r2_secret: str = ""
     # The outside speech-to-text company the bot sends voices to (deepgram, cloud), or None: only
     # consent given for it counts, as in the bot. From TRANSCRIBER, the bot's own setting.
     outside_engine: str | None = None
@@ -110,6 +127,51 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
+    handover_email_on: bool = False
+    # A line fixed from the Transcripts page (#2858; DMBOT_WEB_LINE_FIX): off, its routes answer
+    # 404, so nothing is queued before the bot can act on it.
+    line_fix_on: bool = False
+    # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
+    # routes answer 404, so nothing is queued before the bot can run it.
+    line_delete_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
+    # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
+    # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
+    co_dms_on: bool = False
+    # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
+    # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
+    report_make_on: bool = False
+    # Upload lore on the website (#3022; DMBOT_WEB_LORE): off, the routes that queue an upload
+    # answer 404, so nothing is queued before the bot's half (#3022) reads it.
+    lore_on: bool = False
+    # Pause and unpause from the website (#2985; DMBOT_WEB_PAUSE): off, a pause choice answers 404,
+    # so nothing is queued before the bot step that applies it is deployed.
+    pause_on: bool = False
+    # The Shared story switch from the website (#2985; DMBOT_WEB_STORY_MODE): off, a story-mode
+    # choice answers 404, so nothing is queued before the bot step that applies it is deployed.
+    story_mode_on: bool = False
+    # The House-rules file from the website (#2985; DMBOT_WEB_HOUSE_FILE): off, its routes answer
+    # 404, so nothing is queued before the bot step that applies a request is deployed.
+    house_file_on: bool = False
+    # The D&D Beyond invite link from the website (#2985; DMBOT_WEB_DNDBEYOND_INVITE): off, an
+    # invite choice answers 404, so nothing is queued before the bot step that applies it is
+    # deployed.
+    invite_on: bool = False
+    # Main and fallback rules from the website (#2985; DMBOT_WEB_RULESETS): off, a rules choice
+    # answers 404, so nothing is queued before the bot step that applies it is deployed.
+    rulesets_on: bool = False
+    # Recap style on the website (#2985; DMBOT_WEB_RECAP_STYLE): off, its routes answer 404, so
+    # nothing is queued before the bot step that applies a change is deployed.
+    recap_style_on: bool = False
+    # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
+    # queue a choice answer 404, so nothing is queued before the bot can run it.
+    rule_sharing_on: bool = False
+    # Character sheets from the website (#2816; DMBOT_WEB_SHEETS): off, the routes that show
+    # or queue them answer 404, so nothing is queued before the bot that applies them is deployed.
+    sheets_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -123,10 +185,18 @@ class WebSettings:
     # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
     # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
     plot_check_on: bool = False
+    # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
+    # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
+    # bot does.
+    recap_voice_tags: bool = True
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def site_origin(self) -> str:
@@ -217,6 +287,20 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for model_name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(model_name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{model_name} must be a model name such as {default}.")
+        voyage_models.append(model)
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
@@ -294,8 +378,84 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
+        )
+    line_fix_raw = (get("DMBOT_WEB_LINE_FIX") or "0").lower()
+    if line_fix_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LINE_FIX must be 1 (on) or 0 (off), got "{line_fix_raw}".')
+    line_delete_raw = (get("DMBOT_WEB_LINE_DELETE") or "0").lower()
+    if line_delete_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
+        )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
+    co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
+    if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
+    report_make_raw = (get("DMBOT_WEB_REPORT_MAKE") or "0").lower()
+    if report_make_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
+        )
+    lore_raw = (get("DMBOT_WEB_LORE") or "0").lower()
+    if lore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_LORE must be 1 (on) or 0 (off), got "{lore_raw}".')
+    pause_raw = (get("DMBOT_WEB_PAUSE") or "0").lower()
+    if pause_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_PAUSE must be 1 (on) or 0 (off), got "{pause_raw}".')
+    recap_style_raw = (get("DMBOT_WEB_RECAP_STYLE") or "0").lower()
+    if recap_style_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RECAP_STYLE must be 1 (on) or 0 (off), got "{recap_style_raw}".'
+        )
+    story_mode_raw = (get("DMBOT_WEB_STORY_MODE") or "0").lower()
+    if story_mode_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_STORY_MODE must be 1 (on) or 0 (off), got "{story_mode_raw}".'
+        )
+    house_file_raw = (get("DMBOT_WEB_HOUSE_FILE") or "0").lower()
+    if house_file_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_HOUSE_FILE must be 1 (on) or 0 (off), got "{house_file_raw}".'
+        )
+    invite_raw = (get("DMBOT_WEB_DNDBEYOND_INVITE") or "0").lower()
+    if invite_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_DNDBEYOND_INVITE must be 1 (on) or 0 (off), got "{invite_raw}".'
+        )
+    rulesets_raw = (get("DMBOT_WEB_RULESETS") or "0").lower()
+    if rulesets_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RULESETS must be 1 (on) or 0 (off), got "{rulesets_raw}".')
+    sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
+    if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
+    rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
+    if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RULE_SHARING must be 1 (on) or 0 (off), got "{rule_sharing_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
+        sheets_on=sheets_raw in ("1", "true", "on"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
+        line_fix_on=line_fix_raw in ("1", "true", "on"),
+        line_delete_on=line_delete_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
+        co_dms_on=co_dms_raw in ("1", "true", "on"),
+        report_make_on=report_make_raw in ("1", "true", "on"),
+        lore_on=lore_raw in ("1", "true", "on"),
+        pause_on=pause_raw in ("1", "true", "on"),
+        story_mode_on=story_mode_raw in ("1", "true", "on"),
+        house_file_on=house_file_raw in ("1", "true", "on"),
+        invite_on=invite_raw in ("1", "true", "on"),
+        rulesets_on=rulesets_raw in ("1", "true", "on"),
+        recap_style_on=recap_style_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
@@ -304,6 +464,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
             and get("RECAP_AUDIO_KEY_SET") == "1"
             and get("RECAP_AUDIO_VOICE_SET") == "1"
         ),
+        recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
@@ -330,8 +491,23 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         ai_key=get("ANTHROPIC_API_KEY"),
         support_ai_model=support_ai_model,
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        picture_storage_mb=(
+            int(get("DMBOT_PICTURE_STORAGE_MB"))
+            if get("DMBOT_PICTURE_STORAGE_MB").isascii()
+            and get("DMBOT_PICTURE_STORAGE_MB").isdigit()
+            and int(get("DMBOT_PICTURE_STORAGE_MB")) > 0
+            else 500
+        ),
+        pictures_r2_account=get("WEB_PICTURES_R2_ACCOUNT"),
+        pictures_r2_bucket=get("WEB_PICTURES_R2_BUCKET"),
+        pictures_r2_key=get("WEB_PICTURES_R2_KEY"),
+        pictures_r2_secret=get("WEB_PICTURES_R2_SECRET"),
         outside_engine=get("TRANSCRIBER").lower()
         if get("TRANSCRIBER").lower() in OUTSIDE_ENGINES
         else None,

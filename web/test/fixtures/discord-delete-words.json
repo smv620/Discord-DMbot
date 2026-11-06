@@ -1,0 +1,11 @@
+{
+  "label": "🗑 Delete my transcripts",
+  "yes": "Yes, delete my lines",
+  "cancel": "Cancel",
+  "kept": "OK, nothing was deleted.",
+  "failed": "Sorry, that didn't work and nothing was deleted. Please try again in a minute.",
+  "warning_12_3": "This deletes everything you said that DMbot wrote down in Thursday Table: 12 lines in 3 sessions. Other people's lines stay. Recaps and session notes DMbot made stay with the campaign. Copies people already downloaded stay too. This can't be undone.",
+  "warning_1_1": "This deletes everything you said that DMbot wrote down in Thursday Table: 1 line in 1 session. Other people's lines stay. Recaps and session notes DMbot made stay with the campaign. Copies people already downloaded stay too. This can't be undone.",
+  "done": "🗑 Done. What you said is deleted from Thursday Table's transcripts.",
+  "nothing": "DMbot has nothing written down from you in Thursday Table, so there is nothing to delete."
+}

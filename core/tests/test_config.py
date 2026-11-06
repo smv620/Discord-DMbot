@@ -142,8 +142,45 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertFalse(load_settings({**BASE, "DMBOT_SIDEBAR": "off"}).sidebar_on)
         self.assertFalse(load_settings(BASE).story_extractor_on)  # off unless asked for
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
+        self.assertFalse(load_settings(BASE).story_readings_on)  # off unless asked
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_READINGS": "1"}).story_readings_on)
+        self.assertFalse(load_settings(BASE).story_deeds_on)  # off unless asked (#3175)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_DEEDS": "1"}).story_deeds_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_DEEDS": "maybe"})
+        self.assertFalse(load_settings(BASE).story_family_only)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "maybe"})
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
+
+    def test_theatre_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).theatre_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_THEATRE_ON": "on"}).theatre_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_THEATRE_ON must be 1"):
+            load_settings({**BASE, "DMBOT_THEATRE_ON": "maybe"})
+
+    def test_relationship_reader_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).rel_read_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_REL_READ_ON": "1"}).rel_read_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_REL_READ_ON must be 1"):
+            load_settings({**BASE, "DMBOT_REL_READ_ON": "maybe"})
+
+    def test_grading_contradictions_is_off_unless_asked(self) -> None:
+        self.assertFalse(load_settings(BASE).story_contradictions_on)
+        self.assertTrue(
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "1"}).story_contradictions_on
+        )
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_CONTRADICTIONS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
+
+    def test_the_questions_notices_are_off_unless_asked_for(self) -> None:
+        self.assertFalse(load_settings(BASE).questions_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_QUESTIONS": "1"}).questions_on)
+        self.assertFalse(load_settings({**BASE, "DMBOT_QUESTIONS": "0"}).questions_on)
 
     def test_recaps_are_off_unless_switched_on(self) -> None:
         self.assertFalse(load_settings(BASE).recaps_on)

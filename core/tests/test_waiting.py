@@ -94,7 +94,7 @@ class TheText(unittest.TestCase):
         waiting = WaitingMessage(_nothing, "t", clock=clock, stall_after_s=240)
         waiting.step("Step 1 of 2: reading it through")
         clock.now = 200
-        waiting.step("Step 1 of 2: reading it through, try 2")
+        waiting.moved()  # a call went round again: the same words, but it is movement
         clock.now = 400  # 200 s since the second call: under the limit
         self.assertNotIn("No change", waiting.text())
         waiting.moved()

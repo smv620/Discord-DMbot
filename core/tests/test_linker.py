@@ -184,7 +184,7 @@ class Linking(ConfirmedMemoryTest):
         )
         ilse = (await self.entries())["Mother Ilse"]
         self.assertEqual(
-            (ilse.status, ilse.type, ilse.source), ("proposed", "concept", "extractor")
+            (ilse.status, ilse.type, ilse.source), ("proposed", "character", "extractor")
         )
         # Not asked yet: the DM has to say who Mother Ilse is first.
         self.assertEqual(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE), [])

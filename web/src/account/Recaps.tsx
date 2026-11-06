@@ -18,8 +18,9 @@ import {
 } from "../content/recaps";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { campaignPage as campaignWords } from "../content/campaign-page";
-import { panelWords } from "../content/recap-panel";
-import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
+import { stageWords } from "../content/work-progress";
+import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_MAKE_LIVE, makeWords } from "../content/recap-make";
 import {
   ApiError,
@@ -29,20 +30,24 @@ import {
   type RecapAction,
   type RecapMonth,
   type RecapAudioLinks,
+  type RecapRemake,
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
-import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
-import RecapFix from "./RecapFix";
+import RecapFixName from "./RecapFixName";
+import { audioIsStale, useRemake } from "./useRemake";
+import WorkProgress from "./WorkProgress";
+import LazyPanel from "./LazyPanel";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
-import RecapNames from "./RecapNames";
-import RecapPlayer from "./RecapPlayer";
+import { NAMES_FIXED_LIVE } from "../content/names-fixed-words";
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
+import { AFTER_SESSION_REPORT_LIVE } from "../content/report-words";
 import CampaignNav from "./CampaignNav";
 
 const POLL_MS = 5000;
@@ -107,6 +112,14 @@ export default function Recaps({
       {ref ? <Review api={api} recapRef={ref} /> : <List api={api} campaign={campaignFromSearch(search)} />}
     </div>
   );
+}
+
+/** Why a post was refused, in words, when the API says so (#3355): the reason code of a failed posting progress. A code the
+ * page has no words for gives null, and the general "couldn't confirm" line is used. */
+function refusal(recap: Recap): string | null {
+  const shared = recap.postingProgress;
+  if (shared?.state !== "failed" || !shared.reason) return null;
+  return text.postWhy[shared.reason] ?? null;
 }
 
 function SignedOut() {
@@ -199,7 +212,9 @@ function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
         </ul>
       )}
       {/* Recaps for past sessions (#2610): one campaign's DMs only, and only behind its own switch. */}
-      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && <RecapMake api={api} campaignRef={campaign} />}
+      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && (
+        <LazyPanel load={() => import("./RecapMake")} what="the recaps for past sessions" props={{ api, campaignRef: campaign }} />
+      )}
       {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
       {RECAPS_LIVE &&
         allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
@@ -272,10 +287,13 @@ function AudioPanel({
   api,
   recap,
   onRecap,
+  remake,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
+  /** What making it again would do (#2630); null when not asked or not known. */
+  remake: RecapRemake | null;
 }) {
   const audio = recap.audio;
   const [links, setLinks] = useState<RecapAudioLinks>({});
@@ -289,6 +307,8 @@ function AudioPanel({
     null,
   );
   const playable = audio?.state === "ready" && audio.current;
+
+  const remakeOn = RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE;
 
   // The links last 15 minutes; one fresh read when a player cannot load its file.
   const load = async (): Promise<void> => {
@@ -341,7 +361,7 @@ function AudioPanel({
     setNote(null);
     try {
       onRecap(await api.askRecapAudioAgain(recap.ref));
-      setNote({ ok: true, message: panelWords.asked });
+      setNote({ ok: true, message: remakeOn ? remakeWords.asked : panelWords.asked });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setNote({
@@ -362,6 +382,16 @@ function AudioPanel({
     }
   };
 
+  // (an edited draft's line is beside Approve's audio choice instead, so it is said once)
+  const remakeLine = recap.status === "draft" && audioIsStale(recap) ? null : remakeSentence(remake);
+  const lastLine =
+    !remakeOn || audio.state !== "ready" || !audio.current
+      ? null
+      : audio.how === "voice"
+        ? remakeWords.lastVoice
+        : audio.how === "all"
+          ? remakeWords.lastAll
+          : null;
   const line =
     audio.state === "queued"
       ? panelWords.queued
@@ -378,7 +408,7 @@ function AudioPanel({
     <section class="panel" aria-labelledby="recap-audio-panel">
       <h3 id="recap-audio-panel">{panelWords.heading}</h3>
       {playable && (links.voice || links.music) && (
-        <RecapPlayer voice={links.voice} music={links.music} onFail={failed} />
+        <LazyPanel load={() => import("./RecapPlayer")} what="the audio player" props={{ voice: links.voice, music: links.music, onFail: failed }} />
       )}
       {playable && links.mix && (
         <div>
@@ -399,6 +429,25 @@ function AudioPanel({
         </p>
       )}
       {line && <p role="status">{line}</p>}
+      {remakeOn && audio.state === "queued" && audio.progress && (
+        <WorkProgress
+          stage={stageWords(remakeWords.stage, audio.progress.stage)}
+          done={audio.progress.done}
+          total={audio.progress.total}
+          unit={
+            audio.progress.unit && Object.hasOwn(remakeWords.unit, audio.progress.unit)
+              ? remakeWords.unit[audio.progress.unit]
+              : undefined
+          }
+          startedAt={audio.progress.startedAt}
+          updatedAt={audio.progress.updatedAt}
+          serverNow={audio.progress.serverNow}
+          state={audio.progress.state}
+          reason={audio.progress.reason}
+        />
+      )}
+      {lastLine && <p class="muted small">{lastLine}</p>}
+      {remakeLine && audio.canAskAgain && <p role="status">{remakeLine}</p>}
       {audio.canAskAgain && (
         <button
           type="button"
@@ -407,7 +456,13 @@ function AudioPanel({
           disabled={busy}
           onClick={() => void ask()}
         >
-          {busy ? text.busy : panelWords.again}
+          {busy
+            ? text.busy
+            : remake?.how === "voice"
+              ? remakeWords.voiceButton
+              : remake?.how === "all"
+                ? remakeWords.allButton
+                : panelWords.again}
         </button>
       )}
       {note && (
@@ -472,6 +527,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // The email switch as the DM has it now (null until the choices have loaded), so the line while a
   // recap is made follows it instead of the first read of the recap.
   const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  // The Plot check (#2124): why Approve waits, and words its "Fix the recap" puts in the fix box.
+  const [plotWhy, setPlotWhy] = useState<string | null>(null);
+  const [plotNonce, setPlotNonce] = useState(0);
+  const [fixPrefill, setFixPrefill] = useState<{ n: number; text: string } | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
 
@@ -569,7 +628,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const refresh = async (error: unknown) => {
     if (
       !(error instanceof ApiError) ||
-      !["not-allowed", "not-editable"].includes(error.kind)
+      !["not-allowed", "not-editable", "no-tries", "no-lines"].includes(error.kind)
     )
       return;
     try {
@@ -652,6 +711,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     }
   };
 
+  const remake = useRemake(api, recap);
   const heading = recap.title || text.untitled;
   const decided = recap.status !== "draft";
   return (
@@ -717,9 +777,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       <RecapProgress recap={recap} />
-      {recap.status === "draft" && sawPosting.current && !recap.working && (
+      {recap.status === "draft" && !recap.working && (sawPosting.current || refusal(recap) !== null) && (
         <p class="warn" role="alert">
-          {text.postFailed}
+          {refusal(recap) ?? text.postFailed}
         </p>
       )}
       {recap.status === "dropped" && <p role="status">{text.dropped}</p>}
@@ -774,6 +834,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
               words={recap.cueWords}
               open={cueProblems.some((p) => p.kind === "unknown")}
             />
+          )}
+          {RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE && (
+            <RecapFixName text={summary} onText={setSummary} />
           )}
           <label for="recap-housekeeping">{text.housekeepingLabel}</label>
           <textarea
@@ -849,13 +912,47 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && (
+        <LazyPanel
+          key={`fix-${recap.ref}`}
+          load={() => import("./RecapFix")}
+          what="the fix-a-word tool"
+          props={{ api, recap, onRecap: setRecap, prefill: fixPrefill }}
+        />
+      )}
+      {/* (the switch is tested here so the build drops a panel that is not live: the page stays within its weight budget) */}
+      {RECAP_NAME_CHECKS_LIVE && (
+        <LazyPanel
+          key={`names-${recap.ref}`}
+          load={() => import("./RecapNameChecks")}
+          what="the names to check"
+          props={{ api, refId: recap.ref }}
+        />
+      )}
+      {PLOT_CHECK_LIVE && !editing && recap.status === "draft" && recap.canEdit && (
+        <LazyPanel
+          key={`plot-${recap.ref}`}
+          load={() => import("./RecapPlotCheck")}
+          what="the plot check"
+          props={{
+            api,
+            refId: recap.ref,
+            text: recap.text,
+            onBlocked: setPlotWhy,
+            reloadKey: plotNonce,
+            onFix: (text: string) => setFixPrefill((was) => ({ n: (was?.n ?? 0) + 1, text })),
+          }}
+        />
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
           recap={recap}
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
+          blockedBy={plotWhy}
+          onPlotOpen={() => setPlotNonce((n) => n + 1)}
+          remake={remake}
         />}
       {!editing && (
         <RecapShareControls
@@ -865,10 +962,34 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           onShare={(share) => setRecap({ ...recap, share, shared: share.on })}
         />
       )}
-      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
-      {!editing && <RecapNames api={api} recapRef={recap.ref} />}
+      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this campaign" props={{ api, recapRef: recap.ref }} />}
+      {PRESENT_PER_SCENE_LIVE && !editing && (
+        <LazyPanel
+          key={`present-${recap.ref}`}
+          load={() => import("./PresentPerScene")}
+          what="who was in each scene"
+          props={{ api, recap, onRecap: setRecap }}
+        />
+      )}
+      {NAMES_FIXED_LIVE && !editing && recap.canEdit && (
+        <LazyPanel
+          key={`fixed-${recap.ref}`}
+          load={() => import("./NamesFixed")}
+          what="the names fixed this session"
+          props={{ api, recapRef: recap.ref }}
+        />
+      )}
+      {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
+        <LazyPanel
+          key={`${recap.campaign}.${recap.sessionAt}`}
+          load={() => import("./RecapReport")}
+          what="the after-session report"
+          props={{ api, campaignRef: recap.campaign, sessionAt: recap.sessionAt }}
+        />
+      )}
       {!editing &&
         !recap.working &&
         (recap.canEdit || recap.canTryAgain || !decided) && (

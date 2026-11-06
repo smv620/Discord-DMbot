@@ -29,10 +29,8 @@ from typing import Any, Protocol
 import discord
 
 from dmbot.dm_screen.dm_bot_channel import is_dm_bot_name
-from dmbot.dm_screen.gametime_channel import is_gametime_name
 from dmbot.dm_screen.names import is_screen_name
-from dmbot.dm_screen.npcs_channel import is_npcs_name
-from dmbot.dm_screen.rules_channel import is_rules_name
+from dmbot.dm_screen.retired_channels import is_gametime_name, is_npcs_name, is_rules_name
 from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)

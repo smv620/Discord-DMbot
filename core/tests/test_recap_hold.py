@@ -385,7 +385,9 @@ class TheCap(IsolatedAsyncioTestCase):
         bot = fake_bot(proposed=2)
         bot.mailer, bot.settings.site_url = object(), "https://dmbot.example.org"
         bot._email_hold = DMBot._email_hold.__get__(bot)
-        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+        with patch(
+            "dmbot.recaps.discord.remind_the_dm", new=AsyncMock(return_value="sent")
+        ) as email:
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
         email.assert_awaited_once()
         assert email.await_args is not None
@@ -397,7 +399,9 @@ class TheCap(IsolatedAsyncioTestCase):
         bot = fake_bot(proposed=2)
         bot.mailer = object()
         bot._email_hold = DMBot._email_hold.__get__(bot)
-        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+        with patch(
+            "dmbot.recaps.discord.remind_the_dm", new=AsyncMock(return_value="sent")
+        ) as email:
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S * 2 + 60, reminded=True))
         email.assert_awaited_once()
         assert email.await_args is not None
@@ -411,7 +415,7 @@ class TheCap(IsolatedAsyncioTestCase):
         bot._email_hold = DMBot._email_hold.__get__(bot)
         bot.campaigns.get.return_value.dm_user_ids = frozenset({DM, DM + 1})
         send = AsyncMock(side_effect=[RuntimeError("boom"), "sent"])
-        with patch("dmbot.bot.remind_the_dm", new=send):
+        with patch("dmbot.recaps.discord.remind_the_dm", new=send):
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
         self.assertEqual(send.await_count, 2)
 
@@ -431,7 +435,9 @@ class TheCap(IsolatedAsyncioTestCase):
             for i in range(2)
         )  # fmt: skip
         bot.recap_holds.held = AsyncMock(return_value=[first, second])
-        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+        with patch(
+            "dmbot.recaps.discord.remind_the_dm", new=AsyncMock(return_value="sent")
+        ) as email:
             await bot.release_recap_holds(GUILD)
         email.assert_awaited_once()  # (a round looks at each hold; only the oldest speaks)
         assert email.await_args is not None
@@ -440,7 +446,7 @@ class TheCap(IsolatedAsyncioTestCase):
     async def test_nothing_is_emailed_for_a_hold_past_its_three_day_limit(self) -> None:
         bot = self.import_round_bot()
         late = self.aged(hold.HOLD_MAX_S + 60, asked=True)
-        with patch("dmbot.bot.remind_the_dm", new=AsyncMock()) as email:
+        with patch("dmbot.recaps.discord.remind_the_dm", new=AsyncMock()) as email:
             await self.round_with(bot, late)
         email.assert_not_awaited()  # it is written with the names as they are instead
         bot.recap_holds.release.assert_awaited()
@@ -455,7 +461,9 @@ class TheCap(IsolatedAsyncioTestCase):
             "c" * 32, AT + 1, "s1", DM, 66, int(time.time()) - 100,
             names_open=2, asked=True, group_id=GROUP,
         )  # fmt: skip
-        with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+        with patch(
+            "dmbot.recaps.discord.remind_the_dm", new=AsyncMock(return_value="sent")
+        ) as email:
             for held in ([old, newer], [newer]):  # the oldest is answered between the rounds
                 bot.recap_holds.held = AsyncMock(return_value=held)
                 await bot.release_recap_holds(GUILD)
@@ -477,7 +485,9 @@ class TheCap(IsolatedAsyncioTestCase):
         for _ in range(2):  # a restart: a new bot, no memory of the import's start
             bot = self.import_round_bot()
             bot.recap_holds.held = AsyncMock(return_value=[old])
-            with patch("dmbot.bot.remind_the_dm", new=AsyncMock(return_value="sent")) as email:
+            with patch(
+                "dmbot.recaps.discord.remind_the_dm", new=AsyncMock(return_value="sent")
+            ) as email:
                 await bot.release_recap_holds(GUILD)
             assert email.await_args is not None
             days.append(email.await_args.args[-2])
@@ -501,7 +511,7 @@ class TheCap(IsolatedAsyncioTestCase):
             bot.mailer = mailer
             bot._email_hold = DMBot._email_hold.__get__(bot)
             bot.campaigns.get.return_value.recaps_email = emails_on
-            with patch("dmbot.bot.remind_the_dm", new=AsyncMock()) as email:
+            with patch("dmbot.recaps.discord.remind_the_dm", new=AsyncMock()) as email:
                 await self.round_with(bot, self.aged(age))
             email.assert_not_awaited()
 

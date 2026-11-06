@@ -16,6 +16,7 @@ from typing import Any, Final
 from dmbot import progress
 from dmbot.recaps import critics
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps import post_notes as _notes
 
 # The pipeline's own steps (docs in `recaps.pipeline`), as the stage codes the page puts into words.
 NAMES = "recap_names"  # waiting for PlotBot's name pass on the transcript (#2628)
@@ -24,6 +25,7 @@ BEATS = "recap_beats"  # the beats it found are checked against the transcript
 WRITING = "recap_writing"  # the recap is written from the beats
 CHECKING = "recap_checking"  # the critics read the draft
 CHECK_WAITING = "recap_check_waiting"  # written, and waiting to be checked: tried again later
+FINAL_READ = "recap_final_read"  # the last editing pass over the finished draft (#2952)
 FINISHING = "recap_finishing"  # the title and the housekeeping notes
 READY = "recap_ready"
 FAILED = "recap_failed"
@@ -71,6 +73,8 @@ def stage_of(row: Mapping[str, Any], *, now: int) -> str:
         if row["last_error"] == critics.CHECK_WAIT:
             return CHECK_WAITING
         loop = critics.loop_from_json(row.get("critics"))
+        if loop.done and loop.final == "reading":
+            return FINAL_READ
         return FINISHING if loop.done else CHECKING
     return FINISHING
 
@@ -80,6 +84,46 @@ def reason_of(row: Mapping[str, Any]) -> str | None:
     if row["state"] != "failed":
         return None
     return REASONS.get(str(row["last_error"]), progress.RECAP_FAILED_REASON)
+
+
+# Why a post that was sent back as a draft was refused: see `recaps.post_notes` (a leaf module, so
+# the store can use it too).
+POST_NOTES = _notes.POST_NOTES
+REFUSALS = _notes.REFUSALS
+CLEAR_REFUSAL = _notes.CLEAR_REFUSAL
+_POST_CODES: Final[Mapping[str, str]] = {v: k for k, v in POST_NOTES.items()}
+_POSTING_STAGES: Final[Mapping[str, str]] = {
+    "check": "posting_check",
+    "post": "posting_post",
+    "audio": "posting_audio",
+}
+
+
+def posting_of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
+    """The posting half of a recap in the shared shape (#3355): while it goes out or its audio is
+    made, the step (`posting_check` / `posting_post` / `posting_audio`), when it began (the posting
+    clock's `posting_since`) and when it last moved (`updated_at`, stamped by every step); when a
+    post was refused and the recap is a draft again, `failed` with the refusal's code. None
+    otherwise. Times and codes only: never the sentence."""
+    since = int(row.get("posting_since") or 0)
+    step = row.get("posting_step")
+    if since and step in _POSTING_STAGES:
+        return progress.shape(
+            _POSTING_STAGES[str(step)],
+            started_at=since,
+            # (the narration's own parts stamp `audio_moved_at`, not `updated_at`)
+            updated_at=max(
+                int(row.get("updated_at") or 0),
+                int(row.get("audio_moved_at") or 0) if step == "audio" else 0,
+                since,
+            ),
+            now=now,
+        )
+    code = _POST_CODES.get(str(row.get("last_error") or ""))
+    if row["status"] == "draft" and code is not None:
+        moved = int(row.get("updated_at") or 0) or int(row["created_at"])
+        return progress.shape("failed", started_at=moved, updated_at=moved, now=now, reason=code)
+    return None
 
 
 def of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:

@@ -53,6 +53,10 @@ DEED_VERB = {
     "Hurt them": "hurt",
 }
 DEED_WEIGHT = 20
+# A feeling the DM kept with a connection ("knows (hostile)", #3175): the story's word, pressed by
+# the DM but read by an AI, so it counts for more than one deed and for far less than a standing
+# the DM set (`DM_WEIGHT`), which always wins.
+FEELING_WEIGHT = 30
 DEED_FADES_AFTER = 10
 STORY_SOURCE = "story"
 
@@ -241,6 +245,7 @@ __all__ = [
     "DEVOTED",
     "DM_SOURCE",
     "DM_WEIGHT",
+    "FEELING_WEIGHT",
     "FRIENDLY",
     "HOSTILE",
     "NO_OPINION",

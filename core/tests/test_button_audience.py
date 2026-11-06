@@ -86,6 +86,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.handover.AcceptOfferButton",  # the person the offer is for
             "dm_screen.handover.DeclineOfferButton",
             "dm_screen.handover.NotNowButton",
+            "questions.discord.NotNowButton",  # mutes the presser's own reminders only
             "ui.sheets.MySheetButton",  # `characters_of(guild, interaction.user.id)`
             # Only the person the list was made for (`kept.owner_id`, the DM who asked): anyone else
             # gets "not yours" before anything is shown (#1957).
@@ -136,6 +137,12 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.RemoveYesButton",
             "dm_screen.adventure_card.SeeButton",
             "dm_screen.backstory_button.BackstoryButton",
+            "dm_screen.links_ready.ReadyButton",
+            "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
+            "ui.theatre_button.OldScriptButton",  # the same checks, then the new question (#3478)
+            "ui.kind_offer.OpenButton",  # _is_dm on every press (#3033)
+            "ui.kind_offer.AnswerButton",  # the same
+            "ui.kind_offer.UndoButton",  # the same
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
@@ -150,15 +157,18 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.house_sync.HouseSyncButton",
             "dm_screen.house_voice.HouseVoiceButton",
             "dm_screen.import_button.ImportButton",
+            "dm_screen.import_time.ImportTimeButton",  # the game time an import ended at (#2979)
             "dm_screen.left_out.PutBackButton",
             "dm_screen.name_questions.FixUndoButton",
             "dm_screen.name_questions.NameAnswerUndoButton",
             "dm_screen.name_questions.NameQuestionButton",
             "dm_screen.pack_suggestion.PackSuggestionButton",
+            "dm_screen.old_chat.OldChatButton",
             "dm_screen.pack_update.PackUpdateButton",
             "dm_screen.quiet_stop.KeepListeningButton",
             "dm_screen.names_button.NamesButton",
             "dm_screen.recap_panel.RecapsButton",
+            "dm_screen.recap_style.RecapStyleButton",  # (the recap choice left in Discord, #2986)
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
             "dm_screen.table_pause.PauseTableButton",  # the table's off the record (#2466)
@@ -190,17 +200,26 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.transcript_keep.KeepYesButton",
             "dm_screen.transcript_keep.TranscriptsButton",
             "ui.claims_review.ClaimsReviewButton",
+            "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
+            "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
+            "questions.board.QuestionsButton",  # checks `dm_user_ids` before sending the list
             "ui.continuity.ContinuityButton",
             "ui.guide.GuideButton",
             "ui.heard_review.HeardReviewButton",
             # The person who posted the picture, or a DM (`_is_dm`); a stranger is refused (#2450).
             "ui.image_fix.FixTextButton",
+            # The poster or a DM, checked in `PictureActions.apply` and again before the question
+            # (`DeleteButton`); a stranger is refused (#3274).
+            "ui.kept_pictures.DeleteButton",
+            "ui.kept_pictures.DeleteYesButton",
+            "ui.kept_pictures.PrivateButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
             "ui.name_card.UndoManyButton",
             "ui.name_card.UndoConnectionButton",
             "ui.name_card.UndoSpellingButton",
+            "ui.name_unnamed.UndoNamingButton",
             "ui.name_card.FinishPastButton",
             "ui.name_card.UndoRunButton",
             "ui.name_lists.UndoListButton",
@@ -216,6 +235,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_audio.ListenButton",
             "ui.recap_audio.MakeAudioAgainButton",
             "ui.name_pass_undo.UndoNamePassButton",
+            "ui.recap_lines.RecapLinesUndoButton",  # `dm_user_ids` on every press (#3298)
             "ui.recap_dm.RecapButton",
             "ui.recap_hold.WriteNowButton",
             "ui.recap_share.ShareButton",
@@ -266,6 +286,8 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     # The names home asks `logic.can_run` (the campaign's DMs and server managers) when it opens.
     "dm_screen.names_button.NamesButton": ["dmbot.ui.names:_campaign_for"],
     # The menu it opens asks for the campaign's DMs on every open and on every press inside it.
+    # The look-alikes screen asks `sees_secrets` before it shows a group.
+    "questions.board.LookAlikesButton": ["dmbot.ui.look_alikes:show_look_alikes"],
     "dm_screen.backstory_button.BackstoryButton": ["dmbot.ui.name_background:open_background"],
 }
 

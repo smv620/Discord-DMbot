@@ -272,7 +272,7 @@ class Travelling(MemoryTest):
 
         other = await self.follower()
         await self.memory.add_predicate(
-            GUILD_A, other, term("mentor_of", "mentors"), examples=["x"], reason="y", source="dm"
+            GUILD_A, other, term("patron_of", "mentors"), examples=["x"], reason="y", source="dm"
         )
         async with self.db.guild(GUILD_A) as conn:
             rows = await MemorySection().dump(conn, GUILD_A, other)

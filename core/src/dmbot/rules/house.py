@@ -33,7 +33,6 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
-from dmbot.rules.changes import ChangeHook, notifies
 
 # Where a rule came from (#2285): "discord" is every rule from before it was recorded.
 SOURCES = ("discord", "typed", "voice", "alert", "linked", "upload")
@@ -144,8 +143,6 @@ class HouseRuleStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._clock = clock
-        # Told after a rule is added, edited or removed (the rules channel, #1752).
-        self.on_change: ChangeHook | None = None
 
     async def list(self, guild_id: int, campaign_id: str) -> list[HouseRule]:
         """The campaign's house rules, newest first (the highest number first). Anyone may
@@ -158,7 +155,6 @@ class HouseRuleStore:
             )
             return [_rule(r) for r in await cur.fetchall()]
 
-    @notifies
     async def add(
         self,
         guild_id: int,
@@ -203,7 +199,6 @@ class HouseRuleStore:
                 source_name=_name(source_name),
             )
 
-    @notifies
     async def edit(
         self,
         guild_id: int,
@@ -245,7 +240,6 @@ class HouseRuleStore:
             await _forget_wins(conn, guild_id, campaign_id, number)
             return _rule(row)
 
-    @notifies
     async def remove(
         self,
         guild_id: int,

@@ -101,7 +101,7 @@ def stopped_dm_text(campaign_name: str, reason: str, quiet_minutes: int, where: 
     how to reach Settings today ("in <#channel>" or "with `/dmbot settings`")."""
     return (
         f"⏹ DMbot stopped listening in **{campaign_name}**: {_why_stopped(reason, quiet_minutes)}. "
-        f"The transcript is saved. To change how long I wait, go to ⚙️ Settings → **Stop when "
+        f"The transcript is saved. To change how long I wait, go to ⚙️ Manage DMbot → **Stop when "
         f"quiet** (under 👤 DMbot Main Menu, {where}). To start again, use `/dmbot start`."
     )
 

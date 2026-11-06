@@ -46,7 +46,8 @@ async def read_campaign(
         await _scoped(conn, guild_id)
         cur = await conn.execute(
             "SELECT c.name, c.owner_user_id, c.dm_screen_visibility, c.dm_screen_level,"
-            " c.transcript_keep_days, c.paused,"
+            " c.transcript_keep_days, c.paused, c.story_mode, c.dndbeyond_invite,"
+            " c.target_ruleset, c.fallback_ruleset,"
             " (SELECT count(*) FROM campaign_dms m WHERE m.guild_id = c.guild_id"
             "    AND m.campaign_id = c.id) AS dm_count"
             " FROM campaigns c"
@@ -59,12 +60,18 @@ async def read_campaign(
             name = mine["name"]
             role = "owner" if mine["owner_user_id"] == session.user_id else "co-dm"
             # The campaign's current choices, for the page's Settings group (#2461): the same ones
-            # ⚙️ Settings shows. Only a DM reads the campaign's row, so only a DM gets them.
+            # ⚙️ Manage DMbot shows. Only a DM reads the campaign's row, so only a DM gets them.
             settings: dict[str, Any] | None = {
                 "visibility": str(mine["dm_screen_visibility"]),
                 "level": str(mine["dm_screen_level"]),
                 "keepDays": mine["transcript_keep_days"],
                 "paused": bool(mine["paused"]),
+                "storyMode": str(mine["story_mode"]),
+                # The DM's own invite, which Discord's form also shows them; a player never gets it.
+                "dndbeyondInvite": str(mine["dndbeyond_invite"] or ""),
+                # Discord's "Main rules" and "If missing" ("none" = only the main rules).
+                "mainRules": str(mine["target_ruleset"]),
+                "fallbackRules": str(mine["fallback_ruleset"]),
                 "gameMasters": int(mine["dm_count"]),
             }
         else:

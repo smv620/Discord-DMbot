@@ -1,20 +1,25 @@
 /** @jsxImportSource preact */
-// What the Story graph hides when it draws one centre's web (#2632): how many names there are in all, the
+// What the Story Graph hides when it draws one centre's web (#2632): how many names there are in all, the
 // names with no connection yet (a list beside the map, not drawn, so it does not count against the map's
 // size cap) and the other groups of linked names. The map alone drew 2 of a campaign's 51 names because
 // it walks only the confirmed connections of its centre. The API decides what the person may see (a
 // player gets no hidden name, a DM gets them flagged); this only lists what it sends.
 import { kindWords, webPage as words } from "../content/web-words";
 import type { WebOverview as Overview } from "./api";
+import { npcPageHref } from "./webNodes";
+import { dimmedName, markSecret } from "./know";
 
 export default function WebOverview({
   overview,
+  refId,
   center,
   alone,
   onCentre,
   onAlone,
 }: {
   overview: Overview;
+  /** The campaign, for a name's page address. */
+  refId: string;
   /** The name now in the middle of the map. */
   center: string | null;
   /** A name from the tray that was picked, if any: it has no connection to draw. */
@@ -58,6 +63,15 @@ export default function WebOverview({
                   {words.groupButton(g.centerName, g.size)}
                   {g.center === center && <span class="small muted"> ({words.groupHere})</span>}
                 </button>
+                {g.page === true && npcPageHref(refId, g.center) && (
+                  <>
+                    {" "}
+                    <a class="small" href={npcPageHref(refId, g.center) ?? undefined}>
+                      {words.openItsPage}
+                      <span class="visually-hidden">{words.openItsPageFor(g.centerName)}</span>
+                    </a>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -69,6 +83,7 @@ export default function WebOverview({
             {words.trayHeading} ({tray.length})
           </h2>
           <p class="small muted">{words.trayLead}</p>
+          {tray.some((n) => n.knowWord) && <p class="small muted">{words.knowHint}</p>}
           {/* Right under the lead, so a tap on a name below is answered where the person is looking. */}
           <p class="small" role="status">
             {picked ? words.noConnectionsYet(picked.name) : ""}
@@ -78,18 +93,28 @@ export default function WebOverview({
               <h3 class="small">{words.trayKind(kindWords(k.key), k.names.length)}</h3>
               <ul class="row web-tray">
                 {k.names.map((n) => (
-                  <li key={n.id} class={n.revealed === false ? "web-dim" : undefined}>
+                  <li key={n.id} class={dimmedName(n) ? "web-dim" : undefined}>
                     <button
                       type="button"
                       class="button secondary"
                       aria-pressed={n.id === alone}
                       onClick={() => onAlone(n.id === alone ? null : n.id)}
                     >
-                      {n.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                      {markSecret(n) && <span aria-hidden="true">{words.secretMark} </span>}
                       {n.name}
-                      {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-                      {n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                      {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
+                      {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
+                      {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
                     </button>
+                    {n.page === true && npcPageHref(refId, n.id) && (
+                      <>
+                        {" "}
+                        <a class="small" href={npcPageHref(refId, n.id) ?? undefined}>
+                          {words.openItsPage}
+                          <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
+                        </a>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>

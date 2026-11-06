@@ -55,6 +55,8 @@ function fileFor(url) {
   if (/^\/account\/timeline\/[^/]+$/.test(path)) path = "/account/timeline";
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
+  if (/^\/account\/lore\/[^/]+$/.test(path)) path = "/account/lore";
+  if (/^\/account\/recap-style\/[^/]+$/.test(path)) path = "/account/recap-style";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
   if (/^\/account\/web\/[^/]+$/.test(path)) path = "/account/web";
   if (/^\/account\/npc\/[^/]+\/[^/]+$/.test(path)) path = "/account/npc";
@@ -112,7 +114,11 @@ function measure(vw) {
     if ((r.right > vw + 1 || r.left < -1) && !inOwnScrollBox(el)) out.over.push(`${label(el)} ends at ${Math.round(r.right)}`);
   }
   // A checkbox or radio is tapped through its label; the box the thumb has is that label's.
+  // The relationship map's drawing (names and lines you can drag, tab to and press) is a pan-and-zoom picture:
+  // its shapes are as big as the zoom makes them, and a thumb-sized path to every name and connection is the
+  // list under it ("Make ... the middle", "See the connections between ..."), which this check does count.
   const targets = [...document.body.querySelectorAll("button, a.button, input:not([type=hidden]), select, textarea, summary, [role=button]")]
+    .filter((el) => !el.closest("svg.web-svg"))
     .filter(shown)
     .map((el) => ({ el, r: (el.matches("input[type=checkbox], input[type=radio]") ? el.closest("label") : null)?.getBoundingClientRect() ?? el.getBoundingClientRect() }));
   for (const { el, r } of targets) if (r.height < 43.5 || r.width < 43.5) out.small.push(`${label(el)} ${Math.round(r.width)}x${Math.round(r.height)}`);
@@ -161,6 +167,8 @@ const pages = [
   }],
   ["transcripts", "/account/transcripts?demo=table"],
   ["transcripts, signed out (the line at the top)", "/account/transcripts?demo=signed-out"],
+  ["lore: the form", "/account/lore/100.cmp1?demo=table"],
+  ["recap style: examples and notes", "/account/recap-style/100.cmp1?demo=table"],
   ["import: choose files", "/account/import/100.cmp1?demo=table"],
   ["import: the chosen files, each with Remove", "/account/import/100.cmp1?demo=table", async (page) => {
     await page.setInputFiles('input[type="file"]', [
@@ -176,6 +184,11 @@ const pages = [
       { name: "second-session.txt", mimeType: "text/plain", buffer: Buffer.from("Cerric: again") },
     ]);
     await page.getByRole("button", { name: "Preview" }).click();
+    // The consent step is on: every name needs a choice. Ash is left out; Mira is kept as someone not in Discord, with the
+    // tick, so the tick's layout is measured at phone width too.
+    await page.getByLabel("Ash: Who is who?").selectOption("drop");
+    await page.getByLabel("Mira: Who is who?").selectOption("new");
+    await page.getByLabel(/I confirm Mira agreed to this/).check();
     await page.getByRole("button", { name: /Check what will be kept/ }).click();
     await page.getByText(/^Checked:/).first().waitFor();
   }],
@@ -186,7 +199,7 @@ const pages = [
     // The longest name's row, so a long unbroken name is measured; open its editor, search for a
     // merge, and ask for the removal's confirmation, so every part of the editor is on the page.
     await page.getByLabel("Find a name").fill("Alaric");
-    await page.getByRole("button", { name: /^Change Ser Alaric/ }).first().click();
+    await page.locator("button.name-open", { hasText: "Ser Alaric" }).first().click();
     await page.getByLabel("Find the other name").fill("a");
     await page.getByRole("radio").first().waitFor();
     await page.getByRole("button", { name: "Remove this name" }).click();

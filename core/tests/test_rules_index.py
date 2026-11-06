@@ -872,7 +872,7 @@ class ClassFeatures(unittest.TestCase):
         self.assertIn(("2024", "2014", tuple(index.EQUIPMENT_KINDS)), srd._newer_cache)
 
     def test_a_2014_tool_label_says_its_price_not_its_group(self) -> None:
-        from dmbot.ui import rule_card
+        from dmbot.rules import rule_card
 
         hit = index.srd().lookup("Herbalism Kit", "2014", "2024", kind="tool")
         assert hit is not None

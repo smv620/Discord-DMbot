@@ -29,6 +29,7 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.models import Heard
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.ui import guide as guide_ui
+from tests import speed
 from tests import test_story_plan as plans
 from tests.test_adventure import press
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
@@ -50,6 +51,7 @@ class Flow(ConfirmedMemoryTest):
         patcher = mock.patch.object(sp, "BATCH_CHUNKS", 1)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.busy = speed.slowdown()  # how slow this machine is before the flow (#2490)
         self.started = time.perf_counter()
 
     # ---- the bot's side, as little of it as the flow needs ----
@@ -248,7 +250,9 @@ class Flow(ConfirmedMemoryTest):
         self.assertEqual(len(self.posts), 1)
         took = time.perf_counter() - self.started
         print(f"\nShared story flow: {took:.1f} s")
-        self.assertLess(took, 10.0)
+        # The limit follows how busy the machine was before and is after, like the other timing
+        # tests (#2490): a flow that really is slow misses it on a quiet machine too.
+        self.assertLess(took, speed.allowed(10.0, self.busy))
 
     async def _chapter_ids(self) -> list[str]:
         nodes, _ = await guide.read(

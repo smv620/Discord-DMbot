@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ApiError, type AccountApi, type Recap } from "../src/account/api";
+import { ApiError, httpApi, type AccountApi, type Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { text } from "../src/content/recaps";
@@ -30,6 +30,7 @@ const unchecked = (over: Partial<Recap> = {}): Recap => ({
   uncheckedDraft: DRAFT,
   uncheckedSentences: [2],
   canApproveUnchecked: true,
+  textHash: "h1",
   ...over,
 });
 
@@ -66,8 +67,8 @@ describe("a draft unchecked for 3 days", () => {
   it("uses the draft as it is on a press, and only on a press", async () => {
     const asked: string[] = [];
     const api = pageWith(unchecked(), {
-      approveUnchecked: async (ref) => {
-        asked.push(ref);
+      approveUnchecked: async (ref, hash) => {
+        asked.push(`${ref}|${hash}`); // the fingerprint of the words on the page goes with the press
         return { ...base, text: DRAFT.join(" ") };
       },
     });
@@ -75,7 +76,7 @@ describe("a draft unchecked for 3 days", () => {
     const button = await screen.findByRole("button", { name: text.uncheckedUse });
     expect(asked).toHaveLength(0);
     fireEvent.click(button);
-    await waitFor(() => expect(asked).toEqual([base.ref]));
+    await waitFor(() => expect(asked).toEqual([`${base.ref}|h1`]));
     await waitFor(() => expect(screen.queryByRole("heading", { name: text.uncheckedHeading })).toBeNull());
   });
 
@@ -113,6 +114,38 @@ describe("a draft unchecked for 3 days", () => {
     expect(screen.getByRole("heading", { name: text.uncheckedHeading })).toBeTruthy();
   });
 
+  it("says to read again when the draft changed, and shows the new draft", async () => {
+    const next = unchecked({ textHash: "h2", uncheckedDraft: ["A new first sentence.", ...DRAFT.slice(1)] });
+    let reads = 0;
+    const api = pageWith(unchecked(), {
+      recap: async () => (reads++ === 0 ? unchecked() : next),
+      approveUnchecked: async () => {
+        throw new ApiError("changed");
+      },
+    });
+    render(<Recaps api={api} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.uncheckedUse }));
+    expect(await screen.findByText(text.uncheckedChanged)).toBeTruthy();
+    expect(await screen.findByText("A new first sentence.", { exact: false })).toBeTruthy();
+  });
+
+  it("says it isn't time yet when the API says so", async () => {
+    const api = pageWith(unchecked(), {
+      approveUnchecked: async () => {
+        throw new ApiError("not-yet");
+      },
+    });
+    render(<Recaps api={api} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.uncheckedUse }));
+    expect(await screen.findByText(text.uncheckedNotYet)).toBeTruthy();
+  });
+
+  it("offers nothing without the words' fingerprint (an older API)", async () => {
+    render(<Recaps api={pageWith(unchecked({ textHash: "" }))} path={path} />);
+    await screen.findByRole("heading", { name: text.uncheckedHeading });
+    expect(screen.queryByRole("button", { name: text.uncheckedUse })).toBeNull();
+  });
+
   it("is not shown for a recap that is not waiting any more", async () => {
     render(<Recaps api={pageWith({ ...base, uncheckedDraft: DRAFT, working: false })} path={path} />);
     await screen.findByRole("heading", { level: 2 });
@@ -133,6 +166,27 @@ describe("the pretend API's unchecked draft", () => {
     expect(result.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: text.uncheckedUse }));
     await waitFor(() => expect(screen.queryByRole("heading", { name: text.uncheckedHeading })).toBeNull());
-    expect(api.calls).toContain("approveUnchecked:200000000000000001.cmp9.1789000000");
+    expect(api.calls).toContain("approveUnchecked:200000000000000001.cmp9.1789000000:hash-of-the-draft");
+  });
+});
+
+describe("the real client", () => {
+  it("sends the words' fingerprint to the recap's own address", async () => {
+    const seen: string[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method} ${new URL(url).pathname} ${init?.body}`);
+      return new Response(JSON.stringify({ ...base }), { status: 200 });
+    }) as typeof fetch);
+    await api.approveUnchecked!("5.abc.1700", "h1");
+    expect(seen).toEqual(['POST /me/recaps/5.abc.1700/approve-unchecked {"textHash":"h1"}']);
+  });
+
+  it.each([
+    [409, "not_yet", "not-yet"],
+    [409, "changed", "changed"],
+    [422, "bad_hash", "bad-hash"],
+  ])("reads %s %s as %s", async (status, code, kind) => {
+    const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: code }), { status })) as typeof fetch);
+    await expect(api.approveUnchecked!("5.abc.1700", "h1")).rejects.toMatchObject({ kind });
   });
 });

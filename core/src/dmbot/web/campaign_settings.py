@@ -3,10 +3,11 @@ the DM screen, how much DMbot says, and how long transcripts are kept.
 
 The website's database role has no right on the campaign tables, so a choice is queued through one
 database door (`dmbot_web_setting_add`, schema.py), which checks the signed-in person is a DM of the
-campaign; the bot applies it the way Discord's ⚙️ Settings buttons do (dm_screen/web_settings.py)
+campaign; the bot applies it the way Discord's ⚙️ Manage DMbot buttons do (dm_screen/web_settings.py)
 and the page reads where it stands. A server manager who is not a DM, a player and anyone else get
-"not allowed" or "not found", the same as for the other pages. Not here: game masters, hand over,
-pause and delete (the page sends the DM to Discord for those).
+"not allowed" or "not found", the same as for the other pages. Optional rules (#2753) and game
+masters (#2768) and pause (#2985, the owner only) go through the same queue. Not here: hand over
+and delete (the page sends the DM to Discord for those).
 
 A campaign is named by `<server>.<campaign>`, as for the recap and transcript pages.
 """
@@ -16,7 +17,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot import progress
+from dmbot.campaigns.invite import parse_invite
+from dmbot.campaigns.models import CampaignError, check_rulesets
+from dmbot.campaigns.store import MAX_DMS
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
+from dmbot.rules import optional
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -28,7 +35,45 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "visibility": ("private", "peek", "open"),
     "level": ("quiet", "normal"),
     "retention": ("forever", "365", "90", "30"),
+    "story_mode": ("off", "watch", "guide"),  # the Shared story switch (#2985)
 }
+
+
+OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off (#2753)
+CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
+PAUSE = "pause"  # a sixth: the campaign paused or unpaused, by its owner (#2985)
+STORY_MODE = "story_mode"  # a seventh: the Shared story switch, off, watch or guide (#2985)
+# an eighth: the D&D Beyond invite link, or empty to remove it (#2985)
+DNDBEYOND_INVITE = "dndbeyond_invite"
+RULESETS = "rulesets"  # a ninth: the main rules and what to use if they miss, "2024/2014" (#2985)
+PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
+
+
+def _invite(body: dict[str, Any]) -> str:
+    """The D&D Beyond invite in its standard form, or "" to remove it (#2985). The same parser as
+    Discord's form (`campaigns/invite.py`), so the page and Discord accept exactly the same links;
+    anything else is `bad_value`. The door checks the shape again."""
+    value = body.get("value")
+    if not isinstance(value, str) or len(value) > 200:
+        raise RecapError("bad_value")
+    try:
+        return parse_invite(value) or ""
+    except CampaignError:
+        raise RecapError("bad_value") from None
+
+
+def _rulesets(body: dict[str, Any]) -> str:
+    """ "<main>/<fallback>" for the database door (#2985), or `bad_value`. The same check as
+    Discord's picker (`check_rulesets`: both words offered, and the fallback not the main rules)."""
+    value = body.get("value")
+    if not isinstance(value, str) or value.count("/") != 1:
+        raise RecapError("bad_value")
+    main, fallback = value.split("/")
+    try:
+        check_rulesets(main, fallback)
+    except CampaignError:
+        raise RecapError("bad_value") from None
+    return f"{main}/{fallback}"
 
 
 def _arguments(body: object) -> tuple[str, str, bool]:
@@ -36,6 +81,10 @@ def _arguments(body: object) -> tuple[str, str, bool]:
     if not isinstance(body, dict):
         raise RecapError("bad_setting")
     setting = body.get("setting")
+    if setting == DNDBEYOND_INVITE:
+        return DNDBEYOND_INVITE, _invite(body), False
+    if setting == RULESETS:
+        return RULESETS, _rulesets(body), False
     if not isinstance(setting, str) or setting not in CHOICES:
         raise RecapError("bad_setting")
     value = body.get("value")
@@ -46,20 +95,105 @@ def _arguments(body: object) -> tuple[str, str, bool]:
     return setting, value, body.get("confirm") is True
 
 
-async def queue_setting(db: Database, session: Session, ref: str, body: object) -> str:
+def _optional_rule(body: object) -> tuple[str, bool] | None:
+    """(rule id, on) when the body is an optional-rule choice (#2753), None when it is one of the
+    three settings. The id must be one in the rules catalog, the same list Discord offers, and `on`
+    a real yes or no: anything else is the refusal word. The bot checks again that the rule applies
+    to this campaign's main rules."""
+    if not isinstance(body, dict) or body.get("setting") != OPTIONAL_RULE:
+        return None
+    rule_id, on = body.get("value"), body.get("on")
+    if not isinstance(rule_id, str) or optional.rule(rule_id) is None or not isinstance(on, bool):
+        raise RecapError("bad_value")
+    return rule_id, on
+
+
+def _is_co_dm(body: object) -> bool:
+    return isinstance(body, dict) and body.get("setting") == CO_DM
+
+
+def _co_dm(body: object) -> tuple[str, bool] | None:
+    """(person's id, add) when the body is a game master change (#2768), None otherwise. The id is
+    digits only, as a Discord id is, and `on` a real yes or no: anything else is the refusal word.
+    The database door checks the person is one the candidates list offers; the bot checks every
+    rule of Discord's game masters again when it applies the change."""
+    if not isinstance(body, dict) or body.get("setting") != CO_DM:
+        return None
+    person, add = body.get("value"), body.get("on")
+    if not isinstance(person, str) or not PERSON_ID.match(person) or not isinstance(add, bool):
+        raise RecapError("bad_value")
+    return person, add
+
+
+def _pause(body: object) -> bool | None:
+    """True to pause, False to unpause, when the body is a pause choice (#2985); None otherwise.
+    `on` must be a real yes or no (true is "pause"). Only the owner may; the door says so and the
+    bot checks the owner and the plan's room again."""
+    if not isinstance(body, dict) or body.get("setting") != PAUSE:
+        return None
+    on = body.get("on")
+    if not isinstance(on, bool):
+        raise RecapError("bad_value")
+    return on
+
+
+async def queue_setting(
+    db: Database,
+    session: Session,
+    ref: str,
+    body: object,
+    *,
+    co_dms_on: bool = False,
+    pause_on: bool = False,
+    story_mode_on: bool = False,
+    invite_on: bool = False,
+    rulesets_on: bool = False,
+) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
     transcript limit deletes old sessions, so the page asks first and sends `confirm`; the bot
     refuses it without."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    setting, value, confirmed = _arguments(body)
+    if _is_co_dm(body) and not co_dms_on:  # off until the bot applies it too (DMBOT_WEB_CO_DMS)
+        raise RecapError("not_found")  # (before the body is judged: a malformed one is 404 too)
+    if isinstance(body, dict) and body.get("setting") == PAUSE and not pause_on:
+        raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_PAUSE)
+    if isinstance(body, dict) and body.get("setting") == STORY_MODE and not story_mode_on:
+        raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_STORY_MODE)
+    if isinstance(body, dict) and body.get("setting") == DNDBEYOND_INVITE and not invite_on:
+        raise RecapError(
+            "not_found"
+        )  # off until the bot applies it too (DMBOT_WEB_DNDBEYOND_INVITE)
+    if isinstance(body, dict) and body.get("setting") == RULESETS and not rulesets_on:
+        raise RecapError("not_found")  # off until the bot applies it too (DMBOT_WEB_RULESETS)
+    rule = _optional_rule(body)
+    master = _co_dm(body)
+    pause = _pause(body)
+    setting, value, confirmed = (
+        ("", "", False) if rule or master or pause is not None else _arguments(body)
+    )
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_setting_add(%s, %s, %s, %s, %s) AS r",
-            (guild_id, campaign_id, setting, value, confirmed),
-        )
+        if rule:
+            cur = await conn.execute(
+                "SELECT dmbot_web_optional_rule_add(%s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, rule[0], rule[1]),
+            )
+        elif pause is not None:
+            cur = await conn.execute(
+                "SELECT dmbot_web_pause_add(%s, %s, %s) AS r", (guild_id, campaign_id, pause)
+            )
+        elif master:
+            cur = await conn.execute(
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, master[0], master[1], TERMS_VERSION, MAX_DMS),
+            )
+        else:
+            cur = await conn.execute(
+                "SELECT dmbot_web_setting_add(%s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, setting, value, confirmed),
+            )
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None:
@@ -67,6 +201,25 @@ async def queue_setting(db: Database, session: Session, ref: str, body: object) 
     if got["status"] != "ok":
         raise RecapError(str(got["status"]))
     return str(got["id"])
+
+
+def _progress(got: dict[str, Any]) -> dict[str, Any]:
+    """How long a choice has waited, in the shared progress shape (#3355). Times only:
+    `createdAt` is when the page queued it (seconds), `claimedAt` when the bot took it (0 before;
+    milliseconds, the queue's own stamp). A waiting choice's last movement is its start; a taken
+    one's is the moment it was taken. A rule the DM can fix (a refusal with a note) is a failure
+    here, with its reason code, so the page can say what to do next."""
+    state = str(got["state"])
+    created = int(got.get("createdAt") or 0)
+    taken = int(got.get("claimedAt") or 0) // 1000
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return progress.shape(
+        stage,
+        started_at=created,
+        updated_at=taken if state != "waiting" and taken else created,
+        now=int(got.get("now") or created),
+        reason=(str(got.get("error") or "") or "setting_failed") if stage == "failed" else None,
+    )
 
 
 async def read_setting(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
@@ -92,4 +245,5 @@ async def read_setting(db: Database, session: Session, ref: str, answer: str) ->
         "setting": got["setting"],
         "value": got["value"],
         "note": got["note"],
+        "progress": _progress(got),
     }

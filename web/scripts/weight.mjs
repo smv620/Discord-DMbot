@@ -53,8 +53,19 @@ export function localReferences(text, kind) {
     const path = String.raw`["']((?:\.{1,2}\/|\/)[^"']+)["']`;
     for (const m of text.matchAll(new RegExp(String.raw`\bfrom\s*` + path, "g"))) add(m[1]);
     for (const m of text.matchAll(new RegExp(String.raw`\bimport\s*` + path, "g"))) add(m[1]);
-    for (const m of text.matchAll(new RegExp(String.raw`\bimport\(\s*` + path + String.raw`\s*\)`, "g"))) add(m[1]);
+    // (A chunk written as `import("./x.js")` is loaded on demand, when the viewer needs it: it is not here,
+    // see `onDemandReferences`, and it has its own size limit.)
   }
+  return [...found];
+}
+
+/** The chunks a script loads only when asked, with `import("./x.js")` (#2690): they are not part of what the
+ * page loads first, but each, with everything it imports, is held to its own size limit. Known gap, as for
+ * `localReferences`: a specifier built at run time is not seen. */
+export function onDemandReferences(text) {
+  const found = new Set();
+  const path = String.raw`["']((?:\.{1,2}\/|\/)[^"']+)["']`;
+  for (const m of text.matchAll(new RegExp(String.raw`\bimport\(\s*` + path + String.raw`\s*\)`, "g"))) found.add(m[1]);
   return [...found];
 }
 
@@ -71,6 +82,7 @@ export function weighPage(distDir, page) {
   const html = readFileSync(join(dist, page), "utf8");
   const seen = new Map(); // path -> bytes
   const alternatives = new Set(); // pictures a stylesheet offers instead of another one
+  const onDemand = new Map();
   const queue = localReferences(html, "html").map((ref) => ({ from: page, ref }));
   while (queue.length > 0) {
     const { from, ref } = queue.pop();
@@ -91,11 +103,37 @@ export function weighPage(distDir, page) {
       for (const x of pictures) if (x !== biggest) alternatives.add(x.path);
       for (const ref of refs) if (!pictures.some((x) => x.ref === ref) || ref === biggest?.ref) queue.push({ from: file, ref });
     } else if (kind === "js") {
-      for (const next of localReferences(readFileSync(join(dist, file), "utf8"), kind)) queue.push({ from: file, ref: next });
+      const code = readFileSync(join(dist, file), "utf8");
+      for (const next of localReferences(code, kind)) queue.push({ from: file, ref: next });
+      for (const next of onDemandReferences(code)) {
+        const later = resolveInDist(dist, file, next);
+        if (later !== undefined) onDemand.set(later, statSync(join(dist, later)).size);
+      }
     }
   }
   for (const f of alternatives) if (seen.has(f)) alternatives.delete(f);
-  return { page, alternatives, htmlBytes: statSync(join(dist, page)).size, files: seen, totalBytes: statSync(join(dist, page)).size + [...seen.values()].reduce((a, b) => a + b, 0) };
+  for (const f of onDemand.keys()) if (seen.has(f)) onDemand.delete(f); // (also loaded up front: counted there)
+  // A chunk loaded on demand brings what it imports with it (a shared library, another chunk): weigh the
+  // whole closure, minus what the page already loads, so a small entry file cannot hide a big import.
+  const onDemandTotals = new Map();
+  for (const entry of onDemand.keys()) {
+    const seenHere = new Set();
+    const todo = [entry];
+    while (todo.length > 0) {
+      const file = todo.pop();
+      if (seenHere.has(file) || seen.has(file)) continue;
+      seenHere.add(file);
+      if (!/\.m?js$/.test(file)) continue;
+      const code = readFileSync(join(dist, file), "utf8");
+      for (const ref of [...localReferences(code, "js"), ...onDemandReferences(code)]) {
+        const next = resolveInDist(dist, file, ref);
+        if (next !== undefined) todo.push(next);
+      }
+    }
+    onDemandTotals.set(entry, [...seenHere].reduce((sum, f) => sum + statSync(join(dist, f)).size, 0));
+  }
+  for (const [entry, bytes] of onDemandTotals) onDemand.set(entry, bytes);
+  return { page, alternatives, onDemand, htmlBytes: statSync(join(dist, page)).size, files: seen, totalBytes: statSync(join(dist, page)).size + [...seen.values()].reduce((a, b) => a + b, 0) };
 }
 
 /** Every page's weight against the budgets; `problems` names each page that passes one. */
@@ -110,6 +148,12 @@ export function checkBuild(distDir, budgets) {
     const totalMax = budget.totalKB * KB;
     if (r.htmlBytes > htmlMax) problems.push(`${r.page}: the HTML is ${(r.htmlBytes / KB).toFixed(1)} KB, over its ${budget.htmlKB} KB budget`);
     if (r.totalBytes > totalMax) problems.push(`${r.page}: everything it loads is ${(r.totalBytes / KB).toFixed(1)} KB, over its ${budget.totalKB} KB budget`);
+  }
+  // A chunk loaded on demand is not part of the page's weight, but it may not hide a big panel there either.
+  if (budgets.onDemandKB !== undefined) {
+    for (const r of rows)
+      for (const [file, bytes] of r.onDemand)
+        if (bytes > budgets.onDemandKB * KB) problems.push(`${r.page}: ${file} loads on demand and is ${(bytes / KB).toFixed(1)} KB, over its ${budgets.onDemandKB} KB limit`);
   }
   // Pictures: any image in the build over the limit, with the pages that load it or show it as a link preview.
   const images = [];

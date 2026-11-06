@@ -17,9 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 from dmbot import consent_dm as c
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.config import ConfigError, Settings, load_settings, parse_server_ids
 from dmbot.devtools import test_library as cli
+from dmbot.table import Table
 from dmbot.test_recording import files, flac, library
 from dmbot.test_recording.session import TestSession
 from dmbot.test_recording.store import TestVoiceStore

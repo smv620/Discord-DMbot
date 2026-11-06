@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import json
 import time
 import unittest.mock
@@ -726,7 +727,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                    " '[]'::jsonb, 6) AS r"
+                ),
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -748,7 +752,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL,"
+                    " '[]'::jsonb, 6) AS r"
+                ),
                 (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
                  json.dumps([{"ms": 0, "user": MIRA, "text": "hi", "dur": 1}])),
             )  # fmt: skip
@@ -842,14 +849,43 @@ class TheStore(WithImports):
         self.assertEqual(refused.exception.code, "no_lines_kept")
         self.assertEqual(await self.sessions(), 0)
 
-    async def test_session_dates_must_be_from_2000_to_2100(self) -> None:
-        cases = {"1999-12-31": False, "2000-01-01": True, "2100-01-01": True, "2100-01-02": False}
-        for day, ok in cases.items():
-            if ok:
-                self.assertIsInstance(imports._started_at(day, 0), int, day)
+    async def test_session_dates_must_be_from_2000_and_not_in_the_future(self) -> None:
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        cases = {
+            "1999-12-31": "bad_date",
+            "2000-01-01": "",
+            "2026-11-05": "",
+            "2101-01-01": "bad_date",
+        }
+        for day, code in cases.items():
+            if not code:
+                self.assertIsInstance(imports._started_at(day, 0, now), int, day)
             else:
-                with self.assertRaises(RecapError, msg=day):
-                    imports._started_at(day, 0)
+                with self.assertRaises(RecapError, msg=day) as refused:
+                    imports._started_at(day, 0, now)
+                self.assertEqual(refused.exception.code, code, day)
+
+    async def test_a_day_that_has_not_happened_yet_is_refused_with_its_own_code(self) -> None:
+        """#3483: the page stops it, but an old tab or a direct call must not store one. The
+        server allows one day ahead of UTC (the DM's own calendar may be a day ahead) and refuses
+        anything later."""
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        for day in ("2026-11-04", "2026-11-05", "2026-11-06"):  # past, today, one day ahead
+            self.assertIsInstance(imports._started_at(day, 0, now), int, day)
+        for day in ("2026-11-07", "2027-01-01"):  # tomorrow+1 and later
+            with self.assertRaises(RecapError, msg=day) as refused:
+                imports._started_at(day, 0, now)
+            self.assertEqual(refused.exception.code, "future_date", day)
+
+    async def test_the_import_refuses_a_future_date_before_anything_is_stored(self) -> None:
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=3)).date().isoformat()
+        with self.assertRaises(RecapError) as refused:
+            await self.confirm(
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": future}]},
+                ("a.txt", CRAIG),
+            )
+        self.assertEqual(refused.exception.code, "future_date")
+        self.assertEqual(await self.sessions(), 0)
 
     async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
         await self.confirm(
@@ -1205,6 +1241,7 @@ class TheProgress(WithImports):
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
                     "recap": None,
+                    "story": None,  # (the story read has not started)
                     "progress": {
                         "stage": "cleaning",
                         "startedAt": got["sessions"][0]["progress"]["startedAt"],
@@ -1273,6 +1310,16 @@ class TheProgress(WithImports):
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
 
+    async def test_the_words_and_calls_so_far_ride_in_the_progress_shape(self) -> None:
+        """#3534: `counts` appears once something was handled, counts only, and a session that
+        recorded nothing sends the shape it always did."""
+        imp, _, _ = await self.one_import(False)
+        self.assertNotIn("counts", (await self.stage(imp))["progress"])
+        await self.set_import(step_total=900, step_done=420, words_done=5300, calls_made=7)
+        got = (await self.stage(imp))["progress"]
+        self.assertEqual(got["counts"], {"words": 5300, "calls": 7})
+        self.assertEqual((got["done"], got["total"]), (420, 900))
+
     async def test_the_progress_shape_moves_with_the_stages_and_never_goes_back(self) -> None:
         """#2564: stage, counts, startedAt, updatedAt and serverNow, one shape per session and for
         the whole import."""
@@ -1296,6 +1343,40 @@ class TheProgress(WithImports):
             (whole["stage"], whole["state"], whole["done"], whole["total"], whole["unit"]),
             ("done", "done", 1, 1, "sessions"),
         )
+
+    async def test_the_story_read_shows_each_of_its_states(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        self.assertIsNone((await self.stage(imp))["story"])  # not started
+        now = int(time.time())
+        await self.set_import(
+            story_state="reading", story_part=2, story_parts=5,
+            story_started_at=now - 90, story_moved_at=now - 10,
+        )  # fmt: skip
+        story = (await self.stage(imp))["story"]
+        self.assertEqual(
+            (story["stage"], story["state"], story["done"], story["total"], story["unit"]),
+            ("reading_connections", "running", 2, 5, "parts"),
+        )
+        self.assertGreaterEqual(story["updatedAt"], story["startedAt"])  # how long, and last move
+        await self.set_import(story_state="waiting", story_moved_at=now - 3 * 3600)
+        story = (await self.stage(imp))["story"]
+        self.assertEqual((story["stage"], story["state"]), ("waiting_for_limit", "running"))
+        await self.set_import(story_state="read")
+        story = (await self.stage(imp))["story"]
+        self.assertEqual((story["stage"], story["state"]), ("connections_read", "done"))
+
+    async def test_a_story_read_that_stops_moving_is_called_stalled_but_a_wait_for_the_limit_is_not(
+        self,
+    ) -> None:
+        imp, _, _ = await self.one_import(False)
+        long_ago = int(time.time()) - 3 * 3600
+        await self.set_import(
+            story_state="reading", story_part=1, story_parts=3,
+            story_started_at=long_ago, story_moved_at=long_ago,
+        )  # fmt: skip
+        self.assertEqual((await self.stage(imp))["story"]["state"], "stalled")
+        await self.set_import(story_state="waiting")
+        self.assertEqual((await self.stage(imp))["story"]["state"], "running")
 
     async def test_a_job_that_has_not_moved_for_its_stage_limit_is_stalled(self) -> None:
         imp, _, _ = await self.one_import(False)

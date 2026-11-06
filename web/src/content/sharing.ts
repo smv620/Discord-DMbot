@@ -1,7 +1,7 @@
 // The words of the Shared rules page (#2460 part 2, docs/PLAN.md "Where everything is on the
 // website"): the house-rules sets and homebrew packs your campaigns share with other tables, and the
 // ones they use from other tables. Read-only for now; each line says where to change it in Discord,
-// with the same names as the Discord menus (⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs).
+// with the same names as the Discord menus (⚙️ Manage DMbot → 📚 Shared rules → 📦 Homebrew packs).
 export const sharingCard = {
   heading: "Shared rules",
   lead: "The house rules and homebrew your campaigns share with other tables, and the ones they use from other tables.",
@@ -17,7 +17,7 @@ export const text = {
   openHouseRules: "Open house rules",
   openHomebrew: "Open homebrew",
   signedOut: "Sign in to see your shared rules.",
-  empty: "You don't share or use any rules yet. To start, in Discord, open ⚙️ Settings, then 📚 Shared rules.",
+  empty: "You don't share or use any rules yet. To start, in Discord, open ⚙️ Manage DMbot, then 📚 Shared rules.",
   failed: "That didn't load. Try again in a moment.",
   tooMany: "Too many tries at once. Wait a moment, then try again.",
   server: (name: string): string => `On ${name}`,
@@ -33,8 +33,8 @@ export const text = {
   updating: "Gets new versions",
   noLongerUpdated: "No longer updated",
   // Where to change it. Read-only here for now, so each line names the exact Discord path.
-  changeRules: "Change it in Discord: ⚙️ Settings → 📚 Shared rules",
-  changePacks: "Change it in Discord: ⚙️ Settings → 📚 Shared rules → 📦 Homebrew packs",
+  changeRules: "Change it in Discord: ⚙️ Manage DMbot → 📚 Shared rules",
+  changePacks: "Change it in Discord: ⚙️ Manage DMbot → 📚 Shared rules → 📦 Homebrew packs",
 };
 
 export function problem(kind: string): string {

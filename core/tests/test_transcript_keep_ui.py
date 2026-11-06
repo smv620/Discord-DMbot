@@ -1,4 +1,4 @@
-"""The 📜 Transcripts panel on ⚙️ Settings (#1533): DM only on every press, one warning before a
+"""The 📜 Transcripts panel on ⚙️ Manage DMbot (#1533): DM only on every press, one warning before a
 shorter limit is saved, nothing saved before its button, and a longer choice saves at once."""
 
 from __future__ import annotations

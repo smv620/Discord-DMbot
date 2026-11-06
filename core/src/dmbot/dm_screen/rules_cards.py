@@ -1,6 +1,6 @@
 """Rules cards from the table (#931): when a spell, condition or creature is named in a live
 session, a short card goes on the DM screen, if the campaign's DMs turned that on in
-⚙️ Settings (off by default).
+⚙️ Manage DMbot (off by default).
 
 DMbot only shows what the free rules (the SRD) say; the DM decides what applies. A card
 says what was heard, names its source, and shows a house rule that mentions the thing
@@ -37,10 +37,10 @@ log = logging.getLogger(__name__)
 GAP_S = 60.0  # at most one card in this many seconds, whichever names are said
 CLOSED = (
     "These buttons stopped working (the session ended or DMbot restarted). To look "
-    "something up, press 📖 Look up a rule in ⚙️ Settings."
+    "something up, press 📖 Look up a rule in ⚙️ Manage DMbot."
 )
 ONLY_DMS = "Only this campaign's DMs can use these buttons. You can still read the card."
-STOP_ALL = "To stop all cards: ⚙️ Settings, then 🃏 Turn rules cards off."
+STOP_ALL = "To stop all cards: ⚙️ Manage DMbot, then 🃏 Turn rules cards off."
 FAILED = "Something went wrong. Try again in a moment."
 GOT_LABEL, IGNORE_LABEL, OVERRIDE_LABEL, READ_LABEL = "Got it", "Ignore", "Override", "Read it all"
 ACTIONS = {"got": "✅", "ign": "🙈", "ovr": "⚖️", "all": "📖", "time": "⏳"}

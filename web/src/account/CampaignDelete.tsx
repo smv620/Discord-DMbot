@@ -1,12 +1,13 @@
 /** @jsxImportSource preact */
-// "Delete this campaign" on a campaign's card in My Account (#2555; core #2554). The same steps as Discord's
-// button: one warning that says what goes and that it can't be undone, a backup offered first, and the
-// campaign's name typed to confirm. It is offered to the plan holder only (the API checks again), and the
+// "Delete this campaign" at the bottom of a campaign's page, and on the My Account card of a campaign whose server
+// DMbot can't reach (#2555; core #2554; #2879). The same steps as Discord's button: one warning that says what goes
+// and that it can't be undone, a backup offered first, and the campaign's name typed to confirm. It is offered to the plan holder only (the API checks again), and the
 // button stays off until the typed name matches, as Discord's box does (any case, extra spaces ignored).
 import { useRef, useState } from "preact/hooks";
 
-import { BACKUP_HAS_TRANSCRIPTS, campaignDeleteWords as words } from "../content/campaign-delete";
+import { campaignDeleteWords as words } from "../content/campaign-delete";
 import { ApiError, type AccountApi } from "./api";
+import CampaignBackup from "./CampaignBackup";
 
 const squash = (name: string): string => name.split(/\s+/).filter(Boolean).join(" ").toLocaleLowerCase();
 
@@ -31,9 +32,9 @@ export default function CampaignDelete({
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
-  const [state, setState] = useState<"idle" | "backup" | "deleting">("idle");
+  const [state, setState] = useState<"idle" | "deleting">("idle");
+  const [backingUp, setBackingUp] = useState(false); // a backup is being made (its own button, below)
   const [problem, setProblem] = useState("");
-  const [saved, setSaved] = useState(false);
   const [kept, setKept] = useState(false);
   const working = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
@@ -45,33 +46,8 @@ export default function CampaignDelete({
     if (kind === "not-found") onGone(); // never "Deleted": this press deleted nothing
   };
 
-  const backup = async () => {
-    if (working.current || !api.campaignBackup) return;
-    working.current = true;
-    setState("backup");
-    setProblem("");
-    setSaved(false);
-    try {
-      const blob = await api.campaignBackup(refId);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = words.backupFileName(name);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
-      setSaved(true);
-    } catch (error) {
-      fail(error);
-    } finally {
-      working.current = false;
-      setState("idle");
-    }
-  };
-
   const remove = async () => {
-    if (working.current || squash(typed) !== squash(name)) return;
+    if (working.current || backingUp || squash(typed) !== squash(name)) return;
     working.current = true;
     setState("deleting");
     setProblem("");
@@ -106,17 +82,8 @@ export default function CampaignDelete({
       <p>{words.warning(name)}</p>
       <p class="small">{words.warningStays}</p>
       {backups && (
-        <>
-          {!BACKUP_HAS_TRANSCRIPTS && <p class="small warn">{words.backupWithoutTranscripts}</p>}
-          <div class="row">
-            {/* First, so the way to keep a copy comes before the way to delete. */}
-            <button type="button" class="button" disabled={state !== "idle"} onClick={() => void backup()}>
-              {state === "backup" ? words.backingUp : words.backup}
-            </button>
-          </div>
-          <p class="small">{words.backupNote}</p>
-          {saved && <p role="status" class="small">{words.backupDone(words.backupFileName(name))}</p>}
-        </>
+        /* First, so the way to keep a copy comes before the way to delete. */
+        <CampaignBackup api={api} refId={refId} label={words.backup} inDelete onWorking={setBackingUp} onGone={onGone} />
       )}
       <label class="field">
         {words.typeName}
@@ -132,7 +99,7 @@ export default function CampaignDelete({
         <button
           type="button"
           class="button secondary"
-          disabled={state === "deleting"}
+          disabled={state === "deleting" || backingUp}
           onClick={() => {
             setKept(true);
             setOpen(false);
@@ -146,7 +113,7 @@ export default function CampaignDelete({
         <button
           type="button"
           class="button danger"
-          disabled={state !== "idle" || !matches}
+          disabled={state !== "idle" || backingUp || !matches}
           aria-busy={state === "deleting"}
           onClick={() => void remove()}
         >

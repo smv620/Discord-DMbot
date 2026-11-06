@@ -76,12 +76,14 @@ export const text = {
   uncheckedLead:
     "Nothing is shared. Any highlighted sentences are ones DMbot would have double-checked.",
   uncheckedMark: "Check:",
-  uncheckedUse: "Open it for editing",
-  uncheckedUsing: "Opening it…",
-  uncheckedAfter: "It stays a draft. You can edit it, then approve it.",
+  uncheckedUse: "Approve it as it is",
+  uncheckedUsing: "Approving…",
+  uncheckedAfter: "You can approve it as it is. Once DMbot has finished it, you can edit it.",
   uncheckedKeepTrying: "DMbot keeps trying to finish the check.",
-  uncheckedOpened: "Opened. You can edit it now.",
-  uncheckedFailed: "Couldn't open the draft. Press the button again in a minute.",
+  uncheckedOpened: "Approved as it is.",
+  uncheckedFailed: "Couldn't approve the draft. Press the button again in a minute.",
+  uncheckedChanged: "DMbot changed the draft while you were reading. Read it again, then press the button.",
+  uncheckedNotYet: "It isn't time yet. DMbot keeps trying to finish the check.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or leave it.",
@@ -130,6 +132,23 @@ export const text = {
   /** The running time's label (the clock is not in a live region, so it is not read out each second). */
   clockLabel: "Time so far",
   postedLink: "Open it in Discord",
+  /** Said when a post has not moved for a while (`postingProgress.state` is stalled). Posting twice would put the recap in
+   * the chat twice, so it says to look at the channel first. */
+  postStalled:
+    "Nothing new for a while. You can leave this page; DMbot keeps going. If it has not moved in 5 more minutes, look at your table's channel in Discord before you press Post again.",
+  /** Why a post was refused (`postingProgress.reason`), each with what to do next. Nothing was posted in any of them. */
+  postWhy: {
+    plan: "Your plan doesn't include recaps right now, so nothing was posted. Your draft is saved here.",
+    no_table_chat:
+      "DMbot has no table chat to post in yet, so nothing was posted. Start a session in a voice channel, or pick a chat channel in ⚙️ Manage DMbot in Discord, then press Post.",
+    cannot_check_secrets: "DMbot couldn't check your secret names just now, so nothing was posted. Press Post to try again.",
+    secret_name: "The recap names something you keep secret, so nothing was posted. Change the text, then press Post.",
+    player_stopped:
+      "A player has stopped being recorded since this was written, so it can't be posted. Write a new recap, or leave this one out.",
+    send_failed:
+      "DMbot couldn't write in your table's chat, so nothing was posted. Check that it is allowed to post there, then press Post again.",
+    post_failed: "Nothing was posted. Press Post to try again. If it keeps failing, look at your table's channel in Discord first.",
+  } as Record<string, string>,
   /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
   postFailed:
     "DMbot couldn't confirm this recap was posted. Look at your table's channel in Discord before you try again. The recap is still saved here as a draft; approve it again to post it.",
@@ -248,7 +267,12 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
       "That isn't possible any more. Reload the page to see where this recap is now.",
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
+    "no-lines":
+      "That session's transcript isn't kept any more, so DMbot has nothing to write this recap from. You can leave it unposted.",
+    "no-tries": "This recap has no Try again left. You can leave it unposted.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
+    "fixed-lines":
+      "Nothing was saved. The first and last lines of a recap are DMbot's and can't be changed. Put them back as they were.",
     "bad-cues": "Nothing was saved. Some cues need fixing. See the list under the text box.",
     other: "Something went wrong on our side. Try again in a minute.",
   };

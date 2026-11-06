@@ -1,0 +1,20 @@
+---
+import RestoreIsland from "../../account/RestoreIsland";
+import { restoreWords } from "../../content/restore-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Load a backup"
+  description="Bring a campaign back from a copy you downloaded."
+  noindex
+>
+  <div class="account">
+    <h1>{restoreWords.heading}</h1>
+    <RestoreIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to load a backup. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

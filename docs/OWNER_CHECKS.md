@@ -26,16 +26,8 @@ lines on. A check that didn't work is just as useful: say what you saw.
 
 ## Group A. Right after you start listening
 
-### 1. The people-and-groups channel
-**You'll do:**
-1. Look in your server's channel list for one called **dmb-npcs** (it has a short name after it).
-2. Type `/dmbot names` and pick it from the list that pops up. That is the Names list. Press ➕ Add a name and add one made-up person, for example "Captain Rook". Confirm them.
-3. Look at dmb-npcs again.
-
-**It worked if:** the channel is there, Captain Rook is listed with the other names and groups you gave them,
-and you cannot type in the channel.
-
-Unlocks: #1761
+### 1. (retired)
+The people-and-groups channel is gone (#2875), so there is nothing to check. Numbers stay as they are.
 
 ### 2. Initiative: FightBot hears how your table runs it
 **You'll do:**
@@ -52,23 +44,16 @@ Unlocks: #1771
 ### 3. The DMbot channel with the buttons
 **You'll do:**
 1. Look for the channel **dmb-dm-bot**. Press 👤 DMbot Main Menu.
-2. Press 📖 Look up a rule and look up any rule.
-3. Press ⚙️ Settings, then back out.
+2. Press ❓ Help, then 📖 Look up a rule, and look up any rule.
+3. Press ⚙️ Manage DMbot, then back out.
 
 **It worked if:** the channel is there, only you see your buttons, the rule answer is private, and your DM
 screen shows only notes, alerts and ⏹ Stop listening.
 
 Unlocks: #1666
 
-### 4. The house rules channel
-**You'll do:**
-1. Press ⚙️ Settings and add one made-up house rule, for example "Rope takes a full turn to tie".
-2. Look for the channel **dmb-rules**.
-
-**It worked if:** the channel is there, your rule appears as its own message, and you cannot type in the
-channel.
-
-Unlocks: #1752
+### 4. (retired)
+The house rules channel is gone (#2875), so there is nothing to check. Numbers stay as they are.
 
 ---
 
@@ -79,11 +64,11 @@ Add one made-up person on the Names list first (type `/dmbot names`, press ➕ A
 For Check 6 you also need a player character: press 🧑 Add a player's character on the Names list if you
 have none.
 
-### 5. How an NPC feels about the party (Standing)
-**You'll do:** open Captain Rook's name card and press 🤝 Standing. Then press **Toward a character…** and set
+### 5. How an NPC feels about the party (Reputation)
+**You'll do:** open Captain Rook's name card and press 🤝 Reputation. Then press **Toward a character…** and set
 a feeling.
 
-**It worked if:** Standing shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
+**It worked if:** Reputation shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
 can see it.
 
 Unlocks: #1655
@@ -92,7 +77,7 @@ Unlocks: #1655
 **You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick the person (Captain
 Rook) and **Helped them**, and press ✅ Record it.
 
-**It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
+**It worked if:** Reputation now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
 
 Unlocks: #1732
@@ -108,7 +93,7 @@ players.
 Unlocks: #1662, #1674
 
 ### 8. Homebrew by kind
-**You'll do:** press ⚙️ Settings, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
+**You'll do:** press ⚙️ Manage DMbot, then 📚 Homebrew. Press a kind, then ↩ All kinds. Then press ➕ Add and pick
 🧝 Species (or Subclass, or Background) as the kind, and add one made-up entry.
 
 **It worked if:** you see one button for each kind with a count on it, and the new kinds are on the list.
@@ -120,7 +105,7 @@ Unlocks: #1663, #1665
 ## Group C. Takes a little longer
 
 ### 9. A quiet "where are we" line
-**You'll do:** set the game clock under ⚙️ Settings, then Game clock. Leave listening on and don't touch the
+**You'll do:** set the game clock under ⚙️ Manage DMbot, then Game clock. Leave listening on and don't touch the
 clock for half an hour. It posts nothing when your DM screen is on Quiet, so keep it on Normal.
 
 **It worked if:** one short line appears on your DM screen saying where the game is, and nothing is posted to
@@ -130,7 +115,7 @@ Unlocks: #1738
 
 ### 10. Shared story: watching your adventure
 **You'll do:**
-1. Press ⚙️ Settings, then 🧭 Shared story, and choose **Watch the story**. Read the warning and
+1. Press ⚙️ Manage DMbot, then 🧭 Shared story, and choose **Watch the story**. Read the warning and
    press **I have the right**.
 2. Press 📖 Give your adventure, then Give a file, and pick a short made-up text file you wrote yourself.
    Then press 📖 Read it now and Yes, read it.
@@ -165,15 +150,15 @@ Do 16, 17 and 18 before 15. Check 15 deletes a campaign.
 1. Type `/dmbot settings` anywhere in your test server.
 2. Type `/dmbot start`, press ＋ New campaign (or ▶ Continue last campaign if one exists) and look at the step where you pick the voice channel. You do not need to press ▶ Start listening.
 
-**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Settings is on the voice-channel step too.
+**It worked if:** Settings opens from the command and says only you can see it, and ⚙️ Manage DMbot is on the voice-channel step too.
 
 Unlocks: #1619
 
 ### 13. Game masters
 **You'll do:**
-1. Press ⚙️ Settings, then 👑 Game masters.
+1. Press ⚙️ Manage DMbot, then 👑 Game masters.
 2. Press ➕ Add a game master and pick a second test account of yours that is already in the server.
-3. On that account, press ⚙️ Settings or type `/dmbot settings`.
+3. On that account, press ⚙️ Manage DMbot or type `/dmbot settings`.
 4. Back on your account, press ➖ Remove a game master and take them off again. Try step 3 again.
 
 **It worked if:** Settings opens for the second account after you add them, and does not once you take them off.
@@ -182,7 +167,7 @@ Unlocks: #1600, #1603
 
 ### 14. Splitting the party
 **You'll do:**
-1. Set the game clock first: press ⚙️ Settings, then Game clock, and give any day and hour. You do not need to wait for it.
+1. Set the game clock first: press ⚙️ Manage DMbot, then Game clock, and give any day and hour. You do not need to wait for it.
 2. Press Rests & time…, then ✂️ Split the party.
 3. Name two groups, for example "Tower" and "Camp".
 4. Press 🤝 Rejoin the party, pick a time to keep, then press Undo.
@@ -196,7 +181,7 @@ Unlocks: #1607
 
 **You'll do:**
 1. On the throwaway campaign, press ⏹ Stop listening if it is on. It cannot be deleted while it is being played. Only the game master whose plan it uses can delete it, which should be you.
-2. Press ⚙️ Settings, then 🗑 Delete this campaign.
+2. Press ⚙️ Manage DMbot, then 🗑 Delete this campaign.
 3. Read what will be lost. Press 💾 Back up first and wait for the file.
 4. Press Delete it, then type the campaign's name.
 
@@ -238,7 +223,7 @@ Unlocks: #1407
 This button is merged but not on the server yet. Do this check after dev1 deploys it.
 
 **You'll do:**
-1. Press ⚙️ Settings, then ℹ️ What's switched on.
+1. Press ⚙️ Manage DMbot, then ℹ️ What's switched on.
 
 **It worked if:** only you see the answer, and it lists what is on for your table.
 
@@ -255,5 +240,9 @@ Unlocks: #1831
 - **Heads-up when a fallen character speaks (#2068, #2078):** off until `DMBOT_LIVE_HEADS_UP=1`. It also needs a
   character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
 - **Bring in older sessions (#2105, #2106, #2107):** not built yet, so there is nothing to check yet.
+- **A script of your session (#3244):** dev1 checks the button on the test server before the entry leaves held. It spends real AI money, so DMbot shows the cost first, and nothing needs the owner until dev1 has seen it work.
+- **Split and group names on the website (#3406):** dev1 checks it on the test server before the What's new entry leaves held; nothing needs the owner until dev1 has seen it work.
+- **Questions for you on the website (#3438):** dev1 opens the Questions list in Discord and the Questions page on the test site for one campaign and sees the same counts and words; a player gets neither. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
+- **See where a name was said (#3384):** dev1 presses 📜 Where was it said? on a name question in the test campaign and sees up to three places with a line either side; a player who presses it is refused. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.

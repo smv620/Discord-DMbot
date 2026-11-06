@@ -154,7 +154,7 @@ START_BLOCKED = (
 )
 # A campaign with no owner can't start, because DMbot wouldn't know whose hours to use. A DM
 # of the campaign gets a Take it on button under this (it may be the first time the card
-# for ⚙️ Settings exists, so the words don't send them there); anyone else is pointed at the
+# for ⚙️ Manage DMbot exists, so the words don't send them there); anyone else is pointed at the
 # DMs.
 NO_OWNER_ASK = (
     "This campaign has no owner yet, so DMbot doesn't know whose hours it uses. Press "
@@ -216,10 +216,10 @@ def more_hours(site_url: str, buys_hours: bool = True, renews: bool = False) -> 
 
 PAUSE_WAY = (
     "pause one of your other campaigns first "
-    "(open it, then ⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**)"
+    "(open it, then ⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ **Pause this campaign**)"
 )
 PAUSED_OWNER = (
-    "This campaign is paused. Open ⚙️ Settings → 🗂️ Campaign management and "
+    "This campaign is paused. Open ⚙️ Manage DMbot → 🗂️ Campaign management and "
     "press ▶️ **Unpause**. Everything in it is kept."
 )
 
@@ -235,7 +235,7 @@ def paused_resume(name: str) -> str:
     paused meanwhile: DMbot doesn't start listening again (#957)."""
     return (
         f"**{md_escape(name)}** is paused, so DMbot did not start listening again after its "
-        "restart. Its owner can open ⚙️ Settings → 🗂️ Campaign management and press ▶️ "
+        "restart. Its owner can open ⚙️ Manage DMbot → 🗂️ Campaign management and press ▶️ "
         "**Unpause**, then press Start."
     )
 
@@ -278,7 +278,7 @@ def campaigns_refusal(
 PAUSED_TOLD = (
     "DMbot paused {what} because your plan now covers {cap} {noun}. A paused campaign keeps "
     "everything but can't start. To use one again, pause one you play less (open it, then "
-    "⚙️ Settings → 🗂️ Campaign management → ⏸️ **Pause this campaign**), then open the "
+    "⚙️ Manage DMbot → 🗂️ Campaign management → ⏸️ **Pause this campaign**), then open the "
     "paused one and press "
     "▶️ **Unpause**.{change}"
 )

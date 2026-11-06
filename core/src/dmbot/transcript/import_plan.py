@@ -18,13 +18,13 @@ from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
-from dmbot.recaps.draft import SPOKEN_WORDS_PER_HOUR
 from dmbot.transcript.importer import Transcript
 from dmbot.transcript.models import Line
 
 DROP = "drop"  # the mapping's value for a speaker whose lines are not kept
 NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT = "not_matched", "not_agreed", "bot", "left_out"
 REASONS = (NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT)
+SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 WORD_MS = 3_600_000 // SPOKEN_WORDS_PER_HOUR  # one spoken word, in milliseconds
 MAX_LINE_MS = 120_000  # a single line is never counted as longer than two minutes
 MAX_LINE_CHARS = 2_000  # a longer line is stored as several, so one can't carry a whole file
@@ -114,23 +114,28 @@ def make_plan(
     agreed: Collection[int],
     bots: Collection[int] = (),
     members: Collection[int] | None = None,
+    confirmed: Collection[int] = (),
     base_ms: int = 0,
 ) -> Plan:
     """Decide every line of the file. `mapping`: label -> member id, or `DROP`/None. `agreed`:
     the members who have agreed now. `bots`: member ids that are bots. `members`: the ids that
-    may be mapped at all (the server's people); None skips that check. `base_ms`: when the
-    session starts (Unix milliseconds); each kept line starts at that plus its time in the file."""
+    may be mapped at all (the server's people); None skips that check. `confirmed`: ids the
+    uploader ticked (a member who has not agreed, or a speaker without Discord, #3305): their
+    lines are kept as an agreed member's are. The caller has already refused anyone who said no.
+    `base_ms`: when the session starts (Unix milliseconds); each kept line starts at that plus its
+    time in the file."""
     reports = {s.label: SpeakerReport(s.label) for s in speakers(transcript)}
     kept: list[Line] = []
     for u, (start, length) in zip(transcript.utterances, timed(transcript), strict=True):
         report = reports[u.speaker]
         who = mapping.get(u.speaker)
         member = who if isinstance(who, int) and not isinstance(who, bool) else None
-        if member is None or (members is not None and member not in members):
+        # (a speaker without Discord has a negative id and is no member of the server)
+        if member is None or (members is not None and member > 0 and member not in members):
             report.dropped[NOT_MATCHED] += 1
         elif member in bots:
             report.dropped[BOT] += 1
-        elif member not in agreed:
+        elif member not in agreed and member not in confirmed:
             report.dropped[NOT_AGREED] += 1
         else:
             report.kept += 1

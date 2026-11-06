@@ -312,7 +312,7 @@ describe("actions", () => {
     const { api } = show("table");
     await screen.findByText("The Brynwater Crossing");
     const row = document.querySelector('[data-campaign="cmp-brynwater"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
 
     const confirm = await screen.findByRole("button", { name: text.handOverConfirm });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
@@ -332,7 +332,7 @@ describe("actions", () => {
     show("table");
     await screen.findByText("Ashen Crown");
     const row = document.querySelector('[data-campaign="cmp-ashen"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
     expect(await screen.findByText(text.handOverNobody)).toBeTruthy();
     expect(screen.queryByRole("button", { name: text.handOverConfirm })).toBeNull();
   });
@@ -343,7 +343,7 @@ describe("actions", () => {
     render(<Account api={api} go={vi.fn()} />);
     await screen.findByText("The Brynwater Crossing");
     const row = document.querySelector('[data-campaign="cmp-brynwater"]') as HTMLElement;
-    fireEvent.click(row.querySelector("button") as HTMLButtonElement);
+    fireEvent.click(within(row).getByRole("button", { name: text.handOver }));
     fireEvent.click(await screen.findByLabelText("Mirelle"));
     fireEvent.click(screen.getByRole("button", { name: text.handOverConfirm }));
     const alert = (await screen.findByRole("alert")).textContent ?? "";

@@ -20,9 +20,12 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
+from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
-from dmbot.recaps import critics, cues
+from dmbot.recaps import critics, cues, fixed_lines
 from dmbot.recaps import progress as recap_progress
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
@@ -48,6 +51,8 @@ _COLUMNS = (
     " r.written_by, r.uploaded_at, r.earlier,"
     # How far the work has got (#2636): `progress` in `_view` is made from these (counts and times).
     " r.created_at, r.updated_at, r.window_count, r.window_done, r.calls, r.errors,"
+    # What the last making of the audio did and how far the one under way has got (#2630).
+    " r.audio_how, r.audio_why, r.audio_stage, r.audio_done, r.audio_total, r.audio_moved_at,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -103,7 +108,33 @@ def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> 
         and (row["status"] != "posted" or not current),
         # The page says what the new narration is for: the Discord message keeps the old one.
         "postedNote": row["status"] == "posted",
+        # What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken
+        # again, the music kept), `all` (everything again, `why` says why: paragraphs, moods, size
+        # or no_parts) or `same` (the words the voice reads had not changed); fixed words only.
+        "how": row.get("audio_how") or "",
+        "why": row.get("audio_why") or "",
+        # While it is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+        # the paragraphs spoken `done` of `total`, when it last moved). Counts and codes only.
+        "progress": _audio_progress(row),
     }
+
+
+def _audio_progress(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    stage = row.get("audio_stage") or ""
+    if row["audio"] != "queued" or not stage:
+        return None
+    moved = int(row.get("audio_moved_at") or 0)
+    began = int(row.get("posting_since") or 0) or moved
+    voice = stage == "voice"
+    return progress.shape(
+        f"audio_{stage}",
+        started_at=began,
+        updated_at=moved,
+        now=int(time.time()),
+        done=int(row["audio_done"]) if voice else None,
+        total=int(row["audio_total"]) if voice else None,
+        unit=progress.UNITS.get(f"audio_{stage}"),
+    )
 
 
 def _approved(row: dict[str, Any]) -> bool:
@@ -267,6 +298,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # it last moved, and `state` (running, stalled, failed or done); a failure is a fixed code
         # in `reason`. Counts and codes only. Null once the recap is posted or dropped.
         "progress": recap_progress.of(row, now=now),
+        # The posting half (#3355): the step it is on (while it goes out or its audio is made),
+        # when it began and last moved, whether it has stalled; or `failed` with a code when a
+        # post was refused and the recap is a draft again. Null otherwise. Counts and codes only.
+        "postingProgress": recap_progress.posting_of(row, now=now),
         "canTryAgain": status == "draft"
         and state in ("ready", "failed")
         and row["tries"] < MAX_TRIES,
@@ -537,7 +572,53 @@ async def read_recap(db: Database, session: Session, ref: str) -> dict[str, Any]
                     return _held_view(guild_id, held)
             # Released between the list and this page: the job exists now (one more look).
             *_, row = await _one(conn, ref, session)
-    return _view(row)
+        guild_id, campaign_id, session_at = row["guild_id"], row["campaign_id"], row["session_at"]
+        cur = await conn.execute(
+            "SELECT dmbot_recap_present(%s, %s, %s) AS r", (guild_id, campaign_id, session_at)
+        )
+        scenes = (await cur.fetchone() or {}).get("r")
+    view = _view(row)
+    if isinstance(scenes, dict) and scenes["beats"]:
+        # Who was in each scene and who the DM may pick (#2577): names only, the DM's view only
+        # (the shared link and a player's page never get these keys).
+        view["beats"] = [
+            {"n": int(b["n"]), "present": list(b["present"]), "saved": bool(b["saved"])}
+            for b in scenes["beats"]
+        ]
+        view["characters"] = list(scenes["characters"])
+    return view
+
+
+async def set_beat_present(
+    db: Database, session: Session, ref: str, n: object, present: object
+) -> dict[str, Any]:
+    """Save who was in scene `n` (#2577), for a DM of the campaign: the whole new list, 0 to 12 of
+    the campaign's player characters. Kept on the scene with a mark that it is the DM's word; the
+    recap's text is not changed. Refusals: `not_found`, `stale` (no such scene: the recap was made
+    again since the page read it), `not_allowed` (posted, or not ready), `bad_present`."""
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 1000:
+        raise RecapError("stale")
+    if (
+        not isinstance(present, list)
+        or len(present) > 12
+        or not all(isinstance(p, str) for p in present)
+    ):
+        raise RecapError("bad_present")
+    parsed = parse_ref(ref)
+    if parsed is None:
+        raise RecapError("not_found")
+    guild_id, campaign_id, session_at = parsed
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_set_present(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, session_at, n, Jsonb(present)),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if not isinstance(got, dict) or "error" in got:
+        raise RecapError(str((got or {}).get("error", "not_found")))
+    return {"n": int(got["n"]), "present": list(got["present"]), "saved": True}
 
 
 async def edit_recap(
@@ -555,10 +636,14 @@ async def edit_recap(
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        if fixed_lines.changes_fixed_lines(_row["summary"], text):
+            raise RecapError("fixed_lines")  # the opening and closing lines are DMbot's (#2630)
         cur = await conn.execute(
-            "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
+            "UPDATE recap_jobs SET summary = %s, housekeeping = %s, "
+            + recap_progress.CLEAR_REFUSAL
+            + " WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",
-            (text, bullets, gid, cid, at),
+            (text, bullets, recap_progress.REFUSALS, gid, cid, at),
         )
         if not cur.rowcount:
             raise RecapError("not_editable")
@@ -594,14 +679,15 @@ async def decide(
         args: tuple[Any, ...] = (gid, cid, at)
         if action == "post":
             cur = await conn.execute(
-                "UPDATE recap_jobs SET status = 'posting' "
+                "UPDATE recap_jobs SET status = 'posting', "
+                + recap_progress.CLEAR_REFUSAL
                 + where
                 + " AND state = 'ready' AND status = 'draft'"
                 # Only the text the DM approved: an edit between the read above and this statement
                 # (or since the approval) posts nothing. The page's role may read the hash.
                 + " AND approved_hash = encode(sha256(convert_to(title || E'\\n' || summary,"
                 " 'UTF8')), 'hex')",
-                args,
+                (recap_progress.REFUSALS, *args),
             )
         elif action == "drop":
             cur = await conn.execute(
@@ -708,9 +794,11 @@ async def approve_recap(
             raise RecapError("not_allowed")
         if post:  # the same hand-over as `decide(..., "post")`, in this transaction
             cur = await conn.execute(
-                "UPDATE recap_jobs SET status = 'posting' WHERE guild_id = %s AND campaign_id = %s"
+                "UPDATE recap_jobs SET status = 'posting', "
+                + recap_progress.CLEAR_REFUSAL
+                + " WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s AND state = 'ready' AND status = 'draft'",
-                (gid, cid, at),
+                (recap_progress.REFUSALS, gid, cid, at),
             )
             if not cur.rowcount:
                 raise RecapError("not_allowed")  # (the approval is rolled back with it)

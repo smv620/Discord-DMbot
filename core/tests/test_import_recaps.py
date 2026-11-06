@@ -8,6 +8,7 @@ import json
 import time
 import unittest
 from collections.abc import Callable
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -149,11 +150,18 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_names={},
         _import_reports={},
         _import_unhonoured={},
+        _import_party={},
         _import_queued={},
         _import_unchecked={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         repair_names=AsyncMock(return_value=0),  # PlotBot's name pass (#2628): its own tests
         _hold_or_queue=AsyncMock(return_value="held"),
+        _link_import_party=AsyncMock(),  # the party link after a scan (#3036): its own tests
+        _offer_import_time=AsyncMock(),  # the game-time offer (#2979): its own tests
+        _extract_import=AsyncMock(return_value="done"),  # the story read (#3301): its own tests
+        _extract_imports_left=AsyncMock(return_value={}),
+        _tell_imports_left=AsyncMock(),
+        _tell_finished_imports=AsyncMock(),  # the private "what waits" message (#3314): its tests
     )
     for name in (
         "run_import_followups",
@@ -222,6 +230,46 @@ class ThePlaysChoices(WithImports):
         bot, _ = fake_bot(self.store, memory=idle)
         await bot.run_import_followups(GUILD)  # a second round does nothing
         idle.apply_import_plays.assert_not_awaited()
+
+    async def test_a_choice_links_the_party_in_the_same_round_as_the_scan(self) -> None:
+        # The DM's choice comes first, so the scanned session already sees the player character
+        # (#3036): one round gives the party link, with the real store and the real rule.
+        cerric = await self.character()
+        await self.wait(cerric)
+        bot, _ = fake_bot(self.store, memory=self.memory)
+        bot._apply_import_plays = partial(DMBot._apply_import_plays, bot)
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = partial(DMBot._link_the_party, bot)
+        bot.transcripts = TranscriptStore(self.db)
+        bot.memory = self.memory
+        bot._scan_import = AsyncMock(return_value=[])
+        await self.imported(1)
+        await bot.run_import_followups(GUILD)
+        members = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        self.assertIn(cerric, {r.subject_id for r in members if r.predicate == "member_of"})
+
+    async def test_the_dm_is_told_once_how_many_player_characters_the_import_linked(self) -> None:
+        # #3036: the party link takes moments, so it is told as a result at the import's end, one
+        # counts-only line with the rest of its news
+        cerric = await self.character()
+        await self.wait(cerric)
+        bot, _ = fake_bot(self.store, memory=self.memory)
+        bot._apply_import_plays = partial(DMBot._apply_import_plays, bot)
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = partial(DMBot._link_the_party, bot)
+        bot._tell_import_news = partial(DMBot._tell_import_news, bot)
+        bot.transcripts = TranscriptStore(self.db)
+        bot.memory = self.memory
+        bot._scan_import = AsyncMock(return_value=[])
+        await self.imported(1)
+        await bot.run_import_followups(GUILD)
+        await bot._tell_import_news(GUILD, self.store)
+        told = [c.args[1] for c in bot.post.await_args_list if "🎭" in c.args[1]]
+        self.assertEqual(len(told), 1)
+        self.assertIn("1 player character", told[0])
+        self.assertNotIn("Cerric", told[0])  # counts only
+        await bot._tell_import_news(GUILD, self.store)
+        self.assertEqual(len([c for c in bot.post.await_args_list if "🎭" in c.args[1]]), 1)
 
     async def test_a_choice_for_someone_off_the_record_is_kept_not_dropped(self) -> None:
         """Off the record (#2466) has no lasting effect: Mira is paused (not recorded now) but
@@ -477,6 +525,33 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("on the names panel", told[0])
         self.assertNotIn("your list", told[0])
 
+    async def test_a_successful_scan_links_the_party_of_its_session(self) -> None:
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        await DMBot.run_import_followups(bot, GUILD)
+
+        bot._link_import_party.assert_awaited_once()
+
+    async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
+        # The link runs after the scan is finished: when it raises, the scan still counts as done,
+        # its names are still posted, and nothing is given up or retried (#3036).
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot._link_import_party = partial(DMBot._link_import_party, bot)
+        bot._link_the_party = AsyncMock(side_effect=RuntimeError("down"))
+        with self.assertLogs("dmbot.bot", level="ERROR") as logs:
+            done = await DMBot.run_import_followups(bot, GUILD)
+
+        self.assertEqual(done, 1)
+        posted = " ".join(c.args[1] for c in bot.post.await_args_list)
+        self.assertIn("Kazeth", posted)  # the new names still reach the DM
+        self.assertEqual(bot._import_unchecked, {})
+        self.assertTrue(any("couldn't link the party" in line for line in logs.output))
+
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
@@ -589,6 +664,23 @@ class TheFollowUp(WithImports):
             self.assertEqual(call.args[3], 66)  # asked on the campaign's DM screen
         starts = sorted(call.args[2] for call in bot._hold_or_queue.await_args_list)
         self.assertEqual(starts, [START + DAY, START + 3 * DAY])
+
+    async def test_the_story_read_follows_each_scan_in_date_order(self) -> None:
+        a, b = await self.imported(1), await self.imported(2)
+        bot, _ = await self.bot()
+        order: list[str] = []
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            order.append(f"scan {ready.session_id}")
+            return []
+
+        async def read(gid: int, ready: Any) -> str:
+            order.append(f"read {ready.session_id}")
+            return "done"
+
+        bot._scan_import, bot._extract_import = scan, read
+        await rounds(bot)
+        self.assertEqual(order, [f"scan {a}", f"read {a}", f"scan {b}", f"read {b}"])
 
     async def test_the_scan_asks_only_about_lines_of_people_who_still_agree(self) -> None:
         await self.imported(1)

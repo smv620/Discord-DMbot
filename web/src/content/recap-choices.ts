@@ -19,7 +19,7 @@ export const choiceWords = {
   /** The panel's line for a DM with the email off. */
   emailOff: "The recap will be on your recap page.",
   /** Where the same choices are on Discord. */
-  sameOnDiscord: "The same choices are in Discord: 👤 DMbot Main Menu → ⚙️ Settings, in your DM Bot channel.",
+  sameOnDiscord: "The same choices are in Discord: 👤 DMbot Main Menu → ⚙️ Manage DMbot, in your DM Bot channel.",
   // The page's own: what to do when it didn't work.
   failed: "That didn't save. Try again.",
   notInPlan: "Narration and music aren't in your plan.",

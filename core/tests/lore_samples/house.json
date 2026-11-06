@@ -1,0 +1,56 @@
+{
+  "title": "House Aumery of Greystone",
+  "pc_backstories": [],
+  "statements": [
+    {
+      "text": "House Aumery holds the eastern march from its seat at Greystone",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The house colours are green and gold",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Each midwinter the lords of the march gather in the great hall for the tourney",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Anselm Aumery — is the present lord of — House Aumery",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "His hall is known for its generosity",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Edric is not in fact Anselm's blood",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The true heir, Cressida, was the child of Anselm's elder brother",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Under the chapel of Greystone runs a passage that leads to the old postern",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "only the castellan and the lord know where the iron key is hidden behind the altar",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "she was sent north as a babe to be raised by a miller's family under another name",
+      "expect": "spoiler",
+      "world_for": []
+    }
+  ]
+}

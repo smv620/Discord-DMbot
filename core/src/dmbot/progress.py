@@ -27,13 +27,43 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "cleaning": 10 * 60,  # a chunk of lines, then the next (waiting to be taken counts too)
     "checking_names": 15 * 60,  # the name scan's own retake window
     "finding_names": 15 * 60,
+    # A lore upload (#3534). The bot reads one upload at a time per server, so a queued upload
+    # can wait behind a long read: it never reads as stalled (the door fails one nobody took
+    # within half an hour as `not_taken`). A read that goes quiet is put back by the door at 10
+    # minutes, so these limits are a backstop for the page only.
+    "lore_waiting": None,
+    "lore_reading": 10 * 60,
+    "finding_links": 10 * 60,
+    # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
+    # waiting for the daily limit never stalls, it carries on by itself.
+    "reading_connections": 15 * 60,
+    "waiting_for_limit": None,
+    "connections_read": None,
     "waiting_for_names": None,  # waiting for the DM's answers
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    # A note typed or spoken on the recap page (#3355): the bot takes it within seconds, then one
+    # AI call sorts it (or one transcription writes it down).
+    "working": 10 * 60,
+    "fixing": 5 * 60,  # a line fixed at a person's asking (#2858)
+    "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
+    "removing": 10 * 60,  # a speaker's lines being removed from a campaign by its DM (#3305)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
+    # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
+    # the bot taking it, reading the copy, then writing the campaign.
+    "restore_receiving": None,
+    "restore_waiting": 2 * 60,
+    "restore_reading": 5 * 60,
+    "restore_writing": 15 * 60,
+    "sharing": 5 * 60,  # a sharing choice the bot is applying (#2783)
+    # The posting half of a recap (#3355): the checks made again before it goes out, the send, and
+    # the narration made before it (a part of the voice, the music, the mix).
+    "posting_check": 5 * 60,
+    "posting_post": 5 * 60,
+    "posting_audio": 15 * 60,
     # The steps of a recap being made on the website's page (#2636; `recaps.progress`). The name
     # pass wait is touched every half minute; a part of a long session can take a while.
     "recap_names": 10 * 60,
@@ -42,7 +72,13 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "recap_writing": 30 * 60,
     "recap_checking": 30 * 60,
     "recap_check_waiting": None,  # written, and tried again later by design (hours, not minutes)
+    "recap_final_read": 30 * 60,  # one call of the careful tier, up to its long answer
     "recap_finishing": 10 * 60,
+    # The audio being made on the recap page (#2630): a part of the voice, the music call (up to
+    # 7 minutes), the mix.
+    "audio_voice": 10 * 60,
+    "audio_music": 15 * 60,
+    "audio_mix": 10 * 60,
     "recap_ready": None,
     "recap_failed": None,
     "done": None,
@@ -53,6 +89,7 @@ ENDS: Final[Mapping[str, str]] = {
     "done": DONE,
     "recap_not_written": DONE,
     "recap_ready": DONE,
+    "connections_read": DONE,
     "failed": FAILED,
     "recap_failed": FAILED,
 }
@@ -60,7 +97,13 @@ ENDS: Final[Mapping[str, str]] = {
 STALLED_REASON: Final = "stalled"
 RECAP_FAILED_REASON: Final = "recap_failed"
 # What each count measures, for the stages that have one.
-UNITS: Final[Mapping[str, str]] = {"cleaning": "lines", "recap_reading": "parts"}
+UNITS: Final[Mapping[str, str]] = {
+    "cleaning": "lines",
+    "audio_voice": "parts",
+    "recap_reading": "parts",
+    "restore_writing": "parts",
+    "reading_connections": "parts",
+}
 
 
 def shape(
@@ -99,6 +142,15 @@ def shape(
     if done is not None and total is not None and total > 0:
         out.update(done=min(done, total), total=total, unit=unit)
     return out
+
+
+def with_counts(shaped: dict[str, Any], *, words: int, calls: int) -> dict[str, Any]:
+    """The shape plus what the job has handled so far (#3534): `counts: {words, calls}`, the words
+    of text read and the AI calls made. Left out until the job has handled something, so a job
+    that records neither (and an older row) sends the shape it always did. Counts only."""
+    if words > 0 or calls > 0:
+        shaped["counts"] = {"words": max(words, 0), "calls": max(calls, 0)}
+    return shaped
 
 
 # The order a job passes through the stages: the whole import is at the earliest one that some

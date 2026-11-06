@@ -1,7 +1,7 @@
 """Looking up a rule (#908): the DM asks for a spell, a condition or a creature by name, and
 gets what the free rules (the SRD) say, privately, with where it comes from.
 
-Two ways in: the 📖 **Look up a rule** button on the DM screen's ⚙️ Settings card (the
+Two ways in: the 📖 **Look up a rule** button on the DM screen's ⚙️ Manage DMbot card (the
 campaign's DMs only), which opens a form with one box, and `/dmbot rule name:` with a list of
 names that opens as they type, for **anyone in the server** (decided 2026-10-16, #1562). A
 player gets the same card without the DM's own things: only homebrew the DM let players know,
@@ -11,7 +11,7 @@ never in a transcript. A house rule that names the thing comes first; the book c
 the DM decides what applies. Nothing is guessed: no match means "couldn't find that", with
 close names to press.
 
-The card itself is built in `dmbot.ui.rule_card`, which has no Discord in it.
+The card itself is built in `dmbot.rules.rule_card`, which has no Discord in it.
 """
 
 from __future__ import annotations
@@ -29,11 +29,11 @@ from discord import app_commands
 from dmbot.campaigns import FALLBACK_NONE, Campaign
 from dmbot.campaigns.models import DEFAULT_FALLBACK, DEFAULT_TARGET
 from dmbot.logs import set_log_context
-from dmbot.rules import index
+from dmbot.rules import index, rule_card
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.homebrew import Homebrew
 from dmbot.rules.house import HouseRule
-from dmbot.ui import logic, rule_card
+from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -509,44 +509,9 @@ async def _typeahead(
     if not dm:  # the list would tell a player what the DM's chapter holds (#1935)
         found = [e for e in found if not e.dm_side]
     return [
-        app_commands.Choice(name=rule_card.choice_label(e), value=_choice_value(srd, e))
+        app_commands.Choice(name=rule_card.choice_label(e), value=rule_card.choice_value(srd, e))
         for e in found
     ]
-
-
-def _choice_value(srd: index.Index, entry: index.Entry) -> str:
-    """What is typed into the box when a name is picked. A feature several classes share is
-    picked with its class in front ("Rogue Evasion"); one a class has at two levels ("Improved
-    Brutal Strike") with its level after, which `_features` reads back."""
-    if entry.kind in index.NAMED_KINDS and (
-        srd.lookup(entry.name, entry.edition) is not None
-        or any(  # a gear entry and a magic item can share a name ("Spell Scroll"): #1927
-            srd.lookup(entry.name, entry.edition, kind=kind) is not None
-            for kind in index.NAMED_KINDS
-            if kind != entry.kind
-        )
-        or (
-            entry.kind != index.RULE  # a feat shares its name with a class feature
-            and srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE)
-        )
-    ):
-        return f"{entry.name} ({entry.kind})"[:BOX_MAX]  # also a creature's name: say which
-    if entry.kind == "monster" and any(
-        srd.lookup(entry.name, edition, kind=kind) is not None
-        for edition in ("2024", "2014")
-        for kind in (index.ITEM, *index.ORIGIN_KINDS, *index.EQUIPMENT_KINDS, *index.HAZARD_KINDS)
-    ):
-        return f"{entry.name} (creature)"[:BOX_MAX]  # the species or background has the name too
-    if entry.kind != index.FEATURE:
-        return entry.name[:BOX_MAX]
-    klass = str(entry.details.get("class", ""))
-    same = [
-        h
-        for h in srd.lookup_all(entry.name, entry.edition, kind=index.FEATURE, prefer=klass)
-        if h.entry.details.get("class") == klass
-    ]
-    level = f" {entry.details.get('level')}" if len(same) > 1 else ""
-    return f"{klass} {entry.name}{level}"[:BOX_MAX]
 
 
 async def _is_a_dm(interaction: discord.Interaction) -> bool:
@@ -564,9 +529,6 @@ async def _is_a_dm(interaction: discord.Interaction) -> bool:
         )
         return False
     return any(may_look_up(c, interaction.user.id) for c in everyone)
-
-
-choice_value = _choice_value  # (for the sidebar's "What I looked at", #1957)
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:

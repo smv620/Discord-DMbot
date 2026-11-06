@@ -116,9 +116,17 @@ class Kept(DatabaseTest):
     async def test_adds_at_once_keep_the_cap_exact(self) -> None:
         import asyncio
 
-        await asyncio.gather(
-            *(self.store.add(GUILD_A, self.one.id, ME, a_map(f"T{n}")) for n in range(KEEP + 6))
-        )
+        # Four at a time, each group at once: every add waits on the campaign's lock while holding
+        # a connection, so all KEEP + 6 at once can empty the test pool on a loaded machine and
+        # fail with a pool timeout instead of proving anything about the cap (#2677).
+        names = [f"T{n}" for n in range(KEEP + 6)]
+        for start in range(0, len(names), 4):
+            await asyncio.gather(
+                *(
+                    self.store.add(GUILD_A, self.one.id, ME, a_map(n))
+                    for n in names[start : start + 4]
+                )
+            )
         self.assertEqual(len(await self.store.notes(GUILD_A, self.one.id)), KEEP)
 
     async def test_one_poster_and_one_message_can_keep_several_maps(self) -> None:

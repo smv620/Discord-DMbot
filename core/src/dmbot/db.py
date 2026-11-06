@@ -36,6 +36,7 @@ from dmbot.schema import (
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
     WEB_ROLE_RECAP_POLICY,
+    WEB_ROLE_REFUSALS_POLICY,
     WEB_ROLE_SHEET_POLICY,
     Migration,
 )
@@ -408,10 +409,12 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     cur = await conn.execute(
         "SELECT count(*) AS n FROM information_schema.columns"
         " WHERE table_schema = current_schema() AND table_name = 'campaign_handover_offers'"
-        " AND column_name IN ('delivered_at', 'claimed_at', 'message_id', 'end_told_at')"
+        " AND column_name IN ('delivered_at', 'claimed_at', 'message_id', 'end_told_at',"
+        " 'via_email', 'token_hash')"
     )
     columns = await cur.fetchone()
-    if columns is not None and columns["n"] == 4:
+    offers_ready = columns is not None and columns["n"] == 6  # #2532 columns exist
+    if offers_ready:
         await conn.execute(WEB_ROLE_OFFER_POLICY)  # #728
     cur = await conn.execute(
         "SELECT count(*) AS n FROM information_schema.columns"
@@ -431,20 +434,23 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     # cross: the owner's campaign count (0034), account deletion making campaigns ownerless
     # (0047) and the hours used in a month (0048). REVOKE first, so a run on every start leaves
     # exactly these; each only once it exists.
-    for name, signature in WEB_ROLE_FUNCTIONS:
-        cur = await conn.execute(
-            "SELECT 1 FROM pg_proc WHERE proname = %s"
-            " AND pronamespace = current_schema()::regnamespace",
-            (name,),
-        )
-        if await cur.fetchone() is not None:
+    for _name, signature in WEB_ROLE_FUNCTIONS:
+        # By its whole signature, not its name: a function that was given another set of
+        # arguments by a later migration (#3305) is not there yet in a database migrated only part
+        # of the way.
+        cur = await conn.execute("SELECT to_regprocedure(%s) IS NOT NULL AS found", (signature,))
+        if (await cur.fetchone() or {}).get("found"):
             door = sql.SQL(signature)  # constants from schema.py, never input
             await conn.execute(sql.SQL("REVOKE ALL ON FUNCTION {} FROM {}").format(door, role))
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     if "recap_jobs" in existing:
         await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
+    if "consent_refusals" in existing:
+        await conn.execute(WEB_ROLE_REFUSALS_POLICY)  # #3305
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
+        if privileges.startswith("INSERT (") and not offers_ready:
+            continue  # the offer INSERT names columns an older schema doesn't have yet
         if not sheets_held:
             # No sheet rights without the rule that holds them to the person's own rows.
             present = [t for t in present if t != "character_sheets"]
@@ -457,6 +463,13 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
                 role,
             )
         )
+        if privileges.startswith("INSERT (") and "campaign_handover_offers" in present:
+            # An insert takes its id from the table's sequence (#2532).
+            await conn.execute(
+                sql.SQL("GRANT USAGE ON SEQUENCE {} TO {}").format(
+                    sql.Identifier("campaign_handover_offers_id_seq"), role
+                )
+            )
 
 
 async def _take_migration_lock(conn: AsyncConnection[Any], schema: str) -> None:
@@ -487,14 +500,31 @@ async def _create_schema(url: str, schema: str) -> None:
 
 
 async def drop_schema(url: str, schema: str) -> None:
-    """Remove a schema made with `Database.open(schema=...)` (tests)."""
+    """Remove a schema made with `Database.open(schema=...)` (tests).
+
+    `DROP SCHEMA … CASCADE` locks every object in the schema in one transaction, and a migrated
+    schema holds hundreds, so a Postgres with the default `max_locks_per_transaction` (64) can run
+    out of shared memory when several drops run at once (#3030). Then the tables go one at a time,
+    each in a transaction of its own, and the schema last. Any other error is raised as before."""
     if not _SCHEMA_NAME.match(schema):
         raise ValueError(f"Invalid schema name: {schema!r}")
     conn = await AsyncConnection.connect(url, autocommit=True)
     try:
-        await conn.execute(
-            sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
-        )
+        drop = sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema))
+        try:
+            await conn.execute(drop)
+        except pg_errors.OutOfMemory:  # out of lock slots (SQLSTATE 53200)
+            cur = await conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = %s ORDER BY tablename",
+                (schema,),
+            )
+            for (name,) in await cur.fetchall():
+                await conn.execute(
+                    sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                        sql.Identifier(schema), sql.Identifier(name)
+                    )
+                )
+            await conn.execute(drop)
     finally:
         await conn.close()
 

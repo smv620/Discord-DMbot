@@ -15,9 +15,11 @@ is, **🔄 Refresh** updates it, and **📋 See what was read** scrolls through 
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
+from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any, cast
 
@@ -28,6 +30,7 @@ from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
+from dmbot.memory import plan_reader
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
     FILE_MAX_BYTES,
@@ -40,6 +43,14 @@ from dmbot.memory.adventure import (
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.name_documents import DocumentError, kind_of_file
 from dmbot.memory.story_plan import Counts, Listed, ReadState
+from dmbot.waiting import (
+    SHOW_ELAPSED_AFTER_S,
+    SHOW_LAST_CHANGE_AFTER_S,
+    STOPPED_UPDATING,
+    ago_text,
+    elapsed_text,
+    keep_card_current,
+)
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +142,68 @@ STOPPED_WORDS = {
     ),
 }
 CARRY_ON = "Press Read it now to carry on."
+READING_STARTED = (
+    "Reading started. This card updates by itself for about 14 minutes; the end of the read is "
+    "told on the DM screen. Press Refresh to check at any time."
+)
+
+
+# The longest silence a read can have and still be allowed to go on: every call may time out, with
+# the pauses between tries, up to the failure that ends the read. Past this the card says nothing
+# has changed (a read is silent for no longer than this unless it is stuck).
+STALL_AFTER_S = (
+    plan_reader.FAILURES_BEFORE_STOP * plan_reader.CALL_TIMEOUT_S
+    + sum(plan_reader.PAUSES_S[: plan_reader.FAILURES_BEFORE_STOP - 1])
+    + 60.0
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadAges:
+    """How long a read has waited for its turn, been running, and sat without a call coming back
+    (seconds). Numbers only: nothing of the file."""
+
+    queued_s: float
+    running_s: float
+    still_s: float
+
+
+def _hours(seconds: float) -> str:
+    whole = int(seconds // 3600)
+    return (
+        f"{whole} hour{'' if whole == 1 else 's'}" if seconds % 3600 == 0 else elapsed_text(seconds)
+    )
+
+
+def age_words(ages: ReadAges, *, short: bool = False, waiting: bool = False) -> str:
+    """How long a read has been waiting or going and when it last moved forward (#2564): "" for a
+    short wait, then "running for 2 min", "last change 1 min ago", and past the stall limit a plain
+    line that says nothing has changed and when DMbot stops by itself. `short` is the form for a
+    card with many files."""
+    if waiting:
+        return (
+            "" if ages.queued_s < SHOW_ELAPSED_AFTER_S else f"asked {ago_text(ages.queued_s)} ago"
+        )
+    stalled = ages.still_s >= STALL_AFTER_S
+    if short:
+        if stalled:
+            return f"no change for {ago_text(ages.still_s)}"
+        return (
+            f"running {ago_text(ages.running_s)}"
+            if ages.running_s >= SHOW_LAST_CHANGE_AFTER_S
+            else ""
+        )
+    parts = []
+    if ages.running_s >= SHOW_ELAPSED_AFTER_S:
+        parts.append(f"running for {elapsed_text(ages.running_s)}")
+    if stalled:
+        parts.append(
+            f"no change for {ago_text(ages.still_s)}; DMbot stops by itself after "
+            f"{_hours(plan_reader.MAX_RUN_S)} at most, or sooner if the AI keeps failing"
+        )
+    elif ages.still_s >= SHOW_LAST_CHANGE_AFTER_S:
+        parts.append(f"last change {ago_text(ages.still_s)} ago")
+    return ", ".join(parts)
 
 
 def read_line(
@@ -140,6 +213,7 @@ def read_line(
     *,
     short: bool = False,
     waiting: bool = False,
+    ages: ReadAges | None = None,
 ) -> str:
     """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
     read says what to do next, which depends on why it stopped."""
@@ -154,9 +228,14 @@ def read_line(
         )
         return "read" if short else f"read: {found}{skipped}"
     if running and waiting:
-        return "waiting for a turn" if not short else "waiting"
+        late = age_words(ages, short=short, waiting=True) if ages is not None else ""
+        words = "waiting" if short else "waiting for a turn"
+        return words + (f" ({late})" if late else "")
     if running:
-        return f"reading {state.percent}%" if short else f"reading… {state.percent}%"
+        late = age_words(ages, short=short) if ages is not None else ""
+        if short:
+            return f"reading {state.percent}%" + (f" ({late})" if late else "")
+        return f"reading… {state.percent}%" + (f" ({late})" if late else "")
     stopped = f"stopped at {state.percent}%"
     if short:
         return stopped
@@ -171,8 +250,10 @@ def card_text(
     counts: dict[str, Counts] | None = None,
     running: frozenset[str] = frozenset(),
     waiting: frozenset[str] = frozenset(),
+    ages: dict[str, ReadAges] | None = None,
 ) -> str:
     states, counts = states or {}, counts or {}
+    ages = ages or {}
     lines = [INTRO, NOTE]
     if not documents:
         lines.append(EMPTY)
@@ -189,6 +270,7 @@ def card_text(
                 d.id in running,
                 short=short,
                 waiting=d.id in waiting,
+                ages=ages.get(d.id),
             )
             if status:
                 size += f", {status}"
@@ -291,6 +373,91 @@ def _running(interaction: discord.Interaction, guild_id: int) -> frozenset[str]:
     return frozenset(doc for guild, doc in reads if guild == guild_id)
 
 
+def _ages(interaction: discord.Interaction, guild_id: int) -> dict[str, ReadAges]:
+    """For each read going now: how long it waited, has run, and sat without a call coming back
+    (#2564)."""
+    now = time.monotonic()
+    clocks = getattr(interaction.client, "plan_clocks", None) or {}
+    return {
+        doc: ReadAges(now - c.asked, now - c.began, now - c.moved)
+        for (guild, doc), c in clocks.items()
+        if guild == guild_id
+    }
+
+
+# Cards being kept current, by message: a newer press on the same card takes over from the older
+# loop, so two loops never fight over one message (#2564).
+_watching: dict[int, int] = {}
+
+
+def _still_reading(interaction: discord.Interaction, campaign: Campaign) -> bool:
+    """Whether any of this campaign's files is being read (or waiting for a turn) right now."""
+    reads = getattr(interaction.client, "plan_reads", None) or {}
+    return any(guild == campaign.guild_id for guild, _doc in reads)
+
+
+async def watch_card(
+    interaction: discord.Interaction, campaign: Campaign, drawn: str, note: str = ""
+) -> None:
+    """After 📖 Read it now or 🔄 Refresh, keep the card current while a read goes (#2564): the
+    elapsed time and last movement move without another press, for as long as the interaction's
+    token allows (`waiting.EDIT_FOR_S`), then the card says it has stopped updating by itself (and
+    how long the read has not moved, if it has not). `drawn` is the text just shown, so the first
+    tick edits only if something changed; `note` is a line kept above the card. The end of a read
+    is told on the DM screen as before. Never raises."""
+    if not _still_reading(interaction, campaign):
+        return  # nothing to keep current: no loop, nothing remembered
+    message = getattr(interaction, "message", None)
+    key = message.id if message is not None else interaction.id
+    generation = _watching[key] = _watching.get(key, 0) + 1
+
+    async def render() -> tuple[str, discord.ui.View]:
+        text, view = await _card(interaction, campaign)
+        return (f"{note}\n\n{text}" if note else text), view
+
+    async def edit(text: str, view: Any) -> None:
+        await interaction.edit_original_response(content=text, view=view)
+
+    def late_note() -> str:
+        still = max((a.still_s for a in _ages(interaction, campaign.guild_id).values()), default=0)
+        if still < SHOW_LAST_CHANGE_AFTER_S:
+            return STOPPED_UPDATING
+        return f"No change for {ago_text(still)}. {STOPPED_UPDATING}"
+
+    try:
+        await keep_card_current(
+            render,
+            edit,
+            lambda: _still_reading(interaction, campaign),
+            current=lambda: _watching.get(key) == generation,
+            last=f"{note}\n\n{drawn}" if note else drawn,
+            late_note=late_note,
+        )
+    except Exception:
+        log.exception("Couldn't keep the adventure card current")
+    finally:
+        if _watching.get(key) == generation:
+            _watching.pop(key, None)
+
+
+_watchers: set[asyncio.Task[Any]] = set()  # held so a watching task is not collected mid-way
+
+
+def _watch_in_background(
+    interaction: discord.Interaction, campaign: Campaign, drawn: str, note: str = ""
+) -> None:
+    """Start `watch_card` without holding the button's own answer."""
+    work = watch_card(interaction, campaign, drawn, note)
+    track = getattr(interaction.client, "track", None)
+    if track is not None:
+        if track(work, "adventure-card") is None:
+            work.close()  # shutting down: the work was dropped
+        return
+    task = asyncio.get_running_loop().create_task(work)
+    _watchers.add(task)
+    task.add_done_callback(_watchers.discard)
+
+
 async def _card(
     interaction: discord.Interaction, campaign: Campaign
 ) -> tuple[str, discord.ui.View]:
@@ -312,7 +479,7 @@ async def _card(
     )
     can_read = plan is not None and getattr(interaction.client, "plan_ai", None) is not None
     return (
-        card_text(docs, states, counts, running, waiting),
+        card_text(docs, states, counts, running, waiting, _ages(interaction, campaign.guild_id)),
         card_view(
             campaign,
             docs,
@@ -701,9 +868,7 @@ class ReadYesButton(
         if (campaign.guild_id, self.document_id) in getattr(bot, "plan_reads", {}):
             await interaction.response.send_message(BUSY, ephemeral=True)
             return
-        note = (
-            "Reading started. Nothing pops up when it's done: press Refresh to see how far it is."
-        )
+        note = READING_STARTED
         await interaction.response.defer()  # the checks below may take longer than Discord waits
         try:
             state = await plan.begin(
@@ -717,6 +882,7 @@ class ReadYesButton(
             note = COULDNT
         text, view = await _card(interaction, campaign)
         await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
+        _watch_in_background(interaction, campaign, text, note)
 
 
 class ReadNoButton(
@@ -783,6 +949,7 @@ class RefreshButton(
             return
         text, view = await _card(interaction, campaign)
         await interaction.edit_original_response(content=text, view=view)
+        _watch_in_background(interaction, campaign, text)
 
 
 class BackToFilesButton(

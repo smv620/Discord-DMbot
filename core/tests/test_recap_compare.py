@@ -16,7 +16,7 @@ def job(summary: str, state: str = "ready", beats: Any = None) -> Any:
     return SimpleNamespace(
         title="The Door", summary=summary, housekeeping=(), music=("soft",), to_confirm=(),
         state=state, beats=beats if beats is not None else [{"what": "x"}], speakers=(1, 2),
-        split={"m": 1}, grade={},
+        split={"m": 1}, grade={}, critics={}, window_count=2,
     )  # fmt: skip
 
 
@@ -27,7 +27,7 @@ def counted(model: str) -> Any:
 def outcome(summary: str, model: str, state: str = "ready") -> Any:
     return SimpleNamespace(
         job=job(summary, state), stopped="", creative=counted(model), formatting=counted("fmt"),
-        careful=counted("careful"), fast=counted("fast"),
+        careful=counted("careful"), fast=counted("fast"), counts={"away_found": 2},
     )  # fmt: skip
 
 
@@ -129,6 +129,12 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
             "writer: 2 calls, in 1000, out 500, $0.014", text
         )  # 4*1000+20*500 per million
 
+    async def test_each_draft_gets_the_away_and_beat_sheet_counts_and_no_words(self) -> None:
+        _, said, _ = await self.run_it(Runner(), (0, 1))
+        text = "\n".join(said)
+        self.assertEqual(text.count("Away: notes 0, fixed 2, rounds 0"), 2)  # one for each draft
+        self.assertEqual(text.count("Beats: windows 2, parts 0, beats 1"), 2)
+
     async def test_a_draft_that_names_a_secret_writes_nothing(self) -> None:
         folder, _said, code = await self.run_it(Runner(), (0, 1), leaks=True)
         self.assertEqual(code, 3)
@@ -160,6 +166,29 @@ class TheArguments(unittest.TestCase):
         ):
             with self.assertRaises(SystemExit):
                 parse_args(argv)
+
+    def test_two_claude_writers_need_no_gemini_model_or_key_confirmation(self) -> None:
+        args = parse_args(
+            ["--session", "1", "c", "2", "--compare", "--out", "x", "--writers", "claude,claude"]
+        )
+        self.assertTrue(args.compare)
+        self.assertIsNone(args.gemini_model)
+
+    def test_a_gemini_writer_still_needs_the_model_and_the_confirmation(self) -> None:
+        for argv in (
+            ["--writers", "claude,gemini"],
+            ["--writers", "gemini,gemini"],
+            ["--writers", "claude,gemini", "--gemini-model", "g"],
+            ["--writers", "claude,gemini", "--paid-gemini-key"],
+        ):
+            with self.subTest(argv), self.assertRaises(SystemExit):
+                parse_args(["--session", "1", "c", "2", "--compare", "--out", "x", *argv])
+
+    def test_a_session_run_accepts_out_to_keep_its_draft(self) -> None:
+        args = parse_args(["--session", "1", "c", "2", "--reads", "transcript", "--out", "x"])
+        self.assertEqual(args.out, "x")
+        with self.assertRaises(SystemExit):  # (still not on its own)
+            parse_args(["--golden", "--out", "x"])
 
     def test_the_model_flags_go_only_with_compare(self) -> None:
         with self.assertRaises(SystemExit):

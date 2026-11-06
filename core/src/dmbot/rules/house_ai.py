@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,11 @@ ROOM_MIN, ROOM_MAX = 2_000, 6_000
 TOKENS_PER_SECOND = 40
 RETRY_MAX = int((TIMEOUT_S - 30) * TOKENS_PER_SECOND)  # 30 s kept for reading the file first
 CALLS_MAX = 2  # the first and the retry of a cut answer
+# The whole read, both calls together, ends under this: the DM's waiting message is edited through
+# a Discord interaction token that lives 15 minutes, so a longer read could not say how it ended
+# (#2564). The retry gets what is left, and none if less than `RETRY_MIN_S` remains.
+TOTAL_S = 13 * 60.0
+RETRY_MIN_S = 60.0
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -173,19 +179,29 @@ async def read(
     existing: Sequence[tuple[str, str | None]],
     *,
     budget: int = CALLS_MAX,
+    on_retry: Callable[[], None] | None = None,
 ) -> Found:
     """The AI's list from the text. A cut answer is asked for again once with twice the room (as
     the recap steps do) if `budget`, the calls the day still allows, has the call to spare. Never
-    raises: a failing or unreadable answer is `unread`. `Found.calls` counts every call made."""
+    raises: a failing or unreadable answer is `unread`. `Found.calls` counts every call made.
+    The whole read ends within `TOTAL_S`; `on_retry` is told when the second call starts, so a
+    waiting message can show that DMbot is still moving."""
+    started = time.monotonic()
     room = room_for(len(text))
     calls = 0
     message = request_text(text)
     for attempt in range(CALLS_MAX):
         if calls >= budget:
             return Found(unread=True, out_of_reads=True, calls=calls)
+        left = TOTAL_S - (time.monotonic() - started)
+        if attempt > 0 and left < RETRY_MIN_S:
+            log.info("House rules from a file: no time left to ask again")
+            return Found(unread=True, calls=calls)
+        if attempt > 0 and on_retry is not None:
+            on_retry()
         calls += 1  # counted before the call: one that times out has reached the service
         try:
-            async with asyncio.timeout(TIMEOUT_S):
+            async with asyncio.timeout(min(TIMEOUT_S, left)):
                 reply = await complete(SYSTEM, message, max_tokens=room, schema=SCHEMA)
         except Exception as exc:  # the service, the network, a timeout: the type only
             log.warning("House rules from a file: the AI call failed: %s", type(exc).__name__)

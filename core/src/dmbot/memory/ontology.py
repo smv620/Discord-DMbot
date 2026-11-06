@@ -93,6 +93,11 @@ class PredicateTerm:
     # At any one time, for one object that is one of a kind (`carries`: one holder for a unique
     # item). Core terms only; a campaign's own relationships have no such limit.
     max_per_object: int | None = None
+    # Carries a character's own attitude, loyalty or vow, so only the character's own voice may
+    # state it (#2562, `memory.voice`; #2619). A flag on the term rather than a list in code, so a
+    # relationship can carry it. Not part of the stored definition or its meaning: setting it
+    # changes who may speak for the character, not what the relationship says, so no new version.
+    inner_state: bool = False
 
 
 NOT_THIS_SEP = " -> "
@@ -286,13 +291,17 @@ _ANY = tuple(
 # The catch-all relationship a refused term's fact is kept on, with the steward's words as its
 # label (in the fact's `detail`), so a refusal never loses the fact (#1298, #1303).
 FALLBACK_PREDICATE = "associated_with"
+# A character posing as another is two characters and a secret by nature (#3091): a new one is
+# made secret, however it is made (the DM reveals it with the connection's own switch).
+DISGUISED_AS = "disguised_as"
 
 CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "located_in",
         "is in",
         "Where someone or something is, or sits: a character in a town, a shop in a city, an "
-        "item in a vault. One place at a time; a move ends the old fact.",
+        "item in a vault. One place at a time for each word of the tie (lives in, works in, "
+        "was last seen in...); a move ends only the old fact of the same word.",
         ("character", "place", "faction", "item", "event"),
         ("place",),
         max_per_subject=1,
@@ -431,7 +440,9 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "ally_of",
         "is an ally of",
-        "On the same side, and acting on it: friends, partners, allied groups. Both ways.",
+        "On the same side, and acting on it: partners, allied groups. Both ways. How kindly two "
+        "characters feel is `knows` with a reputation word; this is kept for old rows and for "
+        "groups that act together.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
@@ -443,16 +454,20 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         not_this=(
             ("one side works for the other", "serves"),
             ("a formal oath binds one to the other", "sworn_to"),
-            ("they merely know each other", "knows"),
+            ("they merely know each other, or are friends", "knows"),
         ),
         examples=("Cerric is an ally of Belleros.", "The Harpers are an ally of the Order."),
         inverse_label="is an ally of",
         synonyms=("friend_of", "friends_with", "allied_with", "allies_with"),
+        inner_state=True,
+        version=2,  # friends are `knows` with a reputation word now (#3181)
     ),
     PredicateTerm(
         "enemy_of",
         "is an enemy of",
-        "On opposite sides, and acting on it: rivals, enemies, groups at war. Both ways.",
+        "On opposite sides, and acting on it: groups at war. Both ways. Hatred between "
+        "characters is `knows` with a reputation word; this is kept for old rows and for "
+        "groups at war.",
         (*_BEINGS, "faction"),
         (*_BEINGS, "faction"),
         symmetric=True,
@@ -462,12 +477,35 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "two groups at war or in a feud",
         ),
         not_this=(
-            ("they merely dislike each other in passing", "knows"),
+            ("two characters who dislike or hate each other", "knows"),
             ("one of them rules the other", "serves"),
         ),
         examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
         inverse_label="is an enemy of",
-        synonyms=("rival_of", "enemies_with", "hates", "opposes"),
+        synonyms=("enemies_with", "hates", "opposes"),
+        inner_state=True,
+        version=3,  # a rival is its own kind (#3035); hatred is `knows` now (#3181)
+    ),
+    PredicateTerm(
+        "rival_of",
+        "is a rival of",
+        "Competes with: rivals, a rival apprentice, a rival house. They want to beat each other, "
+        "not to harm each other. Both ways.",
+        (*_BEINGS, "faction"),
+        (*_BEINGS, "faction"),
+        symmetric=True,
+        covers=(
+            "rival apprentices, rival merchants, a rival guild",
+            "two people or groups competing for the same prize or place",
+        ),
+        not_this=(
+            ("they are at war or want each other harmed", "enemy_of"),
+            ("they merely dislike each other in passing", "knows"),
+        ),
+        examples=("Dorn is a rival of Ilse.", "The Silver Lanterns are a rival of the Guild."),
+        inverse_label="is a rival of",
+        synonyms=("rivals_with", "competes_with"),
+        inner_state=True,
     ),
     PredicateTerm(
         "kin_of",
@@ -523,29 +561,133 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             ("the item belongs to them, wherever it is", "owns"),
             ("the item is lying in a place", "located_in"),
         ),
-        examples=("Cerric carries Heartseeker.", "Mira carries a longbow."),
+        examples=("Cerric carries Heartseeker.", "Mira carries the Sealed Letter of Orrin Dace."),
         inverse_label="is held by",
         synonyms=("carrying", "holds", "wields", "wearing", "has_on"),
     ),
     PredicateTerm(
-        "knows",
-        "knows",
-        "Knows someone or about something: has met them, or has learned of it. The weakest tie "
-        "between two entries; use a stronger one when it fits.",
+        "mentor_of",
+        "teaches",
+        "Teaches or trains: a mentor and their apprentice, a master and a student. The first name "
+        "is the teacher.",
         _BEINGS,
+        _BEINGS,
+        covers=(
+            "a mage and the apprentice they train",
+            "a master and a student, a trainer and a trainee",
+        ),
+        not_this=(
+            ("one works for the other and is paid", "serves"),
+            ("they merely know each other", "knows"),
+        ),
+        examples=("Doran teaches Ilsa.", "Brother Aldric teaches Mira."),
+        inverse_label="is taught by",
+        synonyms=("teaches", "trains"),
+    ),
+    PredicateTerm(
+        "leads",
+        "leads",
+        "Is in charge of a group or a place: a guildmaster, a captain, a mayor, a speaker, a "
+        "ruler. The first name is the leader.",
+        ("character",),
+        ("faction", "place"),
+        covers=(
+            "the head of a guild, an army or a cult",
+            "the mayor, speaker or ruler of a town or realm",
+        ),
+        not_this=(
+            ("an ordinary member of a group", "member_of"),
+            ("a character who works for another character", "serves"),
+        ),
+        examples=("Speaker Holt leads Brindle.", "Captain Vale leads the Silver Lanterns."),
+        inverse_label="is led by",
+        synonyms=("rules", "heads", "speaker_of", "leader_of", "captain_of", "mayor_of"),
+    ),
+    PredicateTerm(
+        "travels_with",
+        "travels with",
+        "Goes along with a player character or with the party for a stretch of the story: a "
+        "familiar, a hired guide, a rescued prisoner. The first name is the companion. It covers "
+        "the sessions they were together, so a companion can join and leave. The party itself "
+        "never has a companion as a member (#3176).",
+        _BEINGS,
+        ("character", "faction"),
+        covers=(
+            "a familiar or animal companion that goes everywhere with a player character",
+            "a guide or hireling who travels with the party for a while",
+        ),
+        not_this=(
+            ("one works for the other and is paid", "serves"),
+            ("they merely know each other", "knows"),
+            ("a member of a group", "member_of"),
+        ),
+        examples=("Glyph travels with Cerric.", "Old Marn travels with the party."),
+        inverse_label="is joined by",
+        synonyms=("companion_of", "accompanies", "travels_with_party"),
+    ),
+    PredicateTerm(
+        "founded",
+        "founded",
+        "Started a group or built a place. The founder may be long dead and not a member.",
+        ("character", "faction"),
+        ("faction", "place"),
+        covers=("the character who started a guild, cult or order", "who built a town or a keep"),
+        not_this=(("a character who belongs to a group", "member_of"),),
+        examples=("Arven founded the Silver Lanterns.",),
+        inverse_label="was founded by",
+        synonyms=("founder_of", "established"),
+    ),
+    PredicateTerm(
+        "captive_of",
+        "is held captive by",
+        "Is a prisoner of someone: captured, kidnapped or locked up. One captor at a time; the "
+        "captive is the first name.",
+        ("character",),
+        ("character", "faction"),
+        max_per_subject=1,
+        covers=("a prisoner of a villain, a kidnapped child, a captive of a guild",),
+        not_this=(
+            ("they are on opposite sides", "enemy_of"),
+            ("someone trapped in a place", "located_in"),
+        ),
+        examples=("Tor is held captive by the circus master.",),
+        inverse_label="holds captive",
+        synonyms=("imprisoned_by", "prisoner_of", "captured_by"),
+    ),
+    PredicateTerm(
+        "contains",
+        "contains",
+        "Has something inside it: a note in a book, a gem in a chest.",
+        ("item",),
+        ("item", "place"),
+        covers=("a note inside a tome", "a gem inside a chest", "a pocket world inside a bottle"),
+        not_this=(("an item kept in a place", "located_in"),),
+        examples=("The tome contains a note.",),
+        inverse_label="is inside",
+        synonyms=("has_inside",),
+    ),
+    PredicateTerm(
+        "knows",
+        "knows",
+        "Knows someone or about something: has met them, or has learned of it. For two people it "
+        "carries how kindly they feel, as one reputation word in its details (sworn enemy, "
+        "hostile, distrusts, wary, neutral, trusts, friendly, close, devoted). The weakest tie "
+        "between two entries; use a stronger one when it fits.",
+        (*_BEINGS, "faction"),  # (a group knows who someone is, #3033)
         _ANY,
         covers=(
             "a character who has met another character",
             "a character who knows about a place, an item, an event or a secret",
         ),
         not_this=(
-            ("they fight on the same side", "ally_of"),
-            ("they are on opposite sides", "enemy_of"),
+            ("two groups that fight together or trade as partners", "ally_of"),
+            ("two groups at war", "enemy_of"),
             ("a character who is in a place", "located_in"),
         ),
         examples=("Belleros knows Cerric.", "Cerric knows the Sun Blade."),
         inverse_label="is known by",
         synonyms=("knows_of", "met", "acquainted_with"),
+        version=3,  # a group may know too (#3033); two people carry a reputation word (#3181)
     ),
     PredicateTerm(
         "serves",
@@ -566,6 +708,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Mira serves Lord Neverember.", "The cultist serves Tiamat."),
         inverse_label="is served by",
         synonyms=("worships", "works_for", "obeys"),
+        inner_state=True,
     ),
     PredicateTerm(
         "sworn_to",
@@ -586,6 +729,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is sworn to the Oath of Vengeance.", "Mira is sworn to Lord Aldric."),
         inverse_label="has sworn",
         synonyms=("pledged_to", "oath_to", "pact_with", "bound_to"),
+        inner_state=True,
     ),
     PredicateTerm(
         "plays",
@@ -639,6 +783,45 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Saved the mill mattered to Brindle (helped them).",),
         inverse_label="was affected by",
         synonyms=("mattered_to", "touched"),
+    ),
+    PredicateTerm(
+        DISGUISED_AS,
+        "is disguised as",
+        "One character poses as another: a doppelganger, a changeling or an impostor wearing "
+        "someone's face. Two different characters, never one: the first name is the one in "
+        "disguise, the second is the one being copied. Not for a character who has a second "
+        "name (that is one character).",
+        ("character",),
+        ("character",),
+        covers=(
+            "a doppelganger or changeling posing as a real character",
+            "an impostor, a spy or a pretender passing as someone else",
+        ),
+        not_this=(
+            ("they merely look alike", "associated_with"),
+            ("a character who works for another", "serves"),
+        ),
+        examples=("Jax is disguised as Valyra.", "The changeling is disguised as the mayor."),
+        inverse_label="is impersonated by",
+        synonyms=(
+            "posing_as",
+            "poses_as",
+            "impersonating",
+            "impersonates",
+            "masquerading_as",
+            "masquerades_as",
+            "pretending_to_be",
+            "pretends_to_be",
+            "doppelganger_of",
+            "wearing_the_face_of",
+            "wears_the_face_of",
+            "is_posing_as",
+            "is_impersonating",
+            "is_pretending_to_be",
+            "is_a_doppelganger_of",
+            "is_masquerading_as",
+            "is_wearing_the_face_of",
+        ),
     ),
     PredicateTerm(
         FALLBACK_PREDICATE,

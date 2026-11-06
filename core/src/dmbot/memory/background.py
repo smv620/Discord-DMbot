@@ -18,13 +18,18 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
+from dmbot.memory import kin, place_words, unique_item
+from dmbot.memory import reputation_words as feeling_words
+from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
-from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
+from dmbot.memory.pronouns import PRONOUNS, speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -37,6 +42,9 @@ MAX_ALSO = 4
 # What the AI calls a kind, and the kind DMbot keeps it as (the same words Add many reads).
 KINDS = {
     "person": "npc",  # (the AI's word for any named character; a named monster is one too)
+    # a character the text plainly says is one of the players' own (#3553): proposed as a player
+    # character; who plays it is the DM's to say, never guessed from the text
+    "player": "player_character",
     "place": "place",
     "group": "faction",
     "god": "npc",  # a god is an NPC (#2562)
@@ -46,6 +54,7 @@ KINDS = {
 }
 LABELS = {  # for "Yes to all 14 places"
     "npc": ("NPC", "NPCs"),
+    "player_character": ("player character", "PCs"),
     "place": ("place", "places"),
     "faction": ("group", "groups"),
     "item": ("item", "items"),
@@ -59,12 +68,62 @@ CONNECTIONS = {
     "family": "kin_of",
     "member": "member_of",
     "in": "located_in",
+    # ("friend" and "enemy" are read as knows with a feeling before this table is looked at, #3175:
+    # these two entries only keep the words understood; the readers no longer produce ally_of or
+    # enemy_of, and rows stored earlier stay as they are)
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
     "works for": "serves",
     "knows": "knows",
+    "sworn to": "sworn_to",  # an oath, vow, pact or fealty
+    # Kinds of their own (#3033, #3035): they used to be kept on the catch-all with fixed words.
+    "mentor": "mentor_of",
+    "rival": "rival_of",
+    "leads": "leads",
+    "founded": "founded",
+    "captive": "captive_of",  # a is held captive by b
+    "contains": "contains",  # a contains b
+    # A second character posing as another (a doppelganger, an impostor): two people, never a name
+    # of one (#3091). A secret identity of ONE person stays a secret name; this is a connection.
+    "disguised as": "disguised_as",  # a is disguised as b
+    # A companion goes along with a player character (#3176). A document never points at the
+    # party (it is written before there is one), so the store refuses any other end and the
+    # suggestion is dropped with the rest of the refused ones.
+    "travels with": "travels_with",  # a travels with b (a player character)
 }
+# The relationships lore is mostly made of (#2757), built in so the AI never has to word them
+# itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
+# rarely are). `serves` and `ally` are kinds DMbot keeps natively; the rest are kept on the
+# catch-all relationship with these fixed words as the label, which read from the first name to
+# the second ("a mentors b"). Plain words for a DM: nothing here is a technical term.
+LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
+# Friend, ally and enemy are no kinds any more (#3175): two characters KNOW each other, and the
+# feeling is a reputation word. An AI that still says one of these old words is read as knows with
+# the feeling it stood for, so no line is lost; they are no longer offered to it.
+LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
+LORE_WORDS = {
+    "worships": "worships",
+}
+# Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
+# parent of b" (the role belongs to the first name, as `kin` reads it).
+LORE_KIN = ("parent", "sibling", "spouse", "grandparent", "aunt", "uncle", "niece", "nephew",
+            "cousin", "guardian")  # fmt: skip
+# The role words a text uses, in the neutral word DMbot keeps (the gender stays out of the data):
+# "his younger sister" is a sibling, "whose husband" a spouse (#3035). A word of `kin.ROLES` that is
+# neutral already (aunt, cousin…) stands for itself.
+KIN_NEUTRAL = {
+    "mother": "parent", "father": "parent", "son": "child", "daughter": "child",
+    "sister": "sibling", "brother": "sibling", "wife": "spouse", "husband": "spouse",
+    "grandmother": "grandparent", "grandfather": "grandparent",
+    "granddaughter": "grandchild", "grandson": "grandchild",
+}  # fmt: skip
+# "a is an apprentice of b" is "b mentors a", and "a is a child of b" is "b is the parent of a":
+# kept that way round, so the two ways of saying it are one fact and are never offered twice.
+LORE_REVERSED = {"apprentice": "mentor", "child": "parent", "grandchild": "grandparent"}
+ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
+# What the AI is offered: the old feeling words are still understood but not asked for (#3175).
+OFFERED_WORDS = tuple(w for w in ALL_WORDS if w not in LEGACY_FEELING)
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
 # relationship, with the words the text used as its label ("pays", "sworn on the ashes of").
@@ -98,7 +157,12 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "a": {"type": "string"},
-                        "how": {"type": "string", "enum": [*CONNECTIONS, *(own or {}), OTHER]},
+                        "how": {
+                            "type": "string",
+                            "enum": list(
+                                dict.fromkeys([*OFFERED_WORDS, *(own or {}), OTHER])
+                            ),  # (not the old feeling words)
+                        },
                         "words": {"type": "string"},
                         "b": {"type": "string"},
                         "quote": {"type": "string"},
@@ -132,7 +196,50 @@ class Connection:
     b: str
     quote: str  # a line of the text that holds both names, as written
     secret: bool = False  # an end was found through a secret spelling: it is kept as secret only
-    words: str = ""  # the label of the catch-all (`how` is then FALLBACK_PREDICATE), else ""
+    # The label of the catch-all (`how` is then FALLBACK_PREDICATE), or the family role of a
+    # `kin_of` ("parent"), else "".
+    words: str = ""
+    # The spellings the TEXT used for an end the AI wrote another way (#2757), by end: checked
+    # against the campaign's names when the list is kept. A variant that is another name than its
+    # own end is no variant, and the line is dropped.
+    variant_a: str = ""
+    variant_b: str = ""
+    decided: str = ""  # how a pronoun was settled (#2790), kept with the waiting connection
+
+
+@dataclass(frozen=True, slots=True)
+class Pick:
+    """A connection with one end that fits two or more names equally ("Mara"): it waits for the
+    DM to pick (#2650). `fixed` is the end that is a name, `fixed_is_a` whether it is the first
+    end; `word` is the other end as written and `candidates` the names it may be."""
+
+    fixed: str
+    fixed_is_a: bool
+    word: str
+    candidates: tuple[str, ...]
+    how: str
+    quote: str
+    secret: bool = False
+    words: str = ""
+    decided: str = ""  # how the pronoun was checked (#2790), else ""
+
+
+@dataclass(frozen=True, slots=True)
+class Unsettled:
+    """A connection whose quote has one pronoun ("she") and holds only one of its two names, where
+    the sentence before did not settle who the pronoun means (#2790). It is not dropped when the
+    who-is-it check is on: `who_resolve.settle` asks the AI who it is. `missing_is_a` says which end
+    the quote lacks, `phrase` is the pronoun as written and `passage` the text up to the end of the
+    quote, word for word."""
+
+    made: Connection
+    missing_is_a: bool
+    phrase: str
+    passage: str
+
+
+MAX_PICK_CHOICES = 3  # the card has a button for each; more is left out as `which_one`
+MAX_PICKS = 50  # "Which Mara?" questions from one reading
 
 
 def cost_text(cents: int) -> str:
@@ -154,8 +261,9 @@ def estimate_cents(chars: int) -> int:
     tokens_in = chars / 4
     listed = max(600.0, tokens_in / 8)  # the plain list, at its fullest (a quote on every line)
     shaped = listed * 1.5  # the same list as JSON
-    # The text goes in twice over: a retry or a continuation sends it again with the list so far.
-    cost = tokens_in * 2 * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
+    # The text goes in three times over: a retry or a continuation sends it again with the list so
+    # far, and the second look at names with no relationship (#2757) sends it once more.
+    cost = tokens_in * 3 * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
     cents = cost / 1_000_000 * 100 * 1.5
     return max(1, int(cents) + (1 if cents % 1 else 0))
 
@@ -184,6 +292,42 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
+# What may stand between a first name and a surname it shares (#2841): a list joiner or a bracketed
+# aside, and around them only more asides, joiners or capitalised first names. "Brannoc (father) &
+# Mira (mother) Ashgrove" holds "Brannoc Ashgrove"; "Mira spoke with Ken Ashgrove" does not hold
+# "Mira Ashgrove".
+_ASIDE = r"\([^)\n]*\)"
+_JOIN = rf"(?:{_ASIDE}|&|,|\band\b|\bor\b)"
+_FILL = rf"(?:{_JOIN}|[A-Z][\w'’-]*)"
+_SPLIT_GAP = rf"\s*(?:{_FILL}\s*)*?{_JOIN}\s*(?:{_FILL}\s*)*"
+
+
+def _in_text(haystack: str, name: str, piece: str | None = None) -> bool:
+    """Whether the (squashed) text holds this name: whole, or (a surname written once for two
+    people, "Brannoc (father) & Mira (mother) Ashgrove", #2841) with its words in order across a
+    list joiner or bracketed aside in `piece`, the text as written (capitals tell a first name from
+    other words). Only for a name of two or more words, each of some length."""
+    if _has(haystack, name):
+        return True
+    words = name.split()
+    if piece is None or len(words) < 2 or any(len(re.sub(r"\W", "", w)) < SHORTEST for w in words):
+        return False
+    glue = rf"(?:\s+|{_SPLIT_GAP})"
+    pattern = glue.join(rf"(?<!\w)(?i:{re.escape(w)})(?!\w)" for w in words)
+    return re.search(pattern, piece) is not None
+
+
+def names_in(text: str, names: Iterable[str]) -> list[str]:
+    """Which of these names the text holds as whole words, in the order given."""
+    haystack = _squash(text)
+    return [n for n in names if _has(haystack, n)]
+
+
+def quote_holds(quote: str, end: str) -> bool:
+    """Whether a quote (as written) holds this end, as `read_connections` asks it."""
+    return _in_quote(_squash(quote), end)
+
+
 def _in_quote(quote: str, end: str) -> bool:
     """Whether the quote holds this end: the name whole, or (the quote says "my brother Ulric" and
     the end is the listed "Ulric Stonehand", #2642) a word of it that is a name's own, not a title
@@ -194,6 +338,209 @@ def _in_quote(quote: str, end: str) -> bool:
         len(word) >= SHORTEST and word not in FILLER and _has(quote, word)
         for word in name_key(end).split()
     )
+
+
+VARIANT_MIN = 5  # letters a name needs before a spelling one edit away may stand for it
+
+
+def _one_edit(a: str, b: str) -> bool:
+    """Whether two strings differ by exactly one inserted, removed or changed letter."""
+    if a == b or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) > len(b):
+        a, b = b, a
+    i = 0
+    while i < len(a) and a[i] == b[i]:
+        i += 1
+    if len(a) == len(b):
+        return a[i + 1 :] == b[i + 1 :]
+    return a[i:] == b[i + 1 :]
+
+
+def _variant(haystack: str, name: str, cache: dict[str, str | None]) -> str | None:
+    """The one spelling in the (squashed) text that is a single letter away from this name, for a
+    name of `VARIANT_MIN` letters or more (#2757): a document that spells a name two ways, and an
+    AI that writes the other one. None when there is no such spelling or when there are two (which
+    one is meant would be a guess). The caller checks the spelling is no other name of the
+    campaign; this only finds it."""
+    key = _squash(name)
+    if key in cache:
+        return cache[key]
+    found: set[str] = set()
+    if len(re.sub(r"\W", "", key)) >= VARIANT_MIN:
+        count = len(key.split())
+        tokens = re.findall(r"\w+(?:['’-]\w+)*", haystack)
+        for i in range(len(tokens) - count + 1):
+            candidate = " ".join(tokens[i : i + count])
+            if _one_edit(candidate, key):
+                found.add(candidate)
+    cache[key] = next(iter(found)) if len(found) == 1 else None
+    return cache[key]
+
+
+# The forms of one pronoun, as one person each (he/him/his/himself): a quote with two forms of one
+# pronoun still holds one person to settle, not two (#2841).
+_PERSON = {
+    **dict.fromkeys(("he", "him", "his", "himself"), "he"),
+    **dict.fromkeys(("she", "her", "hers", "herself"), "she"),
+    **dict.fromkeys(("they", "them", "their", "theirs", "themselves"), "they"),
+    **dict.fromkeys(("who", "whose", "whom"), "who"),
+}
+
+_SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
+# Every way a document ends a paragraph or a line, not only "\n" (a pasted text may use the
+# Unicode separators).
+_BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
+
+
+REACH_SENTENCES = 3  # how many sentences back a pronoun's name may stand (#2757)
+REACH_WORDS = 60  # the most words of a quote that reaches back (the AI's own: `QUOTE_WORDS`)
+# The waiting-connection queue keeps a quote to `QUOTE_MAX` characters and cuts the END (the
+# pronoun's own sentence), so a window longer than that is never offered.
+REACH_CHARS = QUOTE_MAX
+
+
+def reach_names(keys: Iterable[str]) -> set[str]:
+    """The name keys a reach looks for as a third name: every key given, and the first word of
+    every longer key ("Brannoch" for "Brannoch Ashe"), since a text says a name short. A first word
+    that two names share ("Pell" for Pell Ashe and Pell Voss) counts too: it is a name in the text
+    whichever of them is meant, and either way it is not the pair's own."""
+    full = {k for k in keys if k}
+    return full | {
+        k.split()[0] for k in full if len(k.split()) > 1 and len(k.split()[0]) > SHORTEST
+    }
+
+
+_POSSESSIVE_RELATIVE = re.compile(
+    r"\b(?:his|her|their)\s+(?:[\w'’-]+\s+){0,2}[\w'’-]+\s*,\s*$", re.I
+)
+
+
+def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bool:
+    """Whether a name of the campaign or the read other than the pair's own stands in the span
+    (a capitalised run of up to four words, so "boy" in running text is no name): then the
+    pronoun may mean that one, and no reach is made. A name introduced as one of the same
+    person's own ("His elder brother, Ivo, vanished, while his younger sister, ...") does
+    not count: "his" before and after it means the same person, and the second relative is the
+    very case a reach is for (#3238)."""
+    tokens = [(m.group(), m.start()) for m in re.finditer(r"\w+(?:['’-]\w+)*", span)]
+    # ("Pell's cousin" names Pell: a possessive ending is taken off the last word of a name)
+    tokens = [
+        (re.sub(r"['’]s$", "", t, flags=re.I) if t[:1].isupper() else t, at) for t, at in tokens
+    ]
+    for i, (token, at) in enumerate(tokens):
+        if not token[:1].isupper():
+            continue
+        for size in range(1, 5):
+            gram = name_key(" ".join(t for t, _ in tokens[i : i + size]))
+            if gram and gram in others and gram not in ends:
+                # (only within one sentence: across a full stop the relative can be the new
+                # antecedent, "His brother, Daric, was a smith. His wife, Ana, ...")
+                if _POSSESSIVE_RELATIVE.search(span[max(0, at - 60) : at]) and not re.search(
+                    r"[.!?]",
+                    span[at:].rstrip(".!?…\"'”’ "),  # (the span's own last stop is no break)
+                ):
+                    break  # (this occurrence is "his <relative>, Name": not a new possessor)
+                return True
+    return False
+
+
+MIN_BORROWED_WORDS = 3  # the paragraph before must end in at least this many words to lend
+LONG_QUOTE_WORDS = 2 * QUOTE_WORDS  # a widened quote's most, when 20 cannot hold both ends
+
+
+def _widen(
+    piece: str,
+    words: list[str],
+    a: str,
+    b: str,
+    holds: Callable[[str, str], bool] | None = None,
+    lost: Dropped | None = None,
+    others: Collection[str] | None = None,
+    ends: Collection[str] = (),
+    needs_pronoun: bool = True,
+) -> list[str] | None:
+    """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
+    the sentence before it too: the text from the start of the previous sentence to the end of the
+    quote, word for word as written. Only for a quote with a pronoun in it ("his", "she", "who").
+    The AI's whole quote is always in the result, and it is kept only when the window holds BOTH
+    names, so "both names are in the quoted words" stays true without trusting the AI's reading of
+    a pronoun. (A trade-off: a window with both names does not prove which one the pronoun means;
+    the DM confirms every suggestion before it is kept.) A quote that runs across a line break is
+    not looked at.
+
+    The window keeps the FRONT of the earlier sentence, where its name is, and runs to the quote's
+    end: up to `QUOTE_WORDS` words, and up to `LONG_QUOTE_WORDS` when 20 cannot hold both names
+    (a list sentence "A mentored two apprentices: B... as well as C", #2841). A quote that opens
+    its paragraph borrows the last sentence of the paragraph before it. `lost` counts how often
+    each of these was needed (`quote_long`, `quote_prev_paragraph`), never a word. None when no
+    place in the text gives such a window.
+
+    Reach (#2757): when the sentence just before does not name the missing end (a background says
+    "Bran found a journal. Family members vanish at a hundred. His brother, Ivo, …"),
+    the window goes back through the SAME paragraph, up to `REACH_SENTENCES` sentences and
+    `REACH_WORDS` words (and `REACH_CHARS` characters, the queue's quote column), to the nearest
+    earlier sentence that holds both names. Only when `others` (the name keys of the campaign
+    and of this read, `reach_names`) is given, and only when no name in `others` but the pair's
+    own `ends` stands anywhere in the window: another name there could be the one the pronoun
+    means, so the line is left to the who-is-it check. Counted as `quote_reach`.
+
+    `needs_pronoun` False is for a description with no named subject ("…the son of a weaver
+    mother", #2959): the person's own word then stands in for the second name."""
+    if needs_pronoun and not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
+        return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
+    holds = holds or _in_quote
+    pattern = r"\s+".join(re.escape(w) for w in words)
+    for hit in re.finditer(pattern, piece, re.I):  # (a quote may stand in the text more than once)
+        start, end = hit.start(), hit.end()
+        if _BREAK.search(piece[start:end]):
+            continue
+        breaks = list(_BREAK.finditer(piece, 0, start))
+        paragraph = breaks[-1].end() if breaks else 0
+        before = piece[paragraph:start]
+        starts = [0] + [m.end() for m in _SENTENCE_END.finditer(before)]
+        cut = starts[-2] if len(starts) >= 2 else 0
+        origin = paragraph + cut
+        borrowed = False
+        if not before.strip() and breaks:  # the quote opens its paragraph: the one before ends here
+            upto = len(piece[:paragraph].rstrip("\n\r\u2028\u2029\x85 "))  # (blank lines skipped)
+            earlier = list(_BREAK.finditer(piece, 0, upto))
+            before_par = earlier[-1].end() if earlier else 0
+            tail = piece[before_par:upto]
+            stops = [m.end() for m in _SENTENCE_END.finditer(tail)]
+            origin = before_par + (stops[-1] if stops else 0)
+            # (a heading of a word or two is no sentence to borrow)
+            borrowed = len(piece[origin:upto].split()) >= MIN_BORROWED_WORDS
+            if not borrowed:
+                origin = paragraph
+        tokens = piece[origin:end].split()
+        for limit in (QUOTE_WORDS, LONG_QUOTE_WORDS):
+            window = tokens[-limit:]  # (the quote's end is always in it; the front is cut last)
+            said = _squash(" ".join(window))
+            if holds(said, a) and holds(said, b):
+                if lost is not None:
+                    if len(window) > QUOTE_WORDS:
+                        lost["quote_long"] += 1
+                    if borrowed and len(tokens) - len(window) < len(piece[origin:upto].split()):
+                        lost["quote_prev_paragraph"] += 1  # (the window really reaches into it)
+                return window
+        if others is None or borrowed:
+            continue
+        for back in range(2, REACH_SENTENCES + 1):
+            if len(starts) < back + 1:
+                break  # (the paragraph holds no sentence that far back)
+            reach = piece[paragraph + starts[-(back + 1)] : end]
+            tokens = reach.split()
+            if len(tokens) > REACH_WORDS or len(reach) > REACH_CHARS:
+                break  # (longer reaches are longer still)
+            if _third_name(reach, others, ends):
+                break  # (the pronoun may mean that name: the who-is-it check decides)
+            said = _squash(reach)
+            if holds(said, a) and holds(said, b):
+                if lost is not None:
+                    lost["quote_reach"] += 1
+                return tokens
+    return None
 
 
 def _spellings(
@@ -244,8 +591,9 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or len(name) > NAME_CHARS
             or len(name.split()) > NAME_WORDS
             or "|" in name
-            or not _has(haystack, name)
+            or not _in_text(haystack, name, piece)
             or not not_names.allowed(name, cued)
+            or not_names.shape_of(name) is not None  # a number, time or address: no name (#3394)
         ):
             continue
         # A disguise is read first, so the same spelling is never also a public one.
@@ -277,27 +625,90 @@ def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
     return False
 
 
+def _led_by_a_group(item: Found, parts: list[str], others: dict[str, Found]) -> Found | None:
+    """The group this list is led by (#3383, part 2): its first part is another name of the same
+    read, of the kind faction ("the Ash Wolves, Tavin and Mira": the group, then its members)."""
+    if len(parts) < 2:
+        return None
+    group = others.get(name_key(parts[0]))
+    return group if group is not None and group.kind == "faction" and group is not item else None
+
+
+def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[list[Found]]:
+    """A name that is a list ("Aldmoor, Quillgate, Fenwick") as one name for each part (#3383),
+    each with the list's kind and quote, so a list is never offered as one name. A bare "and"
+    splits only when each part is held or another entry of the same read names it alone. A list
+    led by a group of the same read ("the Ash Wolves, Tavin and Mira") gives its members as
+    people (`group_connections` makes their ties)."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
+    out: list[list[Found]] = []
+    for found in pieces:
+        kept: list[Found] = []
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            if len(parts) == 1:
+                kept.append(item)
+            elif _led_by_a_group(item, parts, named) is not None:
+                kept.extend(Found(p, "npc", (), (), item.quote) for p in parts[1:])
+            else:
+                kept.extend(Found(p, item.kind, (), (), item.quote) for p in parts)
+        out.append(kept)
+    return out
+
+
+def group_connections(
+    answers: Iterable[list[Found]], held: Collection[str] = ()
+) -> list[Connection]:
+    """The `member_of` ties of every list a group of the same read leads (#3383, part 2): "the Ash
+    Wolves, Tavin and Mira" gives Tavin and Mira each a tie to the Ash Wolves, in the words of the
+    list's own quote. Nothing else is guessed: a list no group of this read leads gives none."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
+    out: list[Connection] = []
+    for found in pieces:
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            group = _led_by_a_group(item, parts, named) if len(parts) > 1 else None
+            if group is not None:
+                out.extend(Connection(p, "member_of", group.name, item.quote) for p in parts[1:])
+    return out
+
+
 def merge(
     answers: Iterable[list[Found]],
     skip_keys: Collection[str] = (),
     *,
     cap: int = MAX_NAMES,
     rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
     leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
     that is a disguise of another entry folds into it, and its other spellings become that
     entry's secret spellings. `rules`
-    (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
+    (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
+    item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
+    as `item_not_unique` (#3373)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
+    answers = _split_lists(answers, skip_keys)
     order: list[str] = []
     merged: dict[str, Found] = {}
+    generic: set[str] = set()
     for found in answers:
         for item in found:
             key = name_key(item.name)
             if not key or key in skip:
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
+                continue
+            if item.kind == "item" and not any(
+                unique_item.keeps(spelling, item.quote)
+                for spelling in (item.name, *item.also, *item.secret)
+            ):
+                generic.add(key)  # (not one particular thing under any of its spellings)
                 continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
@@ -321,6 +732,8 @@ def merge(
                 (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
             )
+    if dropped is not None and (left_out := generic - merged.keys()):
+        dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:
@@ -423,32 +836,84 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 Dropped = Counter[str]
 
 
-def _quote_window(words: list[str], a: str, b: str) -> list[str]:
+def _quote_window(
+    words: list[str], a: str, b: str, holds: Callable[[str, str], bool] | None = None
+) -> list[str]:
     """A quote of more than `QUOTE_WORDS` words cut to that many (#2601): the front, or the back
     when the front loses one of the two names. Words of a verbatim quote stay verbatim; the check
-    that the text holds the quote and both names still follows, so this only shortens."""
+    that the text holds the quote and both names still follows, so this only shortens. `holds`
+    says whether a squashed quote holds an end (by any of its spellings, #2841)."""
     if len(words) <= QUOTE_WORDS:
         return words
+    holds = holds or _has
     for window in (words[:QUOTE_WORDS], words[-QUOTE_WORDS:]):
         said = _squash(" ".join(window))
-        if _has(said, a) and _has(said, b):
+        if holds(said, a) and holds(said, b):
             return window
     return words[:QUOTE_WORDS]
 
 
+def _groups(aliases: Mapping[str, Sequence[str]]) -> dict[str, set[str]]:
+    """For each name key of an entry (its main name and every spelling), the other keys of the same
+    entry (#2841): the campaign's confirmed aliases and the spellings this read listed. A spelling
+    two entries both claim belongs to neither (it would be a guess which one is meant)."""
+    claimed: dict[str, set[str]] = {}
+    mains = {name_key(m) for m in aliases}
+    for main, spellings in aliases.items():
+        for sp in spellings:
+            if name_key(sp) in mains and name_key(sp) != name_key(main):
+                continue  # (another entry's own name is never this one's spelling)
+            claimed.setdefault(name_key(sp), set()).add(name_key(main))
+    out: dict[str, set[str]] = {}
+    for main, spellings in aliases.items():
+        mk = name_key(main)
+        members = {mk} | {
+            name_key(sp) for sp in spellings if len(claimed.get(name_key(sp), ())) == 1
+        }
+        for m in members:
+            out.setdefault(m, set()).update(members - {m})
+    return out
+
+
 def read_connections(
-    reply: str, piece: str, own: Collection[str] = (), dropped: Dropped | None = None
+    reply: str,
+    piece: str,
+    own: Collection[str] = (),
+    dropped: Dropped | None = None,
+    aliases: Mapping[str, Sequence[str]] | None = None,
+    unsettled: list[Unsettled] | None = None,
+    others: Collection[str] | None = None,
 ) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
     names are checked against the merged list later (`keep_connections`). `dropped` counts why
-    each line that failed did."""
+    each line that failed did. `aliases` (a name key of the campaign to its confirmed public alias
+    keys, each fitting that one entry only) lets a text that uses only an alias back the canonical
+    name the AI wrote (#2762). A read's own spellings, secret ones too, are in it for this check
+    alone (#2841): a connection found through a secret one is kept secret (`keep_connections`).
+    `unsettled` (#2790): when given, a connection whose pronoun the sentence before did not settle
+    is added there instead of being dropped as `not_in_text`, for the caller to settle; the caller
+    then counts what became of each (the counts add up to the lines found).
+
+    `others` (#2757): the name keys of the campaign and of this read (`reach_names`). When given, a
+    quote with a pronoun may reach back through its paragraph for the name it lacks (`_widen`);
+    without it, only the sentence before is used, as before."""
     lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return []
     haystack = _squash(piece)
+    variants: dict[str, str | None] = {}  # (one text's search for a name's other spelling, once)
+    groups = _groups(aliases or {})  # (an entry's name and spellings, #2841)
+
+    def forms(end: str) -> list[str]:
+        return [end, *sorted(groups.get(name_key(end), ()))]
+
+    def holds(quote: str, end: str) -> bool:
+        """Whether a squashed quote holds this end or any other spelling of the same entry."""
+        return any(_in_quote(quote, f) for f in forms(end))
+
     out: list[Connection] = []
     for item in items:
         if not isinstance(item, dict):
@@ -456,8 +921,45 @@ def read_connections(
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
-        how = CONNECTIONS.get(word) or next((k for k in own if k.lower() == word), None)
+        word = KIN_NEUTRAL.get(word, word)  # (a gendered role word is kept as its neutral one)
+        old_feeling = LEGACY_FEELING.get(word)  # "friend", "ally", "enemy" (#3175)
+        if old_feeling is not None:
+            word = "knows"
+        reverse = word in LORE_REVERSED
+        word = LORE_REVERSED.get(word, word)
+        how = (
+            CONNECTIONS.get(word)
+            or LORE_KEPT.get(word)
+            or next((k for k in own if k.lower() == word), None)
+        )
         label = ""
+        if how == "located_in":
+            # The place tie keeps the word the text used, as one wording ("lives in"), or none for
+            # a place inside a place (#3363); anything else the AI wrote there is dropped.
+            raw_place = str(item.get("words") or "").strip()
+            label = place_words.canonical(raw_place) or ""
+            if raw_place and not label:
+                lost["place_word_off_list"] += 1  # (kept without it, as an off-list feeling is)
+        if how == "knows":
+            # How the one feels about the other: one of nine words (a reputation, #3175), in the
+            # line's "words". One off the list is dropped and counted; the connection is kept
+            # without it. "neutral" is the plain "they know each other" and stores no word.
+            raw = item.get("words")
+            said_feeling = feeling_words.word_of(raw)
+            if (
+                said_feeling is None
+                and raw not in (None, "")
+                and not (isinstance(raw, str) and not raw.strip())
+            ):
+                lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
+            said_feeling = said_feeling or old_feeling
+            label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
+        if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
+            how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
+        elif how is None and word in LORE_KIN:  # family by role
+            how, label = "kin_of", word
+        elif how is None and SYNONYMS.get("_".join(word.split())) == DISGUISED_AS:
+            how = DISGUISED_AS  # "poses as", "impersonates": a disguise, never a public link
         if word == OTHER:  # the catch-all, kept with the words the text used
             label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
             if not label or "|" in label:
@@ -470,6 +972,8 @@ def read_connections(
                 lost["word_not_allowed"] += 1
                 continue
             how = FALLBACK_PREDICATE
+            if SYNONYMS.get("_".join(label.casefold().split())) == DISGUISED_AS:
+                how, label = DISGUISED_AS, ""  # (a disguise word said as "other": still secret)
         if how is None:
             lost["word_not_allowed"] += 1
             continue
@@ -478,29 +982,130 @@ def read_connections(
             continue
         # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
-        words = _quote_window(str(quote).split(), a, b)
+        if reverse:  # "a is an apprentice of b" is kept as "b mentors a"
+            a, b = b, a
+        spoken = str(quote).split()
         if (
             not a
             or not b
             or len(a) > NAME_CHARS
             or len(b) > NAME_CHARS
             or name_key(a) == name_key(b)
-            or not words
+            or not spoken
         ):
             lost["bad_names"] += 1
             continue
+        # A name the document spells another way than the AI wrote it (#2757) counts as in the
+        # text when exactly one spelling a letter away is there; keep_connections later checks
+        # that spelling is no OTHER name of the campaign. Kept per end, so each is checked against
+        # the name it stands for.
+        seen = [a, b]
+        for index, end in enumerate((a, b)):
+            if not _in_text(haystack, end, piece):
+                spelled = next((f for f in forms(end)[1:] if _in_text(haystack, f, piece)), None)
+                spelled = spelled or _variant(haystack, end, variants)
+                if spelled is not None:
+                    seen[index] = spelled
+        if name_key(seen[0]) == name_key(seen[1]):  # two ends that came to one spelling
+            lost["bad_names"] += 1
+            continue
+        words = _quote_window(spoken, seen[0], seen[1], holds)
         said = " ".join(words)
-        if (
-            _has(haystack, a)
-            and _has(haystack, b)
-            and _in_quote(_squash(said), a)
-            and _in_quote(_squash(said), b)
+        said_squashed = _squash(said)
+        made = Connection(
+            a,
+            how,
+            b,
+            said,
+            words=label,
+            variant_a=seen[0] if seen[0] != a else "",
+            variant_b=seen[1] if seen[1] != b else "",
+        )
+        if not (
+            _in_text(haystack, seen[0], piece)
+            and _in_text(haystack, seen[1], piece)
             and _has(haystack, said)
         ):
-            out.append(Connection(a, how, b, said, words=label))
+            lost["not_in_text"] += 1
+        elif holds(said_squashed, seen[0]) and holds(said_squashed, seen[1]):
+            out.append(_via(made, said_squashed, seen, forms))
+        elif (
+            wide := _widen(
+                piece, words, seen[0], seen[1], holds, lost, others, _own_ends(seen, forms)
+            )
+        ) is not None:
+            # The quote named one end ("his sister…"): the sentence before it joins, word for word.
+            lost["quote_widened"] += 1
+            joined = replace(made, quote=" ".join(wide))
+            out.append(_via(joined, _squash(" ".join(wide)), seen, forms))
+        elif unsettled is not None and (
+            open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
+        ):
+            unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
     return out
+
+
+def _own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
+    """The keys of the pair's own two ends, with their spellings and each word of them: none of
+    these is a third name when a reach looks for one."""
+    keys = {name_key(f) for end in seen for f in forms(end)}
+    return keys | {w for k in keys for w in k.split() if len(w) >= SHORTEST}
+
+
+def _via(
+    made: Connection, said: str, seen: list[str], forms: Callable[[str], list[str]]
+) -> Connection:
+    """The connection with, for an end the quote holds only through another spelling of its
+    entry, that spelling as the end's variant (#2841). `keep_connections` then keeps the link
+    secret when the spelling is a disguise, and drops it when the spelling is another entry's."""
+    out = made
+    for index, end in enumerate(seen):
+        if _in_quote(said, end):
+            continue
+        via = next((f for f in forms(end)[1:] if _in_quote(said, f)), "")
+        if via and index == 0 and not made.variant_a:
+            out = replace(out, variant_a=via)
+        elif via and index == 1 and not made.variant_b:
+            out = replace(out, variant_b=via)
+    return out
+
+
+def _unsettled(
+    piece: str,
+    words: list[str],
+    said: str,
+    made: Connection,
+    seen: list[str],
+    holds: Callable[[str, str], bool] = lambda q, e: _in_quote(q, e),
+) -> Unsettled | None:
+    """The question a quote leaves open, or None when it is not one the AI should be asked: the
+    quote must hold exactly one of the two names and exactly one distinct pronoun (two pronouns
+    could each mean another person, and which one stands for the missing end is a guess)."""
+    in_a, in_b = holds(said, seen[0]), holds(said, seen[1])
+    if in_a == in_b:
+        return None
+    written = [w.strip(".,;:!?\"'“”‘’()") for w in words]
+    pronouns = [w for w in written if w.casefold() in PRONOUNS]
+    # "his father cared for him and his sister": his and him are one person, so one pronoun (#2841)
+    if len({_PERSON.get(w.casefold(), w.casefold()) for w in pronouns}) != 1:
+        return None
+    pattern = r"\s+".join(re.escape(w) for w in words)
+    for hit in re.finditer(pattern, piece, re.I):
+        if _BREAK.search(piece[hit.start() : hit.end()]):
+            continue
+        return Unsettled(made, not in_a, pronouns[0], piece[: hit.end()])
+    return None
+
+
+def _clashes(reader: Ends, variant: str, own: str) -> bool:
+    """Whether a spelling the text used for an end is, or may be, a name other than that end's own
+    (#2757): then the AI's name was not this spelling, and the link is not this one's."""
+    if not variant:
+        return False
+    got = reader.match(variant)
+    return bool(got.ambiguous) or got.name not in (None, own)
 
 
 def keep_connections(
@@ -512,6 +1117,9 @@ def keep_connections(
     skip: Callable[[Connection], bool] | None = None,
     dropped: Dropped | None = None,
     questions: list[str] | None = None,
+    speaker: str | None = None,
+    picks: list[Pick] | None = None,
+    secret_keys: Collection[str] = (),
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -523,13 +1131,21 @@ def keep_connections(
 
     An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
     title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
-    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed."""
+    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed. With
+    `picks` given, a connection whose other end is a name waits for the DM's pick instead
+    (`which_waiting`, #2650): it is added there, with its candidates, and is not left out.
+
+    `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
+    are that character, and so are a bare "his" or "her"; with no speaker, a connection that
+    needs "I" is left out as `whose` (counted, never guessed)."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
     for f in names:  # every public name first: another name's spelling never takes it over
         ends.setdefault(name_key(f.name), f.name)
     hidden = {name_key(x) for f in names for x in f.secret} - {name_key(f.name) for f in names}
+    # (disguises of names this read did not offer, such as the campaign's own: `secret_keys`)
+    hidden |= {name_key(x) for x in secret_keys} - {name_key(f.name) for f in names}
     claimed: dict[str, set[str]] = {}
     for f in names:
         for spelling in (*f.also, *f.secret):
@@ -538,17 +1154,92 @@ def keep_connections(
         # a spelling that two names claim is no end: DMbot would be guessing which one is meant
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
-    both_ways = {"kin_of", "ally_of", "enemy_of"}
-    reader = Ends(ends, {*ends.values()})
-    seen: set[tuple[str, str, str]] = set()
+    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of"}
+    # (a public other spelling fits an end by its words too, for the name it belongs to; a secret
+    # one never does)
+    spellings = {
+        sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
+    }
+    reader = Ends(ends, {*ends.values()}, spellings)
+    seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
+    # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
+    kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
+    contradicted: set[tuple[str, str]] = set()
+    knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
+    # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
+    # the pick itself and the way round it was said, so opposite roles are caught here too
+    kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
+    seen_picks: set[tuple[str, str, str, bool]] = set()
     out: list[Connection] = []
     answers = [list(piece) for piece in answers]
-    total = sum(len(piece) for piece in answers)
     looked = 0
     for piece in answers:
         for c in piece:
             looked += 1
-            first, second = reader.match(c.a), reader.match(c.b)
+            end_a, no_a = speaker_end(c.a, speaker)
+            end_b, no_b = speaker_end(c.b, speaker)
+            if no_a or no_b:
+                lost["whose"] += 1
+                continue
+            first, second = reader.match(end_a), reader.match(end_b)
+            if (c.variant_a or c.variant_b) and (first.ambiguous or second.ambiguous):
+                lost["spelling_clash"] += 1  # (a spelling is never a question: it is a guess)
+                continue
+            if (
+                picks is not None
+                and len(picks) < MAX_PICKS
+                and first.ambiguous != second.ambiguous  # exactly one end is the question
+                and max(len(first.ambiguous), len(second.ambiguous)) <= MAX_PICK_CHOICES
+                and (second.name if first.ambiguous else first.name) is not None
+            ):
+                fixed, other = (first, second) if second.ambiguous else (second, first)
+                # (a pick is secret as a connection would be, so its card is kept so too)
+                secret = bool(
+                    {
+                        name_key(c.a),
+                        name_key(c.b),
+                        name_key(c.variant_a),
+                        name_key(c.variant_b),
+                        fixed.key,
+                    }
+                    & hidden
+                )
+                word = c.b if second.ambiguous else c.a
+                again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
+                if again in seen_picks:
+                    lost["same_pair"] += 1
+                    continue
+                seen_picks.add(again)
+                made_pick = Pick(
+                    fixed.name or "", bool(second.ambiguous), word, other.ambiguous or (),
+                    c.how, c.quote, secret, c.words,
+                )  # fmt: skip
+                if c.how == "kin_of" and kin.directional(c.words):
+                    # The same contradiction check as for a plain connection: a role said both
+                    # ways round, or against a role already offered for one of the candidates, is
+                    # not believed; the two are still family, so the question is plain family.
+                    pk = (name_key(fixed.name or ""), name_key(word))
+                    earlier = kin_picks.get(pk)
+                    if earlier is not None and earlier[1] != bool(second.ambiguous):
+                        picks[picks.index(earlier[0])] = replace(earlier[0], words="")
+                        lost["which_way"] += 1
+                        continue
+                    kin_picks[pk] = (made_pick, bool(second.ambiguous))
+                    for cand in other.ambiguous or ():
+                        ck = name_key(cand)
+                        held = kin_held.get((min(pk[0], ck), max(pk[0], ck)))
+                        said_as = (pk[0], ck) if second.ambiguous else (ck, pk[0])
+                        if held is not None and held[1] and held[2] != said_as:
+                            made_pick = replace(made_pick, words="")
+                            kin_picks[pk] = (made_pick, bool(second.ambiguous))
+                            where = held[0]
+                            if where is not None:  # the line offered already is plain family too
+                                out[where] = replace(out[where], words="")
+                            kin_held[(min(pk[0], ck), max(pk[0], ck))] = (where, "", held[2])
+                            break
+                picks.append(made_pick)
+                lost["which_waiting"] += 1
+                continue
             if first.ambiguous or second.ambiguous:
                 lost["which_one"] += 1
                 if questions is not None:
@@ -560,29 +1251,132 @@ def keep_connections(
             if a is None or b is None or name_key(a) == name_key(b):
                 lost["name_not_found"] += 1
                 continue
-            ka, kb = name_key(a), name_key(b)
-            if c.how in both_ways and kb < ka:
-                ka, kb = kb, ka
-            if (ka, c.how, kb) in seen:  # (one catch-all for a pair, whatever its words)
-                lost["same_pair"] += 1
+            # A spelling the text used for an end the AI wrote another way must not be another
+            # name of the campaign (#2757): then it was that name, and the link is not this one's.
+            if _clashes(reader, c.variant_a, a) or _clashes(reader, c.variant_b, b):
+                lost["spelling_clash"] += 1
                 continue
-            seen.add((ka, c.how, kb))
+            ka, kb = name_key(a), name_key(b)
+            made = Connection(
+                a,
+                c.how,
+                b,
+                c.quote,
+                # secret when the end was written under a secret spelling, with a title in
+                # front of it too ("Lady Nightshade", #2591): the matched key counts
+                bool(
+                    {
+                        name_key(c.a),
+                        name_key(c.b),
+                        name_key(c.variant_a),
+                        name_key(c.variant_b),
+                        first.key,
+                        second.key,
+                    }
+                    & hidden
+                ),
+                c.words,
+                decided=c.decided,
+            )
+            role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
+            # A shared role (sibling, spouse, cousin) has no order to contradict, but it still
+            # beats a plain "family" line for the pair, whichever was read first.
+            shared = c.words if c.how == "kin_of" and kin.role_of(c.words) in kin.MUTUAL else ""
+            pair = (min(ka, kb), max(ka, kb))
+            if c.how == "kin_of":
+                # Family connections are stored once for a pair, in the order of a role ("a is the
+                # parent of b"): a role beats plain "family", two roles the same way round are one
+                # fact, and two roles the opposite way round contradict: neither role is believed,
+                # but the two are still family, so plain "family" is offered (the DM sees no
+                # direction to pick from, and no line is lost).
+                if pair in contradicted:
+                    lost["which_way" if role else "same_pair"] += 1
+                    continue
+                held = kin_held.get(pair)
+                if held is not None:
+                    where, held_role, held_order = held
+                    if role and held_role and held_order != (ka, kb):
+                        contradicted.add(pair)
+                        if where is not None:  # the first line stays, as plain family
+                            out[where] = replace(out[where], words="")
+                        lost["which_way"] += 1  # and this one is the contradiction
+                        continue
+                    # Only a plain line is replaced, and only by a role: a held shared role or
+                    # free-text label is never swapped (first read wins; two roles conflict anyway).
+                    if (
+                        where is None  # (narrows `where` for the index below)
+                        or not (role or shared)
+                        or held_role
+                        or out[where].words
+                    ):
+                        lost["same_pair"] += 1  # (a plain line, or the same role again)
+                        continue
+                    lost["same_pair"] += 1  # the plain line is dropped for the role
+                    out[where] = made
+                    kin_held[pair] = (
+                        where,
+                        role,
+                        (ka, kb),
+                    )  # (a shared role has no order: role "")
+                    continue
+                kin_held[pair] = (None, role, (ka, kb))
+            else:
+                if c.how == "knows" and (ka, kb) in knows_held:
+                    # A plain "knows" read first must not swallow a later one that says how the
+                    # one feels (#3175): the word is added to the held line. Two different
+                    # words for the same direction clash: the first stays and the clash is counted.
+                    held_at = knows_held[(ka, kb)]
+                    held_words = out[held_at].words
+                    if c.words and not held_words:
+                        out[held_at] = replace(out[held_at], words=c.words)
+                        lost["feeling_added"] += 1
+                    elif c.words and held_words != c.words:
+                        lost["feeling_clash"] += 1
+                    else:
+                        lost["same_pair"] += 1
+                    continue
+                if c.how in both_ways and kb < ka:
+                    ka, kb = kb, ka
+                # One fact per pair and kind: the queue's key has no words, so a second
+                # catch-all line for the pair (a mentor who is also a rival) is not offered.
+                # (the place tie is one fact for each of its words: lives in and worked in the
+                # same town are both kept, #3363)
+                once = (ka, c.how, kb, place_words.slot(c.words) if c.how == "located_in" else None)
+                if once in seen:
+                    lost["same_pair"] += 1
+                    continue
+                seen.add(once)
+            if role:
+                # A "Which X?" question asked earlier with the opposite role for one of this
+                # line's two names contradicts it the same way: both end as plain family.
+                for pk, (pick, fixed_is_a) in list(kin_picks.items()):
+                    if not pick.words:
+                        continue
+                    cands = {name_key(x) for x in pick.candidates}
+                    opposite = (
+                        (pk[0] == ka and kb in cands and not fixed_is_a)
+                        or (pk[0] == kb and ka in cands and fixed_is_a)
+                    )  # fmt: skip
+                    if opposite:
+                        plain_pick = replace(pick, words="")
+                        picks_ref = picks if picks is not None else []
+                        picks_ref[picks_ref.index(pick)] = plain_pick
+                        kin_picks[pk] = (plain_pick, fixed_is_a)
+                        made = replace(made, words="")
+                        role = ""
+                        kin_held[pair] = (None, "", (ka, kb))
+                        break
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
-            out.append(
-                Connection(
-                    a,
-                    c.how,
-                    b,
-                    c.quote,
-                    # secret when the end was written under a secret spelling, with a title in
-                    # front of it too ("Lady Nightshade", #2591): the matched key counts
-                    bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
-                    c.words,
-                )
-            )
             if len(out) >= cap:
-                lost["over_cap"] += total - looked  # the rest are not looked at: all counted
-                return out
+                # Full. The rest are still read, so a contradiction among family lines is found
+                # whichever side of the cap it falls on, but none of them is offered.
+                lost["over_cap"] += 1
+                continue
+            out.append(made)
+            if c.how == "kin_of":
+                kin_held[pair] = (len(out) - 1, role, (ka, kb))
+            if c.how == "knows":
+                knows_held[(ka, kb)] = len(out) - 1
     return out

@@ -91,6 +91,27 @@ describe("💡 Suggest", () => {
     expect(api.calls.some((c) => c.startsWith("saveSaidAs"))).toBe(false); // nothing was saved
   });
 
+  it("says it is still working after five seconds, and that it can be left after thirty (#3347)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = apiWithName();
+    let finish: (text: string) => void = () => {};
+    api.suggestSaidAs = () => new Promise<string>((done) => (finish = done));
+    render(<Box api={api} />);
+    press(w.suggest);
+    expect(screen.queryByText(w.slow(5))).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByText(w.slow(5))).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(25000);
+    });
+    expect(screen.getByText(w.stalled(30))).toBeTruthy();
+    await act(async () => finish("KAH-zeth"));
+    await waitFor(() => expect(field().value).toBe("KAH-zeth"));
+    expect(screen.queryByText(w.stalled(30))).toBeNull();
+  });
+
   it("says so when there is no suggestion, and what went wrong when the call fails", async () => {
     const api = apiWithName();
     api.suggestSaidAs = async () => "  ";

@@ -118,7 +118,7 @@ class Combined(unittest.IsolatedAsyncioTestCase):
         self.assertIn("4. **Pack 3**", text)
         self.assertIn("5. **Pack 4**", text)
         self.assertIn("**Pack 4** homebrew, now v6", text)  # named, though it has no buttons
-        self.assertIn("1 without buttons here: open ⚙️ Settings → 📚 Shared rules.", text)
+        self.assertIn("1 without buttons here: open ⚙️ Manage DMbot → 📚 Shared rules.", text)
         self.assertEqual({i.item.row for i in view.children}, {0, 1, 2, 3})
         self.assertEqual(bot.rule_sets.take_pack_update.await_count, 4)  # all were still taken
 
@@ -126,7 +126,7 @@ class Combined(unittest.IsolatedAsyncioTestCase):
         bot = bot_with(house=True, packs=5)
         await update_notes.check_all(bot, campaign(), 99)
         text = bot.post_message.await_args.args[1]
-        self.assertIn("2 without buttons here: open ⚙️ Settings → 📚 Shared rules.", text)
+        self.assertIn("2 without buttons here: open ⚙️ Manage DMbot → 📚 Shared rules.", text)
         self.assertIn("6. **Pack 5**", text)
 
     async def test_gone_lines_join_the_note_as_plain_lines(self) -> None:

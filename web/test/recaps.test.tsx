@@ -9,7 +9,7 @@ import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps, { refFromPath } from "../src/account/Recaps";
 import { approveWords } from "../src/content/recap-approve";
-import { text } from "../src/content/recaps";
+import { errors, text } from "../src/content/recaps";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 
 afterEach(cleanup);
@@ -204,6 +204,62 @@ describe("the page keeps up with the bot", () => {
     fireEvent.click(await screen.findByRole("button", { name: approveWords.postText }));
     expect(await screen.findByText(text.posted)).toBeTruthy();
     expect(screen.queryByRole("button", { name: approveWords.postText })).toBeNull();
+  });
+
+  it("Try again refused for no_lines says why and reads the recap again", async () => {
+    const api = mockApi("table");
+    const read = api.recap!;
+    let reads = 0;
+    api.recap = async (ref) => {
+      reads++;
+      const recap = await read(ref);
+      return reads === 1 ? recap : { ...recap, triesLeft: 1 };
+    };
+    api.decideRecap = async () => {
+      throw new ApiError("no-lines");
+    };
+    renderPage(reviewPath, api);
+    fireEvent.click(await screen.findByRole("button", { name: "Try again (2 left)" }));
+    expect(await screen.findByText(errors["no-lines"]!)).toBeTruthy();
+    expect(reads).toBe(2);
+    expect(await screen.findByRole("button", { name: "Try again (1 left)" })).toBeTruthy();
+  });
+
+  it("Try again refused for no_tries says why, reads the recap again, and greys the button", async () => {
+    const api = mockApi("table");
+    const read = api.recap!;
+    let reads = 0;
+    api.recap = async (ref) => {
+      reads++;
+      const recap = await read(ref);
+      return reads === 1 ? recap : { ...recap, triesLeft: 0, canTryAgain: false };
+    };
+    api.decideRecap = async () => {
+      throw new ApiError("no-tries");
+    };
+    renderPage(reviewPath, api);
+    fireEvent.click(await screen.findByRole("button", { name: "Try again (2 left)" }));
+    expect(await screen.findByText(errors["no-tries"]!)).toBeTruthy();
+    expect(reads).toBe(2);
+    const again = (await screen.findByRole("button", { name: text.again })) as HTMLButtonElement;
+    expect(again.disabled).toBe(true);
+  });
+
+  it("a failure that is not a refusal (ApiError(\"server\")) leaves the read count alone", async () => {
+    const api = mockApi("table");
+    const read = api.recap!;
+    let reads = 0;
+    api.recap = async (ref) => {
+      reads++;
+      return read(ref);
+    };
+    api.decideRecap = async () => {
+      throw new ApiError("server");
+    };
+    renderPage(reviewPath, api);
+    fireEvent.click(await screen.findByRole("button", { name: "Try again (2 left)" }));
+    expect(await screen.findByText(errors.other)).toBeTruthy();
+    expect(reads).toBe(1);
   });
 
   it("looks again while the recap is being posted, until it is posted", async () => {

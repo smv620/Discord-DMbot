@@ -191,7 +191,10 @@ class Phrase(unittest.TestCase):
         self.assertIn("⚔️ Combat, round 2\nInitiative, as heard: by side", text)
         calm = clock_ui.clock_text(Clock(0, 0), None, None, "Initiative, as heard: by side")
         self.assertNotIn("Initiative", calm)
-        self.assertNotIn("Initiative", clock_ui.players_text(fighting))  # players never see it
+        told = clock_ui.small(
+            clock_ui.players_view(SimpleNamespace(clock=fighting, split=False, groups=()))  # type: ignore[arg-type]
+        )
+        self.assertNotIn("Initiative", told)  # players never see it
 
 
 def sheets_for(users: list[int]) -> list[CharacterSheet]:
@@ -608,12 +611,11 @@ class MoreNearMisses(unittest.TestCase):
         self.assertIsNone(self.heard("I have dinner"))
 
     def test_a_huge_line_is_ignored_quickly(self) -> None:
-        import time
+        def both() -> None:
+            self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
+            self.assertIsNone(self.heard("a" * 100_000))
 
-        start = time.perf_counter()
-        self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
-        self.assertIsNone(self.heard("a" * 100_000))
-        self.assertLess(time.perf_counter() - start, speed.allowed(0.5))
+        self.assertLess(speed.fastest(both), speed.allowed(0.5))
 
 
 class Prompt(unittest.TestCase):

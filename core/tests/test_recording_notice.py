@@ -1,12 +1,13 @@
 """The recording notice: posted once per table, retried and reported if it fails."""
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from tests.pg import DatabaseTest
 
 GUILD, VOICE, SCREEN = 1, 2, 3

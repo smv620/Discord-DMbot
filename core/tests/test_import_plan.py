@@ -141,6 +141,10 @@ class TheTimes(unittest.TestCase):
         self.assertEqual(times[0][0], 0)
         self.assertEqual(times[1][0], times[0][0] + times[0][1])  # one after the other
         self.assertTrue(all(length > 0 for _, length in times))
+        from dmbot.recaps import draft
+
+        # One definition, two names: the recaps module still exports it.
+        self.assertIs(draft.SPOKEN_WORDS_PER_HOUR, ip.SPOKEN_WORDS_PER_HOUR)
 
     def test_a_file_with_times_keeps_them_and_never_overlaps_the_next_line(self) -> None:
         t = importer.parse(TIMED)

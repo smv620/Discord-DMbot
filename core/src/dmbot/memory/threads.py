@@ -94,6 +94,29 @@ LED_TO = "led_to"
 CHAIN_DEPTH = 10  # how far the loop check follows "led to" before it gives up (and refuses)
 
 
+def loops_through(pairs: Iterable[tuple[str, str]], node: str) -> bool:
+    """Is `node` on a loop of the live links in `pairs` (from, to)? Followed to the end (no depth
+    limit): a loop is a loop however long (a merge can also push a chain past `CHAIN_DEPTH`, which
+    this does not mind; the card readers follow one link at a time). Used before a merge, which
+    moves links wholesale."""
+    out: dict[str, list[str]] = {}
+    for a, b in pairs:
+        out.setdefault(a, []).append(b)
+    seen: set[str] = set()
+    frontier = [node]
+    while frontier:
+        nxt: list[str] = []
+        for current in frontier:
+            for to in out.get(current, ()):
+                if to == node:
+                    return True
+                if to not in seen:
+                    seen.add(to)
+                    nxt.append(to)
+        frontier = nxt
+    return False
+
+
 def would_loop(
     pairs: Iterable[tuple[str, str]], start: str, end: str, depth: int = CHAIN_DEPTH
 ) -> bool:

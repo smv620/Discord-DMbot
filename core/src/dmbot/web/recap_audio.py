@@ -15,8 +15,11 @@ import hashlib
 import hmac
 import re
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode
 
+from dmbot.recaps.audio import parts
+from dmbot.recaps.audio import script as audio_script
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.notify import parse_ref
 
@@ -79,3 +82,38 @@ def file_for(
     return files.verify(
         link_key(secret_key), guild_id, campaign_id, session_at, kind, int(expires), signature
     )
+
+
+def remake(
+    files: AudioFiles | None, ref: str, recap: dict[str, Any], *, voice_tags: bool
+) -> dict[str, Any]:
+    """What "Make it again" would do for this recap (#2630), so the page can say which button it
+    is and why: `how` is `voice` (only the `changed` paragraphs of `total` are spoken again, the
+    music kept), `all` (everything again; `why` is paragraphs, moods, size or no_parts), `same` (the
+    words the voice reads have not changed) or `new` (nothing was made before). Worked out from
+    the kept manifest and the recap's text as it is now, with the same rules the bot applies when
+    it makes the audio; only fixed words and counts leave here."""
+    audio = recap["audio"]
+    out: dict[str, Any] = {"how": "new", "why": "", "changed": 0, "total": 0}
+    parsed = parse_ref(ref)
+    if files is None or parsed is None or audio["state"] not in ("ready", "failed"):
+        return out
+    script = audio_script.build(
+        recap["title"], recap["gameDay"], recap["summary"], emotion_tags=voice_tags
+    )
+    out["total"] = len(script.paragraphs)
+    if audio["current"]:
+        return {**out, "how": "all"}  # the same text: a new take, all of it
+    guild_id, campaign_id, session_at = parsed
+    try:
+        folder = files.recap_dir(guild_id, campaign_id, session_at)
+    except ValueError:
+        return out
+    manifest = parts.read_manifest(folder)
+    # (the mode is the one the audio was made in; the bot checks the DM's choice again when it
+    # makes it, and a different choice makes everything again)
+    choice = recap["approval"]["choice"] or (manifest or {}).get("mode")
+    if manifest is None or choice not in ("voice", "both") or choice != manifest.get("mode"):
+        return {**out, "how": "all", "why": parts.NO_PARTS}
+    change = parts.classify(manifest, script, mode=choice, seed=session_at)
+    return {**out, "how": change.kind, "why": change.why, "changed": len(change.changed)}

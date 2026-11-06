@@ -1,0 +1,61 @@
+{
+  "title": "The Temple of Sarn in the Marrowmere",
+  "pc_backstories": [
+    {
+      "character": "Tamsin Vey",
+      "tie": "dived the lake for silver"
+    }
+  ],
+  "statements": [
+    {
+      "text": "The temple fell three hundred years ago in the Long Flood",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "Its bell still hangs in the open arch of the tower",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The ferryman, Halvard Reis, charges a copper for the crossing",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The reeds are being cut for the autumn thatch",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "the bell is rung only for fog",
+      "expect": "world",
+      "world_for": []
+    },
+    {
+      "text": "The last priest, Ysenne, did not drown in the Long Flood",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "she sealed the stair behind her",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "The stair is still there, hidden behind a fallen column on the north side of the nave",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "whoever carries it out will be able to calm the lake for a season",
+      "expect": "spoiler",
+      "world_for": []
+    },
+    {
+      "text": "Halvard knows this from his grandmother",
+      "expect": "spoiler",
+      "world_for": []
+    }
+  ]
+}

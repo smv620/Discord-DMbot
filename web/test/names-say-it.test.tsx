@@ -26,7 +26,7 @@ const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.fil
 async function edit(path = DM, api = mockApi("table")) {
   render(<Names api={api} path={path} />);
   await screen.findByRole("list", { name: w.listLabel });
-  fireEvent.click(within(rowOf("Gorrak")).getByRole("button", { name: w.changeFor("Gorrak") }));
+  fireEvent.click(within(rowOf("Gorrak")).getByRole("button", { name: "Gorrak" }));
   return { api, row: within(rowOf("Gorrak")) };
 }
 
@@ -95,7 +95,7 @@ describe("how to say a name, on the Names page", () => {
     render(<Names api={mockApi("table")} path={MANAGER} />);
     await screen.findByRole("list", { name: w.listLabel });
     expect(screen.queryByLabelText(w.sayLabel("Gorrak"))).toBeNull();
-    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
+    expect(document.querySelectorAll("button.name-open")).toHaveLength(0);
   });
 
   it("an API that sends no id for the row shows no box", async () => {

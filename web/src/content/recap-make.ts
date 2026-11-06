@@ -29,6 +29,15 @@ export const makeWords = {
   // is kept until the new one is approved, so the words say that only for those.
   askAgain: (kept: boolean): string =>
     `This session already has a recap. Make a new one?${kept ? " The one you have stays until you approve the new one." : ""}`,
+  // Shown under that question (also when an uploaded recap would replace it) when a scene of the recap has a
+  // "who was there" list the DM saved (#2684): a rewrite or a replacement finds the scenes afresh, so the lists go. `maybe` when the recap could not be read to check.
+  askAgainLists: 'Your saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
+  askAgainMaybeLists: 'Any saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
+  checkingLists: "Checking your saved lists…",
+  // A recap that failed has nothing to keep (#2764), but its saved "who was there" lists would still go.
+  askAgainUnfinished: "Make this recap again?",
+  askReplaceUnfinished: "Add this one in place of the recap that didn't finish?",
+  askReplaceDraft: "This session already has a recap. Add this one in its place? The recap there isn't approved yet, so it is replaced.",
   askReplaceExisting: "This session already has a recap. Add this one in its place? The old one is kept as an earlier version.",
   yesAgain: "Yes, make a new one",
   yesReplace: "Yes, add it",
@@ -68,6 +77,18 @@ export const makeWords = {
     checking: "Checking the recap",
     fetching: "Reading your Google Doc",
     saving: "Saving the recap",
+    // What the API sends while a recap is made on the website (core `recaps/progress.py`, #2636): every
+    // code starts "recap_". The unprefixed words above are the older names and stay as they were.
+    recap_names: "Finding the names in what was said",
+    recap_reading: "Reading what was said",
+    recap_beats: "Working out what happened",
+    recap_writing: "Writing the recap",
+    recap_checking: "Checking the recap",
+    recap_check_waiting: "Written, waiting to be checked",
+    recap_final_read: "Giving it a last read",
+    recap_finishing: "Tidying up",
+    recap_ready: "Ready to read",
+    recap_failed: "Couldn't be made",
   } as Record<string, string>,
   fileTooBig: "That file is over 1 MB. Choose a smaller one.",
   doneNote: "The recap is ready.",

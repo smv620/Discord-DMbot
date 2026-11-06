@@ -5,7 +5,7 @@ import re
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -27,6 +27,7 @@ from dmbot.dm_screen.rules import (
 )
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, PLAYER, OTHER = 1, 2, 3, 4, 5

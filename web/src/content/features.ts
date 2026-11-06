@@ -1,7 +1,7 @@
 // What DMbot does at a table (#1141): only things that are built and merged. Add a card when
 // a feature ships, never before. Plain words, one sentence and one example each; no game or
 // publisher trademarks (CLAUDE.md), so character sheets are named without the brand.
-import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE } from "./help";
+import { GAMETIME_IN_CHAT_LIVE, INITIATIVE_STYLE_LIVE } from "./help";
 import { RECAPS_LIVE } from "./recap-words";
 
 export interface Feature {
@@ -30,12 +30,14 @@ const cards: (Feature & { live?: boolean })[] = [
   },
   {
     title: 'Ask "Hey DMbot"',
-    what: "Anyone at the table who said yes can ask a quick rules question out loud or in the dmb-chat channel. The short answer is posted there, and the game master has the final say. Questions and answers go in the written record.",
+    what: "Anyone at the table who said yes can ask a quick rules question out loud or by typing in the voice channel's chat (start with 'Hey DMbot' or 'DMbot'). The short answer is posted there, and the game master has the final say. Questions and answers go in the written record.",
     example: '"Hey DMbot, how long does Bless last?" The answer says how sure DMbot is.',
   },
   {
     title: "The game clock",
-    what: "Players see the story's day and time in their own channel. The game master sees the exact time.",
+    what: GAMETIME_IN_CHAT_LIVE
+      ? "The game time shows in the voice channel's chat as a small 🕰️ line whenever it changes. The game master sees the exact time."
+      : "Players see the story's day and time in their own channel. The game master sees the exact time.",
     example: 'Players see "Day 5, morning". The game master can time a spell like Bless.',
   },
   {
@@ -58,12 +60,6 @@ const cards: (Feature & { live?: boolean })[] = [
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do.",
     example: "After Friday's game, fix a misspelled name, then press Post to the table.",
     live: RECAPS_LIVE,
-  },
-  {
-    title: "A who's who list",
-    what: "DMbot keeps a list of the people and groups your game master confirmed, which players see only as far as the DM screen allows, and never with secrets.",
-    example: "A player forgets the innkeeper's name and checks the list.",
-    live: NPCS_CHANNEL_LIVE,
   },
   {
     title: "Your own homebrew",

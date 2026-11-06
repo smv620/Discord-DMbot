@@ -58,7 +58,17 @@ _SESSION_DROP = ("id", "guild_id", "campaign_id")
 _LINE_DROP = ("id", "guild_id", "session_id")
 _SUGGESTION_DROP = ("id", "guild_id", "campaign_id", "session_id")
 _RESPELL_DROP = ("id", "guild_id", "campaign_id", "session_id", "line_id")
-_IMPORT_DROP = ("guild_id", "campaign_id", "session_id")
+_IMPORT_DROP = (
+    "guild_id",
+    "campaign_id",
+    "session_id",
+    # where the story read is: a restored session starts blank (0325)
+    "story_state",
+    "story_part",
+    "story_parts",
+    "story_started_at",
+    "story_moved_at",
+)
 _SESSION_KEYS = ("session", "lines", "suggestions", "respells", "import")
 
 
@@ -209,9 +219,12 @@ class TranscriptParts:
         (#2605). The count goes to `left_out`."""
         allowed = await _columns(conn)
         erased = await self._erased(conn, guild_id, part)
+        removed = await self._removed(conn, guild_id, campaign_id)
         for s in part["sessions"]:
             if erased:
                 s = _without_erased(s, erased, left_out)
+            if removed:  # a DM removed these speakers from THIS campaign (#3305)
+                s = _without_erased(s, removed, left_out, by_import=True)
             sid = uuid.uuid4().hex
             await self._insert(
                 conn, "transcript_sessions", allowed, [s["session"]],
@@ -267,6 +280,18 @@ class TranscriptParts:
         return out
 
     @staticmethod
+    async def _removed(conn: Conn, guild_id: int, campaign_id: str) -> dict[int, int]:
+        """speaker -> when a DM removed their lines from THIS campaign (`speaker_erasures`, #3305).
+        Read on every restore path (this is the one place a restore writes lines), and for this
+        campaign only: the same number in another campaign is someone else."""
+        cur = await conn.execute(
+            "SELECT user_id, erased_at FROM speaker_erasures"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        return {int(r["user_id"]): int(r["erased_at"]) for r in await cur.fetchall()}
+
+    @staticmethod
     async def _erased_in(conn: Conn, server: int, speakers: list[int]) -> dict[int, int]:
         cur = await conn.execute(
             "SELECT user_id, erased_at FROM dmbot_erased_speakers(%s, %s)", (server, speakers)
@@ -307,11 +332,17 @@ class TranscriptParts:
 
 
 def _without_erased(
-    s: dict[str, Any], erased: dict[int, int], left_out: LeftOut | None
+    s: dict[str, Any], erased: dict[int, int], left_out: LeftOut | None, by_import: bool = False
 ) -> dict[str, Any]:
     """One session of a part with the erased people's rows taken out (#2605): only people who
-    erased after the session began lose it (a session after they came back stays whole)."""
+    erased after the session began lose it (a session after they came back stays whole).
+    `by_import`: a session loaded from a file counts from the day it was imported, not from the
+    day it was played, so a speaker a DM removed and then confirmed again in a new import keeps the
+    new lines (#3305)."""
     began = s["session"].get("started_at")
+    imported = (s.get("import") or {}).get("imported_at")
+    if by_import and type(imported) is int:
+        began = imported
     gone = {u for u, at in erased.items() if type(began) is int and began <= at}
     if not gone:
         return s

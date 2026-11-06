@@ -354,7 +354,7 @@ describe("fresh starts and out-of-date points", () => {
   it("says that a kept style note is saved for later recaps, and where to remove it", async () => {
     await sortedOnce();
     const lead = screen.getByText(/saved for this campaign's later recaps too/);
-    expect(lead.textContent).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+    expect(lead.textContent).toContain("⚙️ Manage DMbot → ✍️ Recap style");
     expect(lead.textContent).toContain("newest 10");
   }, 10000);
 
@@ -562,4 +562,60 @@ describe("over the wire", () => {
       reply(422, { error: "bad_choice" }).rewriteWith!("r", "i", ["zz"], []),
     ).rejects.toMatchObject({ kind: "bad-choice" });
   });
+});
+
+// The wait panel for a typed note (#3355): the bot's stage, shown with WorkProgress, from the progress it sends.
+describe("the wait panel for a typed note (#3355)", () => {
+  const now = () => Math.floor(Date.now() / 1000);
+  const points = { corrections: [{ id: "c1", text: "Fix the innkeeper's name" }], style: [], replies: [] };
+
+  it("shows the stage words in turn, while it is being sorted", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      if (asked === 1) return { state: "working", progress: { stage: "waiting", state: "running", startedAt: now() - 5, updatedAt: now() - 5, serverNow: now() } };
+      if (asked === 2) return { state: "working", progress: { stage: "working", state: "running", startedAt: now() - 7, updatedAt: now() - 1, serverNow: now() } };
+      return { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.pickUp, {}, { timeout: 5000 })).toBeTruthy();
+    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+    expect(screen.queryByText(w.sorting)).toBeNull(); // the panel is gone once the note is sorted
+  }, 30_000);
+
+  it("a stalled sort says so with the existing slow words", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      if (asked <= 2) return { state: "working", progress: { stage: "working", state: "stalled", startedAt: now() - 90, updatedAt: now() - 80, serverNow: now() } };
+      return { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.stalled, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.checkAgain })).toBeNull(); // the button is for a page that gave up
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+
+  it("without progress from an older API, keeps today's one-line status", async () => {
+    const api = mockApi("table");
+    let asked = 0;
+    api.fixResult = async () => {
+      asked += 1;
+      return asked < 2 ? { state: "working" } : { state: "done", points };
+    };
+    await open(api);
+    type("Fix the name");
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.sorting, {}, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText(w.pickUp)).toBeNull();
+    await screen.findByText("Fix the innkeeper's name", {}, { timeout: 8000 });
+  }, 30_000);
+
 });

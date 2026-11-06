@@ -56,7 +56,7 @@ FULL = (
     "Remove one first, then add it again."
 )
 BAD_KIND = "That isn't one of the kinds. Pick one from the list."
-NOT_HOMEBREW = "Rules go in House rules, not Homebrew: ⚙️ Settings → House rules."
+NOT_HOMEBREW = "Rules go in House rules, not Homebrew: ⚙️ Manage DMbot → House rules."
 DAMAGED = "This backup file is damaged (bad homebrew entry)."
 
 

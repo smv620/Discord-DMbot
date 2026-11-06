@@ -8,6 +8,10 @@ never get bright enough to hurt the words on top). The dice are the exception: t
 by colour and lifted so they stand out. Words sit on cards and on the faded left side, and
 the dice are far from where bare text goes, so the lift doesn't hurt reading. If you swap the
 artwork or change CAP, DICE_CAP or --art-opacity, look at the pages again.
+
+The files are also made smaller on purpose (#3010): the picture sits faded behind the words, so the
+sharpness is never seen, and every page counts the picture in its weight budget. Each is cut to 75% of
+the artwork's size (the wide one is then about 1,030 px across, the tall one about 580) at quality 65.
 """
 import sys
 from pathlib import Path
@@ -44,17 +48,21 @@ def prepare(image: Image.Image, dice: np.ndarray) -> Image.Image:
     return Image.fromarray(np.clip(plain * (1 - weight) + bright * weight, 0, 255).astype("uint8"))
 
 
+def save(image: Image.Image, path) -> None:
+    """The picture at 75% of its size, as a quality 65 WebP (see the note at the top)."""
+    small = image.resize((round(image.width * 0.75), round(image.height * 0.75)), Image.LANCZOS)
+    small.save(path, "WEBP", quality=65, method=6)
+
+
 def main(source: str) -> None:
     art = Image.open(source).convert("RGB")
     width, height = art.size
     dice = dice_mask(art)
     OUT.mkdir(parents=True, exist_ok=True)
-    prepare(art, dice).save(OUT / "table-wide.webp", "WEBP", quality=72, method=6)
+    save(prepare(art, dice), OUT / "table-wide.webp")
     # The phone crop drops the empty left side of the wide picture and keeps the artwork.
     left = int(width * 0.436)
-    prepare(art.crop((left, 0, width, height)), dice[:, left:]).save(
-        OUT / "table-tall.webp", "WEBP", quality=72, method=6
-    )
+    save(prepare(art.crop((left, 0, width, height)), dice[:, left:]), OUT / "table-tall.webp")
 
 
 if __name__ == "__main__":

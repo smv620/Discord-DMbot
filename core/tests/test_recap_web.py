@@ -59,11 +59,13 @@ NOW = int(time.time())
 def callers(needle: str) -> set[str]:
     """Which source files mention this: a new caller of a door fails here and must be looked at."""
     root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
-    return {
+    found = {
         str(f.relative_to(root))
         for f in root.rglob("*.py")
         if needle in f.read_text(encoding="utf-8")
     }
+    # The migrations are files of their own since #2127; they stand where schema.py stood.
+    return {"schema.py" if name.startswith("migrations/") else name for name in found}
 
 
 class Base(DatabaseTest):
@@ -89,7 +91,10 @@ class Base(DatabaseTest):
         # Alice DMs "One"; Bob DMs "Two" in the same server.
         self.one = await self.campaigns.create(THURSDAY.id, "One", ALICE.id)
         self.two = await self.campaigns.create(THURSDAY.id, "Two", BOB.id)
-        self.store = RecapStore(self.db)
+        # Rows are dated by `NOW`, not by the real clock: a run that straddles midnight on the 1st
+        # would otherwise write them in another month than `NOW`'s, and the month counts (which
+        # read `NOW`) would find none (#3182).
+        self.store = RecapStore(self.db, clock=lambda: NOW)
         for campaign, dm in ((self.one, ALICE.id), (self.two, BOB.id)):
             await self.store.enqueue(THURSDAY.id, campaign.id, 100, dm_user_id=dm)
             await self.store.update(
@@ -459,7 +464,8 @@ class TheDmsPage(Base):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                " '[]'::jsonb, 6) AS r",
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -503,6 +509,32 @@ class TheDmsPage(Base):
         self.assertIsInstance(read["serverNow"], int)
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
+
+    async def test_the_recap_view_carries_the_posting_progress_and_a_refusal_clears_on_an_edit(
+        self,
+    ) -> None:
+        """#3355: `postingProgress` is null with nothing under way, `posting_check` while a post
+        waits for the bot, and `failed` with a code (never the sentence) after a refusal; editing
+        the text or pressing Post again clears an old refusal."""
+        from dmbot.recaps import progress as rp
+
+        await self.speaker_agreed()
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["postingProgress"])
+        posting = await decide(self.web, self.session, self.ref, "post")
+        self.assertEqual(posting["postingProgress"]["stage"], "posting_check")
+        self.assertEqual(posting["postingProgress"]["state"], "running")
+        async with self.db.guild(THURSDAY.id) as conn:  # the bot refused it
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'draft', last_error = %s",
+                (rp.POST_NOTES["secret_name"],),
+            )
+        refused = (await read_recap(self.web, self.session, self.ref))["postingProgress"]
+        self.assertEqual((refused["state"], refused["reason"]), ("failed", "secret_name"))
+        self.assertNotIn(rp.POST_NOTES["secret_name"], str(refused))
+        edited = await edit_recap(
+            self.web, self.session, self.ref, summary="A new line.", housekeeping=[]
+        )
+        self.assertIsNone(edited["postingProgress"])  # an edit clears the old refusal
 
     async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
         self,
@@ -573,6 +605,35 @@ class TheDmsPage(Base):
         self.assertEqual(job.summary, "《Calm》 Edited by the DM.")
         self.assertEqual(job.original, fx.SUMMARY)  # the diff against the draft stays possible
 
+    async def test_the_opening_and_closing_lines_cannot_be_edited(self) -> None:
+        """#2630: the DM edits the story between DMbot's two fixed lines."""
+        opening = "Previously, on The Ember Road…"
+        closing = "And so we continue, the epic adventure of The Ember Road."
+        story = "《Calm》 Mira rested."
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, summary=f"{opening}\n\n{story}\n\n{closing}"
+        )
+        edited = f"{opening}\n\n《Calm》 Mira rested by the fire.\n\n{closing}"
+        shown = await edit_recap(self.web, self.session, self.ref, summary=edited, housekeeping=[])
+        self.assertIn("by the fire", shown["summary"])  # the story between them is the DM's
+        for bad in (
+            edited.replace(opening, "Long ago…"),
+            edited.replace(closing, "The end."),
+            edited.replace(closing, "").strip(),
+            edited.replace(opening + "\n\n", ""),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await edit_recap(self.web, self.session, self.ref, summary=bad, housekeeping=[])
+            self.assertEqual(caught.exception.code, "fixed_lines", bad)
+        job = await self.state(self.one.id)
+        self.assertEqual(job.summary, edited)  # nothing was saved by the refusals
+
+    async def test_a_recap_that_never_had_the_lines_may_stay_without_them(self) -> None:
+        shown = await edit_recap(
+            self.web, self.session, self.ref, summary="《Calm》 Plain.", housekeeping=[]
+        )
+        self.assertEqual(shown["summary"], "《Calm》 Plain.")
+
     async def test_edits_that_are_empty_or_too_big_are_refused(self) -> None:
         for summary, bullets in (
             ("  ", []),
@@ -591,11 +652,18 @@ class TheDmsPage(Base):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             for column in (
                 "leased_to", "decided_at", "updated_at", "attempt", "errors", "next_at",
-                "beats", "problems", "last_error", "restarts",
+                "beats", "problems", "restarts",
             ):  # fmt: skip
                 with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     async with conn.transaction():
                         await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
+
+    async def test_the_website_may_clear_a_refusal_but_nothing_else_of_the_workers(self) -> None:
+        """#3355: `last_error` is writable only so an edit or a new Post can blank the old
+        "couldn't post" sentence; the lease columns above stay the worker's."""
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            await conn.execute("UPDATE recap_jobs SET last_error = last_error")
 
     async def test_the_website_cannot_write_the_bots_columns(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
@@ -708,6 +776,28 @@ class TheRoutes(Base):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertNotIn(BOB.email, got.text)  # never another DM's address (#2334)
         return dict(got.json()["recapEmail"])
+
+    async def test_try_again_with_no_body_retries_the_draft_it_does_not_start_over(self) -> None:
+        """#3387: the page's "Try again (2 left)" posts to `/again` with no body. That path was
+        taken by "make a new one" (#2608), which answered 409 `needs_confirm`, and the page said
+        "Something went wrong on our side". No body is the retry of a failed or finished draft."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+        got = await self.client.post(f"/me/recaps/{self.ref}/again")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["state"], got.json()["triesLeft"]), ("queued", 1))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.tries, job.state), (1, "queued"))
+        # "Make a new one" still sends its body and still asks first.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
+        asked = await self.client.post(f"/me/recaps/{self.ref}/again", json={"replace": False})
+        self.assertEqual(asked.status_code, 409)  # (this fixture has no lines: `no_lines`)
+        self.assertIn(asked.json()["error"], ("needs_confirm", "no_lines"))
+        junk = await self.client.post(f"/me/recaps/{self.ref}/again", json=[1])
+        self.assertEqual((junk.status_code, junk.json()["error"]), (422, "bad_action"))
+        job = await self.state(self.one.id)
+        self.assertEqual(job.tries, 1)  # neither of those spent a try
 
     async def test_approve_unchecked_answers_in_the_pages_words(self) -> None:
         from dmbot.recaps import critics as cr
@@ -844,7 +934,7 @@ class TheAudio(Base):
         self.assertEqual(
             off,
             {"state": "off", "error": "", "current": False, "canAskAgain": False,
-             "postedNote": False},
+             "postedNote": False, "how": "", "why": "", "progress": None},
         )  # fmt: skip
         await self.make(self.one.id)
         ready = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
@@ -857,6 +947,95 @@ class TheAudio(Base):
         )
         stale = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
         self.assertEqual((stale["state"], stale["current"]), ("ready", False))
+
+    async def keep_manifest(self, campaign: str) -> None:
+        """What the bot keeps beside the audio of the recap's text as it is now (#2630)."""
+        from dmbot.recaps.audio import parts
+        from dmbot.recaps.audio import script as audio_script
+
+        job = await self.state(campaign)
+        script = audio_script.build(job.title, job.game_day, job.summary)
+        n = len(script.paragraphs)
+        folder = self.files.recap_dir(THURSDAY.id, campaign, 100)
+        parts.save_manifest(
+            folder,
+            parts.manifest_of(
+                script, mode="both", seed=100, seconds=[2.0] * n, cue_at=[[] for _ in range(n)]
+            ),
+        )
+
+    async def remake(self) -> dict[str, Any]:
+        got = await self.client.get(f"/me/recaps/{self.ref}/audio/remake")
+        self.assertEqual(got.status_code, 200, got.text)
+        return cast(dict[str, Any], got.json())
+
+    async def test_the_page_is_told_whether_a_change_remakes_only_the_voice(self) -> None:
+        await self.make(self.one.id)
+        await self.keep_manifest(self.one.id)
+        same = await self.remake()  # the text the audio was made from: a new take of all of it
+        self.assertEqual((same["how"], same["why"]), ("all", ""))
+        job = await self.state(self.one.id)
+        first = job.summary.split("\n\n")[0]
+        word = next(w for w in first.split() if w.isalpha() and len(w) > 3)
+        small = job.summary.replace(first, first.replace(word, word + "x", 1), 1)
+        await self.client.put(f"/me/recaps/{self.ref}", json={"summary": small, "housekeeping": []})
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"], got["changed"]), ("voice", "", 1))
+        self.assertGreaterEqual(got["total"], 2)
+        # a paragraph added: everything again, and the page is told why
+        more = small + "\n\nAnd then the door closed behind them."
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary=more)
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "paragraphs"))
+
+    async def test_nothing_kept_or_nothing_made_before_is_said_so(self) -> None:
+        await self.make(self.one.id, current=False)  # made before, and nothing kept beside it
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "no_parts"))
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="off")
+        self.assertEqual((await self.remake())["how"], "new")
+
+    async def test_only_the_campaigns_dm_is_told(self) -> None:
+        await self.make(self.two.id)  # Bob's campaign
+        got = await self.client.get(f"/me/recaps/{self.other}/audio/remake")
+        self.assertEqual(got.status_code, 404)
+        anonymous = httpx.AsyncClient(
+            transport=self.client._transport, base_url=API, headers=HEADERS
+        )
+        self.assertEqual(
+            (await anonymous.get(f"/me/recaps/{self.ref}/audio/remake")).status_code, 401
+        )
+        await anonymous.aclose()
+
+    async def test_the_audio_under_way_carries_its_progress_in_the_shared_shape(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="queued")
+        # The page tells "running" from "stalled" against the real clock, so the progress is stamped
+        # by the real clock too. `self.store` stamps with `NOW`, read when this file was imported:
+        # in a long run that is more than the stall limit ago and the job read as stalled (#3231).
+        await RecapStore(self.db, clock=time.time).set_audio_progress(
+            THURSDAY.id, self.one.id, 100, stage="voice", done=2, total=3
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        progress = audio["progress"]
+        self.assertEqual(
+            (progress["stage"], progress["done"], progress["total"], progress["unit"]),
+            ("audio_voice", 2, 3, "parts"),
+        )
+        self.assertEqual((progress["state"], progress["reason"]), ("running", None))
+        self.assertGreater(progress["updatedAt"], 0)
+        self.assertNotIn("text", json.dumps(progress))  # counts and codes only
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")  # it ends
+        done = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertIsNone(done["progress"])
+
+    async def test_the_last_making_says_what_it_did(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(
+            THURSDAY.id, self.one.id, 100, audio="ready", how="all", why="moods"
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual((audio["how"], audio["why"]), ("all", "moods"))
 
     async def test_a_failed_audio_carries_its_sentence_and_may_be_asked_for_again(self) -> None:
         await self.approved_with_audio()
@@ -1953,7 +2132,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
     campaign = SimpleNamespace(
-        id="c" * 32, dmbchat_channel_id=55, dm_screen_channel_id=66,
+        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66,
         recaps_text=True, recaps_audio=True, recaps_email=True,
     )  # fmt: skip
     bot = SimpleNamespace(
@@ -2229,7 +2408,9 @@ class MakeAgain(Base):
         await self.lines(self.one.id, 100)
         await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
         async with self.db.guild(THURSDAY.id) as conn:  # a worker has it right now
-            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (NOW + 600,))
+            # (the door judges "right now" by the clock; `NOW` was taken when this file was
+            # imported, so in a run longer than ten minutes `NOW + 600` has already passed)
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (int(time.time()) + 600,))
         with self.assertRaises(RecapError) as busy:
             await redo_recap(self.web, self.session, self.ref, replace=True)
         self.assertEqual(busy.exception.code, "busy")

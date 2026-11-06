@@ -187,6 +187,45 @@ describe("how it ends", () => {
   });
 });
 
+describe("the shared progress (#3355)", () => {
+  const shared = (state: "running" | "stalled" | "failed", extra: Record<string, unknown> = {}) => ({
+    stage: "posting_post",
+    startedAt: 1_900_000_000 - 700,
+    updatedAt: 1_900_000_000 - 650,
+    serverNow: 1_900_000_000,
+    state,
+    ...extra,
+  });
+
+  it("counts from the shared start and takes the step from the shared stage", async () => {
+    await show(pageWith([{ ...posting(5, null), postingSince: null, postingProgress: shared("running") }]));
+    expect(screen.getByText(text.step.post)).toBeTruthy();
+    expect(screen.getByRole("timer").textContent).toBe(clock(700));
+  });
+
+  it("says a stalled post has stalled, and to look at the channel before posting again", async () => {
+    await show(pageWith([{ ...posting(700, "post"), postingProgress: shared("stalled") }]));
+    expect(screen.getByText(text.postStalled)).toBeTruthy();
+    expect(screen.queryByText(text.slow)).toBeNull();
+  });
+
+  it("says why a refused post was not posted, from the reason code, even after a reload", async () => {
+    const refused: Recap = { ...base, postingProgress: shared("failed", { stage: "failed", reason: "no_table_chat" }) };
+    await show(pageWith([refused]));
+    expect(screen.getByText(text.postWhy.no_table_chat!)).toBeTruthy();
+    expect(screen.queryByText(text.postFailed)).toBeNull();
+  });
+
+  it("has words for every reason the API can send, and falls back for one it cannot word", async () => {
+    for (const code of ["plan", "no_table_chat", "cannot_check_secrets", "secret_name", "player_stopped", "send_failed", "post_failed"])
+      expect(text.postWhy[code]).toBeTruthy();
+    const odd: Recap = { ...base, postingProgress: shared("failed", { stage: "failed", reason: "something_new" }) };
+    await show(pageWith([posting(5), odd]));
+    await wait(3000);
+    expect(screen.getByText(text.postFailed)).toBeTruthy();
+  });
+});
+
 describe("the polling", () => {
   it("looks soon at first and then settles, never faster than every 3 seconds", async () => {
     const api = pageWith([posting(1)]);

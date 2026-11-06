@@ -153,20 +153,12 @@ class TheCard(WithTheSwitch):
             c for c in view.children if isinstance(c, discord.ui.Button) and c.label == ib.LABEL
         ]
 
-    def test_the_card_holds_a_link_button_to_the_page_for_a_dm_only_where_importing_is_on(
+    def test_the_card_has_no_import_link_any_more_the_website_page_is_reached_from_manage_campaign(
         self,
     ) -> None:
-        (button,) = self.link_buttons(settings_view(campaign(), None, DM, SITE))
-        self.assertEqual(button.url, f"{SITE}/account/import/{GUILD}.{CAMPAIGN}")
-        self.assertEqual(button.style, discord.ButtonStyle.link)
-        self.assertIsNone(button.custom_id)  # a link runs no code: nothing to press
-        self.assertEqual(self.link_buttons(settings_view(campaign(), None, PLAYER, SITE)), [])
-        ib.use_switch(lambda guild_id: False)
-        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM, SITE)), [])
-
-    def test_without_a_website_address_the_card_has_no_import_button(self) -> None:
-        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM)), [])
-        self.assertEqual(self.link_buttons(settings_view(campaign(), None, DM, "http://x.y")), [])
+        # (#2986: Import sessions left Manage DMbot; 🌐 Manage campaign opens the campaign's page)
+        for viewer in (DM, PLAYER):
+            self.assertEqual(self.link_buttons(settings_view(campaign(), None, viewer, SITE)), [])
 
     def test_the_old_button_is_still_registered_so_an_old_card_answers(self) -> None:
         self.assertTrue(issubclass(ib.ImportButton, discord.ui.DynamicItem))

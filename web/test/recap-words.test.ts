@@ -139,7 +139,7 @@ describe("the switches and What's new agree", () => {
     expect(step !== "").toBe(RECAP_FIX_LIVE);
     if (RECAP_FIX_LIVE) {
       expect(step).toContain("this campaign's later recaps too. DMbot keeps the newest 10.");
-      expect(step).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+      expect(step).toContain("⚙️ Manage DMbot → ✍️ Recap style");
     }
   });
 

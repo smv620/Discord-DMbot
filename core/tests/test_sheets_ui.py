@@ -4,6 +4,7 @@ database in test_sheet_store."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 import unittest
 from dataclasses import replace
@@ -136,6 +137,45 @@ class Button(unittest.IsolatedAsyncioTestCase):
         it = interaction([])
         await ui.MySheetButton(GUILD).callback(it)
         self.assertEqual(said(it), ui.NO_CHARACTER)
+
+    def in_server(self, it: Any, member: Any = True) -> Any:
+        """The press as it comes from the DM Bot channel's 🙋 My data: the server's member known."""
+        guild = MagicMock()
+        guild.get_member = MagicMock(return_value=MagicMock() if member else None)
+        it.client.get_guild = MagicMock(return_value=guild)
+        return it
+
+    async def test_no_sheet_yet_opens_the_form_on_the_same_press(self) -> None:
+        it = self.in_server(interaction([]))
+        await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
+        it.response.send_modal.assert_awaited_once()
+        (form,) = it.response.send_modal.await_args.args
+        self.assertIsInstance(form, ui.NewSheetForm)
+        it.response.defer.assert_not_awaited()  # a form cannot follow a deferral (#2986)
+
+    async def test_a_slow_read_falls_back_to_the_panel_and_never_errors(self) -> None:
+        it = self.in_server(interaction([]))
+
+        async def slow(*_: Any) -> list[PlayerCharacter]:
+            await asyncio.sleep(1)
+            return []
+
+        it.client.sheets.characters_of = AsyncMock(side_effect=slow)
+        with patch.object(ui, "FORM_WAIT_S", 0.01):
+            await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertIn("Link my D&D Beyond sheet", said(it))  # today's panel
+
+    async def test_a_character_with_a_sheet_still_shows_its_panel_not_the_form(self) -> None:
+        it = self.in_server(interaction([TESTA]))
+        await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertIn("**Testa**", said(it))
+
+    async def test_a_person_the_server_does_not_show_gets_the_usual_check(self) -> None:
+        it = self.in_server(interaction([]), member=False)
+        await ui.MySheetButton(GUILD, CAMPAIGN).callback(it)
+        it.response.send_modal.assert_not_awaited()
 
     async def test_one_character_opens_its_panel(self) -> None:
         it = interaction([TESTA])

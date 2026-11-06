@@ -24,17 +24,19 @@ import re
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot import fetch, plan_rules
 from dmbot import progress as progress_shape
 from dmbot.consent import TERMS_VERSION
+from dmbot.consent_dm import request_text
 from dmbot.db import Conn, Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.transcript import import_link, importer
 from dmbot.transcript import import_plan as ip
+from dmbot.transcript import uploader_words as uw
 from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
 from dmbot.web import recap_choices
@@ -219,6 +221,10 @@ class Campaign:
     campaign_id: str
     agreed: frozenset[int]  # the server's members who are recorded now (current terms)
     owner: int | None
+    # Members who said no (#3305): 'stopped' (had agreed) or 'declined' (never did).
+    refused: Mapping[int, str] = field(default_factory=dict)
+    # The campaign's speakers without Discord, by lower-cased name -> negative id.
+    speakers: Mapping[str, int] = field(default_factory=dict)
 
 
 def _ref(ref: str) -> tuple[int, str]:
@@ -251,6 +257,8 @@ async def _open(conn: Conn, session: Session, ref: str, *, outside: str | None) 
         cid,
         frozenset(int(u) for u in found["agreed"]),
         int(owner) if isinstance(owner, str) and owner.isdecimal() else None,
+        {int(u): str(kind) for u, kind in (found.get("refused") or {}).items()},
+        {str(sp["name"]).casefold(): int(sp["id"]) for sp in found.get("speakers") or []},
     )
 
 
@@ -350,7 +358,110 @@ async def _members(conn: Conn, c: Campaign, q: str, outside: str | None) -> list
         (c.guild_id, c.campaign_id, q[:60], TERMS_VERSION, outside),
     )
     found = (await cur.fetchone() or {}).get("r")
-    return list(found or [])
+    out = []
+    for member in found or []:
+        kind = member.pop("refused", None)  # said no: the page greys them out (#3305)
+        out.append({**member, "blocked": BLOCKED_WORDS.get(kind) if kind else None})
+    return out
+
+
+def consent_words(*, cloud: bool, company: str | None) -> dict[str, Any]:
+    """The words the uploader confirms for each speaker (#3305): the same consent request a
+    player sees in Discord, which says the whole server can read transcripts, and the version of
+    the wording. The page sends the version back with the import and a stale one is refused.
+    Once `UPLOADER_WORDS_LIVE` is on these are the uploader's own words
+    (`transcript.uploader_words`) and the tick's words, `{name}` filled in by the page."""
+    if uw.UPLOADER_WORDS_LIVE:  # the uploader's own words, with their own version (#3305)
+        return {"version": uw.version(), "text": uw.TEXT, "tick": uw.TICK}
+    return {
+        "version": TERMS_VERSION,
+        "text": request_text("this server", voice=None, dm=None, cloud=cloud, company=company),
+    }
+
+
+async def speakers(
+    db: Database, session: Session, ref: str, *, outside: str | None, now: int, enforce_plans: bool
+) -> dict[str, Any]:
+    """The campaign's speakers without Discord: id (a negative number as text, opaque to the
+    page), name and how many lines each has. Names and counts only. DMs only."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_import_speakers(%s, %s) AS r", (c.guild_id, c.campaign_id)
+        )
+        found = (await cur.fetchone() or {}).get("r")
+    if found is None:
+        raise RecapError("not_a_dm")
+    return {"speakers": list(found)}
+
+
+SPEAKER_ID = re.compile(r"^-?[1-9][0-9]{0,18}$")
+REMOVAL_ID = re.compile(r"^[0-9a-f]{32}$")
+# What a failed removal says, as the code the page turns into words.
+REMOVAL_REASONS = {"failed"}
+
+
+async def remove_speaker(
+    db: Database, session: Session, ref: str, speaker: str, *, outside: str | None,
+    now: int, enforce_plans: bool,
+) -> dict[str, Any]:  # fmt: skip
+    """Ask the bot to remove one speaker's lines from this campaign (#3305): `{status, id}`.
+    DMs only, a speaker of this campaign only. Not held to a paid plan, on purpose: taking
+    someone's words out is never something to put behind a payment. The same id again while one is
+    open for the speaker. `nothing` when a member has no lines here, `unknown_speaker` for a number
+    that is nobody's here, `too_soon` past twenty requests an hour."""
+    if not SPEAKER_ID.match(speaker) or abs(int(speaker)) > 2**63 - 1:
+        raise RecapError("unknown_speaker")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_speaker_remove(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, int(speaker)),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_a_dm")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return {"status": "queued", "id": str(got["id"])}
+
+
+async def speaker_removal(
+    db: Database, session: Session, ref: str, removal_id: str, *, outside: str | None,
+    now: int | None = None,
+) -> dict[str, Any]:  # fmt: skip
+    """Where a removal stands, in the shared progress shape, with the counts once it is done.
+    A single transaction in the bot, so no "n of N": the stage, how long it has run and when it
+    last moved. Counts only, never a word of a transcript. DMs only."""
+    if not REMOVAL_ID.match(removal_id):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        c = await _open(conn, session, ref, outside=outside)
+        cur = await conn.execute(
+            "SELECT dmbot_speaker_removal_read(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, removal_id),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")
+    reason = got["error"] or None
+    shape = progress_shape.shape(
+        got["stage"],
+        started_at=int(got["createdAt"]),
+        updated_at=int(got["updatedAt"]),
+        now=int(time.time()) if now is None else now,
+        reason=reason if reason in REMOVAL_REASONS else ("failed" if reason else None),
+    )
+    done = got["state"] == "done"
+    return {
+        **shape,
+        "speaker": got["speaker"],
+        "lines": int(got["lines"]) if done else None,
+        "sessions": int(got["sessions"]) if done else None,
+    }
 
 
 async def authorize(
@@ -472,12 +583,26 @@ async def preview(
             if f.transcript is not None:
                 for s in ip.speakers(f.transcript):
                     member, character = guesses.get(s.label, (None, None))
+                    who = member.get("userId") if isinstance(member, dict) else None
+                    refused = (
+                        c.refused.get(int(who))
+                        if isinstance(who, str) and who.isdecimal()
+                        else None
+                    )
+                    shown = label_parts(s.label)[0] or s.label.strip()
+                    known = c.speakers.get(shown.casefold())
                     view["speakers"].append(
                         {
                             "label": s.label,
                             "lines": s.lines,
                             "suggested": member,
                             "suggestedCharacter": character,
+                            # Only for a member who said no; the page greys them out (#3305).
+                            "blocked": BLOCKED_WORDS.get(refused) if refused else None,
+                            # A speaker without Discord this campaign already has by that name.
+                            "speaker": (
+                                {"id": str(known), "name": shown} if known is not None else None
+                            ),
                         }
                     )
             out.append(view)
@@ -528,35 +653,88 @@ async def _suggest(
     }
 
 
-def mapping_of(raw: object) -> dict[str, int | str | None]:
-    """The request's mapping, {label: member id or "drop"}; ids come as text (they are bigger
-    than a script's numbers)."""
+# One code for both kinds of no: the page may say only that this person said no. "stopped" would
+# tell the uploader they once agreed, "declined" that they were asked (#3305, ux-critic).
+BLOCKED_WORDS = {"stopped": "said_no", "declined": "said_no"}
+NEW_SPEAKER_BASE = -(10**12)  # placeholder ids for speakers not made yet; real ones are small
+
+
+@dataclass(frozen=True, slots=True)
+class Choices:
+    """What the uploader chose for each speaker label (#3305). `mapping`: label -> member id,
+    `ip.DROP`, or a placeholder (below `NEW_SPEAKER_BASE`) for a speaker without Discord that is
+    made when the import is stored. `ticked`: the member ids the uploader confirmed. `new`:
+    placeholder -> the name to make it with."""
+
+    mapping: Mapping[str, int | str | None]
+    ticked: frozenset[int] = frozenset()
+    new: Mapping[int, str] = field(default_factory=dict)
+
+    @property
+    def confirmed(self) -> frozenset[int]:
+        return self.ticked | frozenset(self.new)
+
+
+def _member_id(who: object) -> int:
+    if (
+        isinstance(who, str)
+        and who.isascii()
+        and who.isdecimal()
+        and len(who) <= 19
+        and 0 < int(who) < 2**63
+    ):
+        return int(who)
+    raise RecapError("bad_mapping")
+
+
+def choices_of(raw: object) -> Choices:
+    """The request's choices. A label maps to a member id as text (as before), `"drop"`/null, or an
+    object: `{"member": id}`, `{"confirmed": true, "member"?: id}` (no member: a speaker without
+    Discord, kept by the label's name), or `{"leave_out": true}`. A tick on a speaker with no
+    member that is not `true` is `not_ticked`."""
     if not isinstance(raw, dict):
         raise RecapError("bad_mapping")
-    out: dict[str, int | str | None] = {}
+    mapping: dict[str, int | str | None] = {}
+    ticked: set[int] = set()
+    new: dict[int, str] = {}
     for label, who in raw.items():
         if not isinstance(label, str) or len(label) > MAX_LABEL:
             raise RecapError("bad_mapping")
         if who == ip.DROP or who is None:
-            out[label] = ip.DROP
-        elif (
-            isinstance(who, str)
-            and who.isascii()
-            and who.isdecimal()
-            and len(who) <= 19
-            and 0 < int(who) < 2**63
-        ):
-            out[label] = int(who)
+            mapping[label] = ip.DROP
+        elif isinstance(who, dict):
+            if who.get("leave_out") is True:
+                mapping[label] = ip.DROP
+            elif "member" in who and who.get("confirmed") is not True:
+                mapping[label] = _member_id(who["member"])
+            elif who.get("confirmed") is True and "member" in who:
+                member = _member_id(who["member"])
+                mapping[label] = member
+                ticked.add(member)
+            elif who.get("confirmed") is True:
+                name = label_parts(label)[0] or label.strip()
+                placeholder = NEW_SPEAKER_BASE - len(new)
+                mapping[label] = placeholder
+                new[placeholder] = name
+            else:
+                raise RecapError("not_ticked")
         else:
-            raise RecapError("bad_mapping")
-    return out
+            mapping[label] = _member_id(who)
+    return Choices(mapping, frozenset(ticked), new)
 
 
-def _plans(
-    files: Sequence[File], mapping: Mapping[str, int | str | None], c: Campaign
-) -> dict[str, ip.Plan]:
+def refuse(choices: Choices, c: Campaign) -> None:
+    """Checked on the server, whatever the page showed: nobody who said no (Stop recording me, or
+    turned DMbot down) can be ticked in."""
+    if any(member in c.refused for member in choices.ticked):
+        raise RecapError("blocked")
+
+
+def _plans(files: Sequence[File], choices: Choices, c: Campaign) -> dict[str, ip.Plan]:
     return {
-        f.name: ip.make_plan(f.transcript, mapping, agreed=c.agreed)
+        f.name: ip.make_plan(
+            f.transcript, choices.mapping, agreed=c.agreed, confirmed=choices.confirmed
+        )
         for f in files
         if f.transcript is not None
     }
@@ -576,12 +754,13 @@ async def check(
 ) -> dict[str, Any]:
     """The mapping applied to the files, without storing: per speaker, the lines kept and the
     lines dropped by reason."""
-    mapping = mapping_of(raw_mapping)
+    choices = choices_of(raw_mapping)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
+    refuse(choices, c)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
     files = await read_files_off_loop(raw_files, links)
-    plans = _plans(files, mapping, c)
+    plans = _plans(files, choices, c)
     return {
         "files": [
             {
@@ -598,10 +777,12 @@ async def check(
     }
 
 
-def _started_at(date: object, order: object) -> int:
+def _started_at(date: object, order: object, now: int) -> int:
     """The session's start (Unix seconds) from the DM's date: 12:00 UTC of that day (so a DM
     anywhere on earth sees the day they meant), plus the order within the day in seconds, so two
-    files on one day stay in the DM's order."""
+    files on one day stay in the DM's order. A session can't be on a day that has not happened
+    yet (#3483): the page uses the DM's own calendar, so the server allows one day ahead of UTC
+    (a DM east of UTC is never refused today) and refuses anything later (`future_date`)."""
     if not isinstance(date, str):
         raise RecapError("bad_date")
     try:
@@ -610,6 +791,8 @@ def _started_at(date: object, order: object) -> int:
         raise RecapError("bad_date") from None
     if not dt.date(2000, 1, 1) <= day <= dt.date(2100, 1, 1):
         raise RecapError("bad_date")
+    if day > dt.datetime.fromtimestamp(now, dt.UTC).date() + dt.timedelta(days=1):
+        raise RecapError("future_date")
     extra = (
         order if isinstance(order, int) and not isinstance(order, bool) and 0 <= order < 3600 else 0
     )
@@ -634,12 +817,17 @@ async def confirm(
     stored in one transaction: all of them, or none."""
     if not isinstance(raw_plan, dict):
         raise RecapError("bad_mapping")
-    mapping = mapping_of(raw_plan.get("mapping"))
+    choices = choices_of(raw_plan.get("mapping"))
+    # The words the uploader saw when ticking: a stale version is refused so the page shows the
+    # current ones (#3305). Nothing to confirm, nothing to check.
+    if (choices.ticked or choices.new) and raw_plan.get("consentVersion") != uw.version():
+        raise RecapError("stale_consent")
     entries = raw_plan.get("sessions")
     if not isinstance(entries, list) or not entries:
         raise RecapError("bad_date")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
+    refuse(choices, c)
     await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
     # Asked before anything is stored: an answer that cannot be had never fails a stored import.
     facts = await recap_facts(
@@ -649,7 +837,7 @@ async def confirm(
     if len(entries) > len(files):
         raise RecapError("bad_files")  # one session for each file, no more
     by_name = {f.name: f for f in files}
-    plans = _plans(files, mapping, c)
+    plans = _plans(files, choices, c)
     chosen: list[tuple[File, ip.Plan, int]] = []
     recaps_on: dict[str, bool] = {}  # the DM's "Write recaps" choice for each file (#2106)
     named: set[str] = set()
@@ -662,24 +850,38 @@ async def confirm(
         plan = plans[found.name]
         if plan.kept == 0:
             raise RecapError("no_lines_kept")
-        chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"))))
+        chosen.append((found, plan, _started_at(entry.get("date"), entry.get("order"), now)))
         recaps_on[found.name] = entry.get("writeRecap") is True  # only a plain true counts
     batch = uuid.uuid4().hex
     stored: list[dict[str, str | bool]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
+        refuse(choices, c)  # asked again inside the transaction that stores
+        # Speakers without Discord are made here, in the same transaction as the lines, so a failed
+        # import leaves none behind. The same name is the same speaker (the door finds it).
+        made: dict[int, int] = {}
+        for placeholder, name in choices.new.items():
+            cur = await conn.execute(
+                "SELECT dmbot_import_speaker(%s, %s, %s) AS r", (c.guild_id, c.campaign_id, name)
+            )
+            speaker = (await cur.fetchone() or {}).get("r")
+            if not isinstance(speaker, int) or speaker >= 0:
+                raise RecapError("bad_mapping")
+            made[placeholder] = speaker
+        ticked = sorted(choices.ticked | frozenset(made.values()))
         for f, plan, started in chosen:
             lines = [
                 {
                     "ms": line.started_ms,
-                    "user": line.user_id,
+                    "user": made.get(line.user_id, line.user_id),
                     "text": line.text,
                     "dur": line.duration_ms,
                 }
                 for line in plan.lines
             ]
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, %s) AS r",
+                "SELECT dmbot_import_store("
+                "%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s) AS r",
                 (
                     c.guild_id,
                     c.campaign_id,
@@ -689,11 +891,17 @@ async def confirm(
                     json.dumps(lines),
                     TERMS_VERSION,
                     outside,
+                    json.dumps([str(t) for t in ticked]),
+                    uw.version(),  # the words the uploader saw, kept with each tick
                 ),
             )
             done = (await cur.fetchone() or {}).get("r")
             if done is None:
                 raise RecapError("not_a_dm")
+            if done.get("error") == "blocked":
+                raise RecapError("blocked")
+            if done.get("error"):
+                raise RecapError("bad_mapping")
             if not done["session"]:
                 raise RecapError("no_lines_kept")
             if recaps_on.get(f.name):
@@ -707,7 +915,11 @@ async def confirm(
                 {"file": f.name, "state": "waiting", "writeRecap": recaps_on.get(f.name, False)}
             )
         labels = {s.label for f, _, _ in chosen if f.transcript for s in ip.speakers(f.transcript)}
-        remembered = {k: v for k, v in mapping.items() if isinstance(v, int) and k in labels}
+        remembered = {
+            k: v
+            for k, v in choices.mapping.items()
+            if isinstance(v, int) and v > 0 and k in labels  # (a member; never a speaker)
+        }
         await _remembered(conn, c, remembered, outside)
         await _plays_chosen(conn, c, plays_of(raw_plan.get("plays"), remembered), outside)
     return {
@@ -755,19 +967,50 @@ def _shapes(found: list[dict[str, Any]], now: int) -> list[dict[str, Any]]:
     for s in found:
         cleaning = s["stage"] == "cleaning"
         out.append(
-            progress_shape.shape(
-                s["stage"],
-                started_at=int(s["imported"]),
-                updated_at=max(newest, _moved_of(s)) if _queued(s) else _moved_of(s),
-                now=now,
-                done=int(s["stepDone"]) if cleaning else None,
-                total=int(s["stepTotal"]) if cleaning else None,
-                unit=progress_shape.UNITS.get(s["stage"]),
-                # Only a failure carries the job's own stored reason (a code).
-                reason=(s["reason"] or None) if s["stage"] == "failed" else None,
+            progress_shape.with_counts(
+                progress_shape.shape(
+                    s["stage"],
+                    started_at=int(s["imported"]),
+                    updated_at=max(newest, _moved_of(s)) if _queued(s) else _moved_of(s),
+                    now=now,
+                    done=int(s["stepDone"]) if cleaning else None,
+                    total=int(s["stepTotal"]) if cleaning else None,
+                    unit=progress_shape.UNITS.get(s["stage"]),
+                    # Only a failure carries the job's own stored reason (a code).
+                    reason=(s["reason"] or None) if s["stage"] == "failed" else None,
+                ),
+                words=int(s.get("wordsDone") or 0),
+                calls=int(s.get("callsMade") or 0),
             )
         )
     return out
+
+
+# (the story read's stages are its own list, not part of the SQL stage CASE above)
+_STORY_STAGES = {
+    "reading": "reading_connections",
+    "waiting": "waiting_for_limit",
+    "read": "connections_read",
+}
+
+
+def _story_shape(story: dict[str, Any] | None, now: int) -> dict[str, Any] | None:
+    """The story read of one imported session (#3307) in the shared shape: reading (batch n of
+    m, how long it has run, when it last moved), waiting (the daily limit or a failed batch
+    stopped it; it carries on by itself) or read. None until it starts. Counts and times only."""
+    stage = _STORY_STAGES.get(str((story or {}).get("state") or ""))
+    if story is None or stage is None:
+        return None
+    reading = stage == "reading_connections"
+    return progress_shape.shape(
+        stage,
+        started_at=int(story["started"]),
+        updated_at=int(story["moved"]),
+        now=now,
+        done=int(story["part"]) if reading else None,
+        total=int(story["parts"]) if reading else None,
+        unit=progress_shape.UNITS.get(stage),
+    )
 
 
 async def progress(
@@ -809,6 +1052,9 @@ async def progress(
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
                 "progress": part,
+                # The story read (the connections found in what was said) in the same shape, or
+                # None when it has not started (#3307).
+                "story": _story_shape(s.get("story"), now),
                 # Its own recap's reference, for the stages that have a recap or a held one: the
                 # page then links the session's recap, not the list (#2240). The session time is
                 # the door's `date`; the campaign is the one opened above (never another's).

@@ -83,7 +83,7 @@ describe("the recap steps (shown only while recaps are on, by the page)", () => 
     expect(all).toContain("Read it");
     expect(all).toContain("Press Post to the table to send it to your players; DMbot asks once first.");
     expect(all).toContain("Not this one");
-    expect(all).toContain("Press Recaps on ⚙️ Settings");
+    expect(all).toContain("Press Recaps on ⚙️ Manage DMbot");
     expect(all).toContain("Each campaign gets up to 10 recaps a month.");
   });
 

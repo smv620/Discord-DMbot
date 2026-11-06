@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// Accessibility of the Names page (#2295) and the relationship web (#2324): axe-core on each in
+// Accessibility of the Names page (#2295) and the Story Graph (#2324): axe-core on each in
 // the states a person can reach, as a11y-islands.test.tsx does for the account page (#2249).
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
@@ -50,7 +50,7 @@ describe("Names page", () => {
     render(<Names api={mockApi("table")} path="/account/names/100.cmp1" />);
     const list = await screen.findByRole("list", { name: nw.listLabel });
     const row = within(list).getAllByRole("listitem").find((li) => li.textContent?.includes("Gorrak")) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: nw.changeFor("Gorrak") }));
+    fireEvent.click(within(row).getByRole("button", { name: "Gorrak" }));
     expect(await serious()).toEqual([]);
     fireEvent.click(within(row).getByRole("button", { name: /Remove this name/ }));
     await within(row).findByRole("button", { name: /Yes, remove it/ });
@@ -58,7 +58,7 @@ describe("Names page", () => {
   });
 });
 
-describe("relationship web", () => {
+describe("Story Graph", () => {
   it.each([
     ["a DM", "/account/web/100.cmp1"],
     ["a server manager who is not a DM", "/account/web/100.cmp1.web-manager"],

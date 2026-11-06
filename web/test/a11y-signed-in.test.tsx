@@ -130,6 +130,9 @@ describe("the Import page", () => {
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     await screen.findByRole("button", { name: w.checkButton });
     expect(await serious()).toEqual([]);
+    // Every name needs a choice before Check (the consent step is on): Ash is left out.
+    fireEvent.change(screen.getByLabelText(`Ash: ${w.matchHeading}`), { target: { value: "drop" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: w.checkButton }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: w.checkButton }));
     await screen.findByText(/^Checked:/);
     expect(await serious()).toEqual([]);
@@ -208,9 +211,11 @@ describe("what axe cannot see in happy-dom (#2249)", () => {
     fireEvent.change(input);
     fireEvent.click(screen.getByRole("button", { name: w.preview }));
     await screen.findByRole("button", { name: w.checkButton });
+    // A name kept as "Not in Discord" shows its tick, which sits in a group with a legend too.
+    fireEvent.change(screen.getByLabelText(`Ash: ${w.matchHeading}`), { target: { value: "new" } });
+    await waitFor(() => expect(document.querySelectorAll('input[type="checkbox"]').length).toBeGreaterThan(0));
     expect(symbolOnlyButtons()).toEqual([]);
     expect(ungrouped()).toEqual([]);
-    await waitFor(() => expect(document.querySelectorAll('input[type="checkbox"]').length).toBeGreaterThan(0));
   });
 
   it("proves the checks can fail: a symbol-only button and a loose radio are both caught", () => {

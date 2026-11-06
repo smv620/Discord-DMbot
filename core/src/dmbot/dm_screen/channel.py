@@ -363,14 +363,6 @@ async def setup_dm_screen(
             log.warning("DM screen setup failed: %s", exc)
             raise DMScreenError(messages.discord_error(exc.text or str(exc.status))) from exc
     warnings = [_exposure_warning(overwrites, guild, me, campaign), pin_warning]
-    # The rules archive and the NPC list follow the screen (visibility, DMs, peekers), now that
-    # the lock is free. (Imported here: they import this module for the lock and the overwrite
-    # helpers.)
-    from dmbot.dm_screen import npcs_channel
-    from dmbot.dm_screen.rules_channel import follow_screen
-
-    await follow_screen(guild, campaign, channel)
-    await npcs_channel.follow_screen(guild, campaign, channel)
     return ScreenResult(channel, campaign, "\n\n".join(w for w in warnings if w) or None)
 
 

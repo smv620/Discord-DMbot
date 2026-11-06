@@ -19,7 +19,16 @@ ROLES = (
     "mother", "father", "son", "daughter", "sister", "brother", "wife", "husband",
     "aunt", "uncle", "niece", "nephew", "cousin",
     "grandmother", "grandfather", "granddaughter", "grandson",
+    # Neutral words for a worked-out link, where the text does not say which (#3238)
+    "aunt or uncle", "niece or nephew",
+    # A guardian of a ward under age: a family tie of its own, never a parent (#3244, rule 5)
+    "guardian",
 )  # fmt: skip
+
+# Words DMbot writes itself and does not offer in the DM's role menu (at Discord's limit): the
+# neutral words of worked-out links (a text that says "uncle" is stored as stated, #3238) and
+# "guardian".
+NEUTRAL_ONLY = frozenset({"aunt or uncle", "niece or nephew", "guardian"})
 
 # Roles that are true of both names alike (Mira is Aldric's cousin and Aldric is Mira's): they read
 # "is the cousin of" from either card, are never swapped on the website, and keep the id-sorted
@@ -39,6 +48,17 @@ def role_of(detail: str) -> str | None:
     return word if word in ROLES else None
 
 
+def same_fact(a_id: str, role: str | None, b_id: str) -> tuple[str, str, str]:
+    """The link as one key whatever the words, so a suggestion is not offered again under another
+    name for it: "A is the niece of U", "U is the uncle of A" and "U is the aunt or uncle of A" are
+    one fact, keyed as (U, "aunt or uncle", A). Other roles are returned as they are."""
+    if role in ("aunt", "uncle", "aunt or uncle"):
+        return a_id, "aunt or uncle", b_id
+    if role in ("niece", "nephew", "niece or nephew"):
+        return b_id, "aunt or uncle", a_id
+    return a_id, role or "", b_id
+
+
 def directional(detail: str) -> bool:
     """Is the detail a role that is true of one name only (niece, mother…)? Only then does the
     order of the two names matter (#2457)."""
@@ -56,6 +76,27 @@ def backward(role: str) -> str:
     ("has an aunt", "has an uncle")."""
     article = "an" if role[0] in "aeiou" else "a"
     return f"has {article} {role}"
+
+
+# The family words an AI says in its own way ("married to", "are siblings", "half-brother of",
+# "son-in-law of", "older sister", "seems to be the cousin of"): a role word, its plural, or a
+# marriage word, as whole words. Only for reading what an AI returned (the extractor's
+# family-only mode, #2960); the roles DMbot stores are still `ROLES` and `parse`.
+_LOOSE = re.compile(
+    rf"(?<![a-z])(?:(?:step|half)-?)?(?:{_ALT})s?(?![a-z])"
+    r"|(?<![a-z])(?:siblings|twins?|married|wed|widow(?:er)?|children|fianc[ée]e?s?"
+    r"|engaged|betrothed)(?![a-z])"
+)
+# Words that look like a role and are not a family tie ("a father figure to", "a brother in arms")
+_NOT_FAMILY = re.compile(
+    rf"(?<![a-z])(?:{_ALT})\s+(?:figure|in\s+arms|of\s+the\s+(?:order|church|faith|temple))"
+)
+
+
+def looks_like_family(words: str) -> bool:
+    """Does an AI's relationship wording name a family tie in any of its own ways?"""
+    clean = _NOT_FAMILY.sub(" ", " ".join(words.split()).casefold())
+    return _LOOSE.search(clean) is not None
 
 
 def parse(words: str) -> tuple[str, bool] | None:

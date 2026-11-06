@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.config import Settings
 from dmbot.dm_screen import rules_cards
@@ -22,6 +22,7 @@ from dmbot.dm_screen.settings import RulesCardsButton, settings_text, settings_v
 from dmbot.rules import index
 from dmbot.rules.house import HouseRule
 from dmbot.rules.spotter import Spotter
+from dmbot.table import Table
 from dmbot.ui import house_rules as house_ui
 from tests.test_memory_names import FakeResponse
 
@@ -381,7 +382,7 @@ class Registration(unittest.TestCase):
             for item in view.children
             if isinstance(item, discord.ui.DynamicItem)
         }
-        self.assertTrue({"RulesCardsButton", "RuleLookupButton", "RulesCardButton"} <= built)
+        self.assertTrue({"RulesCardsButton", "RulesCardButton"} <= built)
         self.assertEqual(sorted(built - registered), [])  # a press after a restart must work
 
 

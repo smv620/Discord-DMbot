@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Iterator, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from dmbot.memory.extractor import readable
 from dmbot.memory.models import name_key, spelling_key
@@ -18,9 +18,10 @@ from dmbot.memory.secret_aloud import MIN_KEY as MIN_SECRET_LETTERS
 from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
+from dmbot.recaps.must_haves import MustStore
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.style import NoteStore, StyleStore
-from dmbot.recaps.text import strip_cues
+from dmbot.recaps.text import NOTES_HEAD, strip_cues
 from dmbot.timebot.clock import day_of as clock_day_of
 
 log = logging.getLogger(__name__)
@@ -205,6 +206,24 @@ def familiar_for(
     )
 
 
+class NotLoaded(Exception):
+    """The inputs of a recap could not be loaded, and which of the three it was (#2680): the
+    campaign is not there (`campaign`), its names could not be read (`names`), or the campaign has
+    no stored session that began at that time (`session`; `started` then holds when its newest
+    sessions with lines began, as numbers, so a wrong time is easy to see)."""
+
+    def __init__(
+        self,
+        why: Literal["campaign", "names", "session"],
+        started: Sequence[int] = (),
+        lines_in_it: int | None = None,
+    ) -> None:
+        super().__init__(why)
+        self.why = why
+        self.started = tuple(started)
+        self.lines_in_it = lines_in_it  # a session that began then but has no lines: how many
+
+
 async def load_inputs(
     *,
     campaigns: Any,
@@ -217,23 +236,120 @@ async def load_inputs(
     session_at: int,
     styles: StyleStore | None = None,
     notes: NoteStore | None = None,
+    musts: MustStore | None = None,
     with_earlier: bool = True,
     importance: Any | None = None,
     recanted: Collection[str] = (),
     relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> Inputs | None:
+    """The inputs of the recap of one session, or None when they cannot be loaded (the bot does not
+    care why; the one-off tool does: `load_inputs_or_why`)."""
+    try:
+        return await load_inputs_or_why(
+            campaigns=campaigns, lookup=lookup, transcripts=transcripts, recaps=recaps,
+            clocks=clocks, guild_id=guild_id, campaign_id=campaign_id, session_at=session_at,
+            styles=styles, notes=notes, musts=musts, with_earlier=with_earlier,
+            importance=importance,
+            recanted=recanted, relation_ties=relation_ties,
+        )  # fmt: skip
+    except NotLoaded:
+        return None
+
+
+STORY_RECAPS = 24  # the latest earlier recaps the writer can be given (#2954)
+NOTES_ENTRY_CHARS = 2_000  # one session's notes in the story: its share, so recaps always fit
+
+
+def notes_entry(n: Any) -> str:
+    """A session's notes as one entry of the story so far, cut to its share at a beat boundary
+    (whole beats, oldest first), so a long sheet never crowds out an accepted recap. The entry
+    says it is notes, so the writer does not copy it as a recap."""
+    head = NOTES_HEAD
+    kept: list[str] = []
+    size = len(head)
+    for beat in n.sheet():
+        if size + len(beat.what) + 1 > NOTES_ENTRY_CHARS:
+            break
+        kept.append(beat.what)
+        size += len(beat.what) + 1
+    return head + " ".join(kept) if kept else ""
+
+
+async def story_so_far(
+    accepted: Any, guild_id: int, campaign_id: str, session_at: int, notes: Any | None = None
+) -> tuple[str, ...]:
+    """The campaign's earlier accepted recaps for the writer (#2954): the newest accepted version
+    of each session before this one, oldest first, without their cues and fixed opening and
+    closing lines (so the writer has nothing to copy). Empty when there are none or they cannot
+    be read: the bridge then stands in. Players-facing text only: an accepted recap is what the DM
+    approved to read aloud. A session whose transcript is gone and that has no accepted recap, but
+    has kept session notes (#3026, which outlive the transcript), is told by its notes, so the
+    story does not lose it (a session whose transcript still exists is not told this way). Only
+    the beats' own words (`what`) are used, never PlotBot's notes, cut to `NOTES_ENTRY_CHARS` at a
+    beat. The entry says it is notes, so the writer does not copy it as a recap; the trimmers drop
+    notes before any accepted recap (#3086), and only recaps count against `STORY_RECAPS`."""
+    try:
+        found = await accepted.newest(guild_id, campaign_id, before=session_at, last=STORY_RECAPS)
+    except Exception as exc:  # optional context: the type, never the text
+        log.warning("Recap: couldn't read the accepted recaps (%s)", type(exc).__name__)
+        return ()
+    try:
+        kept = (
+            await notes.all(
+                guild_id, campaign_id, before=session_at, last=STORY_RECAPS, transcript_gone=True
+            )
+            if notes is not None
+            else []
+        )
+    except Exception as exc:  # (the accepted recaps are still good without them)
+        log.warning("Recap: couldn't read the session notes (%s)", type(exc).__name__)
+        kept = []
+    told: dict[int, str] = {
+        a.session_at: fixed_lines.without(strip_cues(a.summary))
+        for a in found
+        if a.session_at < session_at
+    }
+    for n in kept:
+        if n.session_at < session_at and not told.get(n.session_at, "").strip():
+            told[n.session_at] = notes_entry(n)  # (an empty one is skipped below)
+    return tuple(told[at] for at in sorted(told) if told[at].strip())
+
+
+async def load_inputs_or_why(
+    *,
+    campaigns: Any,
+    lookup: Any,
+    transcripts: Any,
+    recaps: Any,
+    clocks: Any | None,
+    guild_id: int,
+    campaign_id: str,
+    session_at: int,
+    styles: StyleStore | None = None,
+    notes: NoteStore | None = None,
+    musts: MustStore | None = None,
+    with_earlier: bool = True,
+    importance: Any | None = None,
+    recanted: Collection[str] = (),
+    relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+) -> Inputs:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
-        return None
+        raise NotLoaded("campaign")
     try:
         names = await lookup.get(guild_id, campaign_id)
-    except Exception:
+    except Exception as exc:
         log.exception("Recap: couldn't load the campaign's names")
-        return None
+        raise NotLoaded("names") from exc
     sessions = await transcripts.sessions(guild_id, campaign_id, limit=1000)
     found = [s for s in sessions if s.started_at == session_at]
     if not found:
-        return None
+        count = getattr(transcripts, "line_count_at", None)
+        raise NotLoaded(
+            "session",
+            [s.started_at for s in sessions[:5]],
+            await count(guild_id, campaign_id, session_at) if count is not None else None,
+        )
     lines = await transcripts.lines(guild_id, found[0].id)
     bridge = await recaps.bridge(guild_id, campaign_id, session_at)
     earlier = (
@@ -273,6 +389,8 @@ async def load_inputs(
         notes=[n.text for n in await notes.notes(guild_id, campaign_id)]
         if notes is not None
         else (),
+        # The campaign's must-haves, or the defaults (#3328): for the writer's call only.
+        musts=await musts.lines_for(guild_id, campaign_id) if musts is not None else (),
     )
 
 

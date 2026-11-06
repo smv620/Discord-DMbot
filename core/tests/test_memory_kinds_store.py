@@ -370,8 +370,8 @@ class Backups(MemoryTest):
         for row in rows:
             if row.get("entity_id") in people:
                 continue  # the person's own names
-            if row["table"] in ("perspective", "belief"):
-                continue  # a file from before has no beliefs (they are worked out on restore)
+            if row["table"] in ("perspective", "belief", "knower"):
+                continue  # a file from before has no beliefs or lists (worked out on restore)
             if row["table"] == "rule_link":
                 continue  # a file from before has no links
             if row["table"] == "entity" and row["type"] == "person":
@@ -393,6 +393,7 @@ class Backups(MemoryTest):
             )  # fmt: skip
         old_data = copy.deepcopy(data)
         old_data["sections"]["memory"] = old
+        old_data["version"] = 2  # (the lists came with version 3)
         restored = await self.campaigns.import_backup(GUILD_B, old_data, DM)
         entities = await self.memory.entities(GUILD_B, restored.id)
         self.assertEqual(

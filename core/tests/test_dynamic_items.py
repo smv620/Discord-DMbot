@@ -23,6 +23,7 @@ from dmbot import bot as bot_module
 from dmbot.consent_dm import CONSENT_BUTTONS
 from dmbot.discord_limits import CUSTOM_ID_MAX, UnboundedId, longest_custom_id
 from dmbot.dm_screen import PeekButton
+from dmbot.recaps import discord as recaps_discord
 
 # Classes that are deliberately not registered, each with the reason. Empty today: every one is.
 NOT_REGISTERED: dict[str, str] = {}
@@ -48,23 +49,35 @@ def all_dynamic_items(*modules: str) -> set[type]:
 
 
 def registered_items(source: str | None = None) -> set[type]:
-    """The classes `setup_hook` passes to `add_dynamic_items`, read from the code (names are
-    looked up in `bot.py`'s own namespace, so `*CONSENT_BUTTONS` and `clock_screen.X` resolve)."""
-    tree = ast.parse(source if source is not None else inspect.getsource(bot_module))
+    """The classes `setup_hook` (and the `setup` of each feature that registers its own buttons,
+    #2129) passes to `add_dynamic_items`, read from the code (names are looked up in the
+    module's own namespace, so `*CONSENT_BUTTONS` and `clock_screen.X` resolve)."""
+    if source is None:
+        return registered_items_in(bot_module) | registered_items_in(recaps_discord)
+    return _registered(ast.parse(source), vars(bot_module))
+
+
+def registered_items_in(module: Any) -> set[type]:
+    return _registered(ast.parse(inspect.getsource(module)), vars(module))
+
+
+def _registered(tree: ast.AST, namespace: dict[str, Any]) -> set[type]:
     found: set[type] = set()
-    # Only `setup_hook` registers (a call anywhere else would not run at start-up); a test's
-    # tiny source has a function of another name, so it is read whole.
+    # Only `setup_hook`, and a feature's `setup` that `setup_hook` awaits (checked in
+    # `test_setup_hook_awaits_each_features_setup`), register: a call anywhere else would not run
+    # at start-up. A test's tiny source has a function of another name, so it is read whole.
     hooks: list[ast.stmt] = [
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == "setup_hook"
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+        and n.name in ("setup_hook", "setup")
     ]
     for node in ast.walk(ast.Module(body=hooks, type_ignores=[]) if hooks else tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_dynamic_items":
             for arg in node.args:
                 starred = isinstance(arg, ast.Starred)
                 expression = ast.Expression(arg.value if isinstance(arg, ast.Starred) else arg)
-                value: Any = eval(compile(expression, "<bot.py>", "eval"), vars(bot_module))
+                value: Any = eval(compile(expression, "<bot.py>", "eval"), namespace)
                 found |= set(value) if starred else {value}
     return found
 
@@ -104,6 +117,28 @@ class RegisteredTest(unittest.TestCase):
             "not passed to add_dynamic_items in DMBot.setup_hook: after the next restart every "
             "old message's button shows 'This interaction failed'",
         )
+
+    def test_setup_hook_awaits_each_features_setup(self) -> None:
+        """A feature's `setup(bot)` registers its buttons only if `DMBot.setup_hook` awaits it:
+        deleting that line would pass the test above and break the buttons after a restart."""
+        tree = ast.parse(inspect.getsource(bot_module))
+        [hook] = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "setup_hook"
+        ]
+        awaited = {
+            getattr(call.value.func.value, "id", "")
+            for call in ast.walk(hook)
+            if isinstance(call, ast.Await)
+            and isinstance(call.value, ast.Call)
+            and isinstance(call.value.func, ast.Attribute)
+            and call.value.func.attr == "setup"
+            and isinstance(call.value.func.value, ast.Name)
+        }
+        for module in (recaps_discord,):  # (each feature that moves out of bot.py adds its own)
+            names = {n for n, v in vars(bot_module).items() if v is module}
+            self.assertTrue(names & awaited, f"{module.__name__}.setup is not awaited")
 
     def test_a_stand_in_that_is_not_registered_is_named(self) -> None:
         class Stray(

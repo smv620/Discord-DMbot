@@ -23,7 +23,7 @@ class TheLines(unittest.TestCase):
     def test_the_campaigns_name_is_in_both_lines(self) -> None:
         opening, closing = fl.lines(NAME)
         self.assertEqual(opening, "Previously, on The Ember Road…")
-        self.assertEqual(closing, "And so we continue, the epic adventure of The Ember Road.")
+        self.assertEqual(closing, "And so continues the epic adventure of The Ember Road.")
 
     def test_a_secret_name_is_never_spoken_the_lines_go_without_a_name(self) -> None:
         for secret in (("The Ember Road",), ("ember road",), ("Ember",)):
@@ -44,9 +44,7 @@ class TheLines(unittest.TestCase):
         wrapped = fl.wrap(fx.SUMMARY, NAME)
         paragraphs = wrapped.split("\n\n")
         self.assertEqual(paragraphs[0], "Previously, on The Ember Road…")
-        self.assertEqual(
-            paragraphs[-1], "And so we continue, the epic adventure of The Ember Road."
-        )
+        self.assertEqual(paragraphs[-1], "And so continues the epic adventure of The Ember Road.")
         self.assertEqual(paragraphs[1:-1], fx.SUMMARY.split("\n\n"))
 
     def test_wrapping_twice_or_a_text_with_a_line_already_changes_nothing(self) -> None:
@@ -56,6 +54,21 @@ class TheLines(unittest.TestCase):
         only_opening = fl.wrap(closed, NAME)
         self.assertEqual(only_opening.count("And so we continue"), 1)
         self.assertTrue(only_opening.startswith("Previously, on The Ember Road…"))
+
+    def test_a_recap_written_with_the_older_closing_is_still_found_and_left_alone(self) -> None:
+        # (recaps already posted end "And so we continue, the …" and may be read aloud at the table)
+        old = "And so we continue, the epic adventure of The Ember Road."
+        new = "And so continues the epic adventure of The Ember Road."
+        for closing in (old, new):
+            with self.subTest(closing=closing):
+                text = f"Previously, on The Ember Road…\n\nStory.\n\n{closing}"
+                self.assertTrue(fl.is_closing(closing))
+                self.assertEqual(fl.without(text), "Story.")
+                self.assertEqual(fl.wrap(text, NAME), text)  # a line already there: no second
+                self.assertEqual(fl.wrap("Story.\n\n" + closing, NAME).count("\n\n"), 2)
+        self.assertTrue(fl.is_closing(fl.CLOSING_BARE.format(ending="epic tale")))
+        self.assertTrue(fl.is_closing(fl.OLD_CLOSING_START + "epic tale."))
+        self.assertFalse(fl.is_closing("And so the party continues the adventure."))
 
     def test_without_takes_both_lines_off_and_leaves_the_story(self) -> None:
         for name in (NAME, ""):
@@ -71,7 +84,7 @@ class TheLines(unittest.TestCase):
         built = script.build("The Silver Lock", 4, wrapped)
         spoken = " ".join(p.spoken for p in built.paragraphs)
         self.assertIn("Previously, on The Ember Road", spoken)
-        self.assertIn("And so we continue, the epic adventure of The Ember Road", spoken)
+        self.assertIn("And so continues the epic adventure of The Ember Road", spoken)
 
     def test_the_editor_has_room_for_the_longest_draft_with_both_lines(self) -> None:
         opening, closing = fl.lines("x" * 100)  # the story is shortened to STORY_MAX (#2597)
@@ -127,7 +140,7 @@ class TheTenEndings(unittest.TestCase):
         self.assertEqual(fl.without(old), old)
 
     def test_no_name_still_ends_with_the_chosen_variant(self) -> None:
-        self.assertEqual(fl.lines("", (), 5)[1], "And so we continue, the epic tale.")
+        self.assertEqual(fl.lines("", (), 5)[1], "And so continues the epic tale.")
 
 
 class TheEndingByPlace(DatabaseTest):

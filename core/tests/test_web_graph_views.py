@@ -212,7 +212,7 @@ class ThePeekNotice(Views):
         text = notice("**Bo** @everyone <@123> _x_")
         self.assertNotIn("@everyone", text.replace("@​everyone", ""))
         self.assertTrue(text.startswith("👀 "))
-        self.assertTrue(text.endswith("peeked at the relationship web."))
+        self.assertTrue(text.endswith("peeked at the Story Graph."))
 
     async def test_private_screen_refuses_and_leaves_no_notice(self) -> None:
         await self.setScreen("private")

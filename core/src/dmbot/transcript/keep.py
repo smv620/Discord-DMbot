@@ -47,7 +47,7 @@ def note_text(sessions: int, days: int) -> str:
     age = KEEP_LABELS.get(days, f"{days} days")
     return (
         f"🗑 Deleted {things} older than {age}. Change this under "
-        "⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention."
+        "⚙️ Manage DMbot → 🗂️ Campaign management → 🗄️ Transcript retention."
     )
 
 

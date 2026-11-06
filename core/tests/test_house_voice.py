@@ -18,7 +18,7 @@ import discord
 from dmbot import bot as bot_module
 from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.config import Settings
 from dmbot.dm_screen import house_voice as screen
@@ -26,6 +26,7 @@ from dmbot.dm_screen.house_voice import HouseVoiceButton
 from dmbot.rules import house
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_voice import GAP_S, Clash, HouseVoice, Proposal, Said, find
+from dmbot.table import Table
 from dmbot.ui import house_rules as house_ui
 from tests.test_memory_names import FakeResponse
 
@@ -211,7 +212,7 @@ class TableTest(unittest.IsolatedAsyncioTestCase):
         user.id = user_id
         return SimpleNamespace(
             client=self.bot, guild=SimpleNamespace(id=GUILD), guild_id=GUILD, user=user,
-            message=SimpleNamespace(content=content), response=FakeResponse(),
+            message=SimpleNamespace(content=content, id=1), response=FakeResponse(),
             followup=SimpleNamespace(send=AsyncMock()), edit_original_response=AsyncMock(),
         )  # fmt: skip
 
@@ -728,6 +729,78 @@ class Words(unittest.TestCase):
 
 
 from dmbot.rules import house_voice as house_voice_module  # noqa: E402
+
+
+class InPrivateChats(TableTest):
+    """The offer goes to every DM's private chat (#3210): one DM saves it, the other DM's copy
+    says who did, and a press with no server still works."""
+
+    async def offer_to_two_dms(self) -> tuple[Any, Any, Any]:
+        mine = MagicMock(id=1, content="proposal", edit=AsyncMock())
+        other = MagicMock(id=2, content="proposal", edit=AsyncMock())
+
+        async def ask_live(_t: Any, _text: str, make: Any, on_sent: Any = None) -> Any:
+            views.append(make())
+            on_sent(mine)
+            on_sent(other)
+            return [mine, other]
+
+        views: list[Any] = []
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        return mine, other, views[0]
+
+    async def test_the_other_dm_is_told_who_saved_it(self) -> None:
+        mine, other, view = await self.offer_to_two_dms()
+        it = self.interaction()
+        it.guild, it.guild_id = None, None  # a press in a private chat has no server
+        it.user.display_name = "Sam"
+        await self.button(view, "Save rule").callback(it)
+        self.assertEqual(len(self.store.added), 1)
+        other.edit.assert_awaited_once()
+        self.assertIn("Answered by Sam", other.edit.await_args.kwargs["content"])
+        mine.edit.assert_not_awaited()  # the pressed message is edited by the press itself
+
+    async def test_copies_sent_after_the_answer_are_taken_down(self) -> None:
+        late = MagicMock(id=3, content="proposal", edit=AsyncMock())
+
+        async def ask_live(table_: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
+            self.table.house_settled.add(next(iter(self.table.house_voice.proposals)))  # settled
+            on_sent(late)
+            return [late]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        self.assertIn("Another DM answered", late.edit.await_args.kwargs["content"])
+
+    async def test_a_claimed_offer_is_not_settled_so_copies_sent_meanwhile_stay_live(self) -> None:
+        late = MagicMock(id=3, content="proposal", edit=AsyncMock())
+
+        async def ask_live(_t: Any, _text: str, _make: Any, on_sent: Any = None) -> Any:
+            self.table.house_voice.proposals.clear()  # claimed while a DM answers the disagreement
+            on_sent(late)
+            return [late]
+
+        self.bot.ask_live = ask_live  # type: ignore[method-assign,assignment]
+        await self.deliver("house rule: potions are a bonus action")
+        late.edit.assert_not_awaited()  # the question may be cancelled and the offer given back
+        (pid,) = self.table.house_copies
+        self.assertEqual(self.table.house_copies[pid], [late])
+
+    async def test_cancel_tells_the_other_dm_and_a_non_dm_is_refused(self) -> None:
+        _mine, other, view = await self.offer_to_two_dms()
+        it = self.interaction(PLAYER)
+        it.guild, it.guild_id = None, None
+        it.response.send_message = AsyncMock()
+        await self.button(view, "Cancel").callback(it)
+        other.edit.assert_not_awaited()  # not a DM: nothing happened
+        self.assertIn("Only this campaign's DMs", it.response.send_message.await_args.args[0])
+        it = self.interaction()
+        it.guild, it.guild_id = None, None
+        it.user.display_name = "Sam"
+        await self.button(view, "Cancel").callback(it)
+        self.assertIn("Cancelled", other.edit.await_args.kwargs["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

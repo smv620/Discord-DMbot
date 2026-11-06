@@ -167,7 +167,7 @@ await visit("Shared rules: what a campaign shares and uses", "/account/sharing",
   await step("the campaign", () => seen(page, "The Brynwater Crossing"));
   await step("what it shares", () => seen(page, "Brynwater table rules"));
   await step("what it uses", () => seen(page, "Frostmaiden pack"));
-  await step("where to change it", () => seen(page, "Change it in Discord: ⚙️ Settings → 📚 Shared rules"));
+  await step("where to change it", () => seen(page, "Change it in Discord: ⚙️ Manage DMbot → 📚 Shared rules"));
 });
 
 await visit("Homebrew: campaigns, a campaign's shared entries by kind", "/account/homebrew", async (page) => {
