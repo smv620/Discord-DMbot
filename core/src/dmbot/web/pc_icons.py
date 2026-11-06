@@ -17,7 +17,12 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-CHOICES = ("default", "discord", "dndbeyond", "hidden")  # what the page may send (custom: #3623)
+PAGE_CHOICES = (
+    "default",
+    "discord",
+    "dndbeyond",
+    "hidden",
+)  # what the page may send (custom: #3623)
 
 
 def attach(page: dict[str, Any], rows: list[dict[str, Any]]) -> None:
@@ -56,7 +61,7 @@ async def set_icon(
     `bad_choice`, `not_found` (not a confirmed player character here), `not_allowed` (neither the
     campaign's DM nor that character's player), `unavailable` (that picture does not exist now)."""
     choice = body.get("choice") if isinstance(body, dict) else None
-    if choice not in CHOICES:
+    if choice not in PAGE_CHOICES:
         raise RecapError("bad_choice")
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)

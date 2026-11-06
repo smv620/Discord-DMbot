@@ -22,7 +22,7 @@ ROWS_MAX = 5_000
 INT64_MAX = 2**63 - 1
 _KEYS = {"entity_id", "choice", "custom_ref", "set_by", "updated_at"}
 _HEX = re.compile(r"[0-9a-f]{32}")
-CHOICES = ("discord", "dndbeyond", "custom", "hidden")
+STORED_CHOICES = ("discord", "dndbeyond", "custom", "hidden")
 
 Row = tuple[str, str, str | None, int, int]
 
@@ -44,7 +44,7 @@ def _checked(rows: object) -> list[Row]:
             and isinstance(raw["entity_id"], str)
             and _HEX.fullmatch(raw["entity_id"])
             and raw["entity_id"] not in seen
-            and raw["choice"] in CHOICES
+            and raw["choice"] in STORED_CHOICES
             and (raw["custom_ref"] is None or _is_hex(raw["custom_ref"]))
             and ((raw["choice"] == "custom") == (raw["custom_ref"] is not None))
             and _int(raw["set_by"], 1, INT64_MAX)

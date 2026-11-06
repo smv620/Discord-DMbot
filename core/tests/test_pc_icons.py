@@ -6,14 +6,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from dmbot.campaigns.models import CampaignError
 from dmbot.consent import ConsentStore
 from dmbot.members import MemberDirectory
 from dmbot.memory.pc_icons_backup import DAMAGED, PcIconsSection
-from dmbot.web import pc_icons
+from dmbot.web import pc_icons, sessions
+from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError, _scoped
+from tests.test_recap_web import NOW
 from tests.test_web_all_names import MEMBER
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import BOB_USER, Web
 
 HASH = "cd" * 16
@@ -91,7 +97,10 @@ class TheDefault(Icons):
         self.assertIsNone(await self.icon())
 
     async def test_a_player_who_never_agreed_has_no_avatar(self) -> None:
+        await self.give_avatar()
+        self.assertEqual((await self.icon())["kind"], "discord")
         await self.sql("DELETE FROM member_directory WHERE user_id = %s", BOB_USER.id)
+        self.assertIsNone(await self.icon())  # (the avatar went with the directory row)
         await self.give_portrait()
         self.assertEqual((await self.icon())["kind"], "dndbeyond")  # (the portrait is the sheet's)
 
@@ -252,3 +261,71 @@ class InBackups(Icons):
         async with self.db.guild(self.g) as conn:
             await PcIconsSection().load(conn, self.g, self.one.id, [row])
             self.assertEqual(await PcIconsSection().dump(conn, self.g, self.one.id), [])
+
+
+class OverHttp(Icons):
+    """Through the real routes: the graph page, and the choice with its refusals."""
+
+    async def client(self, who: Any) -> httpx.AsyncClient:
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )  # fmt: skip
+        if who is self.player:
+            token = await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
+        else:
+            token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        return client
+
+    def node(self, page: dict[str, Any], entity: str) -> dict[str, Any] | None:
+        return next((n for n in page["nodes"] if n["id"] == entity), None)
+
+    async def test_the_graph_page_carries_the_icon_and_the_controls_flag(self) -> None:
+        await self.give_avatar()
+        async with await self.client(self.session) as client:
+            got = await client.get(
+                f"/me/campaigns/{self.cref}/web", params={"center": str(self.hero), "hops": "1"}
+            )
+        hero = self.node(got.json(), str(self.hero))
+        assert hero is not None
+        self.assertEqual(hero["icon"], {"kind": "discord", "url": self.avatar_url()})
+        self.assertEqual((hero["iconChoice"], hero["canSetIcon"]), ("default", True))
+
+    async def test_a_character_the_player_may_not_see_carries_no_picture_to_them(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", self.rook
+        )
+        await self.keep_from_bob(self.rook)
+        async with await self.client(self.session) as client:
+            dm = (await client.get(f"/me/campaigns/{self.cref}/web", params={"hops": "3"})).json()
+        async with await self.client(self.player) as client:
+            theirs = (
+                await client.get(f"/me/campaigns/{self.cref}/web", params={"hops": "3"})
+            ).json()
+        seen = self.node(dm, str(self.rook))
+        assert seen is not None
+        self.assertIn("icon", seen)  # (the DM's page has it)
+        self.assertIsNone(self.node(theirs, str(self.rook)))  # ... Bob's has no such node at all
+        self.assertNotIn(str(self.rook), str(theirs))
+
+    async def test_the_choice_route_answers_and_refuses_in_plain_codes(self) -> None:
+        await self.give_avatar()
+        path = f"/me/campaigns/{self.cref}/pc-icons"
+        async with await self.client(self.player) as client:  # Bob plays the character
+            done = await client.post(f"{path}/{self.hero}", json={"choice": "hidden"})
+            self.assertEqual(
+                (done.status_code, done.json()), (200, {"previous": "default", "now": "hidden"})
+            )
+            bad = await client.post(f"{path}/{self.hero}", json={"choice": "custom"})
+            self.assertEqual((bad.status_code, bad.json()["error"]), (422, "bad_choice"))
+            none = await client.post(f"{path}/{self.hero}", json={"choice": "dndbeyond"})
+            self.assertEqual((none.status_code, none.json()["error"]), (409, "unavailable"))
+            elsewhere = await client.post(f"{path}/{self.mira}", json={"choice": "hidden"})
+            self.assertEqual(elsewhere.status_code, 404)  # (an NPC is not a player character)
+            other = await client.post(f"{path}/{self.rook}", json={"choice": "hidden"})
+            self.assertEqual((other.status_code, other.json()["error"]), (409, "not_allowed"))

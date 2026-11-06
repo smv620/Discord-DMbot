@@ -39,7 +39,8 @@ TABLE = r"""
 # player, so relinking changes it at once and a player who has not agreed has none; the portrait
 # is the sheet snapshot's link, checked here again against D&D Beyond's own hosts. `canSet` is
 # the DM or the PC's own player, worked out here from the signed-in user, and only they are told
-# which pictures exist (`has`).
+# which pictures exist (`has`): that a player has no avatar stored can mean the player has not
+# agreed, which the DM already sees on the consent list, and the player knows their own.
 READ_DOOR = r"""
     CREATE FUNCTION dmbot_web_pc_icons(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -101,6 +102,7 @@ READ_DOOR = r"""
                 WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'character'
                   AND e.role = 'player_character' AND e.status = 'confirmed'
                   AND e.merged_into IS NULL
+                -- (500 is far above any table's party; past it the rest simply have no picture)
                 ORDER BY e.id LIMIT 500) r
         ), '[]'::jsonb);
     END
@@ -150,7 +152,7 @@ SET_DOOR = r"""
             RETURN jsonb_build_object('status', 'not_allowed');
         END IF;
         SELECT choice INTO before FROM pc_icons
-            WHERE guild_id = g AND campaign_id = c AND entity_id = ent;
+            WHERE guild_id = g AND campaign_id = c AND entity_id = ent FOR UPDATE;
         IF pick = 'discord' THEN
             SELECT d.avatar IS NOT NULL INTO has_discord FROM member_directory d
                 WHERE d.guild_id = g AND d.user_id = played;
