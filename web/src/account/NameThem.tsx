@@ -49,6 +49,8 @@ export default function NameThem({
   const [declined, setDeclined] = useState(false);
   const [asking, setAsking] = useState(false); // "Remove this person?", asked once
   const [removing, setRemoving] = useState(false);
+  const askBox = useRef<HTMLParagraphElement>(null);
+  const opener = useRef<HTMLButtonElement>(null);
   const questionBox = useRef<HTMLParagraphElement>(null);
   const asked = useRef("");
   const flight = useRef(false);
@@ -161,19 +163,29 @@ export default function NameThem({
       <div class="stack">
         {asking ? (
           <div class="stack" role="group" aria-label={w.removeAsk(row.name)}>
-            <p role="status">{w.removeAsk(row.name)}</p>
+            <p role="status" tabIndex={-1} ref={askBox}>
+              {w.removeAsk(row.name)}
+            </p>
             <div class="row">
               <button type="button" class="button secondary" aria-disabled={working || removing} onClick={() => void remove()}>
                 {w.removeYes}
               </button>
-              <button type="button" class="button secondary" aria-disabled={removing} onClick={() => !removing && setAsking(false)}>
+              <button type="button" class="button secondary" aria-disabled={removing} onClick={() => {
+                  if (removing) return;
+                  setAsking(false);
+                  setTimeout(() => opener.current?.focus(), 0); // the question goes: the keyboard returns to the button that opened it
+                }}>
                 {w.removeKeep}
               </button>
             </div>
           </div>
         ) : (
           <p>
-            <button type="button" class="button secondary" aria-disabled={working || removing} onClick={() => !working && !removing && setAsking(true)}>
+            <button type="button" class="button secondary" aria-disabled={working || removing} ref={opener} onClick={() => {
+                if (working || removing) return;
+                setAsking(true);
+                setTimeout(() => askBox.current?.focus(), 0);
+              }}>
               {w.removeButton}
             </button>
           </p>

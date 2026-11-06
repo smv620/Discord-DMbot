@@ -49,6 +49,20 @@ class TheRemoval(RemovingUnnamed):
         changes = await self.log_since(before)
         self.assertEqual({c["batch"] for c in changes}, {changes[0]["batch"]})  # one Undo
 
+    async def test_a_removal_taken_again_after_it_was_done_is_done(self) -> None:
+        await self.queue(self.sis, action="remove", confirm=True)
+        await self.apply_all()
+        act = wa.Action(
+            id="b" * 32,
+            campaign_id=self.one.id,
+            entity_id=self.sis,
+            user_id=self.session.user_id,
+            action="remove",
+            flag=True,
+        )
+        out = await wa.apply(self.memory, self.g, {self.session.user_id}, act)
+        self.assertEqual(out.error, "")
+
     async def test_it_needs_the_confirmation(self) -> None:
         refused = await self.refused_action(self.sis, action="remove")
         self.assertEqual(refused, "needs_confirm")
