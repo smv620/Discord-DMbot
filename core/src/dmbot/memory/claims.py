@@ -237,9 +237,7 @@ class Proposed:
     described_dropped: int = 0  # a described person at both ends, or with a name to make: not kept
     # About how names were said (#3634), counts only:
     rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
-    tidied: int = (
-        0  # names that lost a leading "a" or "an" or a bracketed note before they were judged
-    )
+    tidied: int = 0  # claims with a name that lost a leading "a"/"an" or a bracketed note
 
 
 @dataclass(frozen=True, slots=True)
@@ -795,11 +793,24 @@ def _a_kind_of_creature(name: str) -> bool:
     the kind alone)."""
     from dmbot.rules import index  # late: the rules data loads on first use
 
+    # said as a kind, not as a name: lower case ("owlbears", "an owlbear", "three goblins"); a
+    # capitalised word ("Azer", "Wolf", "Mimic") may be somebody's name and is left to the DM
+    if name != name.casefold() and not name.casefold().startswith(("a ", "an ", "the ")):
+        return False
     return index.srd().is_monster(name)
 
 
-_BRACKET_TAIL = re.compile(r"\s*[(\[][^()\[\]]*[)\]]\s*$")
-_INDEFINITE = re.compile(r"^(?:an?)\s+(?=\S)", re.IGNORECASE)
+# A trailing bracket is dropped only when it reads as a note about the name ("(no name given yet)",
+# "(either Ok or Nysarra)", "(maybe two)", "(unknown)"), never as part of what tells two things
+# apart ("Mira (the baker)", "Dragon (Red)").
+_BRACKET_TAIL = re.compile(
+    r"\s*[(\[][^()\[\]]*\b(?:no name|unnamed|unknown|either|maybe|perhaps|possibly|probably|"
+    r"not sure|unsure|name unknown|or)\b[^()\[\]]*[)\]]\s*$|\s*[(\[]\s*\?\s*[)\]]\s*$",
+    re.IGNORECASE,
+)
+# "a" or "an" as an article: lower case, before a lower-case word ("an owlbear"). "A Ling", "An Lu"
+# and "A. Smith" are names, and a capitalised "A beggar woman" is left as it is rather than guess.
+_INDEFINITE = re.compile(r"^(?:a|an)\s+(?=[a-z])")
 
 
 def tidy_name(name: str) -> str:
@@ -1004,12 +1015,11 @@ class ClaimStore:
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
-            claims, lists = expand_lists(claims[:limit], names)
-            tidy = [
-                tidy_ends(x, names.by_key) for x in claims
-            ]  # (#3634) "an owlbear (maybe two)" is "owlbear"
-            tidied = sum(1 for was, now in zip(claims, tidy, strict=True) if was != now)
-            claims = tidy
+            # (#3634) "an owlbear (maybe two)" is "owlbear": tidied before a list is split, so a
+            # bracketed note with a comma in it goes whole
+            tidy = [tidy_ends(x, names.by_key) for x in claims[:limit]]
+            tidied = sum(1 for was, now in zip(claims, tidy, strict=False) if was != now)
+            claims, lists = expand_lists(tidy, names)
             # How many lines offer each name (a name two lines offer is more likely a real one)
             lines_by_name: dict[str, set[str]] = {}
             not_a_name: Counter[str] = Counter()
@@ -1076,9 +1086,12 @@ class ClaimStore:
             # their names are proposed before this session's own (#1367).
             old: list[tuple[dict[str, Any], Extracted, list[str]]] = []
             for r in leftovers:
-                kept = Extracted(
-                    r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"], r.get("reading"),
+                kept = tidy_ends(
+                    Extracted(
+                        r["subject"], r["relationship"], r["object"], r["details"],
+                        tuple(r["lines"]), r["how"], r.get("reading"),
+                    ),
+                    names.by_key,
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read

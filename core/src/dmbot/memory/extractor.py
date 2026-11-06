@@ -261,7 +261,7 @@ class Report:
     named: int = 0  # new names made for the DM to check
     new_names: list[str] = field(default_factory=list)  # as said, for the DM screen; not logged
     joined: int = 0  # spellings joined to a name already waiting
-    tidied: int = 0  # names that lost a leading "a"/"an" or a bracketed note before judging (#3634)
+    tidied: int = 0  # claims with a name tidied before judging (#3634)
     deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
     readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
