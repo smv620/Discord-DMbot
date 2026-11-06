@@ -419,6 +419,12 @@ class RecallService:
                 # one, "has a niece: Mira" on the other
                 ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
                 ties.setdefault(b, []).append(f"{kin.backward(family)}: {names[a]}")
+            elif predicate == "kin_of" and kin.role_of(str(r["detail"] or "")) in kin.MUTUAL:
+                # sibling, cousin, spouse: true of both names alike, so it reads the same from
+                # either side whatever the stored direction is (#3102, #3111)
+                family = kin.role_of(str(r["detail"])) or ""
+                ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
+                ties.setdefault(b, []).append(f"{kin.forward(family)} {names[a]}")
             else:
                 ties.setdefault(a, []).append(names[b])
                 ties.setdefault(b, []).append(names[a])

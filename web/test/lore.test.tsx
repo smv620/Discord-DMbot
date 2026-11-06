@@ -193,3 +193,35 @@ describe("the wait panel on Upload lore (Supervisor's send-back on #3059)", () =
     expect(document.body.textContent).toMatch(/Running for/);
   });
 });
+
+describe("the shared shape on Upload lore (#3534, #3535)", () => {
+  const base = { id: "0".repeat(32), error: "", source: "paste" as const, choice: "smart" as const, namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: 100, updatedAt: 100, serverNow: 110 };
+  async function send(api: ReturnType<typeof mockApi>) {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<Lore api={api} path={PATH} />);
+    await fill();
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByRole("button", { name: words.submit }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  }
+  it("says the new stage codes in plain words with the unit the API names", async () => {
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ ...base, state: "working", stage: "reading", progress: { stage: "finding_links", done: 3, total: 10, unit: "checks", state: "running", startedAt: 100, updatedAt: 108, serverNow: 110 } });
+    await send(api);
+    expect(document.body.textContent).toContain(words.stages["finding_links"] as string);
+    expect(document.body.textContent).toMatch(/3 of 10 checks/);
+  });
+  it("does not call a queued upload stalled when the server says it is only waiting", async () => {
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ ...base, state: "waiting", stage: "waiting", serverNow: 5000, progress: { stage: "lore_waiting", state: "running", startedAt: 100, updatedAt: 100, serverNow: 5000 } });
+    await send(api);
+    expect(document.body.textContent).toContain(words.stages["lore_waiting"] as string);
+    expect(document.querySelector(".work-progress")?.getAttribute("data-state")).toBe("running");
+  });
+  it("shows the running counts the API sends", async () => {
+    const api = mockApi("table");
+    api.loreAdd = async () => ({ ...base, state: "working", stage: "reading", progress: { stage: "lore_reading", done: 1, total: 4, unit: "parts", counts: { words: 2400, calls: 1 }, state: "running", startedAt: 100, updatedAt: 108, serverNow: 110 } });
+    await send(api);
+    expect(document.body.textContent).toContain("2,400 words processed · 1 call made");
+  });
+});

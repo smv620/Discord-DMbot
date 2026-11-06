@@ -155,6 +155,90 @@ class TheDoors(Reading):
         [row] = await self.rows()
         self.assertEqual((row["text"], row["link"]), ("", ""))
 
+    async def test_the_words_and_calls_so_far_come_back_as_counts_only(self) -> None:
+        await self.add()
+        before = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual((before["wordsDone"], before["callsMade"]), (0, 0))
+        self.assertNotIn("counts", before["progress"])  # nothing handled yet
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'working', claimed_at = 1, stage = 'finding_names',"
+            " words_done = 1200, calls_made = 4"
+        )
+        up = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual((up["wordsDone"], up["callsMade"]), (1200, 4))
+        self.assertEqual(up["progress"]["counts"], {"words": 1200, "calls": 4})
+        self.assertNotIn(WORDS, repr(up))
+
+    async def progress_of(self) -> dict[str, Any]:
+        read = await lore.read(self.web, self.session, self.cref, None)
+        return dict(read["upload"]["progress"])
+
+    async def test_the_read_carries_the_shared_progress_beside_the_old_fields(self) -> None:
+        await self.add()
+        got = await self.progress_of()
+        self.assertEqual((got["stage"], got["state"]), ("lore_waiting", "running"))
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertLessEqual(got["startedAt"], got["updatedAt"])
+        self.assertNotIn(WORDS, repr(got))
+
+    async def test_a_running_read_sends_done_of_total_with_what_it_counts(self) -> None:
+        await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'working', claimed_at = 1, stage = 'reading',"
+            " done = 2, total = 5"
+        )
+        got = await self.progress_of()
+        self.assertEqual((got["done"], got["total"], got["unit"]), (2, 5, "parts"))
+        self.assertEqual(got["stage"], "lore_reading")
+        await self.sql("UPDATE lore_uploads SET stage = 'finding_names', done = 9, total = 4")
+        got = await self.progress_of()  # (never past the total)
+        self.assertEqual((got["done"], got["total"], got["unit"]), (4, 4, "names"))
+        await self.sql("UPDATE lore_uploads SET stage = 'finding_links', done = 3, total = 8")
+        got = await self.progress_of()
+        self.assertEqual((got["done"], got["total"], got["unit"]), (3, 8, "checks"))
+        await self.sql("UPDATE lore_uploads SET stage = 'finding_links', done = 0, total = 0")
+        self.assertNotIn("done", await self.progress_of())  # no count yet
+
+    async def test_a_done_read_has_no_count_and_the_old_fields_are_all_still_there(self) -> None:
+        await self.add()
+        before = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        await self.sql(
+            "UPDATE lore_uploads SET state = 'done', stage = 'done', done = 4, total = 4"
+        )
+        up = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual((up["progress"]["state"], up["progress"]["reason"]), ("done", None))
+        self.assertNotIn("done", up["progress"])
+        for key in before:
+            if key != "progress":
+                self.assertIn(key, up)
+        self.assertEqual(
+            (up["state"], up["stage"], up["done"], up["total"]), ("done", "done", 4, 4)
+        )
+
+    async def test_a_queued_upload_is_not_stalled_while_the_bot_is_busy_but_ends_not_taken(
+        self,
+    ) -> None:
+        await self.add()
+        await self.sql(
+            "UPDATE lore_uploads SET created_at = created_at - 1000, updated_at = updated_at - 900"
+        )
+        got = await self.progress_of()  # waiting behind another read for 15 minutes
+        self.assertEqual((got["stage"], got["state"]), ("lore_waiting", "running"))
+        await self.sql("UPDATE lore_uploads SET updated_at = updated_at - 1500")
+        read = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual(
+            (read["progress"]["state"], read["progress"]["reason"]), ("failed", "not_taken")
+        )
+
+    async def test_a_failed_read_says_why_by_code(self) -> None:
+        await self.add()
+        # (finish() writes the stage "done" even for a failure)
+        await self.sql("UPDATE lore_uploads SET state = 'failed', error = 'no_ai', stage = 'done'")
+        got = await self.progress_of()
+        self.assertEqual((got["state"], got["reason"]), ("failed", "no_ai"))
+
     async def test_a_taken_upload_gone_quiet_goes_back_and_gets_its_own_half_hour(self) -> None:
         await self.add()
         await self.sql(

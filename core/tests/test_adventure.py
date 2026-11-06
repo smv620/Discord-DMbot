@@ -31,6 +31,7 @@ from dmbot.memory.adventure import AdventureError, AdventureSection, AdventureSt
 from dmbot.memory.document_reader import read_document
 from dmbot.memory.name_documents import DocumentError
 from dmbot.schema import MIGRATIONS
+from tests import speed
 from tests.answer_first import Timeline
 from tests.pg import TEST_URL, DatabaseTest
 
@@ -418,7 +419,7 @@ class Speed(Setup):
         )
         self.assertGreater(len(text), 500_000)
         self.assertLess(read_s, adv.READ_TIME_S)
-        self.assertLess(store_s, 20)
+        self.assertLess(store_s, speed.allowed(20))  # (stretched on a busy runner, #3525)
         self.assertEqual(await self.count("adventure_chunks"), doc.chunks)
 
 

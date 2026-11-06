@@ -318,6 +318,27 @@ class Recalling(MemoryTest):
                 GUILD_A, self.c, link.id, source="dm", status="rejected"
             )
 
+    async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
+        """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
+        recall line carry the role from either side even though the link is not directional."""
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        for role in ("sibling", "cousin", "spouse"):
+            made = await self.memory.add_relation(
+                GUILD_A, self.c, names["Mira"], "kin_of", names["Ulfgar"], source="dm",
+                confidence=1.0, status="confirmed", detail=role, directional=False,
+            )  # fmt: skip
+            ties = await self.roster_ties()
+            self.assertIn(f"is the {role} of Ulfgar", ties["Mira"])
+            self.assertIn(f"is the {role} of Mira", ties["Ulfgar"])
+            text = self.texts(await self.recall(PLAYERS, "Mira", hops=1))
+            # (a two-way link is stored id-sorted, so either name may come first)
+            self.assertTrue(
+                f"Mira is the {role} of Ulfgar" in text or f"Ulfgar is the {role} of Mira" in text
+            )
+            await self.memory.update_relation(
+                GUILD_A, self.c, made.value[0].id, source="dm", status="rejected"
+            )
+
     async def lookup_ids(self) -> tuple[set[str], set[str]]:
         data = await self.memory.lookup_data(GUILD_A, self.c)
         return {r.id for r in data.relations}, {r.id for r in data.secret_relations}
