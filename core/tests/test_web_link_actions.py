@@ -581,7 +581,7 @@ class TheEdits(Editing):
         self.assertGreater(waits["lastMovedAt"], 0)
         self.assertFalse(waits["stalled"])
         self.assertEqual(
-            set(got), {"state", "error", "edge", "removed", "kept", "waits", "progress"}
+            set(got), {"state", "error", "edge", "removed", "kept", "batch", "waits", "progress"}
         )
 
     async def test_keep_all_shows_how_far_it_has_got_and_when_it_last_moved(self) -> None:
