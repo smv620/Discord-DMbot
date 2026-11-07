@@ -8938,6 +8938,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
+            if report.joined and campaign.dm_screen_channel_id is not None:
+                from dmbot.ui.joined_review import summary_line  # (the ui imports this module)
+
+                try:  # a count on the DM screen: players never see it, and a failure only logs
+                    await self.post(
+                        campaign.dm_screen_channel_id,
+                        f"{summary_line(report.joined)} Press **Check guesses** in "
+                        "**/dmbot names**.",
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Who is this: couldn't post the joins line (%s)", type(exc).__name__
+                    )
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""

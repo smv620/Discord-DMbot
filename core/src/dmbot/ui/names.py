@@ -215,6 +215,7 @@ class Reviews:
     people: int = 0  # 🧑 who is who
     claims: int = 0  # 🗣️ what was said (only when the story extractor is on)
     said: int = 0  # 🔊 how the narrator should say a name (#2171)
+    joined: int = 0  # 🤖 names DMbot joined by itself that wait for the DM's word (#3602)
 
 
 def review_line(reviews: Reviews) -> str | None:
@@ -224,6 +225,7 @@ def review_line(reviews: Reviews) -> str | None:
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
         f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
         f"{_plural(reviews.said, 'name')} to say out loud" if reviews.said else "",
+        f"{_plural(reviews.joined, 'name')} DMbot matched on its own" if reviews.joined else "",
     ]
     parts = [p for p in parts if p]
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
@@ -349,16 +351,18 @@ class NamesHome(_Menu):
         # The reviews the after-session posts open, one button each, only while something waits
         # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
         if reviews:
-            for count, label, handler in (
-                (reviews.heard, "❓ Check names", self._check_heard),
-                (reviews.people, "🧑 Check who is who", self._check_people),
-                (reviews.claims, "🗣️ Check what was said", self._check_claims),
-                (reviews.said, "🔊 Check how to say", self._check_said),
+            # (the joins' button sits on row 3: row 4 already holds five with the connections)
+            for count, label, handler, row in (
+                (reviews.heard, "❓ Check names", self._check_heard, 4),
+                (reviews.people, "🧑 Check who is who", self._check_people, 4),
+                (reviews.claims, "🗣️ Check what was said", self._check_claims, 4),
+                (reviews.said, "🔊 Check how to say", self._check_said, 4),
+                (reviews.joined, "🤖 Check guesses", self._check_joined, 3),
             ):
                 if count:
                     shown_count = str(count) if count < 100 else "99+"  # keeps the label short
                     self.add_item(
-                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=4)
+                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=row)
                     )
         if connections:  # a backstory's connections still wait for the DM (#2380)
             shown_links = str(connections) if connections < 100 else "99+"
@@ -483,6 +487,11 @@ class NamesHome(_Menu):
 
         await start_said_as_review(interaction, self.campaign_id)
 
+    async def _check_joined(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.joined_review import start_joined_review
+
+        await start_joined_review(interaction, self.campaign_id)
+
     async def _check_claims(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
@@ -501,7 +510,7 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
     that can't be read is left out (zero), never an error on the home card."""
     bot: Any = _bot(interaction)
     guild_id = campaign.guild_id
-    heard = people = claims = said = 0
+    heard = people = claims = said = joined = 0
     try:
         if bot.heard_questions is not None:
             heard = await bot.heard_questions.count(guild_id, campaign.id)
@@ -528,7 +537,12 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
             said = len(await memory.said_as_suggestions(guild_id, campaign.id))
     except Exception:
         log.exception("Couldn't count the ways to say names")
-    return Reviews(heard=heard, people=people, claims=claims, said=said)
+    try:
+        if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only
+            joined = len(await memory.waiting_joins(guild_id, campaign.id))
+    except Exception:
+        log.exception("Couldn't count the names DMbot joined itself")
+    return Reviews(heard=heard, people=people, claims=claims, said=said, joined=joined)
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
