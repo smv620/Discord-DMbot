@@ -9,9 +9,10 @@ separate change by the readers' owner); until they do, nothing is captured.
 What is stored, in the `ai_feed` table, for one call: the time, the service and model in plain
 words, the step, the first 500 characters of the user text (the instructions are the same constant
 every call, so they are not stored) then `[...]` when there was more, and the first 500
-characters of the reply the same way. An image is the word `[image]`. The cut is made here, in Python, before
-anything is written, so nothing longer reaches the database. Never a key, a header or an account
-detail. Nothing is logged: not a word of a prompt or a reply, only counts and exception class names.
+characters of the reply the same way. An image is the word `[image]`. The cut is made here, in
+Python, before anything is written, so nothing longer reaches the database. Never a key, a header
+or an account detail. Nothing is logged: not a word of a prompt or a reply, only counts and
+exception class names.
 
 It is kept at most 24 hours (`sweep`). "Stop recording me" deletes every row of the server at once
 (`ConsentStore.revoke` calls `forget_server`, which also drops a write that was already on its way).

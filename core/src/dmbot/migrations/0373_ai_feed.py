@@ -9,8 +9,8 @@ from __future__ import annotations
 from dmbot.migrations._shared import _isolate
 
 AI_FEED = r"""
-    -- One row per AI call of one lore upload or session import (`kind`, `job_id`), numbered `n` = 1,
-    -- 2, 3... in the order the calls were written. The prompt and the reply are cut to their first
+    -- One row per AI call of one lore upload or session import (`kind`, `job_id`), numbered
+    -- `n` = 1, 2, 3... in the order the calls were written. The prompt and the reply are cut to their first
     -- 500 characters (then `[...]`) in Python before they are written, and the CHECKs refuse more:
     -- no longer text is ever stored. The row `n = 0` of a job is its bookkeeping, NOT a call (a
     -- reader shows `n > 0` only): `next_n` is the counter the numbers come from (one `INSERT .. ON
