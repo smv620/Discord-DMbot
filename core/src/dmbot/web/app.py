@@ -158,6 +158,7 @@ from dmbot.web.support_mail import (
     verify_signature,
 )
 from dmbot.web.told_panel import read_told_panel
+from dmbot.web.who_names import read_one as read_one_name_check
 
 log = logging.getLogger(__name__)
 
@@ -1139,6 +1140,17 @@ def create_app(
         session, _token = signed
         try:
             return await read_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # One name to check on its own page (#3602, slice 3, #3604): its card and DMbot's ranked
+    # answers, each a ready answer for the POST below. The DM's alone, like the list.
+    @app.get("/me/recaps/{ref}/names-to-check/{entity_id}")
+    async def me_recap_name_check(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_one_name_check(db, session, ref, entity_id)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -2284,6 +2296,29 @@ def create_app(
             body = None
         try:
             return {"answer": await all_names.queue_confirm(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/all-names-matches")
+    async def me_campaign_name_matches(ref: str, signed: Signed) -> dict[str, Any]:
+        """DMbot's own matches the DM has not answered yet (#3602): DM only."""
+        session, _token = signed
+        try:
+            return await all_names.read_matches(db, session, ref)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/all-names-matches/{batch}/{answer}", status_code=202)
+    async def me_campaign_name_match_answer(
+        ref: str, batch: str, answer: str, signed: Signed
+    ) -> dict[str, str]:
+        """ "Yes, that's right" (`confirm`) or the Undo (`undo`) of one of DMbot's own matches,
+        queued for the bot; the answer is polled at `.../all-names/answers/{answer}`."""
+        session, _token = signed
+        try:
+            return {"answer": await all_names.queue_match(db, session, ref, batch, answer)}
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

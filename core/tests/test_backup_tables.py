@@ -199,6 +199,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
                 (g, c, A),
             ),
+            "memory_scenes": (
+                "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
+                " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"
+                " created_at) VALUES (%s, %s, 'entity', %s, 'A scene.', 2, ARRAY[%s::bigint], 100,"
+                " 'scenes-1', 'm', 5)",
+                (g, c, A, SPEAKER),
+            ),
             "memory_kind_offers": (
                 "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
                 " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",

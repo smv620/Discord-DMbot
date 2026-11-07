@@ -164,7 +164,9 @@ def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) ->
     never "is in" (#3363). `feeling`: the reader is the DM, who alone is told how a name feels about
     another (#3610)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return _md(r.detail)  # transcript words: never let them format or ping
+        # transcript words: never let them format or ping. In quotes, so the table's own words are
+        # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
+        return f"“{_md(r.detail)}”"
     return link_words(
         r.predicate, r.detail, r.directional, subject_kind, feeling=feeling
     )  # (family reads with its role: "is the niece of")

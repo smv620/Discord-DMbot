@@ -58,7 +58,7 @@ function pageWith(g: WebGraph, changes: WebLinkChange[] = []): AccountApi {
 }
 async function openPanel(api: AccountApi) {
   render(<Web api={api} path="/account/web/100.cmp1" />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
   return (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
 }

@@ -73,7 +73,7 @@ describe("the Icon row on the page", () => {
   async function open(name = "Mira Voss") {
     const api = mockApi("table");
     render(<Web api={api} path={path} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click((await screen.findAllByText(new RegExp(name), { selector: "text" }))[0] as HTMLElement);
     return api;
   }
@@ -103,7 +103,7 @@ describe("the Icon row on the page", () => {
       throw new ApiError("unavailable");
     };
     render(<Web api={api} path={path} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
     const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
     fireEvent.click(within(row).getByRole("button", { name: w.useDiscord }));
@@ -122,7 +122,7 @@ describe("the Icon row on the page", () => {
     api.webGraph = async (): Promise<WebGraph> => ({ center: "m", nodes: [{ id: "m", name: "Mira", kind: "npc" }, pc({ canSetIcon: false })], edges: [], truncated: false, maxHops: 2, canEdit: false, view: "players" });
     api.webSize = async () => ({ names: 2 });
     render(<Web api={api} path={path} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(await screen.findByText("Aldric", { selector: "text" }));
     expect(screen.queryByRole("group", { name: w.heading })).toBeNull();
   });
