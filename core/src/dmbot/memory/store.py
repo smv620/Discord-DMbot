@@ -3711,8 +3711,12 @@ class MemoryStore:
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
         join_alias: str | None = None,
+        keep_own_flags: bool = False,
     ) -> str:
-        """One merge inside an open write (see `merge`). `join_alias`: the merge joins an unnamed
+        """One merge inside an open write (see `merge`). `keep_own_flags`: the kept entry's
+        "hidden from players" and "limited to some" stay as they are (DMbot's own join, #3602: a
+        name read from a session starts hidden, and joining it must never hide the confirmed
+        entry). `join_alias`: the merge joins an unnamed
         person to the named one it turned out to be (#3037), and this is the secret other name made
         from the description; who knew the unnamed person now know that name and nothing more.
         Returns the id that was kept: a named entry is always the one kept when the other has no
@@ -3756,7 +3760,7 @@ class MemoryStore:
                 # And so does an entry the players don't know yet (#2321).
                 "hidden_from_players": (kept["hidden_from_players"] or gone["hidden_from_players"]),
             }
-            if join_alias is not None:
+            if join_alias is not None or keep_own_flags:
                 # A join keeps the named entry's own flags: the unnamed person's would close the
                 # named entry to every character who knew it (#3037).
                 merged["audience_limited"] = kept["audience_limited"]
@@ -5623,7 +5627,9 @@ class MemoryStore:
             why = await _ai_join_refusal(w, keep, gone)
             if why:
                 raise MemoryRuleError(why)
-            kept = await self._merge_in(w, keep_id, gone_id, source=WHO_SOURCE, dm_said_same=True)
+            kept = await self._merge_in(
+                w, keep_id, gone_id, source=WHO_SOURCE, dm_said_same=True, keep_own_flags=True
+            )
             final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
@@ -6587,7 +6593,9 @@ AI_JOIN_REFUSED = "DMbot doesn't join those two by itself; the DM decides."
 
 async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
     """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
-    else the refusal (one fixed sentence: it names no entry, so no secret can leak through it)."""
+    else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
+    A waiting name read from a session is normally still hidden from the players, so that flag is
+    refused on the confirmed entry only; the join leaves the confirmed entry's flags alone."""
     if keep["status"] != CONFIRMED or gone["status"] != PROPOSED or keep["id"] == gone["id"]:
         return AI_JOIN_REFUSED
     for row in (keep, gone):
@@ -6595,23 +6603,29 @@ async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any])
             row["type"] == PERSON
             or row["played_by"] is not None
             or row["role"] == PLAYER_CHARACTER
+            or row["party"]  # the party is a point of view with its own rules
+            or row["unique_item"] is not None  # one of a kind: whose it is, is the DM's word
+            or row["manipulated_by"] is not None
             or row["unnamed"]
-            or row["hidden_from_players"]
             or row["audience_limited"]
         ):
             return AI_JOIN_REFUSED
-    if keep["type"] != gone["type"]:
+    if keep["hidden_from_players"]:
+        return AI_JOIN_REFUSED
+    if keep["type"] != gone["type"] or keep["role"] != gone["role"]:
         return AI_JOIN_REFUSED
     ids = [keep["id"], gone["id"]]
     if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):
         return AI_JOIN_REFUSED
+    if await w.select(ENTITIES, " AND unnamed_anchor = ANY(%s)", [ids]):
+        return AI_JOIN_REFUSED  # others hang off one of them
     if await w.select(
         RELATIONS,
-        " AND predicate = %s AND status <> 'rejected' AND (subject_id = ANY(%s)"
-        " OR object_id = ANY(%s))",
+        " AND status <> 'rejected' AND (secret OR unrevealed OR predicate = %s)"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
         [DISGUISED_AS, ids, ids],
     ):
-        return AI_JOIN_REFUSED
+        return AI_JOIN_REFUSED  # a disguise, or a link held back from the players
     return ""
 
 

@@ -101,12 +101,80 @@ class WhatItRefuses(Base):
         )
         self.assertEqual(await self.refusal(plain, other), AI_JOIN_REFUSED)
 
-    async def test_hidden_or_limited_entries(self) -> None:
-        for flag in ("hidden_from_players", "audience_limited"):
-            keep = await self.add(f"Ned {flag[:4]}", "npc")
-            await self.sql(f"UPDATE memory_entities SET {flag} = TRUE WHERE id = %s", keep)
-            gone = await self.waiting_name(f"The Mender {flag[:4]}")
+    async def test_a_hidden_confirmed_entry_and_a_limited_one_on_either_side(self) -> None:
+        keep = await self.add("Ned Keep", "npc")
+        await self.sql("UPDATE memory_entities SET hidden_from_players = TRUE WHERE id = %s", keep)
+        gone = await self.waiting_name("The Mender One")
+        self.assertEqual(await self.refusal(keep, gone), AI_JOIN_REFUSED)
+        for side in ("keep", "gone"):
+            keep = await self.add(f"Ned {side}", "npc")
+            gone = await self.waiting_name(f"The Mender {side}")
+            await self.sql(
+                "UPDATE memory_entities SET audience_limited = TRUE WHERE id = %s",
+                keep if side == "keep" else gone,
+            )
             self.assertEqual(await self.refusal(keep, gone), AI_JOIN_REFUSED)
+
+    async def test_a_waiting_name_hidden_from_players_joins_and_the_entry_stays_shown(self) -> None:
+        keep = await self.add("Old Tam", "npc")
+        gone = await self.waiting_name("The Ferry Lady")
+        await self.sql("UPDATE memory_entities SET hidden_from_players = TRUE WHERE id = %s", gone)
+        await self.join(keep, gone)  # (names read from a session start hidden: the normal case)
+        self.assertFalse((await self.row(keep))["hidden_from_players"])
+
+    async def test_party_unique_items_roles_faked_evidence_and_dependants(self) -> None:
+        tam = await self.add("Old Tam", "npc")
+        for column, value in (
+            ("party", "TRUE"),
+            ("unique_item", "TRUE"),
+            ("manipulated_by", f"'{tam}'"),
+        ):
+            gone = await self.waiting_name(f"The {column} one")
+            await self.sql(f"UPDATE memory_entities SET {column} = {value} WHERE id = %s", gone)
+            self.assertEqual(await self.refusal(tam, gone), AI_JOIN_REFUSED, column)
+        odd = await self.waiting_name("The Roled One")
+        await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", odd)
+        await self.sql("UPDATE memory_entities SET role = NULL WHERE id = %s", tam)
+        self.assertEqual(await self.refusal(tam, odd), AI_JOIN_REFUSED)
+        anchored = await self.waiting_name("The Anchored One")
+        await self.memory.add_unnamed(
+            self.g, self.one.id, what="a patron at the bar", anchor_id=anchored
+        )
+        self.assertEqual(await self.refusal(tam, anchored), AI_JOIN_REFUSED)
+
+    async def test_a_link_held_back_from_the_players_and_one_that_is_not(self) -> None:
+        tam = await self.add("Old Tam", "npc")
+        gone = await self.waiting_name("The Ferry Lady")
+        await self.link("knows", gone, self.keep, "gone-keep")
+        await self.sql(
+            "UPDATE memory_relations SET status = 'proposed', unrevealed = TRUE WHERE id = %s",
+            self.links["gone-keep"],
+        )
+        self.assertEqual(await self.refusal(tam, gone), AI_JOIN_REFUSED)
+        await self.sql(
+            "UPDATE memory_relations SET unrevealed = FALSE WHERE id = %s", self.links["gone-keep"]
+        )
+        done = await self.join(tam, gone)  # (a waiting link comes along, still waiting)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT subject_id, status FROM memory_relations WHERE id = %s",
+                (self.links["gone-keep"],),
+            )
+            moved = await cur.fetchone()
+        self.assertEqual((moved["subject_id"], moved["status"]), (tam, "proposed"))
+        await self.memory.undo(self.g, self.one.id, done.batch)  # (and Undo puts it all back)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT subject_id FROM memory_relations WHERE id = %s", (self.links["gone-keep"],)
+            )
+            self.assertEqual((await cur.fetchone())["subject_id"], gone)
+
+    async def test_a_rejected_or_merged_entry_is_not_joined(self) -> None:
+        tam = await self.add("Old Tam", "npc")
+        gone = await self.waiting_name("The Ferry Lady")
+        await self.sql("UPDATE memory_entities SET status = 'rejected' WHERE id = %s", gone)
+        with self.assertRaises(MemoryRuleError):
+            await self.join(tam, gone)
 
     async def test_a_player_character_a_person_and_two_kinds(self) -> None:
         gone = await self.waiting_name("The Ferry Lady")
