@@ -302,18 +302,21 @@
   {
    "name": "Yeti",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "evaded on the road"
   },
   {
    "name": "Ice troll",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "ate the first ship's captain"
   },
   {
    "name": "Mind flayer",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "petrified skull in the mine"
   },
