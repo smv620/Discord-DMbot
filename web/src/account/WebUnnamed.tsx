@@ -12,7 +12,7 @@ import { ApiError, type AccountApi, type NameChange, type NameRow, type WebNode 
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
-/** The Names page's row for this node: the node's label is how the page calls the person ("Ken's sister (name unknown)"). */
+/** The Names page's row for this node: the node's label is how the page calls the person ("unnamed - Ken's sister"). */
 function rowOf(node: WebNode): NameRow {
   return { id: node.id, name: node.name, kind: node.kind, others: [], secret: !!node.secret, npcId: null, unnamed: true, ...(node.unnamedWhat ? { unnamedWhat: node.unnamedWhat } : {}), ...(node.unnamedAnchor !== undefined ? { unnamedAnchor: node.unnamedAnchor } : {}) };
 }
