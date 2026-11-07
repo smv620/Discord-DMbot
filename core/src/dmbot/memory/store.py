@@ -53,6 +53,7 @@ from dmbot.memory import (
     told,
     whereabouts,
 )
+from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
@@ -1561,6 +1562,19 @@ class MemoryStore:
                 [DM, entity_id],
             )  # fmt: skip
         return {(str(r["viewer_id"]), str(r["subject_id"])): int(r["score"]) for r in rows}
+
+    async def isolated_rows(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[list[isolated_mod.Entry], list[isolated_mod.Link]]:
+        """The rows the graph clean-up's rule reads (#3740, `memory/isolated.py`), in one snapshot:
+        see `isolated_rows_in`."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await isolated_rows_in(scope)
+
+    async def isolated_count(self, guild_id: int, campaign_id: str) -> int:
+        """How many characters and groups no chain links to the party (#3740), for the Discord DM
+        screen's count (CloudDev wires it). The same rule as the website's page."""
+        return len(isolated_mod.isolated_ids(*await self.isolated_rows(guild_id, campaign_id)))
 
     async def find_or_add_people(
         self, guild_id: int, campaign_id: str, name: str, *, source: str
@@ -7210,3 +7224,41 @@ async def _check_growth(w: Changes, session_started_at: int | None) -> None:
     row = await cur.fetchone()
     if row is not None and row["n"] >= MAX_NEW_TERMS_PER_SESSION:
         raise MemoryRuleError("Enough new kinds of things for one session; review them first.")
+
+
+async def isolated_rows_in(
+    scope: Scope,
+) -> tuple[list[isolated_mod.Entry], list[isolated_mod.Link]]:
+    """Every live character and group, and every link between two of them that is not rejected,
+    as the graph clean-up's rule takes them (#3740). Only the columns the rule reads: a lore
+    campaign can hold thousands of entries, and the scene sweep calls this on each card open.
+    Inside the caller's scope, so the sweep decides and deletes in one transaction."""
+    cur = await scope.conn.execute(
+        "SELECT id, type, status, unnamed, role, party FROM memory_entities"
+        " WHERE guild_id = %s AND campaign_id = %s AND type IN ('character', 'faction')"
+        " AND status IN ('proposed', 'confirmed') AND merged_into IS NULL",
+        scope.ids,
+    )
+    rows = await cur.fetchall()
+    ids = [str(r["id"]) for r in rows]
+    cur = await scope.conn.execute(
+        "SELECT id, subject_id, object_id, predicate, status FROM memory_relations"
+        " WHERE guild_id = %s AND campaign_id = %s AND status <> 'rejected'"
+        " AND subject_id = ANY(%s::text[]) AND object_id = ANY(%s::text[])",
+        (*scope.ids, ids, ids),
+    )
+    links = await cur.fetchall()
+    entries = [
+        isolated_mod.Entry(
+            str(r["id"]), str(r["type"]), str(r["status"]), bool(r["unnamed"]),
+            r["role"] == PLAYER_CHARACTER, bool(r["party"]),
+        )
+        for r in rows
+    ]  # fmt: skip
+    return entries, [
+        isolated_mod.Link(
+            str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
+            str(r["status"]),
+        )
+        for r in links
+    ]  # fmt: skip
