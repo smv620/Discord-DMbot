@@ -10,6 +10,7 @@ import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { cleanupWords as w } from "../src/content/graph-cleanup-words";
+import { namePlaceWords } from "../src/content/name-places";
 import { webPage } from "../src/content/web-words";
 
 const live = vi.hoisted(() => ({ on: true }));
@@ -109,6 +110,41 @@ describe("the clean-up", () => {
     fireEvent.input(box, { target: { value: "" } });
     await waitFor(() => expect(screen.getByText(w.findHint)).toBeTruthy());
     expect(screen.queryByRole("button", { name: /^Connect to / })).toBeNull();
+  });
+
+  it("offers Where was it said? only for an entry with no scene, and shows the lines it is given", async () => {
+    const api = mockApi("table");
+    const asked: string[] = [];
+    api.clarifyName = async (_ref, id) => {
+      asked.push(id);
+      return { id, name: "Brewner", note: "", places: [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "Brewner paid for the rope." }] }], morePlaces: 0, kinds: [], answering: false };
+    };
+    await open("cleanup", api);
+    await screen.findByText(w.count(6));
+    expect(screen.getAllByRole("button", { name: new RegExp(`^${namePlaceWords.button.replace("?", "\\?")}: `) })).toHaveLength(3); // (e3, e5 and e2 have no scene)
+    expect(asked).toEqual([]); // (nothing is read until a button is pressed)
+    fireEvent.click(screen.getByRole("button", { name: `${namePlaceWords.button}: Brewner` }));
+    expect(await screen.findByText(/Brewner paid for the rope\./)).toBeTruthy();
+    expect(asked).toEqual(["e5"]);
+  });
+
+  it("says plainly when there are no lines for an entry", async () => {
+    const api = mockApi("table");
+    api.clarifyName = async () => {
+      throw new ApiError("not-found");
+    };
+    await open("cleanup", api);
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: `${namePlaceWords.button}: Brewner` }));
+    expect(await screen.findByText(w.noLines)).toBeTruthy();
+  });
+
+  it("links a named entry to the Names page, and an unnamed one has the panel instead", async () => {
+    await open();
+    await screen.findByText(w.count(6));
+    const link = screen.getByRole("link", { name: `${w.namesPage}: Old Pell` });
+    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1.cleanup");
+    expect(screen.queryByRole("link", { name: `${w.namesPage}: unnamed - Okthandom's child` })).toBeNull();
   });
 
   it("asks for both a person and words before adding", async () => {

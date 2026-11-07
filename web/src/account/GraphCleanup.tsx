@@ -6,14 +6,47 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { cleanupWords as w } from "../content/graph-cleanup-words";
+import { namePlaceWords } from "../content/name-places";
 import { kindWords } from "../content/web-words";
-import { ApiError, type AccountApi, type CleanupEntry, type CleanupView, type NameChange, type WebNode } from "./api";
+import { ApiError, type AccountApi, type CleanupEntry, type CleanupView, type NameChange, type NamePlace, type WebNode } from "./api";
+import NamePlaces from "./NamePlaces";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 import LazyPanel from "./LazyPanel";
 
 function asNode(e: CleanupEntry): WebNode {
   return { id: e.id, name: e.name, kind: e.kind, unnamed: true, ...(e.unnamedWhat ? { unnamedWhat: e.unnamedWhat } : {}), ...(e.unnamedAnchor !== undefined ? { unnamedAnchor: e.unnamedAnchor } : {}) };
+}
+
+/** "Where was it said?" for an entry that has no kept scene: the same lines view the name card has (NamePlaces), read for
+ * this one entry only when the button is pressed, so a long list never makes a call for each entry. */
+function WhereSaid({ entry, api, refId }: { entry: CleanupEntry; api: AccountApi; refId: string }) {
+  const [state, setState] = useState<"idle" | "loading" | "none" | { places: NamePlace[]; more: number }>("idle");
+  async function look(): Promise<void> {
+    if (!api.clarifyName || state === "loading") return;
+    setState("loading");
+    try {
+      const got = await api.clarifyName(refId, entry.id);
+      setState(got.places.length === 0 && got.morePlaces <= 0 ? "none" : { places: got.places, more: got.morePlaces });
+    } catch {
+      setState("none");
+    }
+  }
+  if (!api.clarifyName) return null;
+  return (
+    <div class="stack">
+      {state === "idle" && (
+        <p>
+          <button type="button" class="button secondary" aria-label={`${namePlaceWords.button}: ${entry.name}`} onClick={() => void look()}>
+            <span aria-hidden="true">{namePlaceWords.buttonIcon}</span> {namePlaceWords.button}
+          </button>
+        </p>
+      )}
+      {state === "loading" && <p role="status">{w.lookingForLines}</p>}
+      {state === "none" && <p class="small muted" role="status">{w.noLines}</p>}
+      {typeof state === "object" && <NamePlaces places={state.places} more={state.more} campaignRef={refId} />}
+    </div>
+  );
 }
 
 /** Add a connection for one entry: find who it is connected to, say how, and send it (the same call the map's form makes). */
@@ -211,10 +244,16 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
                             {e.waiting && <span class="small muted"> ({w.waiting})</span>}
                           </p>
                           <p class="small">{e.scene ? `${w.scene} ${e.scene}` : w.noScene}</p>
+                          {!e.scene && <WhereSaid entry={e} api={api} refId={refId} />}
                           <p>
                             <button type="button" class="button secondary" aria-expanded={open === e.id} aria-label={open === e.id ? `${w.done}: ${e.name}` : w.addHeading(e.name)} onClick={() => setOpen(open === e.id ? null : e.id)}>
                               {open === e.id ? w.done : w.addShort}
                             </button>
+                            {!e.unnamed && (
+                              <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}`} aria-label={`${w.namesPage}: ${e.name}`}>
+                                {w.namesPage}
+                              </a>
+                            )}
                             {e.unnamed && api.nameThem && (
                               <button type="button" class="button secondary" aria-expanded={naming?.id === e.id} aria-label={naming?.id === e.id ? `${w.done}: ${e.name}` : `${w.nameThem}: ${e.name}`} onClick={() => setNaming(naming?.id === e.id ? null : e)}>
                                 {naming?.id === e.id ? w.done : w.nameThem}
