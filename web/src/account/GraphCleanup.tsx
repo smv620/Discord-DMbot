@@ -249,8 +249,9 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
                             <button type="button" class="button secondary" aria-expanded={open === e.id} aria-label={open === e.id ? `${w.done}: ${e.name}` : w.addHeading(e.name)} onClick={() => setOpen(open === e.id ? null : e.id)}>
                               {open === e.id ? w.done : w.addShort}
                             </button>
+                            {/* The Names page reads `#said=<the name>` (a fragment never leaves the browser, so a secret name is safe) and opens that name's editor, where Same as… and Remove are. */}
                             {!e.unnamed && (
-                              <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}`} aria-label={`${w.namesPage}: ${e.name}`}>
+                              <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(e.name)}`} aria-label={`${w.namesPage}: ${e.name}`}>
                                 {w.namesPage}
                               </a>
                             )}

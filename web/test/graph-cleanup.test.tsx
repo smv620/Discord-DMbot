@@ -143,7 +143,8 @@ describe("the clean-up", () => {
     await open();
     await screen.findByText(w.count(6));
     const link = screen.getByRole("link", { name: `${w.namesPage}: Old Pell` });
-    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1.cleanup");
+    // (the name is in the fragment, which the Names page reads to open that name's editor; a fragment is never sent to a server)
+    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1.cleanup#said=Old%20Pell");
     expect(screen.queryByRole("link", { name: `${w.namesPage}: unnamed - Okthandom's child` })).toBeNull();
   });
 
