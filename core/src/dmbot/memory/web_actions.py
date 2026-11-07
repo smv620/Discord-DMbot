@@ -25,6 +25,7 @@ from dmbot.memory import beliefs, evidence, link_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
+from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
@@ -102,6 +103,9 @@ CONFIRM_ACTIONS = ("confirm-kinds", "confirm-undo")
 # "Tell a character" (#3542, #3089): the DM tells one player character that a secret other name is
 # this entry, or takes the telling back.
 TOLD_ACTIONS = ("told-add", "told-remove")
+# DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
+# takes it back. Filed under no name; the target is the match's batch, in digits.
+MATCH_ACTIONS = ("match-confirm", "match-undo")
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -419,6 +423,8 @@ async def apply(
         if actions is None:
             return _failed(FAILED)
         return await _confirm(memory, actions, guild_id, cid, action)
+    if action.action in MATCH_ACTIONS:
+        return await _match(memory, guild_id, cid, action)
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
@@ -643,6 +649,28 @@ async def _confirm(
     if refused and not parts:
         return _failed(BAD_TARGET)
     return Outcome(counts=" ".join(parts), batches=tuple(batches))
+
+
+async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's word on a name DMbot matched on its own, from the page: ✅ confirms it, ↩️ takes it
+    back, the same store calls as Discord's check (`confirm_join`, `undo`). Only a match that is
+    still waiting can be touched: the batch is looked up in the campaign's waiting matches first
+    (read again now, as the door only checked that the batch was one of DMbot's), so a made-up
+    number never reaches `undo`, which would undo any change. `not_found` covers a match already
+    answered or undone; `gone` is the store refusing (a name was changed since)."""
+    if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
+        return _failed(NOT_FOUND)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.target_id)
+    if not any(j.batch == batch for j in await memory.waiting_joins(guild_id, cid)):
+        return _failed(NOT_FOUND)
+    try:
+        if a.action == "match-confirm":
+            await memory.confirm_join(guild_id, cid, batch)
+        else:
+            await memory.undo(guild_id, cid, batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        return _failed(NOT_FOUND if str(exc) in (STORE_NOT_FOUND, ALREADY_UNDONE) else GONE)
+    return Outcome()
 
 
 async def _confirm_undo(

@@ -11,17 +11,17 @@
   "line": "the line of the session's plain-text export that supports it (blank lines count); 0 = by rule, no line"
  },
  "players": {
-  "Cerric Vanya'elen": "user_ist",
-  "Belleros Stormgrace": "user_jac",
-  "Okthandom Korran": "user_eri",
-  "Claude Ambere": "user_owe"
+  "Cerric Vanya'elen": "player_ist",
+  "Belleros Stormgrace": "player_jac",
+  "Okthandom Korran": "player_eri",
+  "Claude Ambere": "player_owe"
  },
  "speakers": {
   "DM": "the Dungeon Master (no player character; voices Keegan and Jebidiah)",
-  "Belleros": "user_jac",
-  "Cerric": "user_ist",
-  "Okthandom": "user_eri",
-  "Claude": "user_owe"
+  "Belleros": "player_jac",
+  "Cerric": "player_ist",
+  "Okthandom": "player_eri",
+  "Claude": "player_owe"
  },
  "nodes": [
   {
@@ -136,6 +136,7 @@
   {
    "name": "Yeti",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "Named as a danger and as near the shelter at the end."
   },

@@ -50,6 +50,14 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
+        "AI feed",
+        "A window on what DMbot asks the AI",
+        "",
+        lambda s: s.ai_feed_on,
+        ("ai_feed_on",),
+        for_dms=False,  # for whoever runs DMbot: off until the website's windows are live (#3710)
+    ),
+    Feature(
         "questions",
         "Questions for you",
         "DMbot gathers what it is waiting to ask you in one message, and reminds you less and "

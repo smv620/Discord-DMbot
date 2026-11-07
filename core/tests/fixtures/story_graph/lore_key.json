@@ -11,10 +11,10 @@
   "line": "the line of the document's plain-text export that supports it (blank lines count)"
  },
  "players": {
-  "Cerric Vanya'elen": "user_ist",
-  "Belleros Stormgrace": "user_jac",
-  "Okthandom Korran": "user_eri",
-  "Claude Ambere": "user_owe"
+  "Cerric Vanya'elen": "player_ist",
+  "Belleros Stormgrace": "player_jac",
+  "Okthandom Korran": "player_eri",
+  "Claude Ambere": "player_owe"
  },
  "nodes": [
   {
@@ -302,18 +302,21 @@
   {
    "name": "Yeti",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "evaded on the road"
   },
   {
    "name": "Ice troll",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "ate the first ship's captain"
   },
   {
    "name": "Mind flayer",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "petrified skull in the mine"
   },
