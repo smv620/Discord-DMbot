@@ -20,6 +20,14 @@ vi.mock("../src/content/questions-switch", () => ({
   },
 }));
 
+// DMbot's own matches are counted only where a test turns the switch on (#3701).
+const matches = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/name-matches-switch", () => ({
+  get NAME_MATCHES_LIVE() {
+    return matches.on;
+  },
+}));
+
 // The names-to-check cards are on only where a test turns them on (#3438).
 const names = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/recap-words", async (original) => {
@@ -370,5 +378,57 @@ describe("the count on the links", () => {
   it("shows nothing while the switch is off", () => {
     on.live = false;
     expect(render(<QuestionsLink api={mockApi("table")} />).container.textContent).toBe("");
+  });
+});
+
+
+describe("DMbot's guesses on the Questions page (#3701)", () => {
+  const withGuesses = (guesses: number | undefined) => {
+    const api = mockApi("table");
+    const read = api.myQuestions!.bind(api);
+    api.myQuestions = async () => {
+      const got = await read();
+      return { ...got, campaigns: got.campaigns.map((c, i) => (i === 0 ? (guesses === undefined ? (({ guesses: _gone, ...rest }) => rest)(c) : { ...c, guesses }) : c)) };
+    };
+    return api;
+  };
+  afterEach(() => {
+    matches.on = false;
+  });
+
+  it("says how many wait and links to the Names page, only while the switch is on", async () => {
+    matches.on = true;
+    render(<Questions api={withGuesses(3)} />);
+    expect(await screen.findByText(/3 guesses wait for you\./)).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Check DMbot's guesses" });
+    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1");
+  });
+
+  it("shows nothing when none wait, or the API sends no count, or the switch is off", async () => {
+    matches.on = true;
+    const { unmount } = render(<Questions api={withGuesses(0)} />);
+    await screen.findByText("The Ashen Road");
+    expect(screen.queryByText(/guess/)).toBeNull();
+    unmount();
+    render(<Questions api={withGuesses(undefined)} />);
+    await screen.findByText("The Ashen Road");
+    expect(screen.queryByRole("link", { name: "Check DMbot's guesses" })).toBeNull();
+    cleanup();
+    matches.on = false;
+    render(<Questions api={withGuesses(3)} />);
+    await screen.findByText("The Ashen Road");
+    expect(screen.queryByText(/guesses? wait/)).toBeNull();
+  });
+
+  it("does not say nothing waits for a campaign that has only guesses", async () => {
+    matches.on = true;
+    const api = mockApi("table");
+    api.myQuestions = async () => ({
+      serverNow: 1000,
+      campaigns: [{ ref: "100.cmp2", name: "Salt and Smoke", total: 0, countedAt: 990, kinds: [], guesses: 1 }],
+    });
+    render(<Questions api={api} />);
+    expect(await screen.findByText("1 guess waits for you.")).toBeTruthy();
+    expect(screen.queryByText(w.nothing)).toBeNull();
   });
 });
