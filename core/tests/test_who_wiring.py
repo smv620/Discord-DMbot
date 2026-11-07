@@ -168,6 +168,38 @@ class Asking(Wiring):
             await DMBot.write_who(me, self.table())
         self.assertTrue(callable(self.step_run.await_args.kwargs["apply"]))
 
+    @staticmethod
+    def count_joins(kw: dict[str, Any], joined: int) -> who_step.Report:
+        """What the real step does: it counts into the report it was given."""
+        report: who_step.Report = kw["report"]
+        report.joined = joined
+        return report
+
+    async def test_a_count_of_joins_is_posted_on_the_dm_screen_only_when_there_were_some(
+        self,
+    ) -> None:
+        for joined, posts in ((0, 0), (3, 1)):
+            me = self.fake(story_who_apply_on=True)
+            me.campaigns.get = AsyncMock(
+                return_value=SimpleNamespace(id="c", dm_screen_channel_id=77)
+            )
+            me.post = AsyncMock()
+            with self.patches():
+                self.step_run.side_effect = lambda *_a, n=joined, **kw: self.count_joins(kw, n)
+                await DMBot.write_who(me, self.table())
+            self.assertEqual(me.post.await_count, posts)
+            if posts:
+                channel, text = me.post.await_args.args
+                self.assertEqual(channel, 77)
+                self.assertIn("answered 3 names itself", text)
+                self.assertNotIn("Vale", text)  # (counts only)
+        me = self.fake(story_who_apply_on=True)
+        me.campaigns.get = AsyncMock(return_value=SimpleNamespace(id="c", dm_screen_channel_id=77))
+        me.post = AsyncMock(side_effect=RuntimeError("down"))
+        with self.patches():
+            self.step_run.side_effect = lambda *_a, **kw: self.count_joins(kw, 1)
+            await DMBot.write_who(me, self.table())  # (a failed post is only logged)
+
     async def test_no_call_left_reads_nothing_more(self) -> None:
         me = self.fake()
         me.transcripts.extraction = AsyncMock(return_value=(0, 480))  # (the session's calls used)
