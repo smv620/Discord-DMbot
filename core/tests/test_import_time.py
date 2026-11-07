@@ -21,6 +21,7 @@ from dmbot.dm_screen import import_time as screen
 from dmbot.timebot import clock as game
 from dmbot.timebot import import_time as it
 from dmbot.timebot.clock import Clock
+from dmbot.transcript.import_clock import ImportClockOffers
 from tests import test_split_party as sp
 from tests.test_recap_feedback import FakeAI
 from tests.test_split_party import DM, GUILD_A, PLAYER
@@ -114,6 +115,9 @@ class Importing(sp.Party):
         self.rows: list[tuple[int, str]] = [(DM, "The next morning, you wake.")]
         self.newer: int | None = None
         self.agreed = frozenset({DM, PLAYER})
+        self.offers = ImportClockOffers(self.db)
+        for number, sid in enumerate(("s1", "s2")):  # (an offer belongs to a real session)
+            await self.make_session(sid, 1000 * (number + 1))
 
         async def post(channel: int, text: str, view: Any = None) -> bool:
             self.posts.append((channel, text, view))
@@ -131,12 +135,28 @@ class Importing(sp.Party):
             import_time_ai=self.ai,
             plan_allows=AsyncMock(return_value=True),
             post=post,
+            import_clock_offers=self.offers,
+        )
+        self.me._keep_import_clock_offer = lambda *a, **k: DMBot._keep_import_clock_offer(
+            cast(Any, self.me), *a, **k
         )
 
         async def total(cues: tuple[str, ...], start: int) -> int | None:
             return await DMBot._import_time_total(self.me, cues, start)
 
         self.me._import_time_total = total
+
+    async def make_session(self, sid: str, started_at: int = 1000) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES (%s, %s, %s, %s)",
+                (sid, GUILD_A, self.a.id, started_at),
+            )
+
+    async def offer_row(self, sid: str = "s1") -> tuple[int, str] | None:
+        found = await self.offers.get(GUILD_A, self.a.id, sid)
+        return None if found is None else (found.minute, found.state)
 
     async def next_after(self, *_: Any) -> int | None:
         return self.newer
@@ -284,6 +304,45 @@ class Importing(sp.Party):
         self.assertIn("Import time: 1 lines, 0 moved by phrases, 1 cue lines, 1 call(s)", shown)
         self.assertNotIn("Frostmaiden", shown)
 
+    async def test_the_offer_is_kept_for_the_website_with_its_minute(self) -> None:
+        await self.run_step()
+        [(_, text, _view)] = self.posts
+        minute, state = cast(tuple[int, str], await self.offer_row())
+        self.assertEqual(state, "offered")
+        self.assertIn(game.short_label(minute), text)  # the page words the same game time
+
+    async def test_a_split_party_keeps_a_split_row_the_page_can_say(self) -> None:
+        await self.split_up()
+        await self.run_step()
+        self.assertEqual((await self.offer_row() or (0, ""))[1], "split")
+
+    async def test_no_dm_screen_still_keeps_the_offer_for_the_website(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET dm_screen_channel_id = NULL WHERE id = %s", (self.a.id,)
+            )
+        await self.run_step()
+        self.assertEqual(self.posts, [])  # nothing to post on
+        self.assertEqual((await self.offer_row() or (0, ""))[1], "offered")
+
+    async def test_a_newer_sessions_offer_expires_the_older_one(self) -> None:
+        await self.run_step()
+        ready = SimpleNamespace(campaign_id=self.a.id, session_id="s2", started_at=2000)
+        await DMBot._offer_import_time_inner(cast(Any, self.me), GUILD_A, cast(Any, ready))
+        self.assertEqual((await self.offer_row("s1") or (0, ""))[1], "expired")
+        self.assertEqual((await self.offer_row("s2") or (0, ""))[1], "offered")
+
+    async def test_a_row_that_cannot_be_kept_never_stops_the_discord_post(self) -> None:
+        cast(Any, self.offers).offer = AsyncMock(side_effect=RuntimeError("down"))
+        await self.run_step()
+        self.assertEqual(len(self.posts), 1)
+
+    async def test_a_result_that_is_not_later_keeps_no_row(self) -> None:
+        await self.press("set", set_to=game.next_dawn(EVENING4))
+        self.rows = [(DM, "At dawn, you wake.")]
+        await self.run_step()
+        self.assertIsNone(await self.offer_row())
+
 
 class Pressing(sp.Party):
     async def asyncSetUp(self) -> None:
@@ -293,6 +352,20 @@ class Pressing(sp.Party):
         self.next_message = 100
         screen._APPLIED.clear()  # (a message id is remembered for the life of the process)
         screen._BEING_APPLIED.clear()
+        self.offers = ImportClockOffers(self.db)
+        cast(Any, self.fake).import_clock_offers = self.offers
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s1', %s, %s, 1000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s1", self.target)
+
+    async def state(self) -> str:
+        found = await self.offers.get(GUILD_A, self.a.id, "s1")
+        assert found is not None
+        return found.state
 
     def pressed(self, user: int = DM) -> Any:
         it_ = self.interaction(user)
@@ -320,6 +393,73 @@ class Pressing(sp.Party):
         self.assertTrue(said)
         self.assertIn("where the imported session ended", said[-1][1])
         self.assertIsNotNone(said[-1][2])  # the Undo button
+
+    async def test_set_it_writes_the_row_the_website_reads(self) -> None:
+        await self.press_button(str(self.target))
+        self.assertEqual(await self.state(), "set")
+
+    async def test_not_now_writes_the_row_too(self) -> None:
+        await self.press_button("no")
+        self.assertEqual(await self.state(), "dismissed")
+
+    async def test_a_press_after_the_website_answered_finds_it_done(self) -> None:
+        await self.offers.settle(GUILD_A, self.a.id, "s1", "dismissed")
+        done = await self.press_button(str(self.target))
+        self.assertEqual(await self.minute(), EVENING4)  # nothing moved
+        self.assertEqual(done.followup.send.await_args.args[0], screen.ALREADY)
+
+    async def test_the_row_says_why_nothing_moved(self) -> None:
+        await self.press("set", set_to=EVENING4 + 1200)
+        await self.press_button(str(self.target))
+        self.assertEqual(await self.state(), "moved_on")
+
+    async def test_a_split_party_ends_the_row_as_split(self) -> None:
+        await self.split_up()
+        await self.press_button(str(self.target))
+        self.assertEqual(await self.state(), "split")
+
+    async def test_a_failure_while_moving_puts_the_offer_back_for_a_second_try(self) -> None:
+        async def boom(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("down")
+
+        original = screen.set_clock
+        screen.set_clock = boom
+        try:
+            await self.press_button(
+                str(self.target)
+            )  # (the button answers FAILED, it does not raise)
+        finally:
+            screen.set_clock = original
+        self.assertEqual(await self.state(), "offered")
+        await self.press_button(str(self.target))
+        self.assertEqual((await self.minute(), await self.state()), (self.target, "set"))
+
+    async def test_an_old_offers_button_after_a_newer_session_replaced_it_is_already_done(
+        self,
+    ) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s2', %s, %s, 2000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s2", self.target + 600)  # replaces s1's
+        done = await self.press_button(str(self.target))
+        self.assertEqual(done.followup.send.await_args.args[0], screen.ALREADY)
+        self.assertEqual(await self.minute(), EVENING4)
+
+    async def test_not_now_on_an_old_message_leaves_the_newer_offer_alone(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s2', %s, %s, 2000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s2", self.target + 600)
+        await self.press_button(f"no:{self.target}")  # the first offer's own button
+        newer = await self.offers.get(GUILD_A, self.a.id, "s2")
+        assert newer is not None
+        self.assertEqual(newer.state, "offered")
 
     async def test_not_now_changes_nothing(self) -> None:
         done = await self.press_button("no")
@@ -368,3 +508,83 @@ class Pressing(sp.Party):
                 cast(discord.Interaction, None), cast(Any, None), cast(re.Match[str], found)
             )
             self.assertEqual(rebuilt.item.custom_id, custom_id)
+
+
+class WebsiteAnswers(sp.Party):
+    """The website's Set it and Not now (#3199): the bot's answer to a queued choice, through the
+    same `set_clock` as Discord's button, with the offer's row saying how it ended."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.press("set", set_to=EVENING4)
+        self.target = EVENING4 + 600
+        self.offers = ImportClockOffers(self.db)
+        cast(Any, self.fake).import_clock_offers = self.offers
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s1', %s, %s, 1000)",
+                (GUILD_A, self.a.id),
+            )
+        await self.offers.offer(GUILD_A, self.a.id, "s1", self.target)
+        self.answer = DMBot._import_clock_choice(cast(Any, self.fake), GUILD_A)
+
+    async def state(self) -> str:
+        found = await self.offers.get(GUILD_A, self.a.id, "s1")
+        assert found is not None
+        return found.state
+
+    async def minute(self) -> int:
+        return int((await self.stored()).clock.minute)
+
+    async def test_set_it_moves_the_clock_once_and_the_row_says_set(self) -> None:
+        await self.answer(self.a.id, "s1", True, DM)
+        self.assertEqual((await self.minute(), await self.state()), (self.target, "set"))
+        await self.answer(self.a.id, "s1", True, DM)  # a second answer finds nothing waiting
+        self.assertEqual((await self.minute(), await self.state()), (self.target, "set"))
+        said = [p for p in self.fake.posted if p[0] == 555]
+        self.assertIn("where the imported session ended", said[-1][1])
+        self.assertIsNotNone(said[-1][2])  # and the Undo button, as Discord's press
+
+    async def test_not_now_moves_nothing_and_the_row_says_dismissed(self) -> None:
+        await self.answer(self.a.id, "s1", False, DM)
+        self.assertEqual((await self.minute(), await self.state()), (EVENING4, "dismissed"))
+
+    async def test_someone_who_is_not_a_dm_changes_nothing(self) -> None:
+        await self.answer(self.a.id, "s1", True, PLAYER)
+        self.assertEqual((await self.minute(), await self.state()), (EVENING4, "offered"))
+
+    async def test_a_clock_that_moved_on_says_moved_on(self) -> None:
+        await self.press("set", set_to=EVENING4 + 1200)
+        await self.answer(self.a.id, "s1", True, DM)
+        self.assertEqual(await self.state(), "moved_on")
+        self.assertEqual(await self.minute(), EVENING4 + 1200)
+
+    async def test_a_split_party_says_split_and_moves_nothing(self) -> None:
+        await self.split_up()
+        before = await self.minute()
+        await self.answer(self.a.id, "s1", True, DM)
+        self.assertEqual((await self.minute(), await self.state()), (before, "split"))
+
+    async def test_an_offer_answered_in_discord_is_left_alone(self) -> None:
+        await screen.ImportTimeButton(self.a.id, "no").callback(self._press("no"))
+        await self.answer(self.a.id, "s1", True, DM)
+        self.assertEqual((await self.minute(), await self.state()), (EVENING4, "dismissed"))
+
+    async def test_a_failure_while_moving_puts_the_offer_back(self) -> None:
+        async def boom(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("down")
+
+        original = screen.set_clock
+        screen.set_clock = boom
+        try:
+            with self.assertRaises(RuntimeError):
+                await self.answer(self.a.id, "s1", True, DM)
+        finally:
+            screen.set_clock = original
+        self.assertEqual(await self.state(), "offered")  # the DM can try again
+
+    def _press(self, what: str) -> Any:
+        it_ = self.interaction(DM)
+        it_.message = SimpleNamespace(id=900, content="offer", edit=AsyncMock())
+        return it_
