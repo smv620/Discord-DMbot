@@ -8,6 +8,7 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
@@ -22,6 +23,7 @@ import {
   type WebRevealTarget,
   type WebView,
 } from "./api";
+import { currentItem, pairFromItem } from "./itemLink";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
@@ -116,6 +118,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
   const [line, setLine] = useState<{ a: string; b: string } | null>(null);
+  // A private message's "Open on the website" can name one line, as `?item=<idA>.<idB>` (#3663): its panel is opened once the
+  // graph is here, or the page says it has been answered (or is not drawn any more).
+  const wantedLine = useRef(((item) => (item === null ? null : pairFromItem(item)))(currentItem()));
+  const [lineGone, setLineGone] = useState(false);
+  const lineTries = useRef(0);
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
   const latest = useRef(0);
   const sayings = useRef(0);
@@ -437,6 +444,24 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   }
 
   useEffect(() => {
+    const want = wantedLine.current;
+    if (want === null || graph === null) return;
+    const [a, b] = want;
+    if (graph.edges.some((e) => (e.a === a && e.b === b) || (e.a === b && e.b === a))) {
+      wantedLine.current = null;
+      setLine({ a, b });
+    } else if (lineTries.current === 0) {
+      // Not drawn around the middle name now: ask for the graph around one end of it, once, before saying it is gone.
+      lineTries.current = 1;
+      void load(a, hops);
+    } else {
+      wantedLine.current = null;
+      setLineGone(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph]);
+
+  useEffect(() => {
     setOverview(null); // (another campaign's names are never shown under this one)
     setAlone(null);
     seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
@@ -693,6 +718,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       </div>
 
       {graph.truncated && <p class="note">{words.truncated}</p>}
+      {lineGone && (
+        <p class="note" role="status">
+          {itemWords.answered}
+        </p>
+      )}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
