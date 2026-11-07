@@ -115,6 +115,10 @@ ODD_NOW = "That doesn't look like something said in the game any more."
 UNKNOWN_NAME_REASON = "a name in it is not one DMbot knows yet"
 # (#3373) Only one particular thing is tracked: "Garret's sled", not "a sled".
 ITEM_REASON = "an item that is not one particular thing"
+# A kind of creature the rules already hold ("owlbears", "an owlbear") is not a name in the story
+# (#3634): the lore read leaves it out too (`background.in_the_rules`); a creature the story names
+# or sets apart ("Owlbear Mama") is not a kind and stays an entry.
+RULES_REASON = "a kind of creature the rules already hold"
 TWO_ENTRIES_REASON = "a name in it could be two different entries"
 SAME_ENTRY_REASON = "it connects an entry to itself"
 STATE_REASON = "that entry can't be in that condition"
@@ -233,6 +237,9 @@ class Proposed:
     described: int = 0  # claims kept for the DM's answer ("Keep a person with no name")
     described_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
     described_dropped: int = 0  # a described person at both ends, or with a name to make: not kept
+    # About how names were said (#3634), counts only:
+    rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
+    tidied: int = 0  # claims with a name that lost a leading "a"/"an" or a bracketed note
 
 
 @dataclass(frozen=True, slots=True)
@@ -803,6 +810,65 @@ def _known_ends(claim: Extracted, names: Names) -> list[str]:
     ]
 
 
+def _a_kind_of_creature(name: str) -> bool:
+    """Is this new name a kind of creature the rules hold ("owlbears", "an owlbear", "three
+    goblins"), in any edition? A proper name ("Owlbear Mama") is not (`rules.is_monster` looks at
+    the kind alone)."""
+    from dmbot.rules import index  # late: the rules data loads on first use
+
+    # said as a kind, not as a name: lower case ("owlbears", "an owlbear", "three goblins"); a
+    # capitalised word ("Azer", "Wolf", "The Owlbear", "Owlbear Mama") may be somebody's name and
+    # is left to the DM. A lower-case article may stand before the kind; nothing else may be a
+    # capital.
+    rest = name
+    for article in ("a ", "an ", "the "):
+        if name.startswith(article):
+            rest = name[len(article) :]
+            break
+    if rest != rest.casefold():
+        return False
+    return index.srd().is_monster(name)
+
+
+# A trailing bracket is dropped only when it reads as a note about the name ("(no name given yet)",
+# "(either Ok or Nysarra)", "(maybe two)", "(unknown)"), never as part of what tells two things
+# apart ("Mira (the baker)", "Dragon (Red)").
+_BRACKET_TAIL = re.compile(
+    r"\s*[(\[][^()\[\]]*\b(?:no name|unnamed|unknown|either|maybe|perhaps|possibly|probably|"
+    r"not sure|unsure|name unknown|or)\b[^()\[\]]*[)\]]\s*$|\s*[(\[]\s*\?\s*[)\]]\s*$",
+    re.IGNORECASE,
+)
+# "a" or "an" as an article: lower case, before a lower-case word ("an owlbear"). "A Ling", "An Lu"
+# and "A. Smith" are names, and a capitalised "A beggar woman" is left as it is rather than guess.
+_INDEFINITE = re.compile(r"^(?:a|an)\s+(?=[a-z])")
+
+
+def tidy_name(name: str) -> str:
+    """How a name is judged (#3634): a trailing bracketed note is not part of it ("(no name given
+    yet)", "(either Ok or Nysarra)") and a leading "a" or "an" is not either ("an owlbear"). "The"
+    is kept: it is part of a title ("The Everlasting Rime"). Nothing is stripped that would leave
+    nothing."""
+    out = name.strip()
+    for _ in range(3):
+        cut = _BRACKET_TAIL.sub("", out)
+        if not cut or cut == out:
+            break
+        out = cut
+    out = _INDEFINITE.sub("", out)
+    return out or name.strip()
+
+
+def tidy_ends(claim: Extracted, known: Collection[str] = ()) -> Extracted:
+    """The claim with both ends tidied (`tidy_name`); the same claim when nothing changed. A name
+    the campaign already holds as said ("a rusty dagger", its own entry) is left as it is: `known`
+    holds the name keys it has."""
+    subject = claim.subject if name_key(claim.subject) in known else tidy_name(claim.subject)
+    obj = claim.object if name_key(claim.object) in known else tidy_name(claim.object)
+    if (subject, obj) == (claim.subject, claim.object):
+        return claim
+    return replace(claim, subject=subject, object=obj)
+
+
 def _generic_items(
     onto: Ontology, claim: Extracted, unknown: Sequence[str], said: Mapping[str, str]
 ) -> bool:
@@ -928,6 +994,7 @@ class ClaimStore:
         waiting = dropped = repeated = 0
         kept_unplaced = unplaced_over_cap = 0
         described = described_over_cap = described_dropped = 0
+        rules_dropped = tidied = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
             onto = await _load_ontology(w)
@@ -978,7 +1045,11 @@ class ClaimStore:
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
-            claims, lists = expand_lists(claims[:limit], names)
+            # (#3634) "an owlbear (maybe two)" is "owlbear": tidied before a list is split, so a
+            # bracketed note with a comma in it goes whole
+            tidy = [tidy_ends(x, names.by_key) for x in claims[:limit]]
+            tidied = sum(1 for was, now in zip(claims, tidy, strict=False) if was != now)
+            claims, lists = expand_lists(tidy, names)
             # How many lines offer each name (a name two lines offer is more likely a real one)
             lines_by_name: dict[str, set[str]] = {}
             not_a_name: Counter[str] = Counter()
@@ -1022,6 +1093,9 @@ class ClaimStore:
                                 not_a_name[k] += 1
                         reason = NOT_A_NAME_REASON
                         unknown = []
+                    elif any(_a_kind_of_creature(n) for n in unknown):
+                        reason, unknown = RULES_REASON, []
+                        rules_dropped += 1
                     elif _generic_items(onto, claim, unknown, said or {}):
                         # A new item that is clearly everyday gear is not made into an entry, so
                         # its claim goes with it (#3373): no owns, carries or kept-in is stored.
@@ -1042,9 +1116,12 @@ class ClaimStore:
             # their names are proposed before this session's own (#1367).
             old: list[tuple[dict[str, Any], Extracted, list[str]]] = []
             for r in leftovers:
-                kept = Extracted(
-                    r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"], r.get("reading"),
+                kept = tidy_ends(
+                    Extracted(
+                        r["subject"], r["relationship"], r["object"], r["details"],
+                        tuple(r["lines"]), r["how"], r.get("reading"),
+                    ),
+                    names.by_key,
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read
@@ -1213,6 +1290,8 @@ class ClaimStore:
             described,
             described_over_cap,
             described_dropped,
+            rules_dropped,
+            tidied,
         )
 
     @staticmethod
