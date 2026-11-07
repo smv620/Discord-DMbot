@@ -143,6 +143,10 @@ AUDIENCE: dict[str, str] = {
             "ui.kind_offer.OpenButton",  # _is_dm on every press (#3033)
             "ui.kind_offer.AnswerButton",  # the same
             "ui.kind_offer.UndoButton",  # the same
+            "ui.deed_card.OpenButton",  # _checked: the presser is one of the campaign's DMs (#3175)
+            "ui.deed_card.RecordButton",  # the same
+            "ui.deed_card.NotButton",  # the same
+            "ui.deed_card.UndoButton",  # the same
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",

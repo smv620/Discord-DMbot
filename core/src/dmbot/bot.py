@@ -513,6 +513,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import (
     contradiction_notes,
+    deed_card,
     dm_links,
     image_fix,
     kept_pictures,
@@ -1694,6 +1695,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
+        self.add_dynamic_items(  # deeds the party did, for the DM to record (#3175)
+            deed_card.OpenButton, deed_card.RecordButton, deed_card.NotButton, deed_card.UndoButton
+        )
         self.add_dynamic_items(  # make the table's repeated words a kind of connection (#3033)
             kind_offer.OpenButton, kind_offer.AnswerButton, kind_offer.UndoButton
         )
@@ -3126,6 +3130,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("script offer", lambda: self.offer_script(table)),
             # Words the table keeps using for a connection can become a kind (#3033).
             ("kind offer", lambda: self.offer_kind(table)),
+            # Deeds the party did, noticed in the session, for the DM to record (#3175).
+            ("deeds to record", lambda: self.offer_deeds(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -10019,6 +10025,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         links_ready.family_notice(waiting),
                     ),
                 )
+
+    async def offer_deeds(self, table: Table) -> None:
+        """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
+        the session reader noticed deeds the party did that mattered to someone and they wait to
+        be recorded. Counts only; the DM looks at each one and presses Record (the DM's own
+        `add_deed`). Only for a campaign whose plan has story memory."""
+        if not self.settings.story_deeds_on or self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            count = await DeedProposals(self.memory).count_waiting(
+                gid, cid, opted_in=await self.consent.consenting(gid)
+            )
+            if count:
+                log.info("Deeds: %d waiting for the DM", count)
+                await self.ask_dm(table, deed_card.ask_for(gid, cid, count))
 
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
