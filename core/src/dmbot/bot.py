@@ -291,6 +291,7 @@ from dmbot.memory import (
     web_actions,
     web_report_requests,
     web_sheets,
+    who_step,
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -348,6 +349,7 @@ from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.memory.vectors import VectorStore
+from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.pictures import sweep as picture_sweep
@@ -606,6 +608,9 @@ CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
+
+WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
+WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
 
 SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
@@ -3074,6 +3079,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # Who each name to check could be (#3602): after the extractor made them, inside the
+            # same call limit; off unless its switch is on.
+            ("who is this", lambda: self.write_who(table)),
             # After the extractor (its readings are beliefs too); off unless the switch is on.
             ("contradiction grades", lambda: self.grade_contradictions(table)),
             # The report for the website (#2661): reuses those grades, then sorts the differences.
@@ -8812,6 +8820,118 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.warning(
                 "Story-plan reader: couldn't post the finish notice (%s)", type(exc).__name__
             )
+
+    async def write_who(self, table: Table) -> None:
+        """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
+        each waiting name could be (see `memory.who_step`). It only ranks: nothing is applied.
+        Inside the extractor's session and daily call limits, only lines of people who agree, the
+        DM's own ranking (hidden entries may be a choice; the answers are DM-only), counts only in
+        the log."""
+        if (
+            not self.settings.story_who_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return  # (off means off: nothing is read or asked)
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            session = await transcripts.session(gid, sid)
+            _after_ms, used = await transcripts.extraction(gid, sid)
+            now = int(time.time())
+            allowed = extractor.calls_left(
+                self.settings.story_extractor_max_calls,
+                used,
+                self.settings.story_extractor_max_calls_day,
+                await transcripts.extractor_calls_since(gid, cid, now - 86400),
+            )
+            answers = WhoAnswers(memory)
+            await answers.sweep(gid, cid)  # (an answer stays only while its name is open)
+            open_names = [
+                e
+                for e in await memory.entities(gid, cid, statuses=("proposed", "confirmed"))
+                if who_step.is_open_name(e)
+            ]
+            missing = set(await answers.missing(gid, cid, [e.id for e in open_names]))
+            waiting = [e for e in open_names if e.id in missing]
+            if not waiting or allowed <= 0:
+                return  # (nothing to ask, or no call left: no lookup or transcript is read)
+            agreed = await self.consent.consenting(gid)
+            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            lookup = CampaignLookup.build(await memory.lookup_data(gid, cid))
+            # (every open name is left out, not only the ones asked this time: a name that waits is
+            # never offered as another's choice, even if it is confirmed between the two reads)
+            choices = who_step.candidates_from(
+                lookup, include_hidden=True, leave_out=[e.id for e in open_names]
+            )
+            report = who_step.Report()
+            pending: list[who_step.Pending] = []
+            for entity in waiting[:WHO_SCAN_BOUND]:
+                if len(pending) >= WHO_PER_SESSION:
+                    break  # (the cap counts names asked about, not names with nothing to offer)
+                report.names += 1
+                probe = who_step.build(
+                    entity, choices, number=0, scene_speaker_ids=(), include_hidden=True
+                )
+                if probe is None:
+                    report.no_choices += 1  # (nothing to offer: its lines are not even read)
+                    continue
+                pointers = await memory.mentions(gid, cid, entity.id)
+
+                async def held(_i: str, found: list[tuple[str, int | None]] = pointers) -> Any:
+                    return found
+
+                lines, speakers = await who_step.lines_for(
+                    entity.id, held, transcripts, gid, dm_ids, agreed
+                )
+                if pointers and not lines:
+                    report.no_lines += 1  # (it was said, but no line of a recorded person is left)
+                    continue
+                built = who_step.build(
+                    entity,
+                    choices,
+                    number=len(pending) + 1,
+                    lines=lines,
+                    speaker_ids=speakers,
+                    scene_speaker_ids=(),
+                    include_hidden=True,
+                )
+                if built is None:
+                    report.no_choices += 1
+                    continue
+                pending.append(built)
+            if not pending:
+                log.info(report.line())
+                return
+
+            async def count_call() -> None:
+                await transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                )
+
+            await who_step.run(
+                ai,
+                answers,
+                pending,
+                guild_id=gid,
+                campaign_id=cid,
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: ai.model,
+                session_started_at=session.started_at if session else None,
+                max_calls=allowed,
+                count_call=count_call,
+                report=report,
+            )
+            log.info(report.line())
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""

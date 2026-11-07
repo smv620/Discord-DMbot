@@ -146,6 +146,10 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_READINGS": "1"}).story_readings_on)
         self.assertFalse(load_settings(BASE).story_deeds_on)  # off unless asked (#3175)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_DEEDS": "1"}).story_deeds_on)
+        self.assertFalse(load_settings(BASE).story_who_on)  # off unless asked (#3602)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_WHO": "on"}).story_who_on)
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_STORY_WHO": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_DEEDS": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
