@@ -7,6 +7,8 @@ import type {
   MyNpcNote,
   NameAnswer,
   NameAnswerResult,
+  IconChoice,
+  ClarifyName,
   NameCheckList,
   NamesFixed,
   KindOffer,
@@ -83,6 +85,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    // One name on its own page (#3604): the same address as its answer, read with GET; the core door comes with #3596/#3602.
+    clarifyName: async (ref, id) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`)) as ClarifyName,
     answerNameCheck: async (ref, id, answer) => {
       await call(
         "POST",
@@ -343,6 +348,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
     // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
+    // The icon choice is instant: the door answers with what it was and what it is now (#3621).
+    setPcIcon: async (ref, entityId, choice) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       let queued: { answer: string };

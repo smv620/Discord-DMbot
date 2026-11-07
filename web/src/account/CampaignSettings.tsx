@@ -10,6 +10,7 @@ import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
+import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
 import { KIND_OFFERS_LIVE } from "../content/kind-offers-switch";
 import { RULESETS_LIVE } from "../content/rulesets-switch";
@@ -290,6 +291,9 @@ export default function CampaignSettings({
       )}
       {KIND_OFFERS_LIVE && api.campaignKindOffers && (
         <LazyPanel load={() => import("./KindOffersPanel")} what="the words DMbot stopped asking about" props={{ api, campaignRef }} />
+      )}
+      {FEATURES_LIST_LIVE && page.features && (
+        <LazyPanel load={() => import("./FeaturesList")} what="what is switched on" props={{ features: page.features }} />
       )}
       {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
         <LazyPanel
