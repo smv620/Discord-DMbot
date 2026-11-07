@@ -108,7 +108,7 @@ def is_old_label(text: str) -> bool:
 
 def from_old_label(text: str) -> str:
     """ "Ken's sister (name unknown)'s son (name unknown)" as it is called now: "unnamed - Ken's
-    sister's son". Migration 0378 does the same in SQL; a backup is brought forward with this."""
+    sister's son". Migration 0379 does the same in SQL; a backup is brought forward with this."""
     return PREFIX + _OLD_CUT.sub("", _OLD_WHOLE.sub("", text))
 
 
@@ -145,7 +145,7 @@ def stored(what: str, anchor_name: str | None = None) -> str:
 
 
 # The last resort that keeps a name unique (#3736). English month names, fixed, so the words are the
-# same whatever the server's locale, and the same as migration 0378's SQL `Mon`.
+# same whatever the server's locale, and the same as migration 0379's SQL `Mon`.
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 _FIRST_SEEN = re.compile(r"\s*\(first seen [^)]*\)$")
 

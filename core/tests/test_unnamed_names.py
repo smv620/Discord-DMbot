@@ -1,6 +1,6 @@
 """Every person the story never named is called "unnamed - <description>" (#3736): the name is built
 in one place, a chain reads once, two that would read the same are told apart by when they were
-first seen, and migration 0378 rewrites the stored copies of the old "(name unknown)" labels. The
+first seen, and migration 0379 rewrites the stored copies of the old "(name unknown)" labels. The
 migration runs on tables that hold rows, held back until they are written (CLAUDE.md, #704).
 Invented names."""
 
@@ -20,7 +20,7 @@ from dmbot.schema import MIGRATIONS
 from tests.pg import REQUIRE_DB, TEST_URL
 
 GUILD, DM = 4346, 99
-NAME = "0378_unnamed_names"
+NAME = "0379_unnamed_names"
 SEVEN_NOV = int(datetime(2026, 11, 7, 19, 5, tzinfo=UTC).timestamp())
 
 
@@ -101,7 +101,7 @@ class Unique(unittest.TestCase):
 
 
 class WithOldRows(unittest.IsolatedAsyncioTestCase):
-    """A campaign with Ken, migrated up to just before 0378."""
+    """A campaign with Ken, migrated up to just before 0379."""
 
     async def asyncSetUp(self) -> None:
         if not TEST_URL:

@@ -610,7 +610,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
 
 
 def _unnamed_names(rows: list[Any]) -> list[Any]:
-    """A backup from before #3736 reads as migration 0378 left the database: each unnamed person's
+    """A backup from before #3736 reads as migration 0379 left the database: each unnamed person's
     stored "<description> (name unknown)" becomes "unnamed - <description>", and so does the label a
     joined person left on the entry it was joined into (its key worked out again; its sound codes
     are worked out again on load anyway). Two live people whose names would then read the same are
@@ -650,7 +650,7 @@ def _unnamed_names(rows: list[Any]) -> list[Any]:
 def _unique_unnamed(rows: list[Any]) -> list[Any]:
     """Live unnamed people whose names read the same: the later ones (by when they were made) get
     "(first seen …)" in their description and their name, as `unnamed.unique_what` gives a new one
-    (migration 0378 does the same in the database)."""
+    (migration 0379 does the same in the database)."""
     live = sorted(
         (
             (int(r.get("created_at") or 0), str(r.get("id")), i)
