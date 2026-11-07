@@ -74,6 +74,20 @@ class WithFeed(DatabaseTest):
 
 
 class TheFeed(WithFeed):
+    async def test_a_feed_row_carries_the_build_that_wrote_it(self) -> None:
+        """Lineage (#3739, part 4): the row says which build asked, for debugging old rows."""
+        import os
+        from unittest import mock
+
+        commit = "d" * 40
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": commit}), self.job():
+            entry = ai_feed.begin("a question", "careful")
+            await settle()
+            ai_feed.done(entry, "an answer")
+            await settle()
+        stamps = {r["made_by_commit"] for r in await self.rows()}
+        self.assertEqual(stamps, {commit})
+
     async def test_a_prompt_and_its_reply_are_cut_and_matched_by_number(self) -> None:
         with self.job():
             first = ai_feed.begin(LONG, "careful")

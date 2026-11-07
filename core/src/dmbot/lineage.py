@@ -76,21 +76,27 @@ STAMPED_TRANSCRIPTS = (
     "transcript_sessions", "transcript_lines", "session_imports", "said_as_suggestions",
     "session_notes",
 )  # fmt: skip
-STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS) | frozenset(STAMPED_TRANSCRIPTS)
+# Part 4: the rest (migration 0382). `memory_corrections` is stamped too: a reader may write it.
+STAMPED_REST = (
+    "ai_feed", "map_notes", "plot_checks", "plot_issues", "plot_chat", "import_clock_offers",
+    "character_sheets", "memory_corrections",
+)  # fmt: skip
+STAMPED = (
+    frozenset(STAMPED_MEMORY)
+    | frozenset(STAMPED_RECAPS)
+    | frozenset(STAMPED_TRANSCRIPTS)
+    | frozenset(STAMPED_REST)
+)
 
 # Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
 # (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
 # moves its tables to `STAMPED`; the list ends empty.
-NOT_YET: tuple[str, ...] = (
-    # part 4: the rest
-    "ai_feed", "map_notes", "campaign_pictures", "picture_actions", "plot_chat", "plot_checks",
-    "plot_fine", "plot_issues", "pack_suggestions", "rule_set_suggestions", "import_clock_offers",
-    "character_sheets", "memory_corrections",
-)  # fmt: skip
+NOT_YET: tuple[str, ...] = ()  # every part is in: nothing is left to decide
 
 _DM = "what the DM wrote or chose"
 _QUEUE = "a queue of the DM's website choices, waiting for the bot"
 _PLUMBING = "bookkeeping, not something DMbot generated"
+_POSTED = "a picture a person posted: DMbot only keeps the file"
 # Campaign tables that are never stamped, each with why. A new campaign table must be stamped or
 # be added here with its reason (the catalog test, `tests/test_lineage_catalog.py`).
 NOT_STAMPED: dict[str, str] = {
@@ -138,6 +144,9 @@ NOT_STAMPED: dict[str, str] = {
             "report_answers",
             "secret_exposures",
             "recap_holds",
+            "plot_fine",
+            "pack_suggestions",
+            "rule_set_suggestions",
             "transcript_suggestions",
             "import_plays",
             "import_speakers",
@@ -160,6 +169,7 @@ NOT_STAMPED: dict[str, str] = {
             "web_rule_actions",
             "web_sheet_actions",
             "campaign_handover_offers",
+            "picture_actions",
             "merge_restores",
         ),
         _QUEUE,
@@ -184,6 +194,7 @@ NOT_STAMPED: dict[str, str] = {
         ),
         _PLUMBING,
     ),
+    "campaign_pictures": _POSTED,
 }
 
 
