@@ -25,10 +25,11 @@ PAGE_CHOICES = (
 )  # what the page may send (custom: #3623)
 
 
-def attach(page: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+def attach(page: dict[str, Any], rows: list[dict[str, Any]], *, tools: bool = True) -> None:
     """Adds `icon` (`{kind, url}`, or None for the page's own 👤), `iconChoice` and `canSetIcon` to
     each player character node of a graph page that has a row, in place; `iconHas` (which pictures
-    exist) only where the caller may change it."""
+    exist) only where the caller may change it. `tools` false is the DM's Players view: exactly
+    what a player gets, so nothing to set and nothing about which pictures exist."""
     by_id = {str(r["id"]): r for r in rows}
     for node in page.get("nodes", []):
         row = by_id.get(str(node["id"]))
@@ -36,12 +37,15 @@ def attach(page: dict[str, Any], rows: list[dict[str, Any]]) -> None:
             continue
         node["icon"] = row.get("icon")
         node["iconChoice"] = row.get("choice", "default")
-        node["canSetIcon"] = bool(row.get("canSet"))
-        if row.get("canSet"):
+        can = bool(row.get("canSet")) and tools
+        node["canSetIcon"] = can
+        if can:
             node["iconHas"] = row.get("has") or {"discord": False, "dndbeyond": False}
 
 
-async def with_icons(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+async def with_icons(
+    db: Database, session: Session, ref: str, page: dict[str, Any], *, tools: bool = True
+) -> None:
     """Reads the door and adds the icons to `page`. A campaign that vanished meanwhile has none."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
@@ -50,7 +54,7 @@ async def with_icons(db: Database, session: Session, ref: str, page: dict[str, A
         cur = await conn.execute("SELECT dmbot_web_pc_icons(%s, %s) AS r", (guild_id, campaign_id))
         found = await cur.fetchone()
     rows = found["r"] if found is not None and isinstance(found["r"], list) else []
-    attach(page, rows)
+    attach(page, rows, tools=tools)
 
 
 async def set_icon(

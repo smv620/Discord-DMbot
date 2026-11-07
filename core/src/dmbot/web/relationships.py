@@ -355,7 +355,8 @@ async def read_web(
     # look (a player's, or Players View) the player's
     await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
     # each player character's picture, for the nodes this person may see (#3621)
-    await pc_icons.with_icons(db, session, ref, page)
+    # (the DM's Players view is what a player gets, so it carries no tools for the picture)
+    await pc_icons.with_icons(db, session, ref, page, tools=view != "players")
     return page
 
 
