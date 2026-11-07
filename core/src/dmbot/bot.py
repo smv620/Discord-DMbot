@@ -4445,6 +4445,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't save that the recording notice was posted")
 
     def name_of(self, guild_id: int, user_id: int) -> str:
+        if user_id < 0:  # a speaker without Discord (#3690): never a mention or a member lookup
+            return "a player without Discord"
         guild = self.get_guild(guild_id)
         member = guild.get_member(user_id) if guild else None
         return member.display_name if member else f"<@{user_id}>"
