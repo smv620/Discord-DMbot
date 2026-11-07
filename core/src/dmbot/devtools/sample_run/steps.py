@@ -525,7 +525,14 @@ async def run_steps(
 # through the import's own code (`dmbot.web.imports`), so the speaker rows and the uploader's
 # confirmation (`import_consents`) are written by the same doors, with the same checks, as for any
 # import, never by this tool. The doors only answer a signed-in DM, so the tool opens a website
-# session for the DM for the length of the call and removes it at the end.
+# session for the DM for the length of the call and removes it at the end (its server list is made
+# up for the one server: this tool already holds the database, so it asks Discord for nothing).
+#
+# Two things to know. The players' speakers are made one step BEFORE the import (their characters
+# need the numbers, and the import's cleaning needs the characters), so a refused or failed import
+# leaves four named speakers with no confirmation record in the sample campaign; the next run
+# deletes that campaign. And "the uploader confirmed" is recorded for the sample's made-up players
+# and, if it has not agreed in Discord, the DM: the run only ever touches the one sample campaign.
 
 
 @contextlib.asynccontextmanager

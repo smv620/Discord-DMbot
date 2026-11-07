@@ -142,16 +142,25 @@ class TheBackup(WithGhost):
         self.assertEqual((int(row["played_by"]), int(row["speakers"])), (self.ghost, 1))
         self.assertTrue(written.value.id)
 
-    async def test_a_file_whose_player_has_no_speaker_is_refused_as_damaged(self) -> None:
-        from dmbot.campaigns.models import CampaignError
-
+    async def test_a_backup_of_a_campaign_whose_speaker_was_removed_still_restores(self) -> None:
         await self.make(self.one.id, self.ghost)
+        async with self.db.guild(THURSDAY.id) as conn:  # what removing a speaker's lines leaves
+            await conn.execute(
+                "DELETE FROM campaign_speakers WHERE guild_id = %s AND campaign_id = %s",
+                (THURSDAY.id, self.one.id),
+            )
         store = CampaignStore(self.db)
         register_backup_sections(
             store, forget_audio=lambda g, c: None, consenting=ConsentStore(self.db).consenting
         )
         data, parts = await store.export_set(THURSDAY.id, self.one.id)
-        self.assertTrue(data["sections"]["campaign_speakers"])
-        data["sections"]["campaign_speakers"] = []  # the player's speaker is not in the file
-        with self.assertRaises(CampaignError):
-            await store.import_backup(THURSDAY.id, data, ALICE.id, parts=parts)
+        copy = await store.import_backup(THURSDAY.id, data, ALICE.id, parts=parts)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT played_by FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND name = 'Tess' AND type = 'character'",
+                (THURSDAY.id, copy.id),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(int(row["played_by"]), self.ghost)  # a player not on Discord, no row

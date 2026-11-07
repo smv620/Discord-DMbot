@@ -5911,6 +5911,9 @@ async def _check_player(w: Changes, played_by: int | None) -> None:
 
 
 async def _ensure_person(w: Changes, user_id: int) -> str:
+    # (Callers pass a transcript speaker or an existing `played_by`; the rule that a negative
+    # number must be this campaign's own speaker is `_check_player`, in `add_entity` and
+    # `confirm_entity` where a player is set.)
     """The campaign's entry for this Discord user, made if there is none. A person made
     here is named `Player 1234` (the last four digits of their ID, never their Discord
     name: that is read only in the live session) until a better name is known (#1188)."""

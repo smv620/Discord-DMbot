@@ -205,20 +205,21 @@ async def run(
         shown = steps.speaker_names(transcript, labels)
         player_names = sorted({shown[label] for label in roles})
 
+        made: dict[str, int] = {}  # the players' speaker numbers, by the name the import reads
+
         async def speakers_step() -> Mapping[str, int | str]:
             """The four players are made as speakers without Discord, by the import's own door,
             before their characters are set (the cleaning of the import needs them)."""
             if not off:
                 return {"on Discord": 1}
-            async with steps.site_session(db, dm, gid, now=now) as site:
-                made = await steps.make_speakers(db, site, gid, cid, player_names)
+            async with steps.site_session(db, dm, gid, now=int(time.time())) as site:
+                made.update(await steps.make_speakers(db, site, gid, cid, player_names))
             return {"made": len(made)}
 
         async def correct_step() -> Mapping[str, int | str]:
             who = players
             if off:  # label key (ist...) -> the speaker's negative number
-                found = await steps.speaker_ids(db, gid, cid)
-                who = {roles[label]: found[shown[label].casefold()] for label in roles}
+                who = {roles[label]: made[shown[label]] for label in roles}
             got = await characters.correct_player_characters(db, memory, gid, cid, who)
             return {"corrected": got.corrected, "of those made": got.made}
 
@@ -236,9 +237,12 @@ async def run(
                 if dm not in agreed:
                     who_dm["confirmed"] = True
                 choice[dm_label] = who_dm
-            async with steps.site_session(db, dm, gid, now=now) as site:
+            fresh = int(
+                time.time()
+            )  # (the lore wait was long: a website session must not be stale)
+            async with steps.site_session(db, dm, gid, now=fresh) as site:
                 sid = await steps.import_through_site(
-                    db, site, gid, cid, session_text, choice, started_at=started, now=now
+                    db, site, gid, cid, session_text, choice, started_at=started, now=fresh
                 )
             got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
             return {**got, "players not on Discord": len(roles)}
