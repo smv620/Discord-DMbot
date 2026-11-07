@@ -6,10 +6,10 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 | Player character | Username |
 |---|---|
-| Cerric Vanya'elen | `user_ist` |
-| Belleros Stormgrace | `user_jac` |
-| Okthandom Korran | `user_eri` |
-| Claude Ambere | `user_owe` |
+| Cerric Vanya'elen | `player_ist` |
+| Belleros Stormgrace | `player_jac` |
+| Okthandom Korran | `player_eri` |
+| Claude Ambere | `player_owe` |
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 

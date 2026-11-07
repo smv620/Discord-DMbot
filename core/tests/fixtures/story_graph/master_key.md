@@ -2,7 +2,7 @@
 
 What the graph should hold after the [sample lore](https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing) and then the [sample session](https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing) are read into one campaign: the two keys ([lore_key.md](lore_key.md), [session_key.md](session_key.md)) together, each tie once. The lore comes first and the session after it, so where they disagree about what is current, the session wins. Both documents are linked in the [README](README.md), not copied. The line numbers are lines of each document's plain-text export.
 
-**Test players** (made-up usernames): Cerric Vanya'elen `user_ist`, Belleros Stormgrace `user_jac`, Okthandom Korran `user_eri`, Claude Ambere `user_owe`.
+**Test players** (made-up names, players who are not on Discord): Cerric Vanya'elen `player_ist`, Belleros Stormgrace `player_jac`, Okthandom Korran `player_eri`, Claude Ambere `player_owe`.
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 

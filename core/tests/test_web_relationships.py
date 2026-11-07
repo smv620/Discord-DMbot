@@ -297,7 +297,7 @@ class Shaping(unittest.TestCase):
             self.row("2", "a", "b", "enemy_of", 2),
             self.row("3", "a", "b", "owns", 3, secret=True),
         ]
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         self.assertEqual((edge["a"], edge["b"]), ("a", "b"))  # the smaller id first
         self.assertEqual((edge["label"], edge["more"]), ("is an enemy of", 2))
         links = {x["id"]: x for x in edge["links"]}
@@ -314,7 +314,7 @@ class Shaping(unittest.TestCase):
             self.row("2", "a", "b", "serves", 2),
             self.row("3", "a", "b", "ally_of", 3),  # reads the same either way: no back
         ]
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         links = {x["id"]: x for x in edge["links"]}
         self.assertEqual(links["1"]["back"], "has as a member")
         self.assertEqual(links["2"]["back"], "is the boss of")
@@ -333,7 +333,7 @@ class Shaping(unittest.TestCase):
         kinds = {"a": "npc", "c": "place", "e": "player_character"}  # (g is not in the nodes)
         by_id = {
             x["id"]: x
-            for e in relationships.edges_from(rows, can_edit=True, kinds=kinds)
+            for e in relationships.edges_from(rows, can_edit=True, is_dm=True, kinds=kinds)
             for x in e["links"]
         }
         self.assertEqual(by_id["1"]["words"], "was last seen in")
@@ -380,7 +380,7 @@ class Shaping(unittest.TestCase):
 
     def test_the_old_words_stay_when_no_kinds_are_given(self) -> None:
         rows = [self.row("1", "a", "b", "located_in", 1)]
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         self.assertEqual(edge["links"][0]["words"], "is in")
 
     def test_the_secret_flag_is_a_dms_only_and_never_picks_the_label(self) -> None:
@@ -388,7 +388,7 @@ class Shaping(unittest.TestCase):
             self.row("1", "a", "b", "knows", 1),
             self.row("2", "a", "b", "owns", 2, secret=True),
         ]
-        (for_dm,) = relationships.edges_from(rows, can_edit=True)
+        (for_dm,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         (for_member,) = relationships.edges_from(rows, can_edit=False)
         self.assertEqual(for_dm["label"], for_member["label"])
         self.assertEqual(for_dm["label"], "knows")  # the secret one is newest, and not the label
@@ -396,12 +396,12 @@ class Shaping(unittest.TestCase):
 
     def test_only_secret_connections_still_give_a_label(self) -> None:
         rows = [self.row("1", "a", "b", "owns", 1, secret=True)]
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         self.assertEqual(edge["label"], "owns")
 
     def test_the_words_of_a_said_connection_are_its_label(self) -> None:
         rows = [self.row("1", "a", "b", "associated_with", 1, detail="sworn on the ashes of")]
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         # shown in curly quotes so they are not taken for DMbot's wording; the raw words stay
         # beside them for the edit form, and the label and the back side follow (#3574)
         link = edge["links"][0]
@@ -421,7 +421,7 @@ class Shaping(unittest.TestCase):
             self.row("1", "a", "b", "owns", 1),
             self.row("2", "c", "d", "associated_with", 2, detail=""),
         ]
-        first, second = relationships.edges_from(rows, can_edit=True)
+        first, second = relationships.edges_from(rows, can_edit=True, is_dm=True)
         self.assertEqual(first["links"][0]["words"], "owns")
         self.assertNotIn("rawWords", first["links"][0])
         self.assertNotIn("\u201c", second["links"][0]["words"])
@@ -706,7 +706,7 @@ class TheCheckWords(unittest.TestCase):
             {"id": "x" * 32, "a": "a" * 32, "b": "b" * 32, "predicate": "knows", "detail": "",
              "secret": False, "at": 1},
         ]  # fmt: skip
-        (edge,) = relationships.edges_from(rows, can_edit=True)
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
         self.assertEqual(edge["links"][0]["check"], "")
 
     def test_nothing_or_something_else_is_no_words(self) -> None:

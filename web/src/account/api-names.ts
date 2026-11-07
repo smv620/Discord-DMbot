@@ -10,6 +10,7 @@ import type {
   NameCheckList,
   NamesFixed,
   NamesPage,
+  PlaceSpelling,
   ToldName,
   NpcPage,
   CampaignNameChecks,
@@ -153,6 +154,31 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       // was changed", so nobody tries a merge or remove twice.
       throw new ApiError("still-waiting");
     },
+    placeSpellings: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/place-spellings`)) as {
+        spellings: PlaceSpelling[];
+      }).spellings,
+    // Queued like any name change (the bot confirms or turns down the proposed name), then waited for.
+    answerPlaceSpelling: async (ref, spelling, yes) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(spelling.placeId)}`, {
+        action: yes ? "spelling-yes" : "spelling-no",
+        alias: spelling.id,
+      })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
     toldPanel: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/told-panel`)) as { names: ToldName[] }).names,
     nameThem: async (ref, id, step, onLook) => {
@@ -249,7 +275,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
       const kept = (got as { kept?: unknown }).kept;
-      return typeof kept === "number" ? { kept } : {};
+      const batch = (got as { batch?: unknown }).batch; // the change an answer made, for its Undo (#3645)
+      return { ...(typeof kept === "number" ? { kept } : {}), ...(typeof batch === "number" ? { batch } : {}) };
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
