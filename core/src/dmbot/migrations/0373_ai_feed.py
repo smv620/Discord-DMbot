@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from dmbot.migrations._shared import _isolate
 
-AI_FEED = r"""
+AI_FEED = (
+    r"""
     -- One row per AI call of one lore upload or session import (`kind`, `job_id`), numbered `n`
     -- = 1, 2, 3... in the order the calls were written. The prompt and the reply are cut to
     -- their first 500 characters (then `[...]`) in Python before they are written, and the
@@ -43,8 +44,44 @@ AI_FEED = r"""
         PRIMARY KEY (guild_id, campaign_id, kind, job_id, n)
     );
     CREATE INDEX ai_feed_age ON ai_feed (at);
-    """ + _isolate("ai_feed")
+    """
+    + _isolate("ai_feed")
+    + r"""
+    -- "Stop recording me" empties the server's feed (#3710). The website's Stop route runs
+    -- ConsentStore.revoke as the signed-in person, whose role has no right on the table, so the
+    -- delete goes through this one function: it deletes this server's rows and nothing else, and
+    -- answers how many. The bot (no signed-in person) may call it for the server it is working in;
+    -- a signed-in person only for a server on their own list.
+    CREATE FUNCTION dmbot_ai_feed_forget(g BIGINT) RETURNS INTEGER
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        gone INTEGER;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR (dmbot_current_user() IS NOT NULL
+               AND NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))) THEN
+            RETURN 0;
+        END IF;
+        DELETE FROM ai_feed WHERE guild_id = g;
+        GET DIAGNOSTICS gone = ROW_COUNT;
+        RETURN gone;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_ai_feed_forget(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_ai_feed_forget(BIGINT) FROM PUBLIC;
+    """
+)
 
 SQL = AI_FEED
 
 ISOLATED_TABLES: tuple[str, ...] = ("ai_feed",)
+
+WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
+    ("dmbot_ai_feed_forget", "dmbot_ai_feed_forget(BIGINT)"),
+)
