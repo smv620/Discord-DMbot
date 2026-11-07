@@ -70,7 +70,6 @@ export interface Campaign {
   canDelete?: boolean;
 }
 
-/** One campaign's own page (#2416): what to call it, and whether the person runs it. */
 /** What the bot has switched on, as it wrote it when it last started (#3693): names and sentences only. */
 export interface FeaturesList {
   /** Unix seconds. */
@@ -79,6 +78,7 @@ export interface FeaturesList {
   off: string[];
 }
 
+/** One campaign's own page (#2416): what to call it, and whether the person runs it. */
 export interface CampaignPage {
   ref: string;
   name: string;

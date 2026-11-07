@@ -4,13 +4,13 @@
 // kept). A choice is sent to the bot through the website's queue; the bot applies it exactly as
 // Discord's button does and the page waits for its answer. Hand over, pause and delete stay in
 // Discord, and their steps are shown only to the campaign's owner.
-import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
+import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
 import { RULESETS_LIVE } from "../content/rulesets-switch";
 import { STORY_MODE_LIVE } from "../content/story-mode-switch";

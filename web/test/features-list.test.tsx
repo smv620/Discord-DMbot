@@ -62,13 +62,13 @@ describe("in the campaign settings", () => {
     live.on = false;
     const { api, page: p } = await page();
     const { unmount } = render(<CampaignSettings api={api} campaignRef="100.cmp1" page={p} />);
-    await screen.findByText(/Pause|pause/i).catch(() => {});
+    await screen.findByRole("heading", { name: /settings/i });
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
     unmount();
     live.on = true;
     const { features: _gone, ...without } = p;
     render(<CampaignSettings api={api} campaignRef="100.cmp1" page={without} />);
-    await new Promise((ok) => setTimeout(ok, 50));
+    await screen.findByRole("heading", { name: /settings/i });
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
   });
 });

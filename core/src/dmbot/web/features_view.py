@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +28,12 @@ def _text(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    if not text or len(text) > MAX_TEXT or any(ord(c) < 32 or ord(c) == 127 for c in text):
+    # (Cf: zero-width and right-to-left override characters: a line could pass as another.)
+    if (
+        not text
+        or len(text) > MAX_TEXT
+        or any(ord(c) < 32 or ord(c) == 127 or unicodedata.category(c) == "Cf" for c in text)
+    ):
         return None
     return text
 
@@ -37,9 +44,14 @@ def read_features(directory: str) -> dict[str, Any] | None:
         return None
     path = Path(directory) / FILE
     try:
-        if path.stat().st_size > MAX_BYTES:
+        # Never follow a link out of the volume, and never read more than the limit even if the file
+        # grows while it is read.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as handle:
+            data = handle.read(MAX_BYTES + 1)
+        if len(data) > MAX_BYTES:
             return None
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(data.decode("utf-8"))
     except (OSError, ValueError, RecursionError):
         return None
     if not isinstance(raw, dict) or raw.get("version") != 1:
@@ -49,6 +61,7 @@ def read_features(directory: str) -> dict[str, Any] | None:
     if (
         not isinstance(written, int)
         or isinstance(written, bool)
+        or not 0 < written < 10**11  # (a sane time in seconds: the page shows it as a date)
         or not isinstance(on_raw, list)
         or not isinstance(off_raw, list)
         or len(on_raw) > MAX_ITEMS
@@ -64,5 +77,8 @@ def read_features(directory: str) -> dict[str, Any] | None:
         on.append({"name": name, "words": words})
     off = [_text(n) for n in off_raw]
     if any(n is None for n in off):
+        return None
+    # A name appears once, so the page's keys are unique.
+    if len({d["name"] for d in on}) != len(on) or len(set(off)) != len(off):
         return None
     return {"writtenAt": written, "on": on, "off": [n for n in off if n is not None]}

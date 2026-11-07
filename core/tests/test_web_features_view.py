@@ -62,6 +62,27 @@ class Reader(unittest.TestCase):
             self.put(content)
             self.assertIsNone(self.read(), str(content)[:60])
 
+    def test_a_link_a_directory_a_bad_encoding_and_odd_items_are_none(self) -> None:
+        here = Path(self.dir.name) / features_view.FILE
+        target = Path(self.dir.name) / "other.json"
+        target.write_text(json.dumps(GOOD), encoding="utf-8")
+        here.symlink_to(target)
+        self.assertIsNone(self.read())  # never followed out of the volume
+        here.unlink()
+        here.mkdir()
+        self.assertIsNone(self.read())
+        here.rmdir()
+        here.write_bytes(b"\xff\xfe{")
+        self.assertIsNone(self.read())
+        for content in (
+            {**GOOD, "on": ["text"]},
+            {**GOOD, "on": [{"name": "A\u202eB", "words": "x"}]},  # a right-to-left override
+            {**GOOD, "on": [{"name": "A", "words": "x"}, {"name": "A", "words": "y"}]},
+            {**GOOD, "writtenAt": 10**12},
+        ):
+            self.put(content)
+            self.assertIsNone(self.read(), str(content)[:60])
+
     def test_a_file_over_the_size_limit_is_none(self) -> None:
         self.put(json.dumps({**GOOD, "pad": "x" * features_view.MAX_BYTES}))
         self.assertIsNone(self.read())
