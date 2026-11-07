@@ -193,6 +193,14 @@ def _valid(column: str, value: object) -> bool:
         return is_id(value)
     if column in _VERSIONS:
         return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
+    if column == "played_by":
+        # A Discord user (positive), or a speaker of this campaign without Discord (negative,
+        # #3690): that one is checked against the restored speakers when they load.
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and (0 <= value <= INT64_MAX or -INT64_MAX <= value < 0)
+        )
     if column in _INTS:
         return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
     if column in _LISTS:

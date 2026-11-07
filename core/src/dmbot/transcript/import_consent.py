@@ -103,6 +103,20 @@ class SpeakersSection:
                 " created_at) VALUES (%s, %s, %s, %s, %s, %s)",
                 [(guild_id, campaign_id, *row) for row in checked],
             )
+        # A character played by a speaker without Discord (#3690) points at that speaker's own
+        # number, which a restore keeps as it was (see the module docstring), so every negative
+        # player must be one of the speakers just loaded. This runs before the erasures: a speaker
+        # the DM removed later leaves a number with no row, which readers treat as "a player not
+        # on Discord".
+        cur = await conn.execute(
+            "SELECT 1 FROM memory_entities e WHERE e.guild_id = %s AND e.campaign_id = %s"
+            " AND e.played_by < 0 AND NOT EXISTS (SELECT 1 FROM campaign_speakers s"
+            "  WHERE s.guild_id = e.guild_id AND s.campaign_id = e.campaign_id"
+            "  AND s.user_id = e.played_by) LIMIT 1",
+            (guild_id, campaign_id),
+        )
+        if await cur.fetchone() is not None:
+            raise CampaignError(DAMAGED_SPEAKER)
         await apply_erasures(conn, guild_id, campaign_id)
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:

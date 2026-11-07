@@ -517,3 +517,139 @@ async def run_steps(
         counts = await actions[name]()
         done.append(Step(name, time.monotonic() - began, counts))
         say(f"{name}: done")
+
+
+# ---- players who are not on Discord (#3690) ------------------------------------------------------
+#
+# The session's speakers are imported the way the website's import takes a speaker without Discord:
+# through the import's own code (`dmbot.web.imports`), so the speaker rows and the uploader's
+# confirmation (`import_consents`) are written by the same doors, with the same checks, as for any
+# import, never by this tool. The doors only answer a signed-in DM, so the tool opens a website
+# session for the DM for the length of the call and removes it at the end.
+
+
+@contextlib.asynccontextmanager
+async def site_session(db: Database, dm: int, guild: int, *, now: int) -> Any:
+    """A website session for the DM that lives only inside this block: the doors' own check of who
+    is asking and which server they manage. The row is removed when the block ends, even on an
+    error."""
+    import json
+    import secrets
+
+    from dmbot.web.discord import DiscordGuild
+    from dmbot.web.sessions import Session, hash_token
+
+    token = secrets.token_urlsafe(32)
+    hashed = hash_token(token)
+    try:
+        async with db.user(dm) as conn:
+            await conn.execute(
+                "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
+                " display_name) VALUES (%s, %s, %s, %s, %s::jsonb, '')",
+                (
+                    hashed,
+                    dm,
+                    now,
+                    now + 3600,
+                    json.dumps([{"id": str(guild), "name": "sample", "manage": True}]),
+                ),
+            )
+    except Exception as exc:  # the kind only: a database error can quote a row
+        raise SampleError(
+            f"the DM has no website account to import through ({type(exc).__name__})"
+        ) from exc
+    try:
+        yield Session(hashed, dm, "", (DiscordGuild(guild, "sample", True),), now + 3600, now)
+    finally:
+        async with db.user(dm) as conn:
+            await conn.execute("DELETE FROM web_sessions WHERE id_hash = %s", (hashed,))
+
+
+def speaker_names(transcript: importer.Transcript, labels: Collection[str]) -> dict[str, str]:
+    """Each label's name as the import reads it (the part before any "(username)")."""
+    from dmbot.web.imports import label_parts
+
+    return {label: (label_parts(label)[0] or label.strip()) for label in labels}
+
+
+async def make_speakers(
+    db: Database, session: Any, guild: int, campaign_id: str, names: Collection[str]
+) -> dict[str, int]:
+    """Make the players' speakers without Discord with the import's own door, the same one the
+    website's import stores them with (the same name is the same speaker, so the import that
+    follows finds them). Returns name -> the speaker's negative number."""
+    from dmbot.web.recaps import _scoped
+
+    made: dict[str, int] = {}
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild)
+        for name in sorted(names):
+            cur = await conn.execute(
+                "SELECT dmbot_import_speaker(%s, %s, %s) AS r", (guild, campaign_id, name)
+            )
+            speaker = (await cur.fetchone() or {}).get("r")
+            if not isinstance(speaker, int) or speaker >= 0:
+                raise SampleError("a player not on Discord could not be made")
+            made[name] = speaker
+    return made
+
+
+async def speaker_ids(db: Database, guild: int, campaign_id: str) -> dict[str, int]:
+    """The campaign's speakers without Discord: lower-cased name -> negative number."""
+    async with db.guild(guild, snapshot=True) as conn:
+        cur = await conn.execute(
+            "SELECT user_id, name FROM campaign_speakers WHERE guild_id = %s AND campaign_id = %s",
+            (guild, campaign_id),
+        )
+        return {str(r["name"]).casefold(): int(r["user_id"]) for r in await cur.fetchall()}
+
+
+async def import_through_site(
+    db: Database,
+    session: Any,
+    guild: int,
+    campaign_id: str,
+    text: str,
+    mapping: Mapping[str, Any],
+    *,
+    started_at: int,
+    now: int,
+    file_name: str = "sample-session.txt",
+) -> str:
+    """Store the session with the website's own `confirm`: the players without Discord are ticked
+    in by the uploader (the DM), which records the confirmation as the import records it. Returns
+    the session's id. `mapping`: label -> the choice object the page sends."""
+    import datetime as dt
+
+    from dmbot.transcript import uploader_words as uw
+    from dmbot.web import imports
+    from dmbot.web.recaps import RecapError
+
+    day = dt.datetime.fromtimestamp(started_at, dt.UTC).date().isoformat()
+    try:
+        done = await imports.confirm(
+            db,
+            session,
+            f"{guild}.{campaign_id}",
+            [{"name": file_name, "text": text}],
+            {
+                "mapping": dict(mapping),
+                "consentVersion": uw.version(),
+                "sessions": [{"file": file_name, "date": day, "order": 0, "writeRecap": False}],
+            },
+            outside=None,
+            now=now,
+            enforce_plans=False,
+        )
+    except RecapError as exc:
+        raise SampleError(f"the import was refused ({exc})") from exc
+    async with db.guild(guild, snapshot=True) as conn:
+        cur = await conn.execute(
+            "SELECT session_id FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
+            " AND import_id = %s",
+            (guild, campaign_id, done["importId"]),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise SampleError("the import was not stored")
+    return str(row["session_id"])
