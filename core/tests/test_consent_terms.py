@@ -15,8 +15,8 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 6  # #1187: also what is typed in DMbot's chat channel (anyone may ask there)
-PINNED_FINGERPRINT = "bb9348784488dec231ca4b64a2eb984c7991f216d1c0a1aace3d161ceaab1aa1"
+PINNED_VERSION = 7  # #3268: pictures in the table's chat are described and kept; "the table's chat"
+PINNED_FINGERPRINT = "a9066c074cac8a25464ef35ef4ea83529c7a06e8ce1a34316e6f7758089b2747"
 
 
 def fingerprint() -> str:
@@ -81,16 +81,22 @@ class TermsVersion(unittest.TestCase):
         )
 
     def test_the_note_for_people_asked_again_says_why(self) -> None:
-        self.assertIn("type in its chat channel", RENEWED)
+        self.assertIn("keep a picture you post", RENEWED)
+        self.assertIn("table's chat", RENEWED)
         self.assertIn("asking you again", RENEWED)
         self.assertIn("it records nothing from you", RENEWED)
         self.assertIn("Press **No thanks** and keep playing.", RENEWED)
 
     def test_the_request_says_typed_chat_is_read(self) -> None:
         text = request_text("Server", voice="Table", dm="Dee", cloud=False)
-        self.assertIn("reads what you type in the voice channel's chat", text)
+        self.assertIn("reads what you type in the table's chat: the voice channel's chat", text)
         self.assertIn("one more channel if your DM picks one", text)
-        self.assertIn("in DMbot's chat channel", text)  # #1187
+        self.assertNotIn("DMbot's chat channel", text)  # #3212: DMbot makes no chat channel
+        self.assertIn("sends it to the AI to be described and keeps it with the campaign", text)
+        self.assertIn("Only post pictures you have the right to share", text)
+        self.assertIn("Anyone with its link can see it", text)
+        self.assertIn("make it private or delete it", text)
+        self.assertNotIn("not kept", text)  # #3268: pictures are kept (owner, 2026-11-02)
         self.assertIn("your name and question are posted there for everyone to read", text)
         self.assertIn("Anyone in this server can read and download that text", text)
         self.assertIn("ignores your voice and your typing", text)

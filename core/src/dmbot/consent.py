@@ -53,12 +53,13 @@ from dmbot.db import Conn, Database
 # confirmation. Version 5: DMbot also reads what is typed in the table's chat while it is
 # listening (owner, 2026-10-13; #1118), so everyone is asked again. Version 6: it also reads
 # what is typed in the campaign's DMbot chat channel, where anyone at the table may ask it a
-# question and the answer is posted for everyone (owner, 2026-10-14; #1187).
-TERMS_VERSION = 6
+# question and the answer is posted for everyone (owner, 2026-10-14; #1187). Version 7: pictures
+# posted in the table's chat are sent to the AI to be described (#2450), and the "DMbot chat
+# channel" is now just the table's chat (#3212); everyone is asked again (go-live #3268).
+TERMS_VERSION = 7
 # Pictures posted in the table chat are read (sent to the AI to be described) only for a yes given
-# under this wording or a later one (#2450; Supervisor's ruling, 2026-10-23). The wording itself,
-# the version bump and the website's promises go in a separate go-live PR that merges only on the
-# owner's word, so until then nobody has a yes at this version and no picture is ever read.
+# under this wording or a later one (#2450; Supervisor's ruling, 2026-10-23). This is the version
+# whose wording says so; with `TERMS_VERSION` at this number everyone who says yes has agreed to it.
 IMAGE_TERMS_VERSION = 7
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
