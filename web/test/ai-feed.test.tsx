@@ -4,7 +4,7 @@
 // the server cut it, a reply arriving where its prompt already is, the "not shown" line, a look that stops after
 // repeated failures, and no buttons on an entry. Plain text only.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AiFeed from "../src/account/AiFeed";
 import { ApiError, type AccountApi, type AiFeedEntry } from "../src/account/api";
@@ -135,5 +135,84 @@ describe("AiFeed", () => {
     box.scrollTop = 0;
     fireEvent.scroll(box); // the reader is at the top, far from the newest
     expect((await screen.findAllByRole("button", { name: w.jump })).length).toBeGreaterThan(0);
+  });
+});
+
+describe("the look waits while the tab is hidden (#3710)", () => {
+  // A fake `document.hidden`: setting it fires the same event a browser fires when the tab is hidden or shown.
+  let hiddenNow = false;
+  const setHidden = (value: boolean): void => {
+    hiddenNow = value;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  const pause = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
+  beforeEach(() => {
+    hiddenNow = false;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hiddenNow });
+  });
+  afterEach(() => {
+    hiddenNow = false;
+  });
+
+  it("does not ask while the tab is hidden", async () => {
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(1));
+    setHidden(true);
+    await pause(20); // a look already on its way may finish; nothing new is asked
+    const atHide = aiFeed.mock.calls.length;
+    await pause(120); // several intervals go by
+    expect(aiFeed.mock.calls.length).toBe(atHide);
+  });
+
+  it("asks at once when the tab is shown again, and carries on", async () => {
+    // The rhythm is slow here, so a look soon after the show can only be the one shown-again look.
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} everyMs={60_000} />);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBe(1));
+    setHidden(true);
+    await pause(60);
+    setHidden(false);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBe(2), { timeout: 200 });
+    await pause(60);
+    expect(aiFeed.mock.calls.length).toBe(2); // and the usual rhythm, not a flood
+  });
+
+  it("keeps the out-of-date note while hidden, and while shown again", async () => {
+    const api = apiWith(async () => {
+      throw new ApiError("server");
+    });
+    render(<AiFeed api={api} running {...props} />);
+    expect(await screen.findByText(w.stalled)).toBeTruthy();
+    setHidden(true);
+    await pause(40);
+    expect(screen.getByText(w.stalled)).toBeTruthy();
+    setHidden(false);
+    await pause(40);
+    expect(screen.getByText(w.stalled)).toBeTruthy();
+  });
+
+  it("a tab hidden from the start asks nothing until it is shown", async () => {
+    hiddenNow = true;
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
+    await pause(60);
+    expect(aiFeed.mock.calls.length).toBe(0);
+    setHidden(false);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(0));
+  });
+
+  it("keeps what it showed while hidden, and while shown again", async () => {
+    const api = apiWith(async () => ({ lost: 0, entries: [entry(1), entry(2)] }));
+    render(<AiFeed api={api} running {...props} />);
+    const back = await screen.findByRole("region", { name: w.windowLabel(w.repliesHeading) });
+    const before = back.textContent;
+    expect(before).toContain("Found 2.");
+    setHidden(true);
+    await pause(40);
+    expect(back.textContent).toBe(before);
+    setHidden(false);
+    await pause(40);
+    expect(back.textContent).toBe(before);
   });
 });
