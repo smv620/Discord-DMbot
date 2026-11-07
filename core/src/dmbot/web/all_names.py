@@ -408,6 +408,61 @@ async def queue_confirm(db: Database, session: Session, ref: str, body: object) 
     return str(got["id"])
 
 
+async def read_matches(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """DMbot's own matches that the DM has not answered yet (#3602), for the DM only: names, the
+    batch to answer by and when, never a line of the transcript. Anyone who is not a DM of the
+    campaign gets "not allowed" before anything is read."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_waiting_matches(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    return {
+        "matches": [
+            {
+                "batch": str(m["batch"]),
+                "keepId": str(m["keepId"]),
+                "keepName": str(m["keepName"]),
+                "spelling": str(m["spelling"]),
+                "at": int(m["at"]),
+            }
+            for m in got["matches"]
+        ]
+    }
+
+
+async def queue_match(db: Database, session: Session, ref: str, batch: str, answer: str) -> str:
+    """Queue "yes, that's right" or the Undo of one of DMbot's own matches for the bot and return
+    the action's id (polled like any name action). The batch is digits as an Undo number; one that
+    DMbot did not make in this campaign is "not found" (the door checks; the bot checks again and
+    re-reads that the match is still waiting)."""
+    if answer not in ("confirm", "undo"):
+        raise RecapError("bad_action")
+    if not (batch.isascii() and batch.isdecimal() and 1 <= len(batch) <= 12):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, f"match-{answer}", "", batch, "", None),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
 async def read_action(db: Database, session: Session, ref: str, action_id: str) -> dict[str, Any]:
     """Where one of the caller's own actions stands: `state` (waiting, working, done, failed), the
     `error` word when it failed, the changed (or surviving) name's `row`, and `removed`."""
