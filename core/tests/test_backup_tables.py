@@ -213,6 +213,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 'scenes-1', 'm', 5)",
                 (g, c, A, SPEAKER),
             ),
+            "pc_icons": (
+                "INSERT INTO pc_icons (guild_id, campaign_id, entity_id, choice, set_by, updated_at)"
+                " VALUES (%s, %s, %s, 'hidden', %s, 5)",
+                (g, c, A, DM),
+            ),
             "memory_kind_offers": (
                 "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
                 " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",
