@@ -59,7 +59,7 @@ class Matches(WithChecks):
         await self.apply("match-confirm", str(batch))
         for action in ("match-confirm", "match-undo"):
             self.assertEqual(await self.apply(action, str(batch)), wa.NOT_FOUND)
-        for bad in ("12", "x", ""):
+        for bad in ("12", "x", "", "²", "9" * 40):
             self.assertEqual(await self.apply("match-undo", bad), wa.NOT_FOUND)
 
     async def test_the_undo_cannot_take_back_any_other_change(self) -> None:
