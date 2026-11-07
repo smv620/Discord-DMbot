@@ -77,6 +77,10 @@ class WebSettings:
     # made with. Off until the switch is 1 and a key is set.
     meaning_search: bool = False
     voyage_key: str = field(default="", repr=False)
+    # The admin Costs page (#3671): read-only keys for the two services that let one be scoped
+    # to costs. Empty: that row says "Not connected". Never an Anthropic Admin key.
+    costs_deepgram_key: str = field(default="", repr=False)
+    costs_elevenlabs_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
@@ -85,6 +89,9 @@ class WebSettings:
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # Where the bot writes its finished feature list, read here only (#3693). Empty: the campaign
+    # settings show no list.
+    status_dir: str = ""
     # Kept pictures (#3274). The campaign's picture storage, in MB, as the bot reads it
     # (DMBOT_PICTURE_STORAGE_MB), for the gallery's usage line. And the read-only key to the one
     # private bucket the open link signs short-lived addresses with (WEB_PICTURES_R2_*): all four
@@ -482,6 +489,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         stripe=stripe,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
+        costs_deepgram_key=get("DEEPGRAM_API_KEY_READ_ONLY"),
+        costs_elevenlabs_key=get("ELEVENLABS_API_KEY_READ_ONLY"),
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
@@ -497,6 +506,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        status_dir=get("WEB_STATUS_DIR"),
         picture_storage_mb=(
             int(get("DMBOT_PICTURE_STORAGE_MB"))
             if get("DMBOT_PICTURE_STORAGE_MB").isascii()

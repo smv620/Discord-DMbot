@@ -4,6 +4,8 @@
 // oldest first, and for each kind either the page that answers it or how to answer it in Discord, never a dead
 // button. Counts and campaign names only: the cards come from each kind's own page. The counts are the bot's
 // (`question_counts`); older than five minutes, the page says it is catching up.
+import { matchWords } from "../content/name-matches-words";
+import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { useEffect, useState } from "preact/hooks";
 
 import { RECAP_NAME_CHECKS_LIVE } from "../content/recap-words";
@@ -65,6 +67,8 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
     if (g !== null && howFor(k.kind, api) === "here" && !lead.has(g)) lead.set(g, k.kind);
   }
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
+  // DMbot's own matches (#3701): shown with the Names page's panel, so both go live together.
+  const guesses = NAME_MATCHES_LIVE && api.nameMatches !== undefined ? (campaign.guesses ?? 0) : 0;
   const old = campaign.countedAt === null || serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
   return (
     <section class="panel stack" aria-labelledby={`q-${campaign.ref}`}>
@@ -72,8 +76,14 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
         <a href={campaignHref(campaign.ref)}>{campaign.name}</a>
       </h2>
       {old && <p class="small muted" role="status">{words.catchingUp}</p>}
+      {guesses > 0 && (
+        <p>
+          {matchWords.countOf(guesses)}{" "}
+          <a href={`/account/names/${encodeURIComponent(campaign.ref)}`}>{matchWords.checkThem}</a>
+        </p>
+      )}
       {kinds.length === 0 ? (
-        campaign.countedAt === null ? null : <p>{words.nothing}</p>
+        campaign.countedAt === null || guesses > 0 ? null : <p>{words.nothing}</p>
       ) : (
         <>
           <p>{words.campaignLine(kinds.reduce((n, k) => n + k.count, 0))}</p>

@@ -148,6 +148,21 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_SCENES": "1"}).story_scenes_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_SCENES must be 1"):
             load_settings({**BASE, "DMBOT_STORY_SCENES": "maybe"})
+        self.assertFalse(load_settings(BASE).story_deeds_on)  # off unless asked (#3175)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_DEEDS": "1"}).story_deeds_on)
+        self.assertFalse(load_settings(BASE).story_who_on)  # off unless asked (#3602)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_WHO": "on"}).story_who_on)
+        # applying (slice 4): off unless asked, and never without the ranking it needs
+        self.assertFalse(load_settings({**BASE, "DMBOT_STORY_WHO": "on"}).story_who_apply_on)
+        self.assertFalse(load_settings({**BASE, "DMBOT_STORY_WHO_APPLY": "on"}).story_who_apply_on)
+        both = {**BASE, "DMBOT_STORY_WHO": "on", "DMBOT_STORY_WHO_APPLY": "on"}
+        self.assertTrue(load_settings(both).story_who_apply_on)
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_STORY_WHO_APPLY": "maybe"})
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_STORY_WHO": "maybe"})
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_DEEDS": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):

@@ -131,6 +131,7 @@ FILES: dict[str, str] = {
     "memory/contradiction_grades.py": NOT_DRAWN,
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
     "memory/evidence.py": NOT_DRAWN + " (evidence ids)",
     "memory/forget_readings.py": BUMPS,
     "memory/heard_backup.py": NOT_DRAWN,
