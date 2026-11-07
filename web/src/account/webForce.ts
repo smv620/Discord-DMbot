@@ -117,6 +117,7 @@ export function forceStep(
   mode: LayoutMode,
   anchors: Map<string, { x: number; y: number }>,
   alpha: number,
+  spread = 1,
 ): number {
   for (let i = 0; i < sim.length; i += 1) {
     for (let j = i + 1; j < sim.length; j += 1) {
@@ -132,8 +133,9 @@ export function forceStep(
         d2 = 2;
       }
       const d = Math.sqrt(d2);
-      let f = REPEL / d2;
-      if (d < CLOSE) f += (CLOSE - d) * 0.06;
+      // `spread` is the viewer's spacing (1 is today's): the names push apart with the square of it, lines rest at it.
+      let f = (REPEL * spread * spread) / d2;
+      if (d < CLOSE * spread) f += (CLOSE * spread - d) * 0.06;
       dx /= d;
       dy /= d;
       a.vx -= dx * f;
@@ -142,7 +144,7 @@ export function forceStep(
       b.vy += dy * f;
     }
   }
-  const rest = mode !== "free" ? 130 : REST;
+  const rest = (mode !== "free" ? 130 : REST) * spread;
   const pull = mode !== "free" ? PULL * 0.4 : PULL;
   for (const [i, j] of links) {
     const a = sim[i]!;
@@ -195,11 +197,12 @@ export function settle(
   centreIndex: number,
   mode: LayoutMode,
   anchors: Map<string, { x: number; y: number }>,
+  spread = 1,
 ): number {
   if (sim.length > MAX_SIM_NAMES) return 0;
   let alpha = 1;
   for (let step = 1; step <= MAX_SIM_STEPS; step += 1) {
-    const moved = forceStep(sim, links, centreIndex, mode, anchors, alpha);
+    const moved = forceStep(sim, links, centreIndex, mode, anchors, alpha, spread);
     alpha *= COOLING;
     if (alpha < 0.3 && moved < CALM) return step;
   }

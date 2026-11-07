@@ -1623,7 +1623,7 @@ export interface WebBelief {
 export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
 
 /** Where a connection came from (#2946, API #3540). The API cuts it for a player: a session number or unknown, never a label. */
-export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string } | { type: "dm" } | { type: "unknown" };
+export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string; line?: number } | { type: "dm" } | { type: "unknown" };
 export interface WebLink {
   id: string;
   words: string;
@@ -1650,6 +1650,9 @@ export interface WebLink {
   backAfter?: string | null;
   /** Where it came from (#2946). Missing from an older API: the page then shows nothing. */
   source?: WebLinkSource;
+  /** The words of the lore or session this connection was read from, for a DM only (#3606, #3607). Missing when none is
+   * recorded, and from an older API. */
+  quote?: string | null;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */
@@ -1765,6 +1768,8 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
+  | { action: "feeling"; id: string; feeling: string }
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }

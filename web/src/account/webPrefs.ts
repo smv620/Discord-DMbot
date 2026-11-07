@@ -69,3 +69,46 @@ export function saveAuto(on: boolean): void {
     /* storage is blocked: the choice lasts until the page is closed */
   }
 }
+
+/** How the viewer likes the map drawn (#3620): which kinds of name to show (none listed shows all), how far apart Spread out
+ * puts them, how big names and their words are (1 is today's), and whether a line grows with its connections. */
+export interface GraphLook {
+  kinds: string[];
+  spacing: number;
+  nodeSize: number;
+  textSize: number;
+  lineWidth: boolean;
+}
+export const DEFAULT_LOOK: GraphLook = { kinds: [], spacing: 1, nodeSize: 1, textSize: 1, lineWidth: true };
+/** The sliders' ranges: wide enough to matter, narrow enough that names stay readable and tappable at phone width. */
+export const LOOK_RANGE = { spacing: [0.6, 1.8], nodeSize: [0.7, 1.5], textSize: [0.8, 1.6] } as const;
+const LOOK_KEY = "dmbot:web-look";
+
+const within = (v: unknown, [lo, hi]: readonly [number, number], fallback: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+
+/** The saved look, anything missing or out of range falling back to today's. Kept in this browser only, per viewer. */
+export function readLook(): GraphLook {
+  try {
+    const raw: unknown = JSON.parse(window.localStorage.getItem(LOOK_KEY) ?? "{}");
+    const o = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    return {
+      kinds: Array.isArray(o.kinds) ? o.kinds.filter((k): k is string => typeof k === "string").slice(0, 40) : [],
+      spacing: within(o.spacing, LOOK_RANGE.spacing, 1),
+      nodeSize: within(o.nodeSize, LOOK_RANGE.nodeSize, 1),
+      textSize: within(o.textSize, LOOK_RANGE.textSize, 1),
+      lineWidth: o.lineWidth !== false,
+    };
+  } catch {
+    return { ...DEFAULT_LOOK };
+  }
+}
+
+export function saveLook(look: GraphLook): void {
+  try {
+    if (JSON.stringify(look) === JSON.stringify(DEFAULT_LOOK)) window.localStorage.removeItem(LOOK_KEY);
+    else window.localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+  } catch {
+    /* storage is blocked: the choices last until the page is closed */
+  }
+}
