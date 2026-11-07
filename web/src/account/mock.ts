@@ -1303,6 +1303,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   // works takes the answer back, so the name has none left and the page reads it as done.
 
   const nameAnswers = new Map<string, { looks: number; result: NameAnswerResult }>();
+  const clarified = new Set<string>(); // names answered on the page of one name (#3604)
   // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
   const plotText = new Map<string, string>();
   const plotLooks = new Map<string, number>();
@@ -3479,10 +3480,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       if (id === "c".repeat(32)) nameFailed.add(`${ref}:${id}`);
       nameLooks.set(`${ref}:${id}`, 0);
+      // The page of one name (#3604) follows its own answer: a plain answer is "done" with a batch to Undo.
+      if (answer.action === "same" || answer.action === "confirm" || answer.action === "not_a_name") {
+        clarified.add(`${ref}:${id}`);
+        nameAnswers.set(`${ref}:${id}`, { looks: 0, result: { state: "done", note: "Done.", error: null, batch: 11 } });
+      }
       if (answer.action === "split" || answer.action === "join_group" || answer.action === "make_group" || answer.action === "undo") {
         const key = `${ref}:${id}`;
         if (answer.action === "undo") {
           // A batch that cannot be taken back (99 here) is refused; any other works and leaves no answer behind.
+          if (answer.batch === 11) clarified.delete(key);
           if (answer.batch === 99) nameAnswers.set(key, { looks: 0, result: { state: "failed", note: "", error: "answered", batch: null } });
           else nameAnswers.delete(key);
           return;
@@ -3502,6 +3509,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
                 : { state: "done", note: `Made the group ${answer.name}.`, error: null, batch: 9 };
         nameAnswers.set(key, { looks: 0, result });
       }
+    },
+    async clarifyName(ref, id) {
+      calls.push(`clarifyName:${ref}:${id.slice(0, 1)}`);
+      await reachable();
+      signedIn();
+      if (ref.endsWith(".player")) throw new ApiError("not-allowed");
+      if (clarified.has(`${ref}:${id}`)) throw new ApiError("not-found"); // already answered
+      if (id !== "a".repeat(32)) throw new ApiError("not-found");
+      return {
+        id,
+        name: "Brannoch",
+        note: "A smith in Eastmarch.",
+        scene: ref.includes(".no-scene") ? null : "Brannoch the smith mends Mira's sword in Eastmarch while the party waits out the storm.",
+        places: [{ session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }] }],
+        morePlaces: 2,
+        answers: ref.includes(".no-answers")
+          ? []
+          : [
+              { label: "a.k.a. Veshla", answer: { action: "same" as const, known: "k".repeat(32) } },
+              { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
+            ],
+        kinds: [{ key: "npc", label: "NPC" }, { key: "place", label: "Place" }],
+        answering: false,
+      };
     },
     async nameAnswerResult(ref, id) {
       calls.push(`nameAnswerResult:${ref}:${id.slice(0, 1)}`);
