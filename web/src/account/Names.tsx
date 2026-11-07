@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
@@ -457,6 +458,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           </div>
         </fieldset>
       </form>
+
+      {PLACE_SPELLING_LIVE && data.canEdit && api.placeSpellings !== undefined && (
+        <LazyPanel
+          load={() => import("./PlaceSpellings")}
+          what="the places written two ways"
+          props={{ api, campaignRef: ref, onSignedOut: () => setView("signed-out"), onChanged: () => void reload() }}
+        />
+      )}
 
       {smartOn && (
         <LazyPanel
