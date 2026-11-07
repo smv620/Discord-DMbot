@@ -155,8 +155,9 @@ class Database:
 
         Lineage (#3739, `dmbot.lineage`): the transaction names the running build, so rows it
         inserts are stamped with it. `by_dmbot=True` is for DMbot rewriting its own work: updated
-        rows take the running build's stamp too. `restoring=True` (a backup load, an Undo) keeps
-        every stamp exactly as the row carries it.
+        rows take the running build's stamp too. `restoring=True` (for code that loads rows carrying
+        their own stamp; the campaign restore sets the same setting itself, around its section
+        loads only) keeps every stamp exactly as the row carries it.
         """
         async with self._pool.connection() as conn, conn.transaction():
             if snapshot:

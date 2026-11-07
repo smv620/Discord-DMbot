@@ -14,6 +14,7 @@ from dmbot.memory._changes import ENTITIES
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import DM, PLAYER_CHARACTER
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.vectors import ASSERTION, Item, VectorStore
 from tests.pg import DatabaseTest
 
 GUILD, USER = 91, 5
@@ -121,6 +122,21 @@ class TheTrigger(DatabaseTest):
                     (OLD, entity),
                 )
         self.assertEqual(await self._stamp(entity), OLD)
+
+    async def test_a_recomputed_vector_takes_the_new_stamp_through_an_upsert(self) -> None:
+        """DMbot's own upserts (`ON CONFLICT DO UPDATE`) opt in with `by_dmbot`: a vector the new
+        build recomputed must not still say the old build made it."""
+        store = VectorStore(self.db)
+        item = Item(ASSERTION, "e1", "h1", [0.5, 0.25])
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            await store.save(GUILD, self.campaign.id, "m", [item])
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.save(
+                GUILD, self.campaign.id, "m", [Item(ASSERTION, "e1", "h2", [0.5, 0.5])]
+            )
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT made_by_commit AS c FROM memory_vectors")
+            self.assertEqual([r["c"] for r in await cur.fetchall()], [NEW])
 
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`

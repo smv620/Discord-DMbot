@@ -14,10 +14,18 @@ transaction with `dmbot.commit`, and the trigger `dmbot_stamp_commit()` (migrati
 into `made_by_commit`. On INSERT the row gets the running commit. On UPDATE the stored stamp is
 kept, so a DM's own edit never changes it, unless the writer is DMbot itself rewriting its own work
 (`dmbot.rewrites`, opened by `Database.guild(..., by_dmbot=True)`; story memory opens it for every
-write whose source is not the DM). A restore or an Undo opens `dmbot.restoring`, and the trigger
-then keeps exactly the stamp the row was written with, NULL included: an old row is never stamped
-with the build that restored it. A writer that forgets to opt in keeps the older stamp, which never
+write whose source is not the DM). A restore opens `dmbot.restoring` around its section loads, and the trigger then keeps exactly the
+stamp the row carries, NULL included: an old row is never stamped with the build that restored it.
+An Undo is the DM's act and updates without restamping. A writer that forgets to opt in keeps the older stamp, which never
 claims a version made something it did not.
+
+**Per transaction, not per row:** a write that opted in restamps every row it updates, a dependent
+hide a DM's row included; the stamp is the build that last wrote the row, not who asked.
+
+**Part 1's backup** carries `made_by` for the memory section's own tables only (`memory/backup.py`,
+`_TAGS`). The other stamped tables are restored by their own sections, which do not carry it yet, so
+they restore with none ("made before versions were recorded"): honest, but a loss, filed as a
+follow-up under #3739.
 """
 
 from __future__ import annotations

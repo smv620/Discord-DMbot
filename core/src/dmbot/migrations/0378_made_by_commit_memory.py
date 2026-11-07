@@ -13,7 +13,7 @@ from __future__ import annotations
 #
 # `dmbot_stamp_commit()` is the one trigger every stamped table in every part uses:
 # - INSERT takes the running build's commit (`dmbot.commit`, set by `Database` in each transaction);
-#   unless `dmbot.restoring` is on (a backup load, an Undo), when the row keeps what it carries.
+#   unless `dmbot.restoring` is on (a backup load), when the row keeps what it carries.
 # - UPDATE keeps the stored stamp, so a DM's own edit never changes it; it takes the running
 #   build's commit only when DMbot is rewriting its own work (`dmbot.rewrites`).
 # An unknown build (no `dmbot.commit`) stamps NULL, never text. The function does not read or
