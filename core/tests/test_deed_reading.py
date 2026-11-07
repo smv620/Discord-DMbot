@@ -105,6 +105,28 @@ class TheShape(unittest.TestCase):
         self.assertEqual(parse(deed(deed=short)).deeds[0].text, short)
 
 
+class TheKind(unittest.TestCase):
+    def test_each_fixed_word_is_kept_and_nothing_else(self) -> None:
+        for word in ("attack", "kill", "rescue", "save", "steal", "help"):
+            self.assertEqual(parse(deed(kind=word.upper())).deeds[0].kind, word)
+
+    def test_other_or_missing_is_no_kind_and_not_counted(self) -> None:
+        for given in ("other", "", None):
+            got = parse(deed(kind=given))
+            self.assertEqual((got.deeds[0].kind, got.kind_dropped), ("", 0))
+        self.assertEqual(parse(deed()).deeds[0].kind, "")  # (a model that left the field out)
+
+    def test_a_word_outside_the_list_is_no_kind_and_counted_never_an_error(self) -> None:
+        got = parse(deed(kind="murder"), deed(doer="Cerric", mattered_to=["Oldmill"], kind="slay"))
+        self.assertEqual([d.kind for d in got.deeds], ["", ""])
+        self.assertEqual((got.kind_dropped, got.refused), (2, 0))
+
+    def test_the_prompt_names_the_words(self) -> None:
+        for word in ("attack", "kill", "rescue", "save", "steal", "help", "other"):
+            self.assertIn(word, dr.DEED_SYSTEM)
+        self.assertIn('"kind"', dr.DEED_SYSTEM)
+
+
 class OnePerPair(unittest.TestCase):
     def test_a_fight_is_one_deed_not_one_for_each_round(self) -> None:
         got = parse(
