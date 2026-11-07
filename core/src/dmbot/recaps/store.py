@@ -459,7 +459,7 @@ class RecapStore:
                 values.append(None if value is None else Jsonb(value))
             else:
                 values.append(value)
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
@@ -589,7 +589,7 @@ class RecapStore:
         if unchanged is not None:
             where += " AND title = %s AND summary = %s"
             args += [unchanged[0], unchanged[1]]
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(sets)}, updated_at = %s" + where,
                 (*values, int(self._now()), *args),

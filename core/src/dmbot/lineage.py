@@ -14,9 +14,10 @@ transaction with `dmbot.commit`, and the trigger `dmbot_stamp_commit()` (migrati
 into `made_by_commit`. On INSERT the row gets the running commit. On UPDATE the stored stamp is
 kept, so a DM's own edit never changes it, unless the writer is DMbot itself rewriting its own work
 (`dmbot.rewrites`, opened by `Database.guild(..., by_dmbot=True)`; story memory opens it for every
-write whose source is not the DM). A restore opens `dmbot.restoring` around its section loads, and the trigger then keeps exactly the
-stamp the row carries, NULL included: an old row is never stamped with the build that restored it.
-An Undo is the DM's act and updates without restamping. A writer that forgets to opt in keeps the older stamp, which never
+write whose source is not the DM). A restore opens `dmbot.restoring` around its section loads, and
+the trigger then keeps exactly the stamp the row carries, NULL included: an old row is never stamped
+with the build that restored it. An Undo is the DM's act and updates without restamping. A writer
+that forgets to opt in keeps the older stamp, which never
 claims a version made something it did not.
 
 **Per transaction, not per row:** a write that opted in restamps every row it updates, a dependent
@@ -50,15 +51,17 @@ STAMPED_MEMORY = (
     "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
     "rel_ties", "lore_uploads",
 )  # fmt: skip
-STAMPED = frozenset(STAMPED_MEMORY)
+# Part 2: recaps, name checks and the theatre script (migration 0379).
+STAMPED_RECAPS = (
+    "recap_jobs", "recap_name_checks", "recap_dictionaries", "recap_requests", "recap_accepted",
+    "theatre_lines", "theatre_runs",
+)  # fmt: skip
+STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS)
 
 # Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
 # (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
 # moves its tables to `STAMPED`; the list ends empty.
 NOT_YET: tuple[str, ...] = (
-    # part 2: recaps and audio
-    "recap_accepted", "recap_dictionaries", "recap_holds", "recap_jobs", "recap_name_checks",
-    "recap_requests", "theatre_lines", "theatre_runs",
     # part 3: transcripts and imports
     "transcript_lines", "transcript_respells", "transcript_sessions", "transcript_suggestions",
     "session_imports", "import_plays", "import_speakers", "said_as_suggestions", "session_notes",
@@ -117,6 +120,7 @@ NOT_STAMPED: dict[str, str] = {
             "plan_same_as",
             "report_answers",
             "secret_exposures",
+            "recap_holds",
         ),
         _DM,
     ),

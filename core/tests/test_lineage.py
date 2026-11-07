@@ -138,6 +138,23 @@ class TheTrigger(DatabaseTest):
             cur = await conn.execute("SELECT made_by_commit AS c FROM memory_vectors")
             self.assertEqual([r["c"] for r in await cur.fetchall()], [NEW])
 
+    async def test_a_recap_job_carries_the_build_and_its_worker_restamps_it(self) -> None:
+        """Part 2: the job row is stamped when made, and the worker's content updates opt in."""
+        from dmbot.recaps.store import RecapStore
+
+        store = RecapStore(self.db)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            await store.add_finished(
+                GUILD, self.campaign.id, 1000, dm_user_id=USER, title="T", summary="S",
+                original="o", housekeeping=[], music=[], game_day=None, speakers=[], grade={},
+                beats=[],
+            )  # fmt: skip
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.update(GUILD, self.campaign.id, 1000, summary="S2")
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT made_by_commit AS c FROM recap_jobs")
+            self.assertEqual([r["c"] for r in await cur.fetchall()], [NEW])
+
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`
         (`as_person` for the campaign store, `user` for account doors), so a row a website door
