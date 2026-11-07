@@ -33,6 +33,7 @@ from dmbot.memory.link_words import (
     quoted,
     reads_both_ways,
 )
+from dmbot.memory.standing import dm_line_word
 from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
@@ -89,6 +90,7 @@ def edges_from(
     can_edit: bool,
     is_dm: bool = False,
     kinds: Mapping[str, str] | None = None,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
@@ -98,7 +100,9 @@ def edges_from(
     to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942).
     `kinds` maps a name's id to its kind (from the same answer's `nodes`), so a place tie reads
     "lives in" or "was last seen in" for a character and keeps "is in" for a place (#3363). A
-    subject missing from it (a kind the gate left out) reads the old, safe "is in"."""
+    subject missing from it (a kind the gate left out) reads the old, safe "is in". `standing`: the
+    DM's own Reputation for pairs (`dmbot_web_dm_standings`), whose word wins on a `knows` line and
+    is sent as the link's `standing` (#3642); read only when `is_dm`, so no one else is given it."""
     kinds = kinds or {}
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
@@ -110,6 +114,13 @@ def edges_from(
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
         own = own_words(str(row["predicate"]), str(row["detail"] or ""))
+        # the DM's own word for the pair wins over the reader's on a `knows` line (#3642; the same
+        # function as the Discord card), and only the words change: the stored detail stays
+        dm_word = (
+            dm_line_word(standing, str(row["a"]), str(row["b"]))
+            if is_dm and standing and row["predicate"] == "knows"
+            else None
+        )
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
@@ -120,12 +131,13 @@ def edges_from(
                 if own
                 else link_words(
                     str(row["predicate"]),
-                    str(row["detail"] or ""),
+                    dm_word or str(row["detail"] or ""),
                     directional,
                     subject_kind,
                     feeling=is_dm,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
+                "standing": dm_word,
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
                 # so the page can write each line from the name in the middle
@@ -183,6 +195,7 @@ def edges_from(
                         "direction": x["direction"],
                         "kind": x["kind"],
                         **(who_knows(x) if is_dm else {}),
+                        **({"standing": x["standing"]} if is_dm and x["standing"] else {}),
                     }
                     for x in links
                 ],
@@ -349,8 +362,9 @@ async def read_web(
         got, known = await _door(
             db, session, ref, center, hops, size_only=False, view=view, with_knowers=True
         )
-    page = page_of(got)
     own_view = got["canEdit"] and got["seesAll"]
+    # the DM's own Reputation wins on a `knows` line, in the DM's own Full View only (#3642)
+    page = page_of(got, await dm_standings(db, session, ref) if own_view else None)
     if own_view:
         await with_know_words(db, session, ref, page, known)
     # where each connection came from (#2946): the DM's own view gets the full value, any other
@@ -452,7 +466,9 @@ async def with_know_words(
                 link["knownBy"] = now if held and now else []
 
 
-def page_of(got: dict[str, Any]) -> dict[str, Any]:
+def page_of(
+    got: dict[str, Any], standing: Mapping[tuple[str, str], int] | None = None
+) -> dict[str, Any]:
     """A graph answer (the door's, or the gate's in the door's shape) as the page gets it: each
     name with whether it has an NPC page, and the connections between two names grouped into one
     edge with its words. `pageIds` is dropped."""
@@ -482,6 +498,7 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
             # everything the DM screen shows, but not which characters know what (#2935)
             is_dm=bool(got["canEdit"]) and bool(got["seesAll"]),
             kinds={str(n["id"]): str(n.get("kind") or "") for n in got["nodes"]},
+            standing=standing,
         ),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,
@@ -491,6 +508,22 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         "canPeek": bool(got["canPeek"]),
         **extra,
     }
+
+
+async def dm_standings(db: Database, session: Session, ref: str) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for each pair, (viewer, subject) to score (#3642), from a door that
+    answers only a DM of the campaign (anyone else: nothing). Ids and scores only; they go to
+    `edges_from` and no further."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_dm_standings(%s, %s) AS s", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    rows = found["s"] if found is not None and found["s"] is not None else []
+    return {(str(v), str(s)): int(score) for v, s, score in rows}
 
 
 async def read_size(

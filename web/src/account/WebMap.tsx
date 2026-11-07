@@ -791,7 +791,7 @@ export default function WebMap({
             return (
               <g
                 key={n.id}
-                class={`web-node web-kind-${kindStyle(n.kind)}${n.id === center ? " centre" : ""}${dimmedName(n) ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
+                class={`web-node web-kind-${kindStyle(n.kind)}${n.unnamed ? " web-unnamed" : ""}${n.id === center ? " centre" : ""}${dimmedName(n) ? " web-dim" : ""}${faded ? " web-faded" : ""}`}
                 transform={`translate(${place.x.toFixed(1)} ${place.y.toFixed(1)})`}
                 tabIndex={0}
                 role="button"

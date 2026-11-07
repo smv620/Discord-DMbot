@@ -20,6 +20,7 @@ from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
 from dmbot.memory import beliefs, evidence, notify, sheets
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -73,6 +74,8 @@ from dmbot.memory.models import (
     SOURCES,
     THREAD_STATES,
     is_id,
+    lookup_key,
+    name_key,
     new_id,
 )
 from dmbot.memory.ontology import (
@@ -395,7 +398,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     it would strand the campaign, while a loop only shows as a neighbour on a card (the readers
     follow one link, not a chain) and a new link or a merge can't add to it."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(rows)))
+    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(_unnamed_names(rows))))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -629,6 +632,82 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 # on its detail; it is not a detail, and a feeling word with it was no word (#3650)
                 raw["detail"] = split_effect_note(raw["detail"])[0]
         out.append(raw)
+    return out
+
+
+def _unnamed_names(rows: list[Any]) -> list[Any]:
+    """A backup from before #3736 reads as migration 0379 left the database: each unnamed person's
+    stored "<description> (name unknown)" becomes "unnamed - <description>", and so does the label a
+    joined person left on the entry it was joined into (its key worked out again; its sound codes
+    are worked out again on load anyway). Two live people whose names would then read the same are
+    told apart by when they were made, as a new one is. A current backup passes through as it is.
+    Malformed rows are left for the checks after this to refuse."""
+    entities = [
+        r for r in rows if isinstance(r, dict) and r.get("table") == "entity" and r.get("unnamed")
+    ]
+    old = [
+        r
+        for r in entities
+        if isinstance(r.get("name"), str) and unnamed_mod.is_old_label(r["name"])
+    ]
+    if not old:
+        return rows
+    gone = {
+        (str(r["name"]), str(r.get("merged_into"))) for r in old if r.get("merged_into") is not None
+    }
+    old_rows = {id(r) for r in old}  # (by identity: two rows could be equal)
+    renamed: dict[int, dict[str, Any]] = {}
+    for i, raw in enumerate(rows):
+        if not isinstance(raw, dict):
+            continue
+        if id(raw) in old_rows:
+            renamed[i] = {**raw, "name": unnamed_mod.from_old_label(raw["name"])}
+        elif (
+            raw.get("table") == "alias"
+            and isinstance(raw.get("text"), str)
+            and (raw["text"], str(raw.get("entity_id"))) in gone
+        ):
+            text = unnamed_mod.from_old_label(raw["text"])
+            renamed[i] = {**raw, "text": text, "key": lookup_key(text)}
+    out = [renamed.get(i, raw) for i, raw in enumerate(rows)]
+    return _unique_unnamed(out)
+
+
+def _unique_unnamed(rows: list[Any]) -> list[Any]:
+    """Live unnamed people whose names read the same: the later ones (by when they were made) get
+    "(first seen …)" in their description and their name, as `unnamed.unique_what` gives a new one
+    (migration 0379 does the same in the database)."""
+    live = sorted(
+        (
+            (int(r.get("created_at") or 0), str(r.get("id")), i)
+            for i, r in enumerate(rows)
+            if isinstance(r, dict)
+            and r.get("table") == "entity"
+            and r.get("unnamed")
+            and r.get("merged_into") is None
+            and r.get("status") in ("proposed", "confirmed")
+            and isinstance(r.get("name"), str)
+            and isinstance(r.get("unnamed_what"), str)
+        )
+    )
+    taken: set[str] = set()
+    out = list(rows)
+    for at, _, i in live:
+        row = out[i]
+        if name_key(row["name"]) in taken:
+            for with_time in (False, True):
+                tag = f" (first seen {unnamed_mod.first_seen(at, with_time=with_time)})"
+                name = unnamed_mod.without_tag(row["name"])[: NAME_MAX - len(tag)] + tag
+                if name_key(name) not in taken:
+                    break
+            what = unnamed_mod.without_tag(row["unnamed_what"])
+            row = {
+                **row,
+                "name": name,
+                "unnamed_what": what[: unnamed_mod.MAX_WHAT - len(tag)] + tag,
+            }
+            out[i] = row
+        taken.add(name_key(row["name"]))
     return out
 
 

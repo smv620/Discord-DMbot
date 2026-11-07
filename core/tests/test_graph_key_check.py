@@ -562,5 +562,31 @@ class ByDesign(unittest.TestCase):
         self.assertEqual(row.status, gkc.FOUND)
 
 
+class UnnamedPeople(unittest.TestCase):
+    """A person the story never named is found by its description (#3736), in today's form and an
+    older backup's, and one the key does not list is counted on its own line."""
+
+    def test_found_by_description_and_counted_apart(self) -> None:
+        data = backup(
+            [
+                ("c1", "Cerric", "character"),
+                ("u1", "unnamed - Cerric's sister", "character"),
+                ("u2", "a hooded figure (name unknown)", "character"),
+                ("u3", "unnamed - loud sailors in the corner", "character"),
+            ],
+            [],
+        )
+        for row in data["sections"]["memory"]:
+            if str(row.get("id", "")).startswith("u"):
+                row["unnamed"] = True
+        graph = gkc.Graph(gkc._tables(data))
+        self.assertEqual(graph.ids(["Cerric's sister"]), {"u1"})
+        self.assertEqual(graph.ids(["The hooded figure"]), {"u2"})  # (no article either side)
+        self.assertEqual(graph.ids(["Cerric"]), {"c1"})  # (a name never meets a description)
+        report = gkc.check(data, KEY)
+        self.assertEqual(report.unnamed_extras, 3)
+        self.assertEqual(sum(report.extra_entries.values()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

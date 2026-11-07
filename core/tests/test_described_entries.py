@@ -38,7 +38,7 @@ class TheDescribedEntries(MemoryTest):
         done = await self.memory.make_unnamed(GUILD_A, self.c, woman, source="dm")
         self.assertTrue(done.value.unnamed)
         self.assertEqual(done.value.unnamed_what, "the woman")
-        self.assertEqual(done.value.name, "the woman (name unknown)")
+        self.assertEqual(done.value.name, "unnamed - the woman")
         self.assertEqual(await self.memory.described_entries(GUILD_A, self.c), [])
         listed = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual([e.id for e, _ in listed], [woman])
@@ -121,7 +121,7 @@ class ThePersonWithoutAName(MemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
         self.assertTrue(done.batch is not None or done.claim.fact_id)
         people = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual([label for _, label in people], ["the woman (name unknown)"])
+        self.assertEqual([label for _, label in people], ["unnamed - the woman"])
         (entity, _label) = people[0]
         self.assertEqual(entity.status, CONFIRMED)
         self.assertEqual(done.claim.status, CLAIM_CONFIRMED)

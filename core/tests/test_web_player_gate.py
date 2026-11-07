@@ -200,12 +200,12 @@ class TheSplitNode(OneCampaign):
 
 class TheSisterOfAHiddenMan(OneCampaign):
     """The case from the #3147 review: Bruno and Ken are hidden, Okra knows "Bruno's sister (name
-    unknown)", and the DM joins her into Ken. Okra's page reads "someone's sister (name unknown)";
+    unknown)", and the DM joins her into Ken. Okra's page reads "unnamed - someone's sister";
     neither hidden man's name nor id is anywhere in what the page sends."""
 
     async def test_the_joined_sister_reads_as_someones_sister_and_names_no_one(self) -> None:
         await self.memory.join_same_person(self.g, self.one.id, self.sister, self.ken)
-        label = "someone's sister (name unknown)"
+        label = "unnamed - someone's sister"
         bodies = [str(await self.full_page(center=c, hops=8)) for c in (None, self.mira, self.okra)]
         overview = await relationships.read_overview(self.web, self.player, self.cref)
         bodies.append(str(overview))

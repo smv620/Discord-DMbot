@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.memory import kin, place_words, reputation_words
+from dmbot.memory import kin, place_words, reputation_words, unnamed
 from dmbot.memory.models import name_key
 
 DEFAULT_KEY = (
@@ -124,6 +124,7 @@ class Report:
     entries: list[Row] = field(default_factory=list)
     ties: list[Row] = field(default_factory=list)
     extra_entries: Counter[str] = field(default_factory=Counter)
+    unnamed_extras: int = 0  # people the story never named that the key does not list (#3736)
     extra_ties: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
@@ -154,6 +155,15 @@ def _tables(backup: object) -> dict[str, list[Mapping[str, Any]]]:
     return out
 
 
+_OLD_SUFFIX = re.compile(r"\s*\(name unknown\)")  # the label before #3736, in older backups
+_ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.IGNORECASE)
+
+
+def _plain(text: str) -> str:
+    """A description as the key and the backup are compared: `name_key`, no leading article."""
+    return name_key(_ARTICLE.sub("", text.strip()))
+
+
 class Graph:
     """The backup's entries and connections, found by name."""
 
@@ -171,12 +181,22 @@ class Graph:
                 self.by_key.setdefault(str(a["key"]) or name_key(str(a["text"])), set()).add(
                     str(a["entity_id"])
                 )
+        # a person the story never named is found by its description (#3736): "unnamed - Okthandom's
+        # child" (or an older backup's "Okthandom's child (name unknown)") is the key's
+        # "Okthandom's child". Kept apart from the names, so a description never matches a name.
+        self.by_description: dict[str, set[str]] = {}
+        for e in self.entities.values():
+            if e.get("unnamed"):
+                said = _OLD_SUFFIX.sub("", unnamed.description(str(e["name"])))
+                self.by_description.setdefault(_plain(said), set()).add(str(e["id"]))
         self.relations = [r for r in tables.get("relation", ()) if _live(r)]
 
     def ids(self, names: Sequence[str]) -> set[str]:
         found: set[str] = set()
         for n in names:
             found |= self.by_key.get(name_key(n), set())
+            # (a key's own other names may still be in the old form)
+            found |= self.by_description.get(_plain(_OLD_SUFFIX.sub("", n)), set())
         return found
 
     def between(self, a: set[str], b: set[str]) -> list[tuple[Mapping[str, Any], bool]]:
@@ -413,6 +433,9 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         if PLACEHOLDER.fullmatch(str(e["name"])) and i not in linked:
             report.placeholders += 1  # (the who-plays stand-in, #1559: not an extra entry)
             continue
+        if e.get("unnamed"):
+            report.unnamed_extras += 1  # (their own line: a description, not an extra name)
+            continue
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         if graph.ids([name]):
@@ -464,6 +487,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "entries": tally(report.entries),
         "ties": tally(report.ties),
         "extra_entries": dict(report.extra_entries),
+        "unnamed_extras": report.unnamed_extras,
         "extra_ties": report.extra_ties,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
@@ -495,6 +519,7 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Extra entries (not in the key): {sum(report.extra_entries.values())} "
         f"{dict(report.extra_entries)}"
     )
+    lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
     lines.append(f"Player placeholders left out (not extras): {report.placeholders}")
     lines.append(f"Extra ties between key entries: {report.extra_ties}")
     lines.append(
