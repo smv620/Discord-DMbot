@@ -13,9 +13,9 @@ import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
   ApiError,
+  type IconChoice,
   type NameChange,
   type NameRow,
-  type WebEdge,
   type WebGraph,
   type WebLinkChange,
   type WebOverview,
@@ -25,12 +25,12 @@ import {
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
-import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
+import { pcIconWords } from "../content/pc-icon-words";
 import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
-import { readAuto, saveAuto } from "./webPrefs";
+import { readAuto, readLook, saveAuto, saveLook, type GraphLook } from "./webPrefs";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
@@ -44,6 +44,13 @@ export function webRefFromPath(path: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The name a link asked to have in the middle (`#centre=<id>`, from the Names page's "See in the story graph"), or null. */
+export function centreFromHash(hash: string): string | null {
+  if (!hash.startsWith("#")) return null; // (only a fragment is read, never a query string)
+  const id = new URLSearchParams(hash.slice(1)).get("centre")?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
 
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
@@ -96,6 +103,15 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
+  // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
+  const [look, setLookState] = useState<GraphLook>(readLook);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // The last icon change, so one Undo can post the old choice back (#3622).
+  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice; now: IconChoice } | null>(null);
+  const setLook = (next: GraphLook): void => {
+    setLookState(next);
+    saveLook(next);
+  };
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
@@ -425,11 +441,28 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAlone(null);
     seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
     setSeeAsNote("");
-    void load(null, DEFAULT_HOPS);
+    void load(centreFromHash(typeof window === "undefined" ? "" : window.location.hash), DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref]);
+
+  /** A player character's icon (#3622): instant, then the web is read again so the circle shows it. Returns a plain-words problem. */
+  async function chooseIcon(id: string, choice: IconChoice): Promise<string | null> {
+    if (!ref || !api.setPcIcon) return words.errorFallback;
+    let got: { previous: IconChoice; now: IconChoice };
+    try {
+      got = await api.setPcIcon(ref, id, choice);
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "unavailable" || kind === "not-found") void load(center, hops, true); // (the picture or character went away: show what is left)
+      return pcIconWords.problems[kind] ?? pcIconWords.problems.server ?? words.errorFallback;
+    }
+    // Undo only while the icon is still what this change made it: a change by someone else since must not be undone over.
+    setIconBack(got.previous === got.now ? null : { id, previous: got.previous, now: got.now });
+    void load(center, hops, true).catch(() => undefined); // (the change is saved: a failed re-read is not a failed save)
+    return null;
+  }
 
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
   /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
@@ -542,7 +575,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const peeking = !isDm && asked === "full";
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
-  const nodes = graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false));
+  // A kind the viewer left unticked in the graph settings drops its names, and so their lines; the middle name always stays.
+  // (A kind saved from another campaign, that this one has no names of, is ignored: it would otherwise hide everything.)
+  const activeKinds = look.kinds.filter((k) => graph.nodes.some((n) => n.kind === k));
+  const kindShown = (n: { id: string; kind: string }): boolean => activeKinds.length === 0 || activeKinds.includes(n.kind) || n.id === center;
+  const nodes = graph.nodes.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
@@ -551,13 +588,19 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     .map((e) => {
       // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
-      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, ...l }) => l) };
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, quote: _quote, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, pinned: _pinned, check: _check, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, check: _check, quote: _quote, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
+  // The kinds the campaign has, with how many names of each, for the settings' tick boxes (counted before the filter).
+  const kindCounts = [...new Set(graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false)).map((n) => n.kind))].map((key) => ({
+    key,
+    label: kindWords(key),
+    count: graph.nodes.filter((n) => n.kind === key && (showAll || (!n.secret && n.revealed !== false))).length,
+  }));
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
   const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
   const { own, further } = listLines(edges, center, nameOf);
@@ -666,15 +709,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </div>
       </div>
 
-      <p class="small" role="status" aria-live="polite">
-        {words.howMany(nodes.length, edges.length)}
-      </p>
       {graph.truncated && <p class="note">{words.truncated}</p>}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
+      </p>
+
+      <p class="web-count" role="status" aria-live="polite">
+        <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
 
       {nodes.length <= 1 && edges.length === 0 ? (
@@ -685,6 +729,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <a class="small" href="#web-list" onClick={() => setListOpen(true)}>
               {words.skipMap}
             </a>
+            <div class="row">
+              <button type="button" class="button secondary" aria-expanded={settingsOpen} aria-controls="graph-settings" onClick={() => setSettingsOpen((o) => !o)}>
+                {words.settingsButton}
+              </button>
+            </div>
+            {settingsOpen && (
+              <div id="graph-settings">
+                <LazyPanel
+                  load={() => import("./WebSettings")}
+                  what={words.settingsLoading}
+                  props={{ look, kinds: kindCounts, onChange: setLook }}
+                />
+              </div>
+            )}
             <WebMap
               key={ref}
               api={api}
@@ -698,19 +756,23 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
+              onNodePick={() => setLine(null)}
+              look={look}
+              onIcon={seeing ? undefined : chooseIcon}
+              iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
+                const back = iconBack;
+                const refused = await chooseIcon(back.id, back.previous);
+                if (!refused) setIconBack(null);
+                return refused;
+              } } : null}
+              canEdit={canEdit}
             >
               {chosen && (
-                <LinePanel
+                <LazyPanel
                   key={`${chosen.a}|${chosen.b}`}
-                  edge={chosen}
-                  nameOf={nameOf}
-                  kindOf={kindOf}
-                  canEdit={canEdit}
-                  act={act}
-                  reveal={reveal} revealing={revealing}
-                  api={api}
-                  refId={ref}
-                  onClose={() => setLine(null)}
+                  load={() => import("./WebLinePanel")}
+                  what="the connections"
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null) }}
                 />
               )}
             </WebMap>
@@ -1090,390 +1152,6 @@ function CentrePicker({
         </ul>
       )}
     </div>
-  );
-}
-
-/** All the connections between two names, and (for a DM) the controls to change them. */
-function LinePanel({
-  edge,
-  nameOf,
-  kindOf,
-  canEdit,
-  act,
-  reveal,
-  revealing,
-  api,
-  refId,
-  onClose,
-}: {
-  edge: WebEdge;
-  nameOf: (id: string) => string;
-  kindOf: (id: string) => string;
-  canEdit: boolean;
-  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
-  reveal: (target: WebRevealTarget) => Promise<string | null>;
-  revealing: Set<string>;
-  api: AccountApi;
-  refId: string;
-  onClose: () => void;
-}) {
-  const a = nameOf(edge.a);
-  const b = nameOf(edge.b);
-  const box = useRef<HTMLElement>(null);
-  useEffect(() => box.current?.focus(), []);
-  return (
-    <section class="panel stack" aria-labelledby="web-line-h" tabIndex={-1} ref={box}>
-      <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
-      {/* Every connection between the two names, in both directions (#2934): the two-way ones first, then
-          one column for each way. The numbers stay the same in every group so "Words for connection 2" is unique. */}
-      <div class="stack">
-        {edge.links.some((l) => l.direction === "both") && (
-          <section class="stack" aria-label={words.bothWays}>
-            <h3 class="small">{words.bothWays}</h3>
-            <ol class="stack">
-              {edge.links.map((l, i) =>
-                l.direction === "both" ? (
-                  <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
-                ) : null,
-              )}
-            </ol>
-          </section>
-        )}
-        {edge.links.some((l) => l.direction !== "both") && (
-          <div class="web-sides">
-            {(["a-b", "b-a"] as const).map((way) => (
-              <section key={way} class="stack" aria-label={way === "a-b" ? words.oneWay(a, b) : words.oneWay(b, a)}>
-                <h3 class="small">{way === "a-b" ? words.oneWay(a, b) : words.oneWay(b, a)}</h3>
-                <ol class="stack">
-                  {edge.links.map((l, i) =>
-                    l.direction === way ? (
-                      <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} api={api} refId={refId} />
-                    ) : null,
-                  )}
-                </ol>
-              </section>
-            ))}
-          </div>
-        )}
-      </div>
-      {canEdit && (
-        <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />
-      )}
-      <button type="button" class="button secondary" onClick={onClose}>
-        {words.close}
-      </button>
-    </section>
-  );
-}
-
-/** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
- * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
-function WhoKnows({
-  api,
-  refId,
-  link,
-  act,
-}: {
-  api: AccountApi;
-  refId: string;
-  link: WebEdge["links"][number];
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
-}) {
-  const [picking, setPicking] = useState(false);
-  const [chosen, setChosen] = useState<Set<string>>(new Set());
-  const [names, setNames] = useState<Map<string, string>>(new Map()); // the names of the characters, by id
-  const [q, setQ] = useState("");
-  const [list, setList] = useState<{ id: string; name: string }[]>([]);
-  const [total, setTotal] = useState(0);
-  const [failed, setFailed] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [already, setAlready] = useState("");
-  const [busy, setBusy] = useState(false); // a change is with the bot: no second press until it is answered
-  const latest = useRef(0);
-  // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
-  const current = link.who;
-  const holders = link.knownBy ?? [];
-
-  // The character search: the same wait and list as the See as… picker.
-  useEffect(() => {
-    if (!picking || !api.webViewers) return;
-    const mine = ++latest.current;
-    const timer = setTimeout(
-      () => {
-        api
-          .webViewers!(refId, q.trim())
-          .then((got) => {
-            if (mine !== latest.current) return;
-            setList(got.viewers);
-            setTotal(got.total);
-            setFailed(false);
-          })
-          .catch(() => {
-            if (mine !== latest.current) return;
-            setList([]);
-            setTotal(0);
-            setFailed(true);
-          });
-      },
-      q === "" ? 0 : 300,
-    );
-    return () => clearTimeout(timer);
-  }, [api, refId, q, picking]);
-
-  const stateLine =
-    current === undefined
-      ? null
-      : current === "dm"
-        ? words.whoStateDm
-        : current === "some" && holders.length > 0
-          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
-          : current === "all"
-            ? words.whoStateAll
-            : words.whoStateDm;
-
-  /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
-  async function choose(who: "dm" | "everyone"): Promise<void> {
-    if (busy) return;
-    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
-    setAlready("");
-    if (now === who) return setAlready(words.whoAlready);
-    setBusy(true);
-    try {
-      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function toggle(v: { id: string; name: string }): void {
-    setChosen((was) => {
-      const next = new Set(was);
-      if (next.has(v.id)) next.delete(v.id);
-      else next.add(v.id);
-      return next;
-    });
-    setNames((was) => new Map(was).set(v.id, v.name));
-  }
-
-  async function save(): Promise<void> {
-    if (busy) return;
-    const ids = [...chosen];
-    // The same set as already holds it: nothing is sent, and the page says so.
-    const same = current === "some" && ids.length === holders.length && holders.every((h) => chosen.has(h.id));
-    setAlready("");
-    if (same) return setAlready(words.whoAlready);
-    const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
-    setBusy(true);
-    try {
-      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
-      setProblem(problemNow);
-      if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div class="stack">
-      <p>
-        <strong>{words.whoKnowsHeading}</strong>
-      </p>
-      {stateLine && <p class="small">{stateLine}</p>}
-      <div class="row" role="group" aria-label={words.whoKnowsHeading}>
-        <button type="button" class="button secondary" aria-pressed={current === "dm"} disabled={busy} onClick={() => void choose("dm")}>
-          {words.whoOnlyDm}
-        </button>
-        <button
-          type="button"
-          class="button secondary"
-          aria-pressed={current === "some"}
-          disabled={busy}
-          onClick={() => {
-            setChosen(new Set(holders.map((h) => h.id)));
-            setNames(new Map(holders.map((h) => [h.id, h.name])));
-            setPicking(true);
-          }}
-        >
-          {words.whoSome}
-        </button>
-        <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
-          {words.whoEveryone}
-        </button>
-      </div>
-      {already && <p role="status">{already}</p>}
-      {problem && <p role="status">{problem}</p>}
-      {picking && (
-        <div class="stack">
-          <label>
-            {words.whoSearch}
-            <input
-              type="search"
-              value={q}
-              placeholder={words.whoSearch}
-              autoComplete="off"
-              spellcheck={false}
-              onInput={(e) => setQ((e.target as HTMLInputElement).value)}
-            />
-          </label>
-          {failed && <p role="status">{words.seeAsLoadFailed}</p>}
-          <ul class="web-found" aria-label={words.whoSomeLabel}>
-            {list.map((v) => (
-              <li key={v.id}>
-                <label class="choice">
-                  <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
-                  <span>{v.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
-          <div class="row">
-            <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
-              {words.whoSave}
-            </button>
-            {chosen.size === 0 && <span class="small muted">{words.whoPickOne}</span>}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LinkRow({
-  n,
-  link,
-  a,
-  b,
-  canEdit,
-  act,
-  reveal,
-  revealing,
-  api,
-  refId,
-}: {
-  n: number;
-  link: WebEdge["links"][number];
-  a: string;
-  b: string;
-  canEdit: boolean;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
-  reveal: (target: WebRevealTarget) => Promise<string | null>;
-  revealing: Set<string>;
-  api: AccountApi;
-  refId: string;
-}) {
-  const [text, setText] = useState(link.rawWords ?? link.words);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
-  const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
-  const sourceWords = words.sourceLine(link.source);
-  return (
-    <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
-      {link.kind && (
-        <p class={`small web-kindmark web-link-${link.kind}`}>
-          <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
-        </p>
-      )}
-      <p>
-        {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
-        {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
-        {words.linkText(a, b, link.words, link.direction)}
-        {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
-      </p>
-      {sourceWords && <p class="small muted">{sourceWords}</p>}
-      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
-      {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
-      {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
-      {link.belief && (
-        <p class="small">
-          {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}
-        </p>
-      )}
-      {link.belief?.contradicted && <p class="small warn">{words.believesFalse}</p>}
-      {!link.knowWord && link.revealed === false && <p class="small muted">{words.notRevealedFull}</p>}
-      {canEdit && link.revealed === false && (
-        <div class="row">
-          <button
-            type="button"
-            class="button secondary"
-            aria-label={words.revealLink(n)}
-            disabled={revealing.has(`link:${link.id}`)}
-            onClick={() => void reveal({ kind: "link", id: link.id }).then(setProblem)}
-          >
-            {words.reveal}
-          </button>
-          {problem?.endsWith(words.namesPageEnding) && (
-            <a class="small" href={`/account/names/${encodeURIComponent(refId)}`}>
-              {words.openNames}
-            </a>
-          )}
-        </div>
-      )}
-      {canEdit && (
-        <div class="stack">
-          <label class="field">
-            {words.wordsLabel(n)}
-            <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-          </label>
-          <div class="row">
-            <button
-              type="button"
-              class="button secondary"
-              aria-label={words.saveWords(n)}
-              onClick={() => void run({ action: "words", id: link.id, words: text }, words.saved)}
-            >
-              {words.save}
-            </button>
-            <button
-              type="button"
-              class="button secondary"
-              aria-label={link.secret ? words.makeKnown(n) : words.makeSecret(n)}
-              onClick={() => void run({ action: "secret", id: link.id, secret: !link.secret }, words.saved)}
-            >
-              {link.secret ? words.makeKnownShort : words.makeSecretShort}
-            </button>
-            <button
-              type="button"
-              class="button secondary"
-              aria-label={link.pinned ? words.unpinLabel(n) : words.pinLabel(n)}
-              onClick={() =>
-                void run(
-                  { action: "pin", id: link.id, pinned: !link.pinned },
-                  link.pinned ? words.unpinnedDone : words.pinnedDone,
-                )
-              }
-            >
-              {link.pinned ? words.unpin : words.pin}
-            </button>
-            {!asking && (
-              <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>
-                {words.removeShort}
-              </button>
-            )}
-          </div>
-          <p class="small muted">{words.pinHint}</p>
-          {canEdit && WHO_KNOWS_LIVE && (link.secret || link.revealed === false) && (
-            <WhoKnows api={api} refId={refId} link={link} act={act} />
-          )}
-          {asking && (
-            <div class="row" role="group" aria-label={words.removeShort}>
-              <span>{words.removeAsk(a, b)}</span>
-              <button type="button" class="button" autoFocus onClick={() => void run({ action: "remove", id: link.id, confirm: true }, words.removed)}>
-                {words.removeYes}
-              </button>
-              <button type="button" class="button secondary" onClick={() => setAsking(false)}>
-                {words.keep}
-              </button>
-            </div>
-          )}
-          {problem && (
-            <p class="warn" role="alert">
-              {problem}
-            </p>
-          )}
-        </div>
-      )}
-    </li>
   );
 }
 

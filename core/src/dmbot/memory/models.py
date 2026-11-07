@@ -233,6 +233,9 @@ class NewName:
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
+    # An item the unique-item judge kept (#3373) is stored as one particular thing (#3618), so a
+    # second owner is flagged; None leaves it to the name guess and the DM's switch.
+    unique: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

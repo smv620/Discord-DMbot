@@ -933,6 +933,7 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        stepped = False  # a strong feeling word was brought down to fit its quote (#3606)
         if how == "located_in":
             # The place tie keeps the word the text used, as one wording ("lives in"), or none for
             # a place inside a place (#3363); anything else the AI wrote there is dropped.
@@ -953,6 +954,8 @@ def read_connections(
             ):
                 lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
             said_feeling = said_feeling or old_feeling
+            if said_feeling is not None:  # a strong word needs a cue in the quote (#3606)
+                said_feeling, stepped = feeling_words.held_to_the_quote(said_feeling, str(quote))
             label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
@@ -1012,6 +1015,7 @@ def read_connections(
         words = _quote_window(spoken, seen[0], seen[1], holds)
         said = " ".join(words)
         said_squashed = _squash(said)
+        kept_before = len(out) + len(unsettled or ())
         made = Connection(
             a,
             how,
@@ -1044,6 +1048,8 @@ def read_connections(
             unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
+        if stepped and len(out) + len(unsettled or ()) > kept_before:
+            lost["feeling_demoted"] += 1  # (counted only for a line that was kept or is waiting)
     return out
 
 

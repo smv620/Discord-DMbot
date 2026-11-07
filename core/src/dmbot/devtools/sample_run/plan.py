@@ -30,6 +30,17 @@ PLAYER_CHARACTERS: tuple[tuple[str, str], ...] = (
     ("Claude Ambere", "owe"),
 )
 
+# The sample's players are NOT on Discord (#3690): the session file names them `player_jac` and so
+# on, and the DM's lines "DM". The older labels stay as aliases so an older session file still runs.
+# (short key used by `PLAYER_CHARACTERS`, the labels a file may use for that player)
+OFF_DISCORD: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ist", ("player_ist", "user_ist", "ist")),
+    ("jac", ("player_jac", "user_jac", "jac")),
+    ("eri", ("player_eri", "user_eri", "eri")),
+    ("owe", ("player_owe", "user_owe", "owe")),
+)
+DM_LABELS = ("dm",)
+
 _LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_ ()#.\-]{0,79}")
 MAX_PLAYERS = 12
 
@@ -68,12 +79,38 @@ STEPS: tuple[str, ...] = (
     "player characters found by the read",
     "accept all (lore)",
     "backup and score (lore)",
+    "players not on Discord",
     "player characters corrected",
     "session import",
     "accept all (session)",
     "backup and score (both)",
     "recap (no audio)",
 )
+
+
+def off_discord_roles(
+    labels: Collection[str], display: Mapping[str, str]
+) -> tuple[dict[str, str], str | None]:
+    """Which of a session file's speakers is which (#3690): `({label: short key}, the DM's label)`.
+    `display` is each label's name as the import reads it (the part before any "(username)").
+    A speaker that is neither one of the four players nor the DM is a plain refusal."""
+    keys: dict[str, str] = {}
+    dm_label: str | None = None
+    for label in labels:
+        shown = display[label].strip().casefold()
+        if shown in DM_LABELS:
+            dm_label = label
+            continue
+        for key, accepted in OFF_DISCORD:
+            if shown in accepted:
+                keys[label] = key
+                break
+        else:
+            raise SampleError(
+                "a speaker in the session file is not player_jac, player_ist, player_owe, "
+                "player_eri or DM"
+            )
+    return keys, dm_label
 
 
 def require_character_players(players: Mapping[str, int]) -> None:

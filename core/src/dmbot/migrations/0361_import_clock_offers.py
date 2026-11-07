@@ -123,8 +123,10 @@ _SWAPS = (
     ),
     # neither is filed under a name (the way the Add all actions are not)
     (
-        "OR act IN ('confirm-kinds', 'confirm-undo') THEN\n            -- a waiting connection",
-        "OR act IN ('confirm-kinds', 'confirm-undo', 'clock-set', 'clock-skip') THEN\n"
+        "OR act IN ('confirm-kinds', 'confirm-undo', 'offer-clear') THEN\n"
+        "            -- a waiting connection",
+        "OR act IN ('confirm-kinds', 'confirm-undo', 'offer-clear', 'clock-set',"
+        " 'clock-skip') THEN\n"
         "            -- a waiting connection",
         1,
     ),

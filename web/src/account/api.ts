@@ -70,7 +70,39 @@ export interface Campaign {
   canDelete?: boolean;
 }
 
+/** What the bot has switched on, as it wrote it when it last started (#3693): names and sentences only. */
+export interface FeaturesList {
+  /** Unix seconds. */
+  writtenAt: number;
+  on: { name: string; words: string }[];
+  off: string[];
+}
+
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+/** One call DMbot made to the AI inside a lore read or an import, as the DM's windows show it (#3710): the first
+ * 500 characters of what was asked and of what came back, each ending "[...]" when there was more. */
+export interface AiFeedEntry {
+  /** The lore upload's id, or the id of the session the import made. */
+  job: string;
+  /** The call's number within its job. */
+  n: number;
+  /** Unix seconds. */
+  at: number;
+  service: string;
+  model: string;
+  step: string;
+  prompt: string;
+  reply: string | null;
+  state: "waiting" | "done" | "failed";
+  reason: string | null;
+}
+
+export interface AiFeedRead {
+  entries: AiFeedEntry[];
+  /** How many calls were not written (and so are not shown). */
+  lost: number;
+}
+
 export interface CampaignPage {
   ref: string;
   name: string;
@@ -80,6 +112,8 @@ export interface CampaignPage {
   importsOn?: boolean;
   /** The campaign's current choices, for its game masters only (#2461). */
   settings?: CampaignSettings;
+  /** What DMbot has switched on, for its game masters only; missing until the bot has written it (#3693). */
+  features?: FeaturesList;
 }
 
 /** One of the three choices a game master can change on the Settings tab (#2484). */
@@ -949,6 +983,8 @@ export interface NameCheck {
    * and how many more places there are. Missing from an API older than that. */
   places?: NamePlace[];
   morePlaces?: number;
+  /** DMbot's short summary of the scene this name came up in (#3644). Missing when there is none, and from an older API. */
+  scene?: string | null;
   /** This waiting name is a list of names, so "These are separate names" applies (#3406). Missing from an API older than that. */
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
@@ -1024,6 +1060,24 @@ export interface PlotMessage {
   error: string;
   proposals: PlotProposal[];
   at: number;
+}
+
+/** One name to check, opened on its own page (#3604): everything the Discord card shows, without a press, and DMbot's
+ * top answers. `scene` (#3596) and `answers` (#3602) are missing from an API older than their doors. */
+export interface ClarifyName {
+  id: string;
+  name: string;
+  /** What the recap says about it, in the story's words. */
+  note: string;
+  /** A short who, where and what from the story; null when DMbot has none yet. */
+  scene?: string | null;
+  places: NamePlace[];
+  morePlaces: number;
+  /** DMbot's top answers, best first, with the Discord labels ("a.k.a. Ilse", "new NPC"). Each is a ready answer. */
+  answers?: { label: string; answer: NameCheckAnswer }[];
+  /** The kinds a new entry can be made as. */
+  kinds: { key: string; label: string }[];
+  answering: boolean;
 }
 
 export interface NameCheckList {
@@ -1605,7 +1659,17 @@ export interface WebNode {
   /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
    * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
   quests?: { id: string; name: string; links: number }[];
+  /** A player character's icon (#3621, #3622): the picture to draw in its circle. `null` or missing: draw 👤. `hidden`: no
+   * picture at all. Only on player character names, from an API that has the icons. */
+  icon?: { kind: "discord" | "dndbeyond" | "hidden"; url: string | null } | null;
+  /** What was chosen for it; "default" is the usual order (the Discord picture, else the dndbeyond.com one, else 👤). */
+  iconChoice?: IconChoice;
+  /** True for the DM and for the player who plays this character: only then are the Icon buttons offered. */
+  canSetIcon?: boolean;
+  /** Which pictures exist to pick, sent only with `canSetIcon`. */
+  iconHas?: { discord: boolean; dndbeyond: boolean };
 }
+export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
 export interface WebBelief {
@@ -1623,7 +1687,7 @@ export interface WebBelief {
 export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
 
 /** Where a connection came from (#2946, API #3540). The API cuts it for a player: a session number or unknown, never a label. */
-export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string } | { type: "dm" } | { type: "unknown" };
+export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string; line?: number } | { type: "dm" } | { type: "unknown" };
 export interface WebLink {
   id: string;
   words: string;
@@ -1650,6 +1714,9 @@ export interface WebLink {
   backAfter?: string | null;
   /** Where it came from (#2946). Missing from an older API: the page then shows nothing. */
   source?: WebLinkSource;
+  /** The words of the lore or session this connection was read from, for a DM only (#3606, #3607). Missing when none is
+   * recorded, and from an older API. */
+  quote?: string | null;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */
@@ -1765,11 +1832,29 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
+  | { action: "feeling"; id: string; feeling: string }
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
+/** Words DMbot stopped asking about (#3577, core 0360): the table's own words and the DM's answer, "never" or "later" (Not now). */
+export interface KindOffer {
+  words: string;
+  state: "never" | "later";
+}
+/** A new spelling of a place the campaign already has, waiting for the game master's yes or no (#3533, core #3532). */
+export interface PlaceSpelling {
+  /** The proposed other name's id. */
+  id: string;
+  /** The place's id: the answer is filed under it. */
+  placeId: string;
+  /** The place as the campaign knows it ("Northhaven"). */
+  place: string;
+  /** The new spelling ("North Haven"). */
+  spelling: string;
+}
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow {
   id: string;
@@ -1798,6 +1883,8 @@ export interface NameRow {
   unnamed?: boolean;
   /** For an unnamed person: who they are, in the story's words ("sister"). */
   unnamedWhat?: string;
+  /** DMbot's short summary of the scene this unnamed person came up in, for a DM only (#3644, core #3601). Missing when there is none. */
+  scene?: string | null;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
   /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
@@ -1833,6 +1920,19 @@ export interface SmartNamesAnswer {
   names: NameRow[];
   /** True when only the newest notes were searched (the search looks at the newest 10,000 at most; core #2756). */
   capped?: boolean;
+}
+
+/** One match DMbot made by itself that the DM has not answered (#3602). Names, the change's number and
+ * when only: never a line of the transcript. */
+export interface MatchRow {
+  /** The change's number, in digits: what an answer is queued by. */
+  batch: string;
+  keepId: string;
+  keepName: string;
+  /** The waiting name DMbot put with it. */
+  spelling: string;
+  /** Unix seconds. */
+  at: number;
 }
 
 export interface NamesQuery {
@@ -2083,6 +2183,9 @@ export interface QuestionCampaign {
   total: number;
   kinds: QuestionKind[];
   countedAt: number | null;
+  /** How many of DMbot's own matches wait for the DM (#3701): a count, from the same door as the Names page's
+   * list. Missing from an API older than that. */
+  guesses?: number;
 }
 export interface CampaignNameChecks {
   recaps: { ref: string; at: number; count: number }[];
@@ -2161,6 +2264,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "unavailable" // a player character's icon picture that is not there any more (#3621, #3622)
   | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
   | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
@@ -2545,6 +2649,12 @@ export interface AccountApi {
   /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
+   * an API older than that. */
+  nameMatches?(ref: string): Promise<MatchRow[]>;
+  /** "Yes, that's right" or the Undo of one of them: queued for the bot, which applies it as the DM; resolves when
+   * it is done, rejects with the bot's reason. `onLook` hears the wait each time the page looks (#2564). */
+  answerMatch?(ref: string, batch: string, answer: "confirm" | "undo", onLook?: (look: WaitingLook) => void): Promise<void>;
   /** Names by meaning, for "ice goddess" or "friend of Brannoc" (#2733). The words go in a POST body, never the
    * address (a query string is written to logs). Missing from an API older than that. */
   smartNames?(ref: string, words: string): Promise<SmartNamesAnswer>;
@@ -2584,6 +2694,9 @@ export interface AccountApi {
   /** Back to DMbot's own list of must-haves (#3329). Followed with `recapStyleAction`. */
   recapMustsDefaults?(campaignRef: string): Promise<{ id: string }>;
   /** One upload's progress, or with no id the newest of the last day; null when there is none. */
+  /** The calls DMbot made to the AI in one lore upload or import since `after` (Unix seconds; the calls still
+   * waiting are always included), for a campaign's game masters only (#3710). Missing from an older API. */
+  aiFeed?(ref: string, kind: "lore" | "import", job: string, after: number): Promise<AiFeedRead>;
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
@@ -2594,6 +2707,15 @@ export interface AccountApi {
   /** Delete all of my notes in a campaign; how many there were. */
   deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** The words DMbot stopped asking about (DM only; #3577). */
+  campaignKindOffers?(ref: string): Promise<KindOffer[]>;
+  /** Lift a Never or Not now: the words may be offered again after the next session. The bot applies it, so this waits for its answer. */
+  liftKindOffer?(ref: string, words: string): Promise<void>;
+  /** The spellings of places waiting for a yes or no (DM only; #3533, core migration 0354). */
+  placeSpellings?(ref: string): Promise<PlaceSpelling[]>;
+  /** Yes: the spelling becomes another name of the place. No: it is turned down and not offered again. The
+   * bot applies it, so this waits for its answer like any name change. */
+  answerPlaceSpelling?(ref: string, spelling: PlaceSpelling, yes: boolean): Promise<void>;
   /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
    * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
   /** The secret other names of a campaign and who holds or was told each (DM only; #3542). */
@@ -2650,6 +2772,8 @@ export interface AccountApi {
   webReveal?(ref: string, target: WebRevealTarget): Promise<void>;
 /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
    * `{ removed: true }` when the last connection between two names went. */
+  /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
+  setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
   changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
@@ -2780,6 +2904,8 @@ export interface AccountApi {
   decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
+  /** One name to check on its own page (#3604). Missing from an API older than its door. */
+  clarifyName?(ref: string, id: string): Promise<ClarifyName>;
   /** The bot's word on the last answer to this name: its note in plain words, the batch to Undo, the refusal word (#3406). */
   nameAnswerResult?(ref: string, id: string): Promise<NameAnswerResult>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -2917,6 +3043,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   doc_too_big: "doc-too-big",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
+  unavailable: "unavailable",
   sign_in_again: "sign-in-again",
   try_it_used: "try-it-used",
   try_it_has_plan: "has-plan",
@@ -3062,8 +3189,8 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "toldPanel", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "setPcIcon", "clarifyName", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "aiFeed"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
