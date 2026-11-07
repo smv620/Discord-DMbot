@@ -73,6 +73,7 @@ READERS = {
 # new query in it pass unseen. Every function that names the table is here with how it treats a
 # guess connection (proposed, secret, the extractor's).
 STORE = {
+    "_ai_join_refusal": DM_ONLY + ": a secret, held-back or disguise link makes it say no",
     "_close_stale_flags": DM_ONLY + ": flags",
     "_sync_plays": "plays links only (scan proposals, never secret guesses)",
     "_threads": CONFIRMED_ONLY,

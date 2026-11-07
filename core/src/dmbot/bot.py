@@ -291,6 +291,7 @@ from dmbot.memory import (
     web_actions,
     web_report_requests,
     web_sheets,
+    who_apply,
     who_step,
 )
 from dmbot.memory import health as memory_health
@@ -8823,7 +8824,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def write_who(self, table: Table) -> None:
         """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
-        each waiting name could be (see `memory.who_step`). It only ranks: nothing is applied.
+        each waiting name could be (see `memory.who_step`). It only ranks, unless
+        DMBOT_STORY_WHO_APPLY is also on: then a "sure" answer naming an existing entry is joined
+        by `join_by_ai`.
         Inside the extractor's session and daily call limits, only lines of people who agree, the
         DM's own ranking (hidden entries may be a choice; the answers are DM-only), counts only in
         the log."""
@@ -8930,6 +8933,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 max_calls=allowed,
                 count_call=count_call,
                 report=report,
+                apply=(
+                    who_apply.joiner(memory, gid, cid) if self.settings.story_who_apply_on else None
+                ),
             )
             log.info(report.line())
 
