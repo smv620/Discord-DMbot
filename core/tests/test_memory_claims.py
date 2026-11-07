@@ -559,6 +559,25 @@ class Stored(ConfirmedMemoryTest):
             ],
         )
 
+    async def test_a_kind_of_creature_the_rules_hold_is_no_entry_but_a_named_one_is(self) -> None:
+        # (#3634) "owlbears" and "an owlbear" are kinds the rules hold; "Owlbear Mama" is one
+        got = await self.propose(
+            said("Bram", "fights", "owlbears"),
+            said("Bram", "fights", "an owlbear"),
+            said("Bram", "fights", "Owlbear Mama"),
+        )
+        self.assertEqual(got.reasons, {claims.RULES_REASON: 2})
+        self.assertEqual(got.rules_dropped, 2)
+        self.assertEqual(got.new, ("Owlbear Mama",))
+
+    async def test_a_leading_a_and_a_bracketed_note_are_not_part_of_a_name(self) -> None:
+        got = await self.propose(
+            said("Bram", "knows", "Okthandom's cousin Ren (no name given yet)"),
+            said("Bram", "knows", "an old hermit named Garrick"),
+        )
+        self.assertEqual(got.tidied, 2)
+        self.assertEqual(sorted(got.new), ["Okthandom's cousin Ren", "old hermit named Garrick"])
+
     async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
         # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
         got = await self.propose(

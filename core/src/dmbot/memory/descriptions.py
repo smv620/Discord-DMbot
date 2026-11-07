@@ -74,8 +74,14 @@ PERSON_WORDS = frozenset(
         "brother",
         "son",
         "daughter",
+        "sibling",
+        "patron",
+        "attacker",
     ]
 )
+# A class word names a person only with a word before it that says which one ("maul barbarian": the
+# one with the maul, #3634); alone it is a kind of person ("barbarians"), not someone.
+PERSON_WORDS_WITH_A_MODIFIER = frozenset(["barbarian", "raider", "bandit", "cultist", "assassin"])
 
 
 def is_described_person(text: str) -> bool:
@@ -83,4 +89,10 @@ def is_described_person(text: str) -> bool:
     if not is_description(text):
         return False
     words = [w for w in text.replace("'s", " ").split() if w[:1].isalpha()]
-    return bool(words) and words[-1].casefold() in PERSON_WORDS
+    if not words:
+        return False
+    last = words[-1].casefold()
+    return last in PERSON_WORDS or (
+        last in PERSON_WORDS_WITH_A_MODIFIER
+        and len([w for w in words if w.casefold() not in _LEADING]) >= 2
+    )
