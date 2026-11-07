@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Says which CI jobs a push needs (#1323), as lines for $GITHUB_OUTPUT: core=…, ears=…, web=….
+# Says which CI jobs a push needs (#1323), as lines for $GITHUB_OUTPUT: core=…, ears=…, web=…, docker=….
+#
+# The docker images job builds the images, so it runs only when something the images are built from
+# changed (#3715); its builds are the slowest part of CI and the runners are shared.
 #
 # A job is skipped only when nothing it reads can have changed. Anything this script does not
 # know by name runs everything, so a new folder can never slip past CI. Pushes to development,
@@ -14,11 +17,12 @@ everything() {
   echo "core=true"
   echo "ears=true"
   echo "web=true"
+  echo "docker=true"
   exit 0
 }
 
 case "${GITHUB_REF:-}" in
-  refs/heads/development | refs/heads/beta | refs/heads/main) everything ;;
+  refs/heads/development | refs/heads/beta | refs/heads/main | refs/heads/batch/*) everything ;;
 esac
 
 base=$(git merge-base "$base_ref" HEAD 2>/dev/null) || everything
@@ -29,9 +33,13 @@ files=$(git diff --no-renames --name-only "$base" HEAD 2>/dev/null) || everythin
 core=false
 ears=false
 web=false
+docker=false
 while IFS= read -r f; do
   case "$f" in
     # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
+    # the images' own dependency files and build recipes: the docker job builds from these (#3715)
+    core/Dockerfile | core/.dockerignore | core/pyproject.toml) core=true docker=true ;;
+    ears/Dockerfile | ears/.dockerignore | ears/package.json | ears/package-lock.json) ears=true docker=true ;;
     core/src/dmbot/*.py) core=true web=true ;;
     # the Credits page and its tests read the rules data and its ATTRIBUTION.md files (#1923, #1932)
     core/src/dmbot/rules/data/*) core=true web=true ;;
@@ -63,3 +71,4 @@ done <<<"$files"
 echo "core=$core"
 echo "ears=$ears"
 echo "web=$web"
+echo "docker=$docker"
