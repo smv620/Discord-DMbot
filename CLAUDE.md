@@ -163,6 +163,12 @@ CI runs all of the above on every pull request. Never merge red CI.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
+- **Discord and the website stay level** (owner, 2026-11-07, #3663): a new DM-facing feature ships in
+  both places, or files the other half as an issue (linked in the PR) before it merges. Discord-only on
+  purpose is allowed only for what is live at the table or is Discord itself (which voice channel, joining
+  and recording, live alerts, the initiative tracker, a player's own consent button, server roles); the
+  PR says why. The list of what is where is `docs/discord-web-parity.md`; the PR that adds a feature
+  updates its row.
 - A PR that ships something users can see adds its line to the site's What's new page
   (one file per entry in `web/src/content/whats-new/`, #2469), or marks it `held` with the reason while something known
   stops it working (Supervisor, 2026-10-15; docs/PLAN.md, "What's new page").
