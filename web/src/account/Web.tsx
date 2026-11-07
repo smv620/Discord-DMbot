@@ -692,15 +692,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </div>
       </div>
 
-      <p class="small" role="status" aria-live="polite">
-        {words.howMany(nodes.length, edges.length)}
-      </p>
       {graph.truncated && <p class="note">{words.truncated}</p>}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
+      </p>
+
+      <p class="web-count" role="status" aria-live="polite">
+        <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
 
       {nodes.length <= 1 && edges.length === 0 ? (
