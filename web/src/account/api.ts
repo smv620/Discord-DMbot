@@ -949,6 +949,8 @@ export interface NameCheck {
    * and how many more places there are. Missing from an API older than that. */
   places?: NamePlace[];
   morePlaces?: number;
+  /** DMbot's short summary of the scene this name came up in (#3644). Missing when there is none, and from an older API. */
+  scene?: string | null;
   /** This waiting name is a list of names, so "These are separate names" applies (#3406). Missing from an API older than that. */
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
@@ -1814,6 +1816,8 @@ export interface NameRow {
   unnamed?: boolean;
   /** For an unnamed person: who they are, in the story's words ("sister"). */
   unnamedWhat?: string;
+  /** DMbot's short summary of the scene this unnamed person came up in, for a DM only (#3644, core #3601). Missing when there is none. */
+  scene?: string | null;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
   /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
