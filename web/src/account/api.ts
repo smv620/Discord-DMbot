@@ -1659,7 +1659,17 @@ export interface WebNode {
   /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
    * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
   quests?: { id: string; name: string; links: number }[];
+  /** A player character's icon (#3621, #3622): the picture to draw in its circle. `null` or missing: draw 👤. `hidden`: no
+   * picture at all. Only on player character names, from an API that has the icons. */
+  icon?: { kind: "discord" | "dndbeyond" | "hidden"; url: string | null } | null;
+  /** What was chosen for it; "default" is the usual order (the Discord picture, else the dndbeyond.com one, else 👤). */
+  iconChoice?: IconChoice;
+  /** True for the DM and for the player who plays this character: only then are the Icon buttons offered. */
+  canSetIcon?: boolean;
+  /** Which pictures exist to pick, sent only with `canSetIcon`. */
+  iconHas?: { discord: boolean; dndbeyond: boolean };
 }
+export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
 export interface WebBelief {
@@ -2249,6 +2259,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "unavailable" // a player character's icon picture that is not there any more (#3621, #3622)
   | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
   | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
@@ -2752,6 +2763,8 @@ export interface AccountApi {
   webReveal?(ref: string, target: WebRevealTarget): Promise<void>;
 /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
    * `{ removed: true }` when the last connection between two names went. */
+  /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
+  setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
   changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
@@ -3021,6 +3034,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   doc_too_big: "doc-too-big",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
+  unavailable: "unavailable",
   sign_in_again: "sign-in-again",
   try_it_used: "try-it-used",
   try_it_has_plan: "has-plan",
@@ -3166,7 +3180,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "clarifyName"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "clarifyName", "setPcIcon"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
