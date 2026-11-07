@@ -67,7 +67,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type IconChoice, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -958,6 +958,25 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
+  // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
+  // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
+  const pcChoice = new Map<string, IconChoice>();
+  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2" });
+  const pretendIcons = (ref: string, n: WebNode, dm: boolean): WebNode => {
+    if (!["n1", "n2", "n3"].includes(n.id)) return n;
+    const choice = pcChoice.get(`${ref}:${n.id}`) ?? "default";
+    const has = pcHas(n.id);
+    const picture = (who: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#7a5c9e"/><text x="32" y="44" font-size="34" text-anchor="middle" fill="#fff">${who}</text></svg>`)}`;
+    const shown: WebNode["icon"] =
+      choice === "hidden"
+        ? { kind: "hidden", url: null }
+        : (choice === "discord" || (choice === "default" && has.discord)) && has.discord
+          ? { kind: "discord", url: picture("D") }
+          : (choice === "dndbeyond" || choice === "default") && has.dndbeyond
+            ? { kind: "dndbeyond", url: picture("B") }
+            : null;
+    return { ...n, kind: "player_character", icon: shown, iconChoice: choice, canSetIcon: dm, ...(dm ? { iconHas: has } : {}) };
+  };
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -992,7 +1011,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     // A name changed on the Names routes (rename, kind) shows here too: they are the same names.
     const current = (n: WebNode): WebNode => {
       const live = memory.find((m) => m.id === n.id);
-      return { ...n, name: live?.name ?? n.name, kind: live?.kind ?? n.kind };
+      const now = { ...n, name: live?.name ?? n.name, kind: live?.kind ?? n.kind };
+      return /\.icons/.test(ref) ? pretendIcons(ref, now, view === "dm") : now;
     };
     const nodes = state.nodes
       .filter((n) => near.has(n.id))
@@ -2209,6 +2229,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const found = target.kind === "name" ? state.nodes.find((n) => n.id === target.id) : state.links.find((l) => l.id === target.id);
       if (!found) throw new ApiError("not-found");
       found.revealed = true;
+    },
+    async setPcIcon(ref, entityId, choice) {
+      calls.push(`setPcIcon:${ref}:${entityId}:${choice}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
+      if (!["n1", "n2", "n3"].includes(entityId)) throw new ApiError("not-found");
+      const has = pcHas(entityId);
+      if ((choice === "discord" && !has.discord) || (choice === "dndbeyond" && !has.dndbeyond)) throw new ApiError("unavailable");
+      const previous = pcChoice.get(`${ref}:${entityId}`) ?? "default";
+      pcChoice.set(`${ref}:${entityId}`, choice);
+      return { previous, now: choice };
     },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
