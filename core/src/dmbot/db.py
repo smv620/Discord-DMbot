@@ -28,6 +28,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from dmbot import lineage
 from dmbot.schema import (
     MIGRATIONS,
     WEB_ROLE,
@@ -139,13 +140,26 @@ class Database:
         await self._pool.close()
 
     @asynccontextmanager
-    async def guild(self, guild_id: int, *, snapshot: bool = False) -> AsyncIterator[Conn]:
+    async def guild(
+        self,
+        guild_id: int,
+        *,
+        snapshot: bool = False,
+        by_dmbot: bool = False,
+        restoring: bool = False,
+    ) -> AsyncIterator[Conn]:
         """A transaction that can only see one Discord server's rows.
 
         `snapshot=True` makes every read in the transaction see the same moment (for
         backups). The transaction commits when the block ends, or rolls back on error.
+
+        Lineage (#3739, `dmbot.lineage`): the transaction names the running build, so rows it
+        inserts are stamped with it. `by_dmbot=True` is for DMbot rewriting its own work: updated
+        rows take the running build's stamp too. `restoring=True` (a backup load, an Undo) keeps
+        every stamp exactly as the row carries it.
         """
         async with self._pool.connection() as conn, conn.transaction():
+            await self._stamp(conn, by_dmbot=by_dmbot, restoring=restoring)
             if snapshot:
                 await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             await conn.execute(
@@ -157,6 +171,17 @@ class Database:
                     (value,),
                 )
             yield conn
+
+    @staticmethod
+    async def _stamp(conn: Conn, *, by_dmbot: bool = False, restoring: bool = False) -> None:
+        """Open the lineage settings for this transaction (all dropped when it ends)."""
+        commit = lineage.running_commit()
+        if commit:
+            await conn.execute("SELECT set_config('dmbot.commit', %s, true)", (commit,))
+        if by_dmbot:
+            await conn.execute("SELECT set_config('dmbot.rewrites', 'on', true)")
+        if restoring:
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
 
     @asynccontextmanager
     async def recap_mail(self, guild_id: int) -> AsyncIterator[Conn]:
@@ -171,6 +196,7 @@ class Database:
     async def _with(self, **settings: str) -> AsyncIterator[Conn]:
         """A transaction with these `dmbot.*` settings, all cleared when it ends."""
         async with self._pool.connection() as conn, conn.transaction():
+            await self._stamp(conn)
             for name, value in settings.items():
                 await conn.execute(
                     sql.SQL("SELECT set_config({}, %s, true)").format(sql.Literal(f"dmbot.{name}")),

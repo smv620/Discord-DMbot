@@ -459,7 +459,12 @@ class MemoryStore:
     ) -> AsyncIterator[Changes]:
         if source not in SOURCES:
             raise ValueError(f"Unknown memory source: {source!r}")
-        async with self._db.guild(guild_id) as conn:
+        # Lineage (#3739, `dmbot.lineage`): a write whose source is not the DM is DMbot rewriting
+        # its own work, so rows it updates take the running build's stamp; the DM's own edit keeps
+        # the stamp the row was made with. An Undo is the DM's act too, so it updates without
+        # restamping (the change log holds named columns only, not the stamp, so it cannot hand
+        # the older one back); a row it brings back from a delete is a new insert by this build.
+        async with self._db.guild(guild_id, by_dmbot=source != DM and undoes is None) as conn:
             # Changes to one campaign's memory happen one at a time, so versions never
             # clash. NO KEY UPDATE still lets other tables add rows that link to the
             # campaign (a session starting) while a long write runs.
