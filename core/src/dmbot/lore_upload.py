@@ -19,6 +19,7 @@ import logging
 import time
 from typing import Any
 
+from dmbot import ai_feed
 from dmbot.ai import AIError
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import lore_queue as q
@@ -78,6 +79,11 @@ class _Reporter:
             self._counts = (done, total)
             return
         self._latest = (_STAGES.get(stage, q.READING), done, total)
+        # The next AI calls the read makes in its own task belong to this step (the part being
+        # worked on, so one after the last finished). Its shaping and second-look tasks name their
+        # own step (`lore_read._in_step`): a step set here does not reach a task already made, and a
+        # call from a task's done-callback changes nothing. Outside a feed job this does nothing.
+        ai_feed.step(lore_read.step_words(stage, min(done + 1, total), total))
 
     async def __aenter__(self) -> _Reporter:
         self._reader = asyncio.current_task()
@@ -227,18 +233,23 @@ async def _read(
         # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:
-            async with report:
-                done = await read_background(
-                    bot,
-                    campaign,
-                    upload,
-                    truth=False,
-                    speaker=speaker,
-                    known_by=known_by,
-                    started=time.monotonic(),
-                    progress=report,
-                    choice=claim.choice,
-                )
+            # Every AI call of this read belongs to this upload, for the DM's live window (#3710):
+            # the upload's id is the one the lore page polls. With the feed off, nothing is kept.
+            with ai_feed.job(
+                guild_id, campaign.id, "lore", claim.id, step=lore_read.step_words("reading", 0, 0)
+            ):
+                async with report:
+                    done = await read_background(
+                        bot,
+                        campaign,
+                        upload,
+                        truth=False,
+                        speaker=speaker,
+                        known_by=known_by,
+                        started=time.monotonic(),
+                        progress=report,
+                        choice=claim.choice,
+                    )
         except asyncio.CancelledError:
             if (
                 report.lost

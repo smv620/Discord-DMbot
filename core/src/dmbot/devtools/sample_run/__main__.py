@@ -1,7 +1,11 @@
 """The whole per-deploy sample run in one command, with no one in Discord (#3547, #3545):
 
     python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \\
-        --players ist=ID,jac=ID,eri=ID,owe=ID --lore FILE --session FILE [--keep-old] --yes
+        --lore FILE --session FILE [--keep-old] --yes
+
+The session's speakers are `player_jac`, `player_ist`, `player_owe` and `player_eri` (players who
+are NOT on Discord, imported with the DM's confirmation as the website's import does) and `DM`.
+The older `--players ist=ID,jac=ID,eri=ID,owe=ID` (four real test accounts) still works.
 
 It makes the sample campaign, queues the lore the way the website's upload does and waits for the
 running bot to read it, accepts what was found, backs up and scores the lore, stores the session
@@ -44,7 +48,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="sample_run", description=__doc__)
     parser.add_argument("--guild", type=int, required=True, help="the test server's number")
     parser.add_argument("--dm", type=int, required=True, help="the DM's test account")
-    parser.add_argument("--players", required=True, help="label=ACCOUNT pairs: ist=1,jac=2")
+    parser.add_argument(
+        "--players",
+        default="",
+        help="optional label=ACCOUNT pairs (ist=1,jac=2) for players who ARE on Discord; "
+        "without it the players are not on Discord (player_jac, ..., and DM)",
+    )
     parser.add_argument("--lore", type=Path, required=True, help="the lore text file")
     parser.add_argument("--session", type=Path, required=True, help="the session text file")
     parser.add_argument("--keep-old", action="store_true", help="rename the last run's campaign")
@@ -101,8 +110,10 @@ async def run(
     now = int(time.time())
     # Everything that can refuse the run without a database comes first, so a mistake costs
     # nothing: the players, the files, the choice, the date.
-    players = plan.parse_players(args.players)
-    plan.require_character_players(players)
+    off = not args.players  # the players are not on Discord (#3690)
+    players = {} if off else plan.parse_players(args.players)
+    if not off:
+        plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
@@ -112,7 +123,15 @@ async def run(
         transcript = importer.parse(session_text)
     except importer.TranscriptError as exc:
         raise SampleError(f"the session file cannot be read ({exc.code})") from exc
-    if {s.label for s in ip.speakers(transcript)} - set(players):
+    labels = {s.label for s in ip.speakers(transcript)}
+    roles: dict[str, str] = {}
+    dm_label: str | None = None
+    if off:
+        roles, dm_label = plan.off_discord_roles(labels, steps.speaker_names(transcript, labels))
+        missing = {key for key, _ in plan.OFF_DISCORD} - set(roles.values())
+        if missing:
+            raise SampleError("the session file has no lines from one of the four players")
+    elif labels - set(players):
         raise SampleError("a speaker in the session file has no --players entry")
     chars = sum(len(u.text) for u in transcript.utterances)
     lore, windows, story, recap = steps.estimate_cost(
@@ -145,12 +164,17 @@ async def run(
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now)
         found = await steps.check_existing(db, campaigns, gid, dm)
-        ids = set(players.values())
+        ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
         refused = await steps.refused_accounts(db, gid, ids)
-        planned = await steps.preflight_session(
-            gid, players, session_text, agreed, refused, started_at=started
-        )
+        planned = None
+        if off:
+            if dm in refused:
+                raise SampleError("the DM account has said no to being recorded")
+        else:
+            planned = await steps.preflight_session(
+                gid, players, session_text, agreed, refused, started_at=started
+            )
 
         campaign = await steps.fresh_campaign(
             db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
@@ -178,14 +202,50 @@ async def run(
             say(f"player characters found by the read: {n} of 4")
             return {"found by the read": f"{n} of 4"}
 
+        shown = steps.speaker_names(transcript, labels)
+        player_names = sorted({shown[label] for label in roles})
+
+        made: dict[str, int] = {}  # the players' speaker numbers, by the name the import reads
+
+        async def speakers_step() -> Mapping[str, int | str]:
+            """The four players are made as speakers without Discord, by the import's own door,
+            before their characters are set (the cleaning of the import needs them)."""
+            if not off:
+                return {"on Discord": 1}
+            async with steps.site_session(db, dm, gid, now=int(time.time())) as site:
+                made.update(await steps.make_speakers(db, site, gid, cid, player_names))
+            return {"made": len(made)}
+
         async def correct_step() -> Mapping[str, int | str]:
-            got = await characters.correct_player_characters(db, memory, gid, cid, players)
+            who = players
+            if off:  # label key (ist...) -> the speaker's negative number
+                who = {roles[label]: made[shown[label]] for label in roles}
+            got = await characters.correct_player_characters(db, memory, gid, cid, who)
             return {"corrected": got.corrected, "of those made": got.made}
 
         async def import_step() -> Mapping[str, int | str]:
-            sid = await steps.store_import(db, gid, cid, dm, planned, started_at=started, now=now)
+            if not off:
+                assert planned is not None
+                sid = await steps.store_import(
+                    db, gid, cid, dm, planned, started_at=started, now=now
+                )
+                got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
+                return {**got, "kept": planned.kept}
+            choice: dict[str, object] = {label: {"confirmed": True} for label in roles}
+            if dm_label is not None:  # the DM is a real account: agreed, else ticked in
+                who_dm: dict[str, object] = {"member": str(dm)}
+                if dm not in agreed:
+                    who_dm["confirmed"] = True
+                choice[dm_label] = who_dm
+            fresh = int(
+                time.time()
+            )  # (the lore wait was long: a website session must not be stale)
+            async with steps.site_session(db, dm, gid, now=fresh) as site:
+                sid = await steps.import_through_site(
+                    db, site, gid, cid, session_text, choice, started_at=started, now=fresh
+                )
             got = await steps.wait_import(db, gid, sid, say=say, sleep=sleep)
-            return {**got, "kept": planned.kept}
+            return {**got, "players not on Discord": len(roles)}
 
         async def recap_step() -> Mapping[str, int | str]:
             code = await steps.write_recap(gid, cid, started)
@@ -199,6 +259,7 @@ async def run(
                 "player characters found by the read": found_step,
                 "accept all (lore)": accept_step,
                 "backup and score (lore)": lambda: score_step("lore", "lore"),
+                "players not on Discord": speakers_step,
                 "player characters corrected": correct_step,
                 "session import": import_step,
                 "accept all (session)": accept_step,

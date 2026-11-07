@@ -59,8 +59,10 @@ export const webPage = {
   openItsPage: "📖 Open its page",
   openItsPageFor: (name: string): string => ` for ${name}`,
   groupHere: "shown now",
-  howMany: (names: number, lines: number): string =>
-    `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,
+  // Just above the map: how much of the story is drawn right now. A line can hold several connections, and
+  // it is the connections that are counted.
+  howMany: (names: number, connections: number): string =>
+    `Showing ${names} ${names === 1 ? "name" : "names"} and ${connections} ${connections === 1 ? "connection" : "connections"}`,
   mapLabel: (names: number, centre: string): string =>
     `A map of ${names} ${names === 1 ? "name" : "names"} around ${centre}. The same names and connections are listed below it.`,
   zoomIn: "Zoom in",
@@ -70,6 +72,15 @@ export const webPage = {
   fullScreen: "Full screen",
   leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
+  settingsButton: "⚙️ Graph settings",
+  settingsLoading: "the graph settings",
+  feelingLoading: "the feeling picker",
+  // Where the details panel goes on a wide screen (a phone always puts it under the map).
+  sideLabel: "Where the details go",
+  sideLeft: "Left",
+  sideRight: "Right",
+  sideUnder: "Under",
+  editFull: (name: string): string => `Open ${name} in the full editor`,
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",
   putInMiddle: "Put it in the middle",

@@ -30,7 +30,9 @@ from dmbot.memory import (
     one_off,
     place_words,
     reputation_words,
+    scenes,
     unique_item,
+    who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
@@ -422,6 +424,21 @@ def feeling_of(
     return None
 
 
+def _fits(
+    known: tuple[PredicateTerm, bool], subject_kind: str, object_kind: str, onto: Ontology
+) -> bool:
+    """Whether a known relationship's two ends are kinds it takes. A companion link
+    (`travels_with`) is judged by the store's own rule afterwards, so it is never turned into
+    the catch-all here (#3176)."""
+    term, from_object = known
+    if term.key == TRAVELS_WITH:
+        return True
+    s_kind, o_kind = (object_kind, subject_kind) if from_object else (subject_kind, object_kind)
+    return (not term.subject_types or onto.is_any(s_kind, term.subject_types)) and (
+        not term.object_types or onto.is_any(o_kind, term.object_types)
+    )
+
+
 def place_relationship(
     onto: Ontology,
     text: str,
@@ -458,8 +475,10 @@ def place_relationship(
     ):
         return located, False, ""
     known = resolve_relationship(onto, text)
-    if known is not None:
+    if known is not None and _fits(known, subject_kind, object_kind, onto):
         return known[0], known[1], ""
+    # (a known word whose two ends don't fit, "performed" between two characters, is not lost: it
+    # goes on the catch-all with its own words, like a word DMbot does not know, #3033)
     decision = decide_term(
         onto,
         # "link" is only the proposal's key when the words have no letters to make one from.
@@ -470,7 +489,11 @@ def place_relationship(
         decision = Refused(REASON_BETWEEN, Fallback(FALLBACK_PREDICATE, text))
     if tally is not None:
         tally.record(decision)
-    if isinstance(decision, Reused) and decision.existing in onto.predicates:
+    if (
+        isinstance(decision, Reused)
+        and decision.existing in onto.predicates
+        and _fits((onto.predicates[decision.existing], False), subject_kind, object_kind, onto)
+    ):
         return onto.predicates[decision.existing], False, ""
     label = " ".join(text.split())
     if len(label) > DETAIL_MAX:
@@ -1680,13 +1703,16 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
+        went."""
 
         from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
 
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await scenes.forget(conn, guild_id, user_id)
+            answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",
@@ -1696,7 +1722,7 @@ class ClaimStore:
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-            return len(gone) + readings
+            return len(gone) + readings + answers  # (claims, readings and Who-is-this answers)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""

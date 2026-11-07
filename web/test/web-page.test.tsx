@@ -18,7 +18,7 @@ const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 async function open(suffix = "") {
   const api = mockApi("table");
   render(<Web api={api} path={at(suffix)} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 
@@ -157,7 +157,7 @@ describe("a very big web on first open", () => {
     expect(screen.queryByText(/Only this campaign's DM/)).toBeNull();
     expect(screen.queryByText("No names are connected here yet.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show it anyway" }));
-    await screen.findByText("1 name, 0 lines");
+    await screen.findByText("Showing 1 name and 0 connections");
   });
 });
 
@@ -188,7 +188,7 @@ describe("secrets for someone who is not a DM", () => {
       canEdit: false,
     });
     render(<Web api={api} path={at()} />);
-    await screen.findByText("2 names, 1 line");
+    await screen.findByText("Showing 2 names and 1 connection");
     expect(document.body.textContent).not.toMatch(/heir/);
     expect(document.body.textContent).toMatch(/serves/);
   });
@@ -224,7 +224,7 @@ describe("saying no to a very big first draw", () => {
     };
     render(<Web api={api} path={at()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     expect(calls).toEqual([1]);
     expect(screen.getByLabelText("Steps out from the middle")).toBeTruthy();
   });
@@ -235,7 +235,7 @@ describe("changing a name", () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     fireEvent.click(screen.getAllByRole("button", { name: /^Change / })[0] as HTMLElement);
-    const group = screen.getByRole("group", { name: /^About / });
+    const group = await screen.findByRole("group", { name: /^About / });
     fireEvent.input(within(group).getByLabelText("Spelling"), { target: { value: "Zed the Bold" } });
     fireEvent.click(within(group).getByRole("button", { name: "Save spelling" }));
     await waitFor(() => expect(api.calls.some((c) => c.includes('"action":"spell"') && c.includes("Zed the Bold"))).toBe(true));
@@ -286,7 +286,7 @@ describe("how many more connections a line has", () => {
 
   it("says (+3) on the map, and gives each connection its own line in the list, for a DM", async () => {
     render(<Web api={stub(true)} path={at()} />);
-    await screen.findByText("3 names, 2 lines");
+    await screen.findByText("Showing 3 names and 5 connections");
     for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
       expect(within(document.getElementById("web-list")!).getByText(new RegExp(w))).toBeTruthy();
     }
@@ -300,7 +300,7 @@ describe("how many more connections a line has", () => {
 
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
-    await screen.findByText("2 names, 1 line");
+    await screen.findByText("Showing 2 names and 2 connections");
     expect(within(document.getElementById("web-list")!).getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
@@ -335,7 +335,7 @@ describe("the Open its page link", () => {
       };
     };
     render(<Web api={api} path={at(".web-lonely")} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
     expect(screen.queryAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) })).toHaveLength(0);
     expect(screen.queryByText(w.openItsPage)).toBeNull();
@@ -377,7 +377,7 @@ describe("every connection between two names, in both directions (#2934)", () =>
       canEdit: true,
     });
     render(<Web api={api} path={at()} />);
-    await screen.findByText("2 names, 1 line");
+    await screen.findByText("Showing 2 names and 3 connections");
     fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
     const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
     const both = within(panel).getByRole("region", { name: "Both ways" });
@@ -408,7 +408,7 @@ describe("the kind of each connection in the line panel (#2934)", () => {
       canEdit: true,
     });
     render(<Web api={api} path={at()} />);
-    await screen.findByText("2 names, 1 line");
+    await screen.findByText("Showing 2 names and 1 connection");
     fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
     const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
     expect(panel.querySelector(".web-kindmark")?.textContent?.trim()).toBe("Work");
