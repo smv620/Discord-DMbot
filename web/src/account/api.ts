@@ -1682,39 +1682,31 @@ export interface WebNode {
 }
 export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
 
-/** The Story Graph's clean-up (#3740; core by GraphEngineer, the door `dmbot_web_graph_cleanup` and `memory/isolated.py`): the
- * people and groups no chain of connections links to a player character (or the party). Seeded by confirmed player
- * characters; waiting, ended and secret connections join, rejected ones and `led_to` do not. DM and game masters only. */
+/** The Story Graph's clean-up (#3740; core `web/graph_cleanup.py`, GET `.../web/cleanup`, PR #3764): the characters and groups no
+ * chain of connections links to a player character or the party, largest group first. Waiting, ended and secret connections
+ * join a chain, rejected ones and `led_to` do not. DM and game masters only (anyone else gets "not found"). */
 export interface CleanupEntry {
   id: string;
+  /** For a person the story never named, already labelled by core ("unnamed - Ken's sister") from the anchor's present name. */
   name: string;
   kind: string;
-  /** For a person the story never named: who they are ("sister") and the name they hang from ("Ken"), as `WebNode`. */
+  /** True: DMbot found it and the DM has not kept it yet. */
+  waiting: boolean;
   unnamed?: boolean;
-  unnamedWhat?: string;
+  /** Who they are in the story's words ("sister"), and the name they hang from; both only on a person never named. */
+  unnamedWhat?: string | null;
   unnamedAnchor?: string | null;
-  /** "waiting": DMbot found it and the DM has not kept it yet. */
-  status: "confirmed" | "waiting";
-  /** DMbot's short summary of the scene it came up in (#3596); missing or null when none is kept: the page then offers "Where was it said?". */
-  scene?: string | null;
+  /** DMbot's short summary of the scene it came up in (#3596). Missing when none is kept: the page then offers "Where was it said?". */
+  scene?: string;
 }
-/** A connection between two entries of one group. */
-export interface CleanupLink {
-  id: string;
-  a: string;
-  b: string;
-  words: string;
-  status: "confirmed" | "waiting";
-  ended?: boolean;
-  secret?: boolean;
-}
-/** One group of entries linked only to each other (a lone entry is a group of one). */
+/** One group of entries linked only to each other (an entry with no link is a group of one), with the connections inside it,
+ * worded as the map words them (`WebEdge`). */
 export interface CleanupGroup {
-  id: string;
   entries: CleanupEntry[];
-  links: CleanupLink[];
+  links: WebEdge[];
 }
-/** The 15-minute check of the DM's fixes (#3741): counts only, and only when the campaign shares its story to improve DMbot. */
+/** The 15-minute check of the DM's fixes (#3741): counts only, and only when the campaign shares its story to improve DMbot.
+ * Not sent by the door yet (core's #3741 PR); missing means "show nothing". */
 export interface CleanupReview {
   state: "off" | "idle" | "waiting" | "running" | "done";
   /** While `waiting`: whole minutes until DMbot looks, and how many fixes it will look at. */
@@ -1724,12 +1716,12 @@ export interface CleanupReview {
   missed?: number;
 }
 export interface CleanupView {
-  /** Largest group first. At most 300 entries are listed (`shown`) of `total`. */
   groups: CleanupGroup[];
+  /** Every isolated entry; `groups` holds at most 300 of them, so `truncated` says the list is cut. */
   total: number;
-  shown: number;
-  /** True when the campaign has no player character yet: nothing is isolated then, and the page says so. */
-  noPlayerCharacter: boolean;
+  truncated: boolean;
+  /** True when the campaign has no player character yet (nothing is isolated then). Not sent by the door yet; missing means "unknown". */
+  noPlayerCharacter?: boolean;
   review?: CleanupReview;
 }
 
