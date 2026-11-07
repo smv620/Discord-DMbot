@@ -247,7 +247,7 @@ class Proposed:
     unplaced_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
     # About people the story describes but never names (#3431), counts only:
     described: int = 0  # claims kept for the DM's answer ("Keep a person with no name")
-    described_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
+    described_held: int = 0  # ... and those past the session's cap, held for the next read (#3749)
     described_dropped: int = 0  # none since #3736 (every described end is kept); stays for the logs
     # About how names were said (#3634), counts only:
     rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
@@ -1004,7 +1004,8 @@ class ClaimStore:
         become a new name later (a reading never makes one, #2412)."""
         waiting = dropped = repeated = 0
         kept_unplaced = unplaced_over_cap = 0
-        described = described_over_cap = described_dropped = 0
+        described = described_held = described_dropped = 0
+        described_taken = 0  # held claims about people with no name, asked in this read
         rules_dropped = tidied = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
@@ -1028,9 +1029,11 @@ class ClaimStore:
 
             leftovers = [
                 r
-                for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                # oldest first, so a held claim is never passed over for a newer one (#3749)
+                for r in await w.select(CLAIMS, " AND status = 'proposed' ORDER BY created_at, id")
                 if r["reason"] == WAITING_NAME_REASON and make_names
             ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
+            people_held = resolved = 0  # held claims about people with no name; all ends known
 
             players = {
                 str(e["id"])
@@ -1175,7 +1178,13 @@ class ClaimStore:
                     else:
                         old.append((r, kept, unknown))
                 elif _only_described_unknown(kept, names):
+                    people_held += 1
                     old.append((r, kept, unknown))  # (its name is known now: asked below)
+                elif not _unknown_names(kept, names):
+                    # every end is known now (the DM named it meanwhile, or a held person's words
+                    # came to match an entry): judged again below, so it never waits unseen
+                    resolved += 1
+                    old.append((r, kept, unknown))
             old_mentions = [name_key(n) for _, _, unknown in old for n in unknown]
             chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
             fresh = [name_key(n) for _, _, unknown in work for n in unknown]
@@ -1214,6 +1223,7 @@ class ClaimStore:
                         continue  # (stays held for its name's sake; asked in a later read)
                     await w.update(CLAIMS, r["id"], {"reason": DESCRIBED_REASON})
                     described += 1
+                    described_taken += 1
                     waiting += 1
                     continue
                 if reason:
@@ -1221,7 +1231,9 @@ class ClaimStore:
                 else:
                     await w.update(CLAIMS, r["id"], {"reason": ""})
                     waiting += 1
-            kept_waiting = len(leftovers)
+            # (only claims still waiting on a real name count toward `WAITING_NAME_CLAIMS`: held
+            # claims about people with no name are never let go, #3749)
+            kept_waiting = len(leftovers) - people_held - resolved
             if not_a_name:
                 logger.info("not a name, by reason: %s", dict(not_a_name))  # counts only
             rows: list[dict[str, Any]] = []
@@ -1268,7 +1280,18 @@ class ClaimStore:
                     continue
                 if reason == DESCRIBED_REASON:
                     if described >= UNPLACED_LIMIT:
-                        described_over_cap += 1
+                        # Past this read's cap: held, never dropped (owner's rule, #3749). Stored
+                        # as waiting for its name, which every list and count leaves out, so the
+                        # next read takes it up first (the held-claims loop above), within its own
+                        # cap. Not under `WAITING_NAME_CLAIMS`: that limit lets go of claims.
+                        described_held += 1
+                        asked.add(key)
+                        rows.append(
+                            self._row(
+                                claim, cited, prompt_version, model, session_started_at, w.now,
+                                status=CLAIM_PROPOSED, reason=WAITING_NAME_REASON,
+                            )
+                        )  # fmt: skip
                         continue
                     described += 1
                     waiting += 1
@@ -1312,6 +1335,14 @@ class ClaimStore:
                     )
                 )  # fmt: skip
             await w.insert_many(CLAIMS, rows)
+            pile = people_held - described_taken + described_held
+            if pile or described_taken:
+                # counts only, whenever the pile of held claims about people with no name is not
+                # empty, so one that never shrinks shows in the logs (#3749)
+                logger.info(
+                    "people with no name held: %d new this read, %d taken up, %d held now",
+                    described_held, described_taken, pile,
+                )  # fmt: skip
         return Proposed(
             waiting,
             dropped,
@@ -1326,7 +1357,7 @@ class ClaimStore:
             kept_unplaced,
             unplaced_over_cap,
             described,
-            described_over_cap,
+            described_held,
             described_dropped,
             rules_dropped,
             tidied,
@@ -1669,8 +1700,10 @@ class ClaimStore:
             unnamed = [n for n, f in zip(said, found, strict=True) if not f]
             if any(name_key(n) in rejected for n in unnamed):
                 gone.append((claim, NAME_REJECTED_REASON))  # the DM said it isn't a name
-            elif unnamed and claim.reason == WAITING_NAME_REASON:
-                pending.append(claim)  # its name is not proposed yet: a later session does it
+            elif claim.reason == WAITING_NAME_REASON:
+                # held for a later read (its name not proposed yet, or past a read's cap, #3749):
+                # in no list until a read asks it, as `waiting_for_check` and the web lists do
+                pending.append(claim)
             elif unnamed:
                 ready.append(claim)  # a name that went away: asking says why it can't be written
             elif all(any(e in sure for e, _ in f) for f in found):
@@ -1856,8 +1889,9 @@ class ClaimStore:
         """The DM says no: it is not asked again, and nothing is written to memory."""
         async with self._store._write(guild_id, campaign_id, DM) as w:
             row = await w.get(CLAIMS, claim_id)
-            if row is None or row["status"] != CLAIM_PROPOSED:
-                raise MemoryRuleError(GONE)
+            held = row is not None and row["reason"] == WAITING_NAME_REASON
+            if row is None or row["status"] != CLAIM_PROPOSED or held:
+                raise MemoryRuleError(GONE)  # (a held claim is in no list: never answered, #3749)
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
@@ -1965,7 +1999,9 @@ class ClaimStore:
         players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
         never written secret."""
         claim = await self.get(guild_id, campaign_id, claim_id)
-        if claim is None or claim.status != CLAIM_PROPOSED:
+        # A held claim (waiting for its name, or past a read's cap, #3749) is in no list the DM
+        # sees: an id that reaches here anyway is gone, never written.
+        if claim is None or claim.status != CLAIM_PROPOSED or claim.reason == WAITING_NAME_REASON:
             raise MemoryRuleError(GONE)
         if claim.reading is not None:
             # A theory said "yes" to as a fact would be a lie in the DM's own voice: a reading is
@@ -2033,7 +2069,11 @@ class ClaimStore:
         # `confirm` is only an early exit: this one, under the lock, is the one that counts.
         async with self._store._write(guild_id, campaign_id, DM) as w:
             current = await w.get(CLAIMS, claim_id)
-            if current is None or current["status"] != CLAIM_PROPOSED:
+            if (
+                current is None
+                or current["status"] != CLAIM_PROPOSED
+                or current["reason"] == WAITING_NAME_REASON
+            ):
                 raise MemoryRuleError(GONE)
             made: dict[str, tuple[str, str]] = {}  # stand-in -> the person, made or found
             for i, end in enumerate(described):

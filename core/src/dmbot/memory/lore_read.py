@@ -1173,9 +1173,14 @@ async def read_lore(
     people = bg.reach_names(
         {name_key(x) for f in names if f.kind in PEOPLE_KINDS for x in (f.name, *f.also)}
     )
+    over_before = stats.dropped["over_cap"]
     unnamed = read_unnamed(
         listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people
     )
+    if (past := stats.dropped["over_cap"] - over_before) > 0:
+        # Logged only, for now (Supervisor's ruling on #3749): a document past the per-read limit
+        # of people with no name would be a new issue, holding the rest for the DM.
+        log.info("Lore read: %d unnamed line(s) past the per-read limit, not made", past)
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
         "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
