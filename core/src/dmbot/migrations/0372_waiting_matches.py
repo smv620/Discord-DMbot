@@ -10,7 +10,8 @@ from __future__ import annotations
 # number) are queued on the same table as every other name action and applied by the bot as the DM
 # (`confirm_join` and `undo`). They file under no name (like `confirm-kinds`), carry no words and no
 # flag, and the door only lets a DM queue one for a batch that a `who` change really made in this
-# campaign; the bot checks again, and re-reads that the match is still waiting, when it applies it.
+# campaign (a Yes also needs it to be a match still standing, not undone); the bot checks again,
+# and re-reads that the match is still waiting, when it applies it.
 # The door is read back from the database as it is (many migrations have changed it) and each
 # anchor must be found the exact number of times, so a drift stops the migration instead of
 # widening the wrong rule, as 0369 does. No row is changed.
@@ -42,7 +43,13 @@ _SWAPS = (
         "ELSIF act IN ('match-confirm', 'match-undo') AND NOT EXISTS (\n"
         "                   SELECT 1 FROM memory_changes ch\n"
         "                   WHERE ch.guild_id = g AND ch.campaign_id = c\n"
-        "                   AND ch.source = 'who' AND ch.batch::text = tgt) THEN\n"
+        "                   AND ch.source = 'who' AND ch.batch::text = tgt\n"
+        "                   AND (act = 'match-undo' OR (ch.table_name = 'memory_entities'\n"
+        "                        AND ch.op = 'update' AND ch.after->>'status' = 'merged'\n"
+        "                        AND ch.undoes IS NULL AND NOT EXISTS (\n"
+        "                            SELECT 1 FROM memory_changes u\n"
+        "                            WHERE u.guild_id = g AND u.campaign_id = c\n"
+        "                            AND u.undoes = ch.batch)))) THEN\n"
         "                RETURN jsonb_build_object('status', 'not_found');\n"
         "            ELSIF act = 'names-fixed-undo' AND NOT EXISTS (",
         1,

@@ -790,7 +790,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
-  // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
+  // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let matchesNow: MatchRow[] =
     scenario === "table"
       ? [
@@ -798,6 +798,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           { batch: "9002", keepId: "f".repeat(32), keepName: "Mira Voss", spelling: "the smith", at: 1_790_000_100 },
         ]
       : [];
+  // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
   const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
   const defaultMusts = [

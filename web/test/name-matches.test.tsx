@@ -43,7 +43,7 @@ describe("NameMatches", () => {
     render(<NameMatches api={a} campaignRef={REF} />);
     await screen.findByText(w.line("The Ferry Lady", "Old Tam"));
     fireEvent.click(screen.getAllByRole("button", { name: /Yes, that's right/ })[0]!);
-    await waitFor(() => expect(answered).toHaveBeenCalledWith(REF, "11", "confirm"));
+    await waitFor(() => expect(answered).toHaveBeenCalledWith(REF, "11", "confirm", expect.any(Function)));
     expect(await screen.findByText(w.confirmed("The Ferry Lady", "Old Tam"))).toBeTruthy();
   });
 
@@ -52,7 +52,7 @@ describe("NameMatches", () => {
     render(<NameMatches api={api({ answerMatch: answered })} campaignRef={REF} />);
     await screen.findByText(w.line("the smith", "Mira Voss"));
     fireEvent.click(screen.getAllByRole("button", { name: /Undo/ })[1]!);
-    await waitFor(() => expect(answered).toHaveBeenCalledWith(REF, "12", "undo"));
+    await waitFor(() => expect(answered).toHaveBeenCalledWith(REF, "12", "undo", expect.any(Function)));
     expect(await screen.findByText(w.undone("the smith", "Mira Voss"))).toBeTruthy();
   });
 

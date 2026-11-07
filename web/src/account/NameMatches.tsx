@@ -60,7 +60,11 @@ export default function NameMatches({ api, campaignRef, onChanged }: { api: Acco
       for (const m of todo) {
         if (!alive.current) break;
         try {
-          await api.answerMatch(campaignRef, m.batch, what);
+          await api.answerMatch(campaignRef, m.batch, what, () => {
+            // Each look at the bot's answer is a sign it is still working: "last moved" follows it.
+            const now = Math.floor(Date.now() / 1000);
+            setRun((r) => (r ? { ...r, moved: now } : r));
+          });
           ok += 1;
         } catch (error) {
           problem = reason(error);
@@ -72,14 +76,10 @@ export default function NameMatches({ api, campaignRef, onChanged }: { api: Acco
     } finally {
       // What went wrong comes first: a distracted DM reads only the first line.
       const first = todo[0]!;
-      setSaid(
-        [
-          problem,
-          ok === 0 ? "" : what === "undo" ? w.undone(first.spelling, first.keepName) : todo.length === 1 ? w.confirmed(first.spelling, first.keepName) : w.confirmedMany(ok),
-        ]
-          .filter((x) => x !== "")
-          .join(" "),
-      );
+      // The count comes first when only some went through, so a distracted DM knows how many are left.
+      const done =
+        ok === 0 ? "" : ok < todo.length && todo.length > 1 ? w.someDone(ok, todo.length) : what === "undo" ? w.undone(first.spelling, first.keepName) : todo.length === 1 ? w.confirmed(first.spelling, first.keepName) : w.confirmedMany(ok);
+      setSaid([done, problem].filter((x) => x !== "").join(" "));
       try {
         await read();
         onChanged?.();
@@ -110,8 +110,10 @@ export default function NameMatches({ api, campaignRef, onChanged }: { api: Acco
       )}
       {matches.length > 0 && (
         <>
+          <p>
+            <strong>{w.countOf(matches.length)}</strong>
+          </p>
           <p>{w.lead}</p>
-          <p class="small muted">{w.countOf(matches.length)}</p>
           <ul class="stack">
             {matches.map((m) => (
               <li key={m.batch}>
@@ -129,6 +131,7 @@ export default function NameMatches({ api, campaignRef, onChanged }: { api: Acco
           </ul>
           {matches.length > 1 && (
             <div class="row">
+              <p class="small muted">{w.checkFirst(matches.length)}</p>
               <button type="button" class="button" aria-disabled={busy} onClick={() => !busy && void answer(matches, "confirm")}>
                 {label(w.all(matches.length))}
               </button>

@@ -137,3 +137,62 @@ class Matches(Web):
             ),
             "not_allowed",
         )
+
+
+class TheDoorIsStrict(Matches):
+    """The queue door's own rules for the two words, beyond the route's checks."""
+
+    async def door(self, batch: str, action: str, text: str = "", flag: Any = None) -> Any:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, NULL, %s, '', %s, %s, %s) AS r",
+                (self.g, self.one.id, action, batch, text, flag),
+            )
+            found = await cur.fetchone()
+        return found["r"] if found else None
+
+    async def test_words_and_a_flag_are_refused(self) -> None:
+        made = await self.make_match()
+        for action in ("match-confirm", "match-undo"):
+            self.assertEqual(
+                (await self.door(str(made.batch), action, "hello"))["status"], "bad_text"
+            )
+            self.assertEqual(
+                (await self.door(str(made.batch), action, "", True))["status"], "bad_text"
+            )
+            self.assertEqual((await self.door("12x", action))["status"], "bad_text")
+
+    async def test_yes_needs_a_match_still_standing_but_undo_may_follow_a_yes(self) -> None:
+        made = await self.make_match()
+        await self.memory.undo(self.g, self.one.id, made.batch)
+        gone = await self.door(str(made.batch), "match-confirm")
+        self.assertEqual(gone["status"], "not_found")
+        again = await self.make_match("Mira Voss", "the smith")
+        await self.memory.confirm_join(self.g, self.one.id, again.batch)
+        self.assertEqual((await self.door(str(again.batch), "match-undo"))["status"], "ok")
+
+    async def test_a_dmbot_change_that_is_not_a_merge_is_not_a_match(self) -> None:
+        made = await self.make_match()
+        # The batch of DMbot's own "new entry" answer is not a match to say yes to.
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (self.g, self.one.id),
+            )
+            row = await cur.fetchone()
+            assert row is not None
+            await conn.execute(
+                "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
+                " row_id, op, before, after, source, made_at) SELECT guild_id, campaign_id,"
+                " max(version) + 1, %s, 'memory_aliases', 'x', 'insert', NULL, '{}'::jsonb,"
+                " 'who', 0"
+                " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                " GROUP BY guild_id, campaign_id",
+                (int(row["b"]) + 1, self.g, self.one.id),
+            )
+        self.assertEqual(
+            (await self.door(str(int(row["b"]) + 1), "match-confirm"))["status"], "not_found"
+        )
+        self.assertEqual((await self.door(str(made.batch), "match-confirm"))["status"], "ok")
