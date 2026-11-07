@@ -306,6 +306,8 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
+from dmbot.memory.deed_proposals import DeedProposals
+from dmbot.memory.deed_proposals_backup import DeedProposalsSection
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
@@ -9086,6 +9088,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
                 deeds=self.settings.story_deeds_on,
+                deed_store=DeedProposals(self.memory)
+                if self.settings.story_deeds_on and self.memory is not None
+                else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9256,6 +9261,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=0,
                 readings=self.settings.story_readings_on,
                 deeds=self.settings.story_deeds_on,
+                deed_store=DeedProposals(self.memory)
+                if self.settings.story_deeds_on and self.memory is not None
+                else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
@@ -13855,6 +13863,7 @@ def register_backup_sections(
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
+    campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
 
