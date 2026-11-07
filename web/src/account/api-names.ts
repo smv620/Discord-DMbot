@@ -11,6 +11,7 @@ import type {
   ClarifyName,
   NameCheckList,
   NamesFixed,
+  NameSource,
   KindOffer,
   MatchRow,
   NamesPage,
@@ -124,11 +125,14 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
       if (q.size !== undefined) params.set("size", String(q.size));
       if (q.unnamed) params.set("unnamed", "1");
+      if (q.sources?.length) params.set("sources", q.sources.join(","));
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    nameSources: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/name-sources`)) as { sources: NameSource[] }).sources,
     nameMatches: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names-matches`)) as { matches: MatchRow[] }).matches,
     // Queued for the bot like every name action (202 {answer}); the answer is read where every all-names answer is.
