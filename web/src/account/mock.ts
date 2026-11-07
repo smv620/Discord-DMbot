@@ -67,7 +67,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
+import type { CleanupView, ImportClock, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -2772,6 +2772,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       return MOCK_NAME_SOURCES;
+    },
+    // The graph clean-up page (#3740, #3762): the DM's view only. The data is in its own file, loaded on demand.
+    async graphCleanup(ref): Promise<CleanupView> {
+      calls.push(`graphCleanup:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return (await import("./mock-cleanup")).pretendCleanup(ref.split(".").pop() ?? "cleanup");
     },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
       calls.push(
