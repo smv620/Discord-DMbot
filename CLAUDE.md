@@ -92,6 +92,12 @@ CI runs all of the above on every pull request. Never merge red CI.
   `development`, and that move carries the approval over too. An edit to an existing entry
   on either side is not a union. A conflict in any other file goes to the author and needs a fresh
   "approved".
+  **List unions** (Supervisor, 2026-11-07, after each WebDev merge left the next one conflicting on
+  `NAMES_METHODS`): when every conflicting hunk is a list that both sides only add to (an array such as
+  `NAMES_METHODS`, an interface's members, `mock.ts` entries, import lines, `docs/GO_LIVE.md` rows),
+  RepoManager resolves it as the union, keeping every item of both sides in the file's order, removing and
+  editing nothing, runs that area's checks (`npm run typecheck && npm test` for web), and notes "approval
+  carried over from <sha> (list union)". Anything else goes to the author.
   **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
   "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
   no new design review; Supervisor records the approval again as a review on the new head so the
