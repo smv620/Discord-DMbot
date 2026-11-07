@@ -636,8 +636,8 @@ async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     (read again now, as the door only checked that the batch was one of DMbot's), so a made-up
     number never reaches `undo`, which would undo any change. `not_found` covers a match already
     answered or undone; `gone` is the store refusing (a name was changed since)."""
-    if not a.target_id.isdigit():
-        return _failed(NOT_FOUND)
+    if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
+        return _failed(NOT_FOUND)  # ("²" is a digit to Python and int() refuses it)
     batch = int(a.target_id)
     if not any(j.batch == batch for j in await memory.waiting_joins(guild_id, cid)):
         return _failed(NOT_FOUND)
