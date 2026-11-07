@@ -342,6 +342,8 @@ lead decides everything before handing off, so the assistant never has to guess.
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
 
+**The tracking issue is #3720** (from 2026-11-07, when #516 reached GitHub's 2,500-comment limit): wherever this file says #516 for reports, merge lists, handovers or "online" notes, post on #3720. #516 keeps the history.
+
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
