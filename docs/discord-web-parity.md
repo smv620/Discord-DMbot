@@ -82,7 +82,7 @@ match. "In Discord" says where the DM finds it today.
 | Help | `/dmbot help` | Discord-only: a pointer to the commands |
 | Questions waiting for me | `/dmbot questions`, 📬 on the Manage card | The names waiting for a check (`/account/questions`, #3438) |
 | Make or remake a recap | `/dmbot recap`, 📜 Recaps | Recaps: make again |
-| Add a recap someone wrote | `/dmbot recap-upload` | missing ⚠ (the website has no upload of a written recap) |
+| Add a recap someone wrote | `/dmbot recap-upload` | Recaps: add a recap someone wrote (`addRecap`, on the make-a-recap page; live) (WebDev confirmed) |
 | Fix a line heard wrong | `/dmbot fix` | Fix one transcript line (`FIX_LINE_LIVE`) |
 | Delete my own lines | `/dmbot delete-my-lines` | Delete my own lines (`DELETE_MY_LINES_LIVE`) |
 | Back up a campaign | `/dmbot backup` | Backup download |
@@ -93,32 +93,32 @@ match. "In Discord" says where the DM finds it today.
 | Optional rules (Xanathar's, Tasha's) | `/dmbot optionalrules` | Campaign settings: optional rules (`OPTIONAL_RULES_LIVE`) |
 | Homebrew (own spells, monsters, items) | `/dmbot homebrew` | Homebrew (read and file) |
 | Look up a rule, spell, creature | `/dmbot rule` | missing ⚠ (a rules lookup page); it is also live help at the table, so the owner may rule it Discord-only |
-| Move my plan and campaigns to a new Discord account | `/dmbot migrate` | missing ⚠ (the website's account page has export and sign-in, not an account move) |
+| Move my plan and campaigns to a new Discord account | `/dmbot migrate` | Account: email the move code (`getMoveCode`, live); the move itself is typed in Discord with that code, so that last step is Discord-only (WebDev confirmed) |
 | Give or take back consent to be recorded | `/consent give`, `/consent revoke` | Discord-only: a player's own consent; the website has its own consent screens |
 
 ### The DM screen (the buttons on the card in the DM-screen channel)
 
 | Function | In Discord | Answer |
 |---|---|---|
-| Who can see the DM screen (private, peek, open); Peek behind the DM screen | 👁️ / 🔓 buttons | missing ⚠ (a campaign setting with no website control) |
+| Who can see the DM screen (private, peek, open); Peek behind the DM screen | 👁️ / 🔓 buttons | Campaign settings: who can see the DM screen (`visibility`, in `CampaignSettings`); peek and reveal are Story Graph: peek and reveal (WebDev confirmed) |
 | Hide or show the DM screen | Hide / Show | Discord-only: it is the Discord channel's own card |
 | Pause and resume the table | Pause, Resume now | Pause (`PAUSE_LIVE`) |
 | Quiet stop (stop the recording when the table is quiet) | Campaign management | Discord-only: live recording |
-| Transcript retention (how long transcripts are kept) | Campaign management | missing ⚠ |
+| Transcript retention (how long transcripts are kept) | Campaign management | Campaign settings: how long transcripts are kept (`retention`, in `CampaignSettings`) (WebDev confirmed) |
 | Table chat on or off, and which chat | Table chat | Discord-only: the table's chat is a Discord channel |
 | Rules level (how much DMbot says) and Features on or off | Campaign management | missing ⚠ |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
 | Delete this campaign | Delete this campaign | Backup and delete (delete is live) |
-| Campaign invite link; D&D Beyond invite | Campaign management | missing ⚠ (the website adds the bot to a server, not a campaign's invite link) |
-| Give your adventure (Shared story); read it; match it to files; refresh; remove | Shared story, adventure card | Lore upload and reading (`LORE_LIVE`) ⚠ |
+| Campaign invite link; D&D Beyond invite | Campaign management | Campaign settings: the invite panel (`InvitePanel`, `INVITE_LIVE`, switched off) (WebDev confirmed) |
+| Give your adventure (Shared story); read it; match it to files; refresh; remove | Shared story, adventure card | Lore upload and reading, with the right-to-use box (`LORE_LIVE`); matching to files, refresh and remove not checked ⚠ |
 | Story mode (the story guide choice) | 📖 Story | Story mode (`STORY_MODE_LIVE`) |
 | Import button and the import's clock offer | Import, the clock card | Import older sessions: clock (`IMPORT_CLOCK_LIVE`, #3199); consent (#3306) |
 | Transcripts: download, keep, channel | Transcripts card | Transcripts: read, download |
 | Recap style (how recaps are written) | Recap style | Recap style (`RECAP_STYLE_LIVE`) |
 | Shared rules: follow or publish a set; update notes; pack suggestions | Shared rules, update cards | House rules: rules sharing and rulesets (`RULE_SHARING_LIVE`, `RULESETS_LIVE`) |
 | House-rules file: sync, accept, review | House-rules file card | House rules: the file (`HOUSE_FILE_LIVE`) |
-| Backstory (a character's backstory file) | Backstory button | Names: notes on an NPC ⚠ |
+| Backstory (a character's backstory file) | Backstory button | Story Graph: waiting connections (backstory links are answered there, `backstory-keep`) (WebDev confirmed) |
 | Clock, timers and effects (the table's game time) | Clock and effects cards | Discord-only: running game time at the table |
 | Initiative and fights (fightbot) | live commands | Discord-only: the initiative tracker during play |
 | Character sheets (link a sheet, open a card, re-read) | My sheet, Open card | Campaign settings: character sheets (`SHEETS_LIVE`) |
@@ -135,39 +135,68 @@ match. "In Discord" says where the DM finds it today.
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
 | Check the connections; Keep, Keep as secret, No, Keep all; Undo | Check the connections | Story Graph: waiting connections (live) |
 | Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645) |
-| Family ties | family ties card | Story Graph: waiting connections ⚠ |
+| Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
 | Change a connection; its feeling | connection edit | Story Graph: change a connection; feeling picker (#3607) |
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
-| Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal ⚠ |
+| Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | Make these words a kind of connection | kind offer | #3577 |
-| The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622) ⚠; assigning a player: missing ⚠ |
+| The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |
 | Session notes; after-session report | notes and report cards | `SESSION_NOTES_LIVE` (#3027), `AFTER_SESSION_REPORT_LIVE` |
-| Rule clashes (house rule vs rule); rules alerts | clash card | House rules ⚠; live alerts are Discord-only |
+| Rule clashes (house rule vs rule); rules alerts | clash card | missing ⚠ (the House rules page shows a set's clash note, not a clash with a rule being checked); live alerts are Discord-only |
 | Plot check (ask, answer an issue, decide a proposal) | plot cards | Plot check (`PLOT_CHECK_LIVE`) |
 | Continuity and contradictions | continuity card | missing ⚠ |
 | Threads (open plot threads) | threads card | missing ⚠ |
 | Live heads-up (a secret about to be said) | live card | Discord-only: live at the table |
 | Questions for you (notice, reminders, 🔕 Not now) | private notices | The Questions page; notices are Discord-only |
 | Pictures: kept pictures, looked-at pictures, image fix | picture cards | Pictures gallery (`PICTURES_LIVE`) |
-| Speaker questions (who said this?) | speaker question card | Fix a line; remove a speaker ⚠ |
-| Account move notices; plan and trial messages | private messages | The account page ⚠ |
+| Speaker questions (who said this?) | speaker question card | Remove a speaker (`SPEAKER_REMOVAL_LIVE`); the "who said this?" question itself: missing |
+| Account move notices; plan and trial messages | private messages | The account page shows the plan and ends; the notices are Discord-only (WebDev confirmed) |
 
-### Gaps this list finds (⚠ rows that read "missing")
+### Gaps this list found
 
-Recap upload; rules lookup (or ruled Discord-only); move to a new Discord account; DM-screen
-visibility and peek; transcript retention; rules level and features on or off; the campaign invite
-link; Guide me; continuity and contradictions; open plot threads; assigning the player to a player
-character. Supervisor files one issue each after WebDev-lead confirms the ⚠ rows.
+CloudDev-lead's candidates were: recap upload, rules lookup, account move, DM-screen visibility and
+peek, transcript retention, rules level and features, the campaign invite link, Guide me, continuity,
+open plot threads, assigning a player to a player character, plus the rows marked ⚠. WebDev-lead's
+check against Section 1 is in Section 3.
 
 ## Section 3: the table
 
-(Written by whoever finishes second; Supervisor then files one issue per "missing" row.)
+Written by WebDev-lead on 2026-11-07, after checking each ⚠ row of Section 2 against the website's code
+(`web/src/account/`). Five candidates turned out to be on the website already, so they are not gaps.
+
+### On the website already (the candidates that are not gaps)
+
+| Function | Where on the website |
+|---|---|
+| Add a recap someone wrote | Make-a-recap page (`addRecap`, live) |
+| Account move | The move code is emailed from the account page (`getMoveCode`); the final step is typed in Discord |
+| Who can see the DM screen | Campaign settings (`visibility`) |
+| How long transcripts are kept | Campaign settings (`retention`) |
+| Assign a player to a player character | Names: change the kind to player character, with the player's Discord ID |
+| Campaign invite link | The invite panel in campaign settings (`INVITE_LIVE`, switched off, so on the way) |
+
+### Missing: the gaps Supervisor files, one issue each
+
+| Gap | Discord | Note |
+|---|---|---|
+| Rules level (how much DMbot says) and Features on or off | Campaign management | no website control at all |
+| Guide me (what to do next) | 🧭 button | no website page |
+| Continuity and contradictions | continuity card | the website has no page for them |
+| Open plot threads | threads card | the website has no page for them |
+| Rule clash (a house rule against a rule being checked) | clash card | House rules shows a set's clash note only |
+| "Who said this?" (a speaker question) | speaker question card | the website can only remove a speaker |
+| Rules lookup | `/dmbot rule` | also live help at the table: the owner may rule it Discord-only |
+
+### Switched off and waiting (counted as "on the way", already filed)
+
+Every row in Section 1 marked "built, switched off" or "in an open PR" is on the way: its switch and
+`docs/GO_LIVE.md` row say what it waits for. Nothing in that group needs a new issue.
 
 ## Discord-only on purpose (starting list, from #3663)
 
