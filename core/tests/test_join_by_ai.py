@@ -161,13 +161,16 @@ class WhatItRefuses(Base):
                 (self.links["gone-keep"],),
             )
             moved = await cur.fetchone()
+        assert moved is not None
         self.assertEqual((moved["subject_id"], moved["status"]), (tam, "proposed"))
         await self.memory.undo(self.g, self.one.id, done.batch)  # (and Undo puts it all back)
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute(
                 "SELECT subject_id FROM memory_relations WHERE id = %s", (self.links["gone-keep"],)
             )
-            self.assertEqual((await cur.fetchone())["subject_id"], gone)
+            back = await cur.fetchone()
+            assert back is not None
+            self.assertEqual(back["subject_id"], gone)
 
     async def test_a_rejected_or_merged_entry_is_not_joined(self) -> None:
         tam = await self.add("Old Tam", "npc")
