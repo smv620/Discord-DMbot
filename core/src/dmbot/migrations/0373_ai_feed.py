@@ -52,7 +52,7 @@ AI_FEED = (
     -- delete goes through this one function: it deletes this server's rows and nothing else, and
     -- answers how many. The bot (no signed-in person) may call it for the server it is working in;
     -- a signed-in person only for a server on their own list.
-    CREATE FUNCTION dmbot_web_ai_feed_wipe(g BIGINT) RETURNS INTEGER
+    CREATE FUNCTION dmbot_ai_feed_forget(g BIGINT) RETURNS INTEGER
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         gone INTEGER;
@@ -70,11 +70,11 @@ AI_FEED = (
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_ai_feed_wipe(BIGINT)'
+            'ALTER FUNCTION dmbot_ai_feed_forget(BIGINT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_ai_feed_wipe(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_ai_feed_forget(BIGINT) FROM PUBLIC;
     """
 )
 
@@ -83,5 +83,5 @@ SQL = AI_FEED
 ISOLATED_TABLES: tuple[str, ...] = ("ai_feed",)
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_web_ai_feed_wipe", "dmbot_web_ai_feed_wipe(BIGINT)"),
+    ("dmbot_ai_feed_forget", "dmbot_ai_feed_forget(BIGINT)"),
 )

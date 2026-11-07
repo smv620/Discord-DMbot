@@ -226,6 +226,22 @@ class Confirming(WithImports):
             cur = await conn.execute("SELECT count(*) AS n FROM ai_feed")
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
 
+    async def test_the_feed_function_empties_only_the_current_server_and_a_listed_one(self) -> None:
+        # (#3710) scoped to the server it is called in; a person only for a server on their list
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, prompt, state)"
+                " VALUES (%s, %s, 'lore', 'u', 1, 1900000000, 'p', 'done')",
+                (THURSDAY.id, self.one.id),
+            )
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, THURSDAY.id + 1)  # a server that is not the one the row is in
+            cur = await conn.execute("SELECT dmbot_ai_feed_forget(%s) AS n", (THURSDAY.id,))
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)  # not the current server
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM ai_feed")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)  # untouched
+
     async def test_the_same_name_in_the_next_file_is_the_same_speaker(self) -> None:
         mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
         for _file in range(2):

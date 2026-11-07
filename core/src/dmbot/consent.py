@@ -199,7 +199,7 @@ class ConsentStore:
                 # cut text cannot be cleaned line by line, so the server's whole AI feed goes, in
                 # this same step.
                 ai_feed.forget_server(guild_id)  # (a write already on its way is dropped too)
-                await conn.execute("SELECT dmbot_web_ai_feed_wipe(%s)", (guild_id,))
+                await conn.execute("SELECT dmbot_ai_feed_forget(%s)", (guild_id,))
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
