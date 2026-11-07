@@ -148,6 +148,13 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_DEEDS": "1"}).story_deeds_on)
         self.assertFalse(load_settings(BASE).story_who_on)  # off unless asked (#3602)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_WHO": "on"}).story_who_on)
+        # applying (slice 4): off unless asked, and never without the ranking it needs
+        self.assertFalse(load_settings({**BASE, "DMBOT_STORY_WHO": "on"}).story_who_apply_on)
+        self.assertFalse(load_settings({**BASE, "DMBOT_STORY_WHO_APPLY": "on"}).story_who_apply_on)
+        both = {**BASE, "DMBOT_STORY_WHO": "on", "DMBOT_STORY_WHO_APPLY": "on"}
+        self.assertTrue(load_settings(both).story_who_apply_on)
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_STORY_WHO_APPLY": "maybe"})
         with self.assertRaises(ConfigError):
             load_settings({**BASE, "DMBOT_STORY_WHO": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):

@@ -28,7 +28,7 @@ class Base(Web):
     async def join(self, keep: str, gone: str) -> Any:
         return await self.memory.join_by_ai(self.g, self.one.id, keep, gone)
 
-    async def refused(self, keep: str, gone: str) -> str:
+    async def refusal(self, keep: str, gone: str) -> str:
         with self.assertRaises(MemoryRuleError) as caught:
             await self.join(keep, gone)
         return str(caught.exception)
@@ -93,42 +93,42 @@ class WhatItRefuses(Base):
     async def test_a_secret_name_on_either_side(self) -> None:
         gone = await self.waiting_name("The Ferry Lady")
         # (Mira has the secret name "Lady Grey" in this fixture)
-        self.assertEqual(await self.refused(self.mira, gone), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.mira, gone), AI_JOIN_REFUSED)
         plain = await self.add("Old Tam", "npc")
         other = await self.waiting_name("The Net Mender")
         await self.memory.add_alias(
             self.g, self.one.id, other, "Hidden Hand", kind="short", source="scan", secret=True
         )
-        self.assertEqual(await self.refused(plain, other), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(plain, other), AI_JOIN_REFUSED)
 
     async def test_hidden_or_limited_entries(self) -> None:
         for flag in ("hidden_from_players", "audience_limited"):
             keep = await self.add(f"Ned {flag[:4]}", "npc")
             await self.sql(f"UPDATE memory_entities SET {flag} = TRUE WHERE id = %s", keep)
             gone = await self.waiting_name(f"The Mender {flag[:4]}")
-            self.assertEqual(await self.refused(keep, gone), AI_JOIN_REFUSED)
+            self.assertEqual(await self.refusal(keep, gone), AI_JOIN_REFUSED)
 
     async def test_a_player_character_a_person_and_two_kinds(self) -> None:
         gone = await self.waiting_name("The Ferry Lady")
-        self.assertEqual(await self.refused(self.rook, gone), AI_JOIN_REFUSED)
-        self.assertEqual(await self.refused(self.keep, gone), AI_JOIN_REFUSED)  # a place
+        self.assertEqual(await self.refusal(self.rook, gone), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.keep, gone), AI_JOIN_REFUSED)  # a place
         player_named = await self.waiting_name("Rook's Cousin", "character")
-        self.assertEqual(await self.refused(self.rook, player_named), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.rook, player_named), AI_JOIN_REFUSED)
 
     async def test_two_confirmed_entries_and_the_same_entry(self) -> None:
         other = await self.add("Old Tam", "npc")
-        self.assertEqual(await self.refused(self.mira, other), AI_JOIN_REFUSED)
-        self.assertEqual(await self.refused(self.mira, self.mira), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.mira, other), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.mira, self.mira), AI_JOIN_REFUSED)
 
     async def test_a_disguise(self) -> None:
         gone = await self.waiting_name("The Ferry Lady")
         masked = await self.add("The Masked Duke", "npc")
         await self.link("disguised_as", masked, self.mira, "mask")
-        self.assertEqual(await self.refused(self.mira, gone), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.mira, gone), AI_JOIN_REFUSED)
 
     async def test_a_name_that_is_no_longer_waiting_and_nothing_changed(self) -> None:
         gone = await self.waiting_name("The Ferry Lady")
         await self.memory.confirm_entity(self.g, self.one.id, gone, "npc", source=DM)
         before = await self.aliases_of(self.mira)
-        self.assertEqual(await self.refused(self.mira, gone), AI_JOIN_REFUSED)
+        self.assertEqual(await self.refusal(self.mira, gone), AI_JOIN_REFUSED)
         self.assertEqual(await self.aliases_of(self.mira), before)

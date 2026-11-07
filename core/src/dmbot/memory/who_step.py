@@ -32,11 +32,13 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds, Reply
+from dmbot.memory import who_apply
 from dmbot.memory import who_ranking as ranking
 from dmbot.memory import who_reading as reading
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import PROPOSED, Entity
 from dmbot.memory.who_answers import ENTITY, MAX_RANK, NEW, StoredAnswer, WhoAnswers
+from dmbot.memory.who_apply import Apply
 from dmbot.transcript.store import TranscriptStore
 
 log = logging.getLogger(__name__)
@@ -63,6 +65,9 @@ class Report:
     dropped: int = 0  # answers dropped (off the lists, not offered, odd rows)
     stopped_early: int = 0
     dropped_for_consent: int = 0
+    joined: int = 0  # names DMbot joined itself (sure, and the store's limits agreed; slice 4)
+    join_refused: int = 0  # ... sure, but a limit (or a change since) said no: the DM is asked
+    join_failed: int = 0
     unsent: int = 0  # names left for next time: the call limit, or the run stopped
     stopped: str = ""
 
@@ -73,6 +78,8 @@ class Report:
             f"{self.no_lines} with no lines, "
             f"{self.refused} refused, {self.not_kept} not kept, {self.dropped} answer(s) dropped, "
             f"{self.stopped_early} stopped early, {self.dropped_for_consent} dropped for consent, "
+            f"{self.joined} joined by itself, {self.join_refused} join(s) refused, "
+            f"{self.join_failed} join(s) failed, "
             f"{self.calls} call(s), {self.failed} failed, {self.unsent} left for next time"
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
@@ -252,6 +259,7 @@ async def run(
     max_calls: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
     report: Report | None = None,
+    apply: Apply | None = None,
 ) -> Report:
     """Ask who each of `pending` is (one campaign's, already holding only lines of people who
     agreed) in as few calls as fit, and keep the ranked answers that come back."""
@@ -351,6 +359,24 @@ async def run(
                 report.ranked += 1
             else:
                 report.not_kept += 1  # (consent was checked above: the store found it malformed)
+                continue
+            if apply is None or who_apply.may_apply(stored) is None:
+                continue
+            try:  # consent once more, right before anything is changed
+                if not set(p.item.speaker_ids) <= set(await consenting()):
+                    report.dropped_for_consent += 1
+                    continue
+            except Exception as exc:
+                log.warning("Who is this: couldn't ask who is recorded (%s)", type(exc).__name__)
+                report.failed += 1
+                continue
+            done = await apply(p.entity_id, stored)
+            if done == who_apply.JOINED:
+                report.joined += 1
+            elif done == who_apply.REFUSED:
+                report.join_refused += 1
+            elif done == who_apply.FAILED:
+                report.join_failed += 1
     try:
         await answers.sweep(guild_id, campaign_id)  # a name answered during the wait goes now
     except Exception as exc:

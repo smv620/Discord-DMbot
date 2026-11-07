@@ -26,7 +26,10 @@ def entity(eid: str, name: str, status: str) -> Entity:
 
 class Wiring(unittest.IsolatedAsyncioTestCase):
     def fake(self, **settings: Any) -> Any:
-        on = {"story_who_on": True, "story_extractor_on": True, **settings}
+        on = {
+            "story_who_on": True, "story_who_apply_on": False, "story_extractor_on": True,
+            **settings,
+        }  # fmt: skip
         transcripts = SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(started_at=9)),
             extraction=AsyncMock(return_value=(0, 0)),
@@ -154,6 +157,16 @@ class Asking(Wiring):
         me.transcripts.record_extraction.assert_awaited_once()
         self.assertEqual(me.transcripts.record_extraction.await_args.kwargs["calls"], 1)
         me.plan_allows.assert_awaited_with("story", 1, unittest.mock.ANY, fail_open=False)
+
+    async def test_nothing_is_applied_unless_the_apply_switch_is_on(self) -> None:
+        me = self.fake()
+        with self.patches():
+            await DMBot.write_who(me, self.table())
+        self.assertIsNone(self.step_run.await_args.kwargs["apply"])
+        me = self.fake(story_who_apply_on=True)
+        with self.patches():
+            await DMBot.write_who(me, self.table())
+        self.assertTrue(callable(self.step_run.await_args.kwargs["apply"]))
 
     async def test_no_call_left_reads_nothing_more(self) -> None:
         me = self.fake()
