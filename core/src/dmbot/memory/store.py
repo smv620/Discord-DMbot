@@ -285,8 +285,10 @@ def _alias(r: dict[str, Any]) -> Alias:
 
 
 def _relation(r: dict[str, Any]) -> Relation:
-    # (a connection kept before #3628 may still carry the claim's "happened to them" note, from a
-    # backup or an Undo of an old change: it is not part of the detail, #3650)
+    # (a connection kept before #3628 may still carry the claim's "happened to them" note if an
+    # Undo of an old change put it back: it is not part of the detail, #3650. This covers what reads
+    # through here, Discord's cards and checks; the readers with their own SQL rely on migration
+    # 0375, and a restored backup is cleaned as it loads)
     detail = split_effect_note(r["detail"])[0] if r["detail"] else r["detail"]
     return Relation(
         r["id"], r["subject_id"], r["predicate"], r["object_id"], detail,

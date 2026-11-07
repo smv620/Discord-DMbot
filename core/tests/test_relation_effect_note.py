@@ -5,6 +5,7 @@ names."""
 
 from __future__ import annotations
 
+import importlib
 import unittest
 import uuid
 from typing import Any
@@ -15,6 +16,7 @@ from dmbot.memory import backup
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.reputation_words import word_of
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.voice import split_effect_note
 from dmbot.schema import MIGRATIONS
 from tests.pg import REQUIRE_DB, TEST_URL
 
@@ -89,15 +91,44 @@ class EffectNoteMigration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.stored(plain), "old friend")
         self.assertEqual(await self.stored(middle), f"{NOTE} and then some")
         self.assertEqual(await self.stored(only), "")
-        self.assertTrue((await self.stored(other)).startswith("Told by the DM"))
+        self.assertEqual(
+            await self.stored(other),
+            "Told by the DM as something that happened to Rook, not as Mira's own choice.",
+        )
 
     async def test_a_second_run_changes_nothing(self) -> None:
         feeling = await self.link(f"friendly {NOTE}")
+        middle = await self.link(f"{NOTE} and then some", predicate="associated_with")
         await self.db.migrate(MIGRATIONS)
         async with self.db.guild(GUILD) as conn:
             await conn.execute("DELETE FROM schema_migrations WHERE name = %s", (NAME,))
         await self.db.migrate(MIGRATIONS)
         self.assertEqual(await self.stored(feeling), "friendly")
+        self.assertEqual(await self.stored(middle), f"{NOTE} and then some")
+
+    async def test_the_databases_pattern_takes_off_exactly_what_the_reader_does(self) -> None:
+        """The migration's SQL and `voice.split_effect_note` must never drift apart."""
+        tricky = [
+            f"friendly {NOTE}",
+            NOTE,
+            "wary Told by the DM as something that happened to A, not as B, not as A, not as "
+            "B's own choice.",
+            "close Told by the DM as something that happened to a.b*c(d), not as a.b*c(d)'s own "
+            "choice.",
+            "Told by the DM as something that happened to Ro'ok, not as Ro'ok's own choice.",
+            f"{NOTE} {NOTE}",
+            f"{NOTE} and then some",
+            "Told by the DM as something that happened to Rook, not as Mira's own choice.",
+            "old friend",
+        ]
+        pattern = importlib.import_module(f"dmbot.migrations.{NAME}").NOTE
+        async with self.db.guild(GUILD) as conn:
+            for detail in tricky:
+                cur = await conn.execute(
+                    "SELECT regexp_replace(%s, %s, '') AS d", (detail, pattern)
+                )
+                row: Any = await cur.fetchone()
+                self.assertEqual(row["d"], split_effect_note(detail)[0], detail)
 
     async def test_the_store_reads_an_old_row_without_the_note(self) -> None:
         """A row the migration never saw (restored, or put back by an Undo) reads clean."""
