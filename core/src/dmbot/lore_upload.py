@@ -19,6 +19,7 @@ import logging
 import time
 from typing import Any
 
+from dmbot import ai_feed
 from dmbot.ai import AIError
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import lore_queue as q
@@ -60,6 +61,22 @@ _STAGES = {
 }
 
 
+# The step the AI feed shows for each stage (#3710): the lore page's own words for it
+# (web/src/content/lore-words.ts, `stages`), so the live window and the wait panel agree.
+_STEP_WORDS = {
+    q.READING: "Reading it.",
+    q.FINDING_NAMES: "Finding names.",
+    q.FINDING_LINKS: "Finding how they connect.",
+}
+
+
+def step_words(stage: str, done: int, total: int) -> str:
+    """The feed's step for a stage the page shows, with how far along when that is known: words
+    and counts only, never a word of the document."""
+    words = _STEP_WORDS.get(stage, _STEP_WORDS[q.READING])
+    return f"{words} (part {done} of {total})" if total > 0 else words
+
+
 class _Reporter:
     """Writes the read's stage and counts for the page, without waiting on the read: the read tells
     it where it is (a plain call), and one task writes the latest at most every few seconds. Every
@@ -78,6 +95,9 @@ class _Reporter:
             self._counts = (done, total)
             return
         self._latest = (_STAGES.get(stage, q.READING), done, total)
+        # (the read calls this from its own task, inside the feed's job: the next AI calls belong
+        # to this step; outside a job it does nothing)
+        ai_feed.step(step_words(*self._latest))
 
     async def __aenter__(self) -> _Reporter:
         self._reader = asyncio.current_task()
@@ -227,18 +247,23 @@ async def _read(
         # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:
-            async with report:
-                done = await read_background(
-                    bot,
-                    campaign,
-                    upload,
-                    truth=False,
-                    speaker=speaker,
-                    known_by=known_by,
-                    started=time.monotonic(),
-                    progress=report,
-                    choice=claim.choice,
-                )
+            # Every AI call of this read belongs to this upload, for the DM's live window (#3710):
+            # the upload's id is the one the lore page polls. With the feed off, nothing is kept.
+            with ai_feed.job(
+                guild_id, campaign.id, "lore", claim.id, step=step_words(q.READING, 0, 0)
+            ):
+                async with report:
+                    done = await read_background(
+                        bot,
+                        campaign,
+                        upload,
+                        truth=False,
+                        speaker=speaker,
+                        known_by=known_by,
+                        started=time.monotonic(),
+                        progress=report,
+                        choice=claim.choice,
+                    )
         except asyncio.CancelledError:
             if (
                 report.lost

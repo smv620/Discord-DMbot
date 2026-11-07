@@ -10,7 +10,7 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from dmbot import lore_upload
+from dmbot import ai_feed, lore_upload
 from dmbot.memory import lore_queue as q
 from dmbot.memory.lore_queue import LoreQueue
 from dmbot.memory.lore_read import LORE_TIME_LIMIT_S
@@ -119,6 +119,38 @@ class TheWorker(NamesTest):
         self.assertEqual([k["choice"] for k in asked], ["world"])
         names = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
         self.assertTrue(names and not any(e.hidden_from_players for e in names))
+
+    async def test_the_read_runs_inside_this_uploads_feed_job_and_names_its_step(self) -> None:
+        """#3710: the AI calls of the read belong to this upload (the id the lore page polls), the
+        step follows the page's stage words, and the job is gone once the read ends."""
+        uid = await self.add()
+        seen: list[Any] = []
+        real = ui_bg.read_background
+
+        async def spy(*args: Any, **kwargs: Any) -> Any:
+            seen.append(ai_feed._current.get())
+            kwargs["progress"]("shaping", 2, 5)  # (as the read reports a stage)
+            seen.append(ai_feed._current.get())
+            return await real(*args, **kwargs)
+
+        with patch.object(lore_upload, "read_background", spy):
+            await self.work()
+        first, after = seen
+        assert first is not None and after is not None
+        self.assertEqual(
+            (first.guild_id, first.campaign_id, first.kind, first.job_id, first.step),
+            (GUILD, self.campaign.id, "lore", uid, "Reading it."),
+        )
+        self.assertEqual(after.step, "Finding names. (part 2 of 5)")
+        self.assertIsNone(ai_feed._current.get())
+
+    def test_the_step_words_are_the_pages_and_hold_counts_only(self) -> None:
+        self.assertEqual(lore_upload.step_words("reading", 0, 0), "Reading it.")
+        self.assertEqual(
+            lore_upload.step_words("finding_links", 3, 10),
+            "Finding how they connect. (part 3 of 10)",
+        )
+        self.assertEqual(lore_upload.step_words("odd", 0, 0), "Reading it.")
 
     async def test_a_sender_who_stopped_being_a_dm_reads_nothing(self) -> None:
         uid = await self.add(user=MANAGER)  # (a manager is no DM of the campaign)
