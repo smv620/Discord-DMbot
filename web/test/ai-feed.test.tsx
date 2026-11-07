@@ -27,7 +27,6 @@ const entry = (n: number, over: Partial<AiFeedEntry> = {}): AiFeedEntry => ({
   ...over,
 });
 
-const slow = { timeout: 5000 };
 const apiWith = (aiFeed: AccountApi["aiFeed"]): AccountApi => ({ ...mockApi("table"), aiFeed }) as AccountApi;
 const props = { campaignRef: "100.cmp1", kind: "lore" as const, job: "a".repeat(32), everyMs: 15 };
 
