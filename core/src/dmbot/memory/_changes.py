@@ -896,6 +896,11 @@ def _filled(table: Table, snapshot: Any) -> Any:
     (#1189), so Undo across a migration puts back what the row is now."""
     if not isinstance(snapshot, dict):
         return snapshot
+    if "made_by_commit" in snapshot:
+        # The build's stamp (#3739) is never part of a change: the web's SQL doors log the whole
+        # row (`to_jsonb`), which now carries it, but the row readers and Undo name their columns.
+        # With it in, "changed again since" would always be true for such a row.
+        snapshot = {k: v for k, v in snapshot.items() if k != "made_by_commit"}
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
     if table.name == "memory_entities" and snapshot.get("role") == "god":
