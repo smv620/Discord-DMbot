@@ -228,3 +228,8 @@ class OnTheQuestionsPage(Matches):
         self.assertEqual(
             await question_counts.read_total(self.web, self.session, now=1), {"total": 0}
         )
+
+    async def test_a_player_gets_no_campaign_and_so_no_count(self) -> None:
+        await self.make_match()
+        got = await question_counts.read_questions(self.web, self.player, now=1)
+        self.assertEqual([c for c in got["campaigns"] if c["ref"] == self.cref], [])

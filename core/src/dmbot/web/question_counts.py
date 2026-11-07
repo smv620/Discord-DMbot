@@ -47,7 +47,9 @@ async def read_questions(
     list, with its waiting questions by kind. A player has none. `guesses` adds, for each campaign,
     how many of DMbot's own matches wait for the DM (#3701): read from the very door that lists
     them (`dmbot_web_waiting_matches`, 0372), so the count and the list cannot differ. A count
-    only, never a name; it is not part of the total, which is the bot's own count of questions."""
+    only, never a name; it is not part of the total, which is the bot's own count of questions.
+    One extra read for each campaign the person runs (a handful); the door lists at most 200, so the
+    count stops there, as the Names page's list does. Needs migration 0372 deployed with the API."""
     campaigns: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         for guild in session.guilds[:MAX_GUILDS]:
