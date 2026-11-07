@@ -47,7 +47,7 @@ describe("on the Story Graph", () => {
   it("is not there while it is off", async () => {
     live.on = false;
     render(<Web api={mockApi("table")} path={`/account/web/${REF}`} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
   });
 

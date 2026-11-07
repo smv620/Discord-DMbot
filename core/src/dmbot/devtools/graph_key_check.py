@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -93,7 +94,14 @@ PLACE_SLOTS = {
     "was_kept_in": (place_words.KEPT, True),
 }  # fmt: skip
 
+# The stand-in the "who plays" step makes for a player (`store._placeholder_name`, #1559).
+PLACEHOLDER = re.compile(r"Player \d{4}")
 FOUND, WRONG, WAITING, MISSING = "found", "wrong_type", "waiting_only", "missing"
+# A kind of creature the rules already hold is left out of story memory on purpose
+# (`in_the_rules`, 2026-11-06 ruling on #3545): marked `"by_design": true` in the key, it is not a
+# miss when absent and is listed on its own line, so a change in that rule shows up. A particular
+# creature the lore names or sets apart is an entry and stays must-find (no flag).
+BY_DESIGN = "by_design"
 HEADS = ("total", "found", "waiting", "wrong", "missing", "must-miss")
 WIDTHS = (6, 7, 9, 7, 9, 11)
 
@@ -123,6 +131,8 @@ class Report:
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
     players_expected: int = 0
+    # `Player 1234` entries the "who plays" step made and nothing uses: not DMbot's extras (#3545)
+    placeholders: int = 0
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -321,12 +331,14 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         ids = graph.ids(names[n["name"]])
         matched_ids |= ids
         if not ids:
-            status = MISSING
+            status = BY_DESIGN if n.get("by_design") else MISSING
         elif any(kinds[i] in ENTRY_TYPES.get(n["kind"], frozenset()) for i in ids):
             status = FOUND
         else:
             status = WRONG
-        report.entries.append(Row(n["name"], n["name"], status, n["kind"], True))
+        report.entries.append(
+            Row(n["name"], n["name"], status, n["kind"], not n.get("by_design", False))
+        )
     for t in key["pairs"]:
         if not wanted & set(t.get("in", ["lore", "session"])):
             continue
@@ -345,9 +357,17 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             Row(t["id"], _text(t), status, group, bool(t["must_find"]), t["tier"], why)
         )
     # extras: entries and connections the key does not name
+    # a placeholder's own tie is `plays` (the player, to the character they play): that is what
+    # makes it a placeholder, so only another connection makes it a real entry
+    others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
+    linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
     for i, e in graph.entities.items():
-        if i not in matched_ids:
-            report.extra_entries[_kind_for(str(e["type"]))] += 1
+        if i in matched_ids:
+            continue
+        if PLACEHOLDER.fullmatch(str(e["name"])) and i not in linked:
+            report.placeholders += 1  # (the who-plays stand-in, #1559: not an extra entry)
+            continue
+        report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         if graph.ids([name]):
             report.violations.append(name)
@@ -429,6 +449,7 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Extra entries (not in the key): {sum(report.extra_entries.values())} "
         f"{dict(report.extra_entries)}"
     )
+    lines.append(f"Player placeholders left out (not extras): {report.placeholders}")
     lines.append(f"Extra ties between key entries: {report.extra_ties}")
     lines.append(
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
@@ -455,7 +476,11 @@ def render(report: Report, counts_only: bool = False) -> str:
     lines.append(f"Must-find ties found only as a waiting suggestion: {len(waiting)}")
     for t in waiting:
         lines.append(f"  {t.id}" + ("" if counts_only else f"  {t.text}"))
-    left = [e for e in report.entries if e.status != FOUND]
+    design = [e for e in report.entries if e.status == BY_DESIGN]
+    lines.append(f"Entries left out by design (kinds the rules hold, not misses): {len(design)}")
+    for e in design:
+        lines.append("  " + ("" if counts_only else e.text))
+    left = [e for e in report.entries if e.status not in (FOUND, BY_DESIGN)]
     lines.append(f"Entries missing or of the wrong kind: {len(left)}")
     for e in left:
         lines.append(f"  {e.status:<11}" + ("" if counts_only else e.text))

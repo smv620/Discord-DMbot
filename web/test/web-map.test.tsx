@@ -37,6 +37,11 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  try {
+    localStorage.removeItem("dmbot.web.details");
+  } catch {
+    // (no storage: nothing to clear)
+  }
   vi.unstubAllGlobals();
 });
 
@@ -596,7 +601,7 @@ describe("keeping the map calm", () => {
 
 
 describe("the details beside the map", () => {
-  it("shows the middle name's connections in words, then the name in focus's, and a secret is marked", () => {
+  it("shows the middle name's connections in words, then the clicked name's, and a secret is marked", () => {
     const withSecret: WebEdge[] = [{ ...edges[0]!, links: [link("l1", "serves"), { ...link("l2", "owes"), secret: true }] }, ...edges.slice(1)];
     render(<WebMap nodes={nodes} edges={withSecret} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
     const side = () => document.querySelector(".web-side")!;
@@ -604,15 +609,51 @@ describe("the details beside the map", () => {
     expect(side().textContent).toContain("Mira Voss serves Garrick");
     expect(side().textContent).toContain("Mira Voss lives at Far Hall");
     expect(side().textContent).toContain(words.secretMark);
-    fireEvent.pointerEnter(nodeOf("The Order"));
+    fireEvent.pointerEnter(nodeOf("The Order")); // (passing over a name changes nothing: only a click does)
+    expect(side().querySelector("h3")?.textContent).toBe("Mira Voss");
+    fireEvent.click(nodeOf("The Order"));
     expect(side().querySelector("h3")?.textContent).toBe("The Order");
     expect(side().textContent).toContain("Garrick leads The Order");
     expect(side().textContent).not.toContain("serves");
   });
 
+  it("puts the details on the right by default, and the game master can move them left or under", () => {
+    draw();
+    const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent === text) as HTMLButtonElement;
+    const stage = () => document.querySelector(".web-stage")!;
+    expect(stage().className).toContain("web-side-right");
+    fireEvent.click(button(words.sideLeft));
+    expect(stage().className).toContain("web-side-left");
+    expect(button(words.sideLeft).getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem("dmbot.web.details")).toBe("left");
+    fireEvent.click(button(words.sideUnder));
+    expect(stage().className).toContain("web-side-under");
+    cleanup();
+    draw(); // (the choice is remembered for the next visit)
+    expect(document.querySelector(".web-stage")!.className).toContain("web-side-under");
+  });
+
+  it("offers a way to the full editor for the clicked name, to the DM only", () => {
+    draw({ canEdit: false });
+    fireEvent.click(nodeOf("Garrick"));
+    expect(document.querySelector(".web-side a")).toBeNull();
+    cleanup();
+    draw({ canEdit: true });
+    fireEvent.click(nodeOf("Garrick"));
+    const link = document.querySelector(".web-side a") as HTMLAnchorElement;
+    expect(link.textContent).toBe(words.editFull("Garrick"));
+    expect(link.getAttribute("href")).toBe("/account/names/1.a#said=Garrick");
+  });
+
+  it("shows a chosen line in the same place as a name's details, instead of it", () => {
+    draw({ selected: { a: "m", b: "g" }, children: <section class="web-line-panel">The line</section> });
+    expect(document.querySelector(".web-side .web-line-panel")).not.toBeNull();
+    expect(document.querySelector("aside.web-side")).toBeNull();
+  });
+
   it("keeps a name in place and lets it go again, from a button, for the keyboard", () => {
     draw();
-    fireEvent.pointerEnter(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Garrick"));
     const button = () => document.querySelector(".web-side button") as HTMLButtonElement;
     expect(button().textContent).toBe(words.keepHere);
     fireEvent.click(button());
@@ -751,7 +792,7 @@ describe("full screen (#2981)", () => {
   });
 
   it("draws the chosen line's panel inside the map, so full screen still shows it", () => {
-    draw({ children: <section class="web-line-panel">The line</section> });
+    draw({ selected: { a: "m", b: "g" }, children: <section class="web-line-panel">The line</section> });
     fireEvent.click(button(words.fullScreen));
     const map = document.querySelector(".web-map.web-full")!;
     expect(map.querySelector(".web-line-panel")?.textContent).toBe("The line");

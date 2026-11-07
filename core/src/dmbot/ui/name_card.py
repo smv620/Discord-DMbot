@@ -34,6 +34,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    OLD_FEELINGS,
     back_after,
     back_words,
     campaign_back,
@@ -129,7 +130,7 @@ PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
 BOOK_BUTTON = "📖 In my adventure…"  # the DM says who in the adventure this is (#1715)
 DEED_BUTTON = "⚔️ Record a deed"  # a player character or the party did something (#1732)
-STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
+STANDING_BUTTON = "🤝 Reputation"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
@@ -156,15 +157,18 @@ NAME_LIMIT = 100  # what a form field may hold
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
 
 
-def fact_words(r: Relation, subject_kind: str = "") -> str:
+def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) -> str:
     """How one fact reads between its two names. On the catch-all, the words it was said in
     ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's.
     `subject_kind` is the first name's kind, so a character's place reads "was last seen in",
-    never "is in" (#3363)."""
+    never "is in" (#3363). `feeling`: the reader is the DM, who alone is told how a name feels about
+    another (#3610)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return _md(r.detail)  # transcript words: never let them format or ping
+        # transcript words: never let them format or ping. In quotes, so the table's own words are
+        # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
+        return f"“{_md(r.detail)}”"
     return link_words(
-        r.predicate, r.detail, r.directional, subject_kind
+        r.predicate, r.detail, r.directional, subject_kind, feeling=feeling
     )  # (family reads with its role: "is the niece of")
 
 
@@ -183,12 +187,13 @@ def _safe(r: Relation, guard: NameGuard) -> Relation:
     return r if safe == r.detail else dataclasses.replace(r, detail=safe)
 
 
-def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
+def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> str | None:
     """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(_safe(r, _guard(lookup)), subject.type)} {obj.name}"
+    words = fact_words(_safe(r, _guard(lookup)), subject.type, feeling=feeling)
+    return f"{subject.name} {words} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -266,6 +271,8 @@ def _rows(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if not secrets and r.predicate in OLD_FEELINGS:
+            r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
@@ -276,7 +283,7 @@ def _rows(
         subject_kind = first.type if first is not None else ""
         shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
         words = (
-            fact_words(shown, subject_kind)
+            fact_words(shown, subject_kind, feeling=secrets)
             if ahead
             else (
                 f"is linked (“{_md(shown.detail)}”) to"
@@ -1937,7 +1944,7 @@ class UndoConnectionButton(
             return
         changed(interaction, campaign)
         names = await _names(interaction, campaign)
-        said = sentence(names, written.value) if names is not None else None
+        said = sentence(names, written.value, feeling=True) if names is not None else None
         note = f"Put back: {_md(said or 'that connection')}."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 

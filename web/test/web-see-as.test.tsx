@@ -16,7 +16,7 @@ const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 async function open(suffix = "", api = mockApi("table")) {
   render(<Web api={api} path={at(suffix)} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 /** Opens the DM's Players View, where the picker is. */

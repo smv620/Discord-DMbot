@@ -8,18 +8,17 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { NAME_LIMIT } from "../content/names-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
   ApiError,
+  type IconChoice,
   type NameChange,
   type NameRow,
   type WebEdge,
   type WebGraph,
   type WebLinkChange,
-  type WebNode,
   type WebOverview,
   type WebRevealTarget,
   type WebView,
@@ -27,12 +26,15 @@ import {
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
 import { dimmedName, markSecret, plainGraph, plainOverview } from "./know";
+import { pcIconWords } from "../content/pc-icon-words";
+import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
+import { feelingOf } from "../content/knows-feeling-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
-import { readAuto, saveAuto } from "./webPrefs";
+import { readAuto, readLook, saveAuto, saveLook, type GraphLook } from "./webPrefs";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
@@ -46,6 +48,13 @@ export function webRefFromPath(path: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The name a link asked to have in the middle (`#centre=<id>`, from the Names page's "See in the story graph"), or null. */
+export function centreFromHash(hash: string): string | null {
+  if (!hash.startsWith("#")) return null; // (only a fragment is read, never a query string)
+  const id = new URLSearchParams(hash.slice(1)).get("centre")?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
 }
 
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
@@ -98,6 +107,15 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
+  // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
+  const [look, setLookState] = useState<GraphLook>(readLook);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // The last icon change, so one Undo can post the old choice back (#3622).
+  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice; now: IconChoice } | null>(null);
+  const setLook = (next: GraphLook): void => {
+    setLookState(next);
+    saveLook(next);
+  };
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
@@ -427,11 +445,28 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAlone(null);
     seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
     setSeeAsNote("");
-    void load(null, DEFAULT_HOPS);
+    void load(centreFromHash(typeof window === "undefined" ? "" : window.location.hash), DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref]);
+
+  /** A player character's icon (#3622): instant, then the web is read again so the circle shows it. Returns a plain-words problem. */
+  async function chooseIcon(id: string, choice: IconChoice): Promise<string | null> {
+    if (!ref || !api.setPcIcon) return words.errorFallback;
+    let got: { previous: IconChoice; now: IconChoice };
+    try {
+      got = await api.setPcIcon(ref, id, choice);
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "unavailable" || kind === "not-found") void load(center, hops, true); // (the picture or character went away: show what is left)
+      return pcIconWords.problems[kind] ?? pcIconWords.problems.server ?? words.errorFallback;
+    }
+    // Undo only while the icon is still what this change made it: a change by someone else since must not be undone over.
+    setIconBack(got.previous === got.now ? null : { id, previous: got.previous, now: got.now });
+    void load(center, hops, true).catch(() => undefined); // (the change is saved: a failed re-read is not a failed save)
+    return null;
+  }
 
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
   /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
@@ -544,7 +579,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const peeking = !isDm && asked === "full";
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
-  const nodes = graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false));
+  // A kind the viewer left unticked in the graph settings drops its names, and so their lines; the middle name always stays.
+  // (A kind saved from another campaign, that this one has no names of, is ignored: it would otherwise hide everything.)
+  const activeKinds = look.kinds.filter((k) => graph.nodes.some((n) => n.kind === k));
+  const kindShown = (n: { id: string; kind: string }): boolean => activeKinds.length === 0 || activeKinds.includes(n.kind) || n.id === center;
+  const nodes = graph.nodes.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
@@ -553,13 +592,19 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     .map((e) => {
       // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
-      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, ...l }) => l) };
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, quote: _quote, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, pinned: _pinned, check: _check, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, check: _check, quote: _quote, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
+  // The kinds the campaign has, with how many names of each, for the settings' tick boxes (counted before the filter).
+  const kindCounts = [...new Set(graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false)).map((n) => n.kind))].map((key) => ({
+    key,
+    label: kindWords(key),
+    count: graph.nodes.filter((n) => n.kind === key && (showAll || (!n.secret && n.revealed !== false))).length,
+  }));
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
   const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
   const { own, further } = listLines(edges, center, nameOf);
@@ -668,15 +713,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </div>
       </div>
 
-      <p class="small" role="status" aria-live="polite">
-        {words.howMany(nodes.length, edges.length)}
-      </p>
       {graph.truncated && <p class="note">{words.truncated}</p>}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
+      </p>
+
+      <p class="web-count" role="status" aria-live="polite">
+        <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
 
       {nodes.length <= 1 && edges.length === 0 ? (
@@ -687,6 +733,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <a class="small" href="#web-list" onClick={() => setListOpen(true)}>
               {words.skipMap}
             </a>
+            <div class="row">
+              <button type="button" class="button secondary" aria-expanded={settingsOpen} aria-controls="graph-settings" onClick={() => setSettingsOpen((o) => !o)}>
+                {words.settingsButton}
+              </button>
+            </div>
+            {settingsOpen && (
+              <div id="graph-settings">
+                <LazyPanel
+                  load={() => import("./WebSettings")}
+                  what={words.settingsLoading}
+                  props={{ look, kinds: kindCounts, onChange: setLook }}
+                />
+              </div>
+            )}
             <WebMap
               key={ref}
               api={api}
@@ -700,6 +760,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
+              onNodePick={() => setLine(null)}
+              look={look}
+              onIcon={seeing ? undefined : chooseIcon}
+              iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
+                const back = iconBack;
+                const refused = await chooseIcon(back.id, back.previous);
+                if (!refused) setIconBack(null);
+                return refused;
+              } } : null}
+              canEdit={canEdit}
             >
               {chosen && (
                 <LinePanel
@@ -840,7 +910,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         {editing === n.id ? words.doneShort : words.changeShort}
                       </button>
                     )}
-                    {canEdit && editing === n.id && <NodePanel node={n} act={actName} />}
+                    {canEdit && editing === n.id && <LazyPanel key={n.id} load={() => import("./WebNodePanel")} what="the name editor" props={{ node: n, act: actName, api, refId: ref }} />}
                   </div>
                 )}
               </li>
@@ -1126,6 +1196,14 @@ function LinePanel({
   return (
     <section class="panel stack" aria-labelledby="web-line-h" tabIndex={-1} ref={box}>
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
+      {/* Connections are changed right here; the full editor is each name's own row on the Names page. */}
+      {canEdit && <p class="row small">
+        {[edge.a, edge.b].map((id) => (
+          <a key={id} class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(nameOf(id))}`}>
+            {words.editFull(nameOf(id))}
+          </a>
+        ))}
+      </p>}
       {/* Every connection between the two names, in both directions (#2934): the two-way ones first, then
           one column for each way. The numbers stay the same in every group so "Words for connection 2" is unique. */}
       <div class="stack">
@@ -1369,6 +1447,7 @@ function LinkRow({
   const [asking, setAsking] = useState(false);
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   const sourceWords = words.sourceLine(link.source);
+  const feeling = KNOWS_FEELING_LIVE ? feelingOf(link.words) : null;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       {link.kind && (
@@ -1413,19 +1492,26 @@ function LinkRow({
       )}
       {canEdit && (
         <div class="stack">
-          <label class="field">
-            {words.wordsLabel(n)}
-            <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-          </label>
+          {feeling !== null ? (
+            // A "knows (…)" connection takes one of the nine feelings, never free words (they would make it a catch-all).
+            <LazyPanel load={() => import("./LinkFeeling")} what={words.feelingLoading} props={{ n, link, feeling, act }} />
+          ) : (
+            <label class="field">
+              {words.wordsLabel(n)}
+              <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
+            </label>
+          )}
           <div class="row">
-            <button
-              type="button"
-              class="button secondary"
-              aria-label={words.saveWords(n)}
-              onClick={() => void run({ action: "words", id: link.id, words: text }, words.saved)}
-            >
-              {words.save}
-            </button>
+            {feeling === null && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.saveWords(n)}
+                onClick={() => void run({ action: "words", id: link.id, words: text }, words.saved)}
+              >
+                {words.save}
+              </button>
+            )}
             <button
               type="button"
               class="button secondary"
@@ -1480,51 +1566,6 @@ function LinkRow({
 }
 
 /** A name's spelling and kind, for a DM. Both go through the same route as the Names page. */
-function NodePanel({ node, act }: { node: WebNode; act: (id: string, change: NameChange, ok: string) => Promise<string | null> }) {
-  const [spelling, setSpelling] = useState(node.name);
-  const [kind, setKind] = useState(node.kind);
-  const [problem, setProblem] = useState<string | null>(null);
-  const kinds = Object.keys(words.kinds).includes(node.kind) ? Object.keys(words.kinds) : [node.kind, ...Object.keys(words.kinds)];
-  return (
-    <div class="stack" role="group" aria-label={words.nodePanel(node.name)}>
-      <label class="field">
-        {words.spellLabel}
-        <input type="text" value={spelling} maxLength={NAME_LIMIT} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
-      </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "spell", name: spelling }, words.saved))}
-      >
-        {words.saveSpelling}
-      </button>
-      <label class="field">
-        {words.kindChange}
-        <select value={kind} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
-          {kinds.map((k) => (
-            <option key={k} value={k}>
-              {kindWords(k)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "kind", kind }, words.saved))}
-      >
-        {words.saveKind}
-      </button>
-      {problem && (
-        <p class="warn" role="alert">
-          {problem}
-        </p>
-      )}
-    </div>
-  );
-}
-
-
 /** The player's "Peek behind the DM screen" switch. Greyed out, with the reason, when the DM turned
  * peeking off; it stays focusable so a screen reader can read why. */
 function PeekSwitch({
