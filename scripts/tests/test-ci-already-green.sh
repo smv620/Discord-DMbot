@@ -9,9 +9,9 @@ export CI_API_DIR=$tmp GITHUB_SHA=abc GITHUB_RUN_ID=9
 fails=0
 
 job() { printf '{"name":"%s","conclusion":"%s"}' "$1" "$2"; }
-jobs_file() { # jobs_file <run id> <core conclusion> <web conclusion>
+jobs_file() { # jobs_file <run id> <core conclusion> <web conclusion> [docker conclusion]
   printf '{"jobs":[%s,%s,%s,%s,%s,%s]}' \
-    "$(job 'scripts (server helpers)' success)" "$(job 'docker images' success)" \
+    "$(job 'scripts (server helpers)' success)" "$(job 'docker images' "${4:-success}")" \
     "$(job 'core (Python)' "$2")" "$(job 'web (customer website)' "$3")" \
     "$(job 'ears (Node voice service)' skipped)" "$(job 'changes (which jobs to run)' success)" >"$tmp/jobs-$1.json"
 }
@@ -39,6 +39,11 @@ check "ears skipped before but needed now" "done=false"
 jobs_file 5 skipped success
 check "core was skipped before but is needed now" "done=false" NEED_EARS=false
 check "core was skipped before and is not needed now" "done=true" NEED_EARS=false NEED_CORE=false
+
+jobs_file 5 success success skipped
+check "a run that skipped docker does not stand in for a push that needs docker" "done=false" NEED_EARS=false
+check "a run that skipped docker stands in when docker is not needed" "done=true" NEED_EARS=false NEED_DOCKER=false
+check "no docker answer runs docker" "done=false" NEED_EARS=false NEED_DOCKER=
 
 echo '{"workflow_runs":[{"id":5,"head_sha":"other"}]}' >"$tmp/runs.json"
 jobs_file 5 success success

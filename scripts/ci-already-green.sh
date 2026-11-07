@@ -4,12 +4,13 @@
 #
 # Prints "done=true" and the run it relied on, or "done=false". It only ever skips when an earlier
 # run of this commit finished green AND each job this run needs (the jobs ci-changes.sh says to run,
-# plus scripts and docker, which always run) succeeded there: a run that skipped core because the
-# push touched only the website must not stand in for a push that needs core. A new commit has no
+# plus scripts, which always runs, and docker images unless NEED_DOCKER is "false") succeeded there:
+# a run that skipped core because the push touched only the website must not stand in for a push
+# that needs core. A new commit has no
 # earlier run, so it is never skipped; any failure to ask GitHub means "done=false".
 #
 # Usage: scripts/ci-already-green.sh   (reads GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID,
-# and NEED_CORE / NEED_EARS / NEED_WEB = "false" for a job this push does not need)
+# and NEED_CORE / NEED_EARS / NEED_WEB / NEED_DOCKER = "false" for a job this push does not need)
 # CI_API_DIR (tests only): a folder of canned answers, runs.json and jobs-<id>.json, used instead of GitHub.
 set -u
 
@@ -19,7 +20,8 @@ no() {
 }
 
 # These names are the jobs' `name:` in .github/workflows/ci.yml; test-ci-already-green.sh checks they match.
-need=("scripts (server helpers)" "docker images")
+need=("scripts (server helpers)")
+[ "${NEED_DOCKER:-}" = "false" ] || need+=("docker images")
 [ "${NEED_CORE:-}" = "false" ] || need+=("core (Python)")
 [ "${NEED_EARS:-}" = "false" ] || need+=("ears (Node voice service)")
 [ "${NEED_WEB:-}" = "false" ] || need+=("web (customer website)")

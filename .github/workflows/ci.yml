@@ -28,6 +28,7 @@ jobs:
       core: ${{ steps.decide.outputs.core }}
       ears: ${{ steps.decide.outputs.ears }}
       web: ${{ steps.decide.outputs.web }}
+      docker: ${{ steps.decide.outputs.docker }}
       # "true" only when an earlier run of this very commit was green for every job this run needs.
       done: ${{ steps.reuse.outputs.done }}
     steps:
@@ -48,6 +49,7 @@ jobs:
           NEED_CORE: ${{ steps.decide.outputs.core }}
           NEED_EARS: ${{ steps.decide.outputs.ears }}
           NEED_WEB: ${{ steps.decide.outputs.web }}
+          NEED_DOCKER: ${{ steps.decide.outputs.docker }}
         run: |
           scripts/ci-already-green.sh | tee -a "$GITHUB_OUTPUT" | tee /tmp/reuse.txt
           if grep -q '^done=true' /tmp/reuse.txt; then
@@ -268,7 +270,7 @@ jobs:
   docker:
     name: docker images
     needs: changes
-    if: ${{ always() && needs.changes.outputs.done != 'true' }}
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.docker != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     steps:
       - uses: actions/checkout@v5
