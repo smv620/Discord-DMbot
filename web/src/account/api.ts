@@ -71,6 +71,14 @@ export interface Campaign {
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+/** What the bot has switched on, as it wrote it when it last started (#3693): names and sentences only. */
+export interface FeaturesList {
+  /** Unix seconds. */
+  writtenAt: number;
+  on: { name: string; words: string }[];
+  off: string[];
+}
+
 export interface CampaignPage {
   ref: string;
   name: string;
@@ -80,6 +88,8 @@ export interface CampaignPage {
   importsOn?: boolean;
   /** The campaign's current choices, for its game masters only (#2461). */
   settings?: CampaignSettings;
+  /** What DMbot has switched on, for its game masters only; missing until the bot has written it (#3693). */
+  features?: FeaturesList;
 }
 
 /** One of the three choices a game master can change on the Settings tab (#2484). */

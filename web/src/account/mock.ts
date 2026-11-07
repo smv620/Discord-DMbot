@@ -2449,6 +2449,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           ? {}
           : {
               settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              // What the bot has switched on (#3693): a DM's page only, like the settings.
+              features: {
+                writtenAt: 1_790_000_000,
+                on: [
+                  { name: "Written recaps", words: "DMbot writes a recap of each session for you to read first." },
+                  { name: "Clock suggestions", words: "DMbot offers to move the game clock when time passes. You choose." },
+                ],
+                off: ["Spoken recaps"],
+              },
             }),
       };
     },

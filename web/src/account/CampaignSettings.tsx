@@ -4,6 +4,7 @@
 // kept). A choice is sent to the bot through the website's queue; the bot applies it exactly as
 // Discord's button does and the page waits for its answer. Hand over, pause and delete stay in
 // Discord, and their steps are shown only to the campaign's owner.
+import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
@@ -286,6 +287,9 @@ export default function CampaignSettings({
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
+      )}
+      {FEATURES_LIST_LIVE && page.features && (
+        <LazyPanel load={() => import("./FeaturesList")} what="what is switched on" props={{ features: page.features }} />
       )}
       {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
         <LazyPanel
