@@ -88,3 +88,35 @@ def sign_of(detail: str) -> int:
     word = word_of(detail)
     score = score_of(word) if word is not None else None
     return 0 if not score else (score > 0) - (score < 0)
+
+
+# The strong words need a cue in the line the reader quoted (#3606): a heated debate is "wary" at
+# most, not "hostile". The cues are plain stems, read in the quote only (never in the reader's own
+# word), so a model that over-reads is still held. They cannot read a negation ("never hated him"):
+# that errs toward keeping the strong word, and the DM's Reputation has the last word anyway.
+_CUES = {
+    SWORN_ENEMY: re.compile(
+        r"\bsworn\s+(?:enem|foe)|\bvow\w*\s+(?:to\s+)?(?:kill|destroy|avenge|against)|"
+        r"\bnemesis|\barch-?enem|\bblood feud|\bvendetta",
+        re.I,
+    ),
+    HOSTILE: re.compile(
+        r"\bhate|\bhatr|\benem|\bfoe|\bhostil|\bnemesis|\bkill|\bmurder|\bfight(?!er)|"
+        r"\bfought|\bwar\b|\battack|\bhunt(?!er)|\bdespis|\bloath|\bfeud|\brevenge|"
+        r"\bvengeance|\bthreat|\bassault|\bbetray",
+        re.I,
+    ),
+    DEVOTED: re.compile(r"\blove|\bloyal|\bdevot|\badore|\bworship|\bfaithful|\bfealty", re.I),
+}
+_DEMOTED = {SWORN_ENEMY: HOSTILE, HOSTILE: DISTRUSTS, DEVOTED: CLOSE}
+
+
+def held_to_the_quote(word: str, quote: str) -> tuple[str, bool]:
+    """(the word to keep, whether it was demoted): a strong word (sworn enemy, hostile, devoted)
+    stays only when the reader's quote holds one of its cues, else it steps down toward the
+    milder word, and that is checked in turn. Any other word is kept as it is."""
+    demoted = False
+    while word in _CUES and not _CUES[word].search(quote):
+        word = _DEMOTED[word]
+        demoted = True
+    return word, demoted
