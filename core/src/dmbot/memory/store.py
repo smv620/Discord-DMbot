@@ -137,6 +137,7 @@ from dmbot.memory.models import (
     ROLES,
     SOURCES,
     SPECIES,
+    WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
     Belief,
@@ -5603,6 +5604,30 @@ class MemoryStore:
 
     # ---- undo -------------------------------------------------------------------------
 
+    async def join_by_ai(
+        self, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
+    ) -> Written[Entity]:
+        """DMbot's own answer to "Who is this?" (#3602): a waiting name is another name of a
+        confirmed entry of the same kind. The DM never said it, so this is the one narrow case
+        `merge` refuses to anyone but the DM, and it is its own method so that rule stays put.
+
+        What it will not do (the owner's rule): nothing secret, hidden from players, limited to
+        some characters, in disguise, a player or a player's character, unnamed, or of two
+        different kinds; never a split, a merge of two confirmed entries or a removal. All of it
+        is read again inside the write, at the moment of use. The moved names stay *waiting* (no
+        `confirm_keys`), so players, the recap and table answers do not use the spelling until the
+        DM confirms it; it is one change, so one Undo takes it all back."""
+        async with self._write(guild_id, campaign_id, WHO_SOURCE) as w:
+            keep = await _entity_row(w, keep_id)
+            gone = await _entity_row(w, gone_id)
+            why = await _ai_join_refusal(w, keep, gone)
+            if why:
+                raise MemoryRuleError(why)
+            kept = await self._merge_in(w, keep_id, gone_id, source=WHO_SOURCE, dm_said_same=True)
+            final = await w.get(ENTITIES, kept)
+            assert final is not None
+            return Written(_entity(final), w.batch)
+
     async def undo(
         self,
         guild_id: int,
@@ -6555,6 +6580,39 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
     ):
         await w.delete(FLAGS, flag["id"])
     await w.delete(RELATIONS, relation_id)
+
+
+AI_JOIN_REFUSED = "DMbot doesn't join those two by itself; the DM decides."
+
+
+async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
+    """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
+    else the refusal (one fixed sentence: it names no entry, so no secret can leak through it)."""
+    if keep["status"] != CONFIRMED or gone["status"] != PROPOSED or keep["id"] == gone["id"]:
+        return AI_JOIN_REFUSED
+    for row in (keep, gone):
+        if (
+            row["type"] == PERSON
+            or row["played_by"] is not None
+            or row["role"] == PLAYER_CHARACTER
+            or row["unnamed"]
+            or row["hidden_from_players"]
+            or row["audience_limited"]
+        ):
+            return AI_JOIN_REFUSED
+    if keep["type"] != gone["type"]:
+        return AI_JOIN_REFUSED
+    ids = [keep["id"], gone["id"]]
+    if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):
+        return AI_JOIN_REFUSED
+    if await w.select(
+        RELATIONS,
+        " AND predicate = %s AND status <> 'rejected' AND (subject_id = ANY(%s)"
+        " OR object_id = ANY(%s))",
+        [DISGUISED_AS, ids, ids],
+    ):
+        return AI_JOIN_REFUSED
+    return ""
 
 
 async def _move_aliases(
