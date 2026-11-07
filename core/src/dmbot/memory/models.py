@@ -28,11 +28,15 @@ BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#
 PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
 # A family link worked out from two stated ones (#2959, #2960): proposed for the DM, never stated
 WORKED_OUT_SOURCE = "worked_out"
+# DMbot's own answer to "Who is this?" (#3602, slice 4): the one join it may make without the DM,
+# through `MemoryStore.join_by_ai` only; the DM confirms or undoes it, and `merge` stays DM-only.
+WHO_SOURCE = "who"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
     PARTY_SOURCE,
     WORKED_OUT_SOURCE,
+    WHO_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -57,6 +61,9 @@ HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 PLAYER_CHARACTER, NPC = "player_character", "npc"
 ROLES = (PLAYER_CHARACTER, NPC)
 ROLE_LABELS = {PLAYER_CHARACTER: "PC", NPC: "NPC"}
+# The kinds a yes-to-all never covers: an idea needs a look, a player character its player (#3553).
+# Discord's Add all (`ui.name_background`) and the website's (`web_actions`) share this set.
+NEEDS_A_LOOK = frozenset({"concept", PLAYER_CHARACTER})
 
 # What a character links to in the rules (by source and name), never kinds of their own:
 # "race" is shown only as the 2014 name, `[Legacy 2014]`. One species and one creature type
@@ -230,6 +237,9 @@ class NewName:
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
+    # An item the unique-item judge kept (#3373) is stored as one particular thing (#3618), so a
+    # second owner is flagged; None leaves it to the name guess and the DM's switch.
+    unique: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,6 +526,19 @@ class GroupJoined:
     made: tuple[str, ...]
     # Listed names left out: a known entry that is not a character, or a name DMbot can't keep.
     skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WaitingJoin:
+    """One of DMbot's own joins (#3602, slice 4) the DM has not confirmed or undone: the batch (its
+    Undo), the entry it joined to and the name that was joined (the waiting entry it came from)."""
+
+    batch: int
+    keep_id: str
+    gone_id: str
+    spelling: str
+    keep_name: str
+    made_at: int
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin
+from dmbot.memory import gate, kin, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -33,6 +33,7 @@ from dmbot.memory.link_words import (
     quoted,
     reads_both_ways,
 )
+from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names, graph_view, link_sources, which_choices
@@ -122,6 +123,7 @@ def edges_from(
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,
+                    feeling=is_dm,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
                 # how it reads from the second name when that differs ("has a niece", "has as a
@@ -812,9 +814,10 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
-    """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
-    `{action: "remove", confirm: true}`. Returns the answer's id."""
+    """Queue a change to one connection: `{action: "words", words}`, `{action: "feeling", feeling}`
+    (one of the nine words, #3606), `{action: "secret", secret}`, `{action: "who", who,
+    characters}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -824,6 +827,17 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-words", target=link_id,
             text=_words(body.get("words")), flag=False,
+        )  # fmt: skip
+    if action == "feeling":  # a feeling picked for a `knows` line (#3606): one of the nine words
+        feeling = reputation_words.word_of(body.get("feeling"))
+        if feeling is None:
+            raise RecapError("bad_action")
+        # the same change as typing "knows (wary)" into the words box (`predicate_for` reads it
+        # back as a feeling) but only on a `knows` connection (checked when it is applied), so the
+        # connection stays a "knows" and Undo is the words' own
+        return await _queue(
+            db, session, ref, entity=None, action="link-words", target=link_id,
+            text=f"{web_actions.FEELING_TEXT}{feeling}", flag=False,
         )  # fmt: skip
     if action == "secret":
         if not isinstance(body.get("secret"), bool):
@@ -867,6 +881,7 @@ WAITING_QUEUE = {
     ("claim", "reject"): "claim-reject",
     ("claim", "pick"): "claim-pick",
     ("claim", "unpick"): "claim-unpick",
+    ("claim", "undo"): "claim-undo",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
@@ -912,6 +927,12 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if not ID_PATTERN.match(picked):
             raise RecapError("not_found")
         text = picked
+    if action == "claim-undo":
+        # `batch`: the change number the answer gave back (#3645); the door checks it is theirs
+        batch = body.get("batch")
+        if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
+            raise RecapError("not_found")
+        text = str(batch)
     if action == "claim-pick":
         side, entry = body.get("side"), str(body.get("entity") or "")
         if side not in ("subject", "object") or not ID_PATTERN.match(entry):
@@ -992,6 +1013,12 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "edge": None,
             "removed": False,
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
+            # the change a kept fact made, for the Undo of an All true press (#3645)
+            "batch": int(got["resultOther"])
+            if got["action"] == "claim-confirm"
+            and got["state"] == "done"
+            and str(got["resultOther"] or "").isdigit()
+            else None,
             "waits": _reading_answer(got)["waits"],
             "progress": {"done": int(got.get("progressDone") or 0), "total": total}
             if keeping and total > 0
@@ -1164,7 +1191,7 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     screen's own rule (`claims.condition_of`), so both read it the same way."""
     said = Extracted(
         str(row["subject"]), str(row["relationship"]), str(row["object"]),
-        str(row.get("details") or ""), (), str(row["how"]),
+        split_effect_note(str(row.get("details") or ""))[0], (), str(row["how"]),
     )  # fmt: skip
     return condition_of(said) is None
 
@@ -1173,7 +1200,8 @@ def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
     base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
-    details = str(row.get("details") or "").strip()
+    details, _ = split_effect_note(str(row.get("details") or ""))  # (the note is not a detail)
+    details = details.strip()
     return f"{base} ({details})" if details else base
 
 
@@ -1213,6 +1241,7 @@ async def read_waiting(
     claims = [
         {
             **c,
+            "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
@@ -1227,6 +1256,7 @@ async def read_waiting(
                 str(b["detail"]),
                 kin.directional(str(b["detail"])),
                 str(b.get("subjectKind") or ""),
+                feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
         }
@@ -1242,6 +1272,7 @@ async def read_waiting(
                 # the named name is the subject only when the door says so; otherwise the subject
                 # is a list the DM has yet to choose from, and its kind is not known (old words)
                 str(w.get("otherKind") or "") if w.get("otherIsSubject") else "",
+                feeling=True,
             ),
             "check": check_words(w.get("decided")),
         }

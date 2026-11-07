@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from dmbot import bot as bot_module
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
+from dmbot.memory.scenes import ENTITY, Scene, Scenes
 from dmbot.memory.store import MemoryStore
 from dmbot.recaps import name_answers as na
 from dmbot.transcript.models import Line, line_ref
@@ -124,6 +125,38 @@ class TheCampaignList(WithChecks):
     async def test_a_bad_address_is_not_found(self) -> None:
         code = await self.code(web.read_campaign_checks(self.web, self.session, "nope"))
         self.assertEqual(code, "not_found")
+
+
+class TheScene(WithChecks):
+    """The scene DMbot kept for a waiting name rides on its card, for the DM only (#3644)."""
+
+    async def test_a_waiting_name_with_a_scene_carries_it_and_one_without_does_not(self) -> None:
+        withscene = await self.suggest("Brannoch")
+        plain = await self.suggest("Veshla")
+        text = "The party reached the forge as the storm broke."
+        await Scenes(self.memory).keep(
+            GUILD,
+            self.one.id,
+            [Scene(ENTITY, withscene, text, 3, (), 100)],
+            opted_in=set(),
+            prompt_version="scenes-1",
+            model="m",
+        )
+        cards = {c["name"]: c for c in (await self.listed())["names"]}
+        self.assertEqual(cards["Brannoch"]["scene"], text)
+        self.assertNotIn("scene", cards["Veshla"])
+        self.assertEqual(plain, cards["Veshla"]["id"])
+
+    async def test_a_player_is_refused_the_list_and_so_given_no_scene(self) -> None:
+        await self.suggest("Brannoch")
+        player = await sessions.find(
+            self.web,
+            await sessions.sign_in(self.web, cast(DiscordUser, BOB), [THURSDAY], now=NOW, days=30),
+            now=NOW,
+        )
+        assert player is not None
+        with self.assertRaises(RecapError):
+            await web.read_checks(self.web, player, self.ref)
 
 
 class TheOldPronounRule(WithChecks):

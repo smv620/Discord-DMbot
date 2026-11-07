@@ -30,7 +30,9 @@ from dmbot.memory import (
     one_off,
     place_words,
     reputation_words,
+    scenes,
     unique_item,
+    who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
@@ -72,8 +74,22 @@ from dmbot.memory.ontology import (
     decide_term,
     resolve_kind,
 )
-from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
-from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
+from dmbot.memory.store import (
+    TRAVELS_WITH,
+    MemoryStore,
+    _companion_problem,
+    _load_ontology,
+    _new_alias,
+)
+from dmbot.memory.voice import (
+    EFFECT,
+    EFFECT_NOTE,
+    OWN,
+    PARTY,
+    PARTY_REASON,
+    split_effect_note,
+    voice,
+)
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
@@ -124,6 +140,7 @@ NEW_NAME_LIMIT = 20  # new names one session sends to the DM; the rest wait for 
 # could mean two entries, it is kept for the DM's answer, with its lines, instead of being dropped.
 UNPLACED_REASON = "kept for your answer: a name in it could be two different entries"
 NEW_PERSON = "new-person"  # stands for the unnamed person a Keep is about to make (#3431)
+TRAVELS_REASON = "a companion travels with a player character or the party, in that order"  # #3176
 DESCRIBED_REASON = "kept for your answer: a person the story never names"  # #3431
 UNPLACED_LIMIT = 20  # such claims one session keeps; the rest are counted and not stored
 SESSION_CLAIMS = 3000  # claims one session may hand to `propose` at once
@@ -190,15 +207,19 @@ class Claim:
     # The entries the DM picked for a name that could mean two (#3238), ahead of the words.
     subject_picked: str | None = None
     object_picked: str | None = None
+    # Why a player character's line is "something that happened to them" (#2562), apart from the
+    # details: the note is stored run on to them and taken off here (#3624).
+    note: str = ""
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
     """A stored claim from its row."""
+    details, note = split_effect_note(str(r["details"] or ""))
     return Claim(
-        r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
+        r["id"], r["subject"], r["relationship"], r["object"], details, r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"),
+        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"), note,
     )  # fmt: skip
 
 
@@ -415,6 +436,21 @@ def feeling_of(
     return None
 
 
+def _fits(
+    known: tuple[PredicateTerm, bool], subject_kind: str, object_kind: str, onto: Ontology
+) -> bool:
+    """Whether a known relationship's two ends are kinds it takes. A companion link
+    (`travels_with`) is judged by the store's own rule afterwards, so it is never turned into
+    the catch-all here (#3176)."""
+    term, from_object = known
+    if term.key == TRAVELS_WITH:
+        return True
+    s_kind, o_kind = (object_kind, subject_kind) if from_object else (subject_kind, object_kind)
+    return (not term.subject_types or onto.is_any(s_kind, term.subject_types)) and (
+        not term.object_types or onto.is_any(o_kind, term.object_types)
+    )
+
+
 def place_relationship(
     onto: Ontology,
     text: str,
@@ -451,8 +487,10 @@ def place_relationship(
     ):
         return located, False, ""
     known = resolve_relationship(onto, text)
-    if known is not None:
+    if known is not None and _fits(known, subject_kind, object_kind, onto):
         return known[0], known[1], ""
+    # (a known word whose two ends don't fit, "performed" between two characters, is not lost: it
+    # goes on the catch-all with its own words, like a word DMbot does not know, #3033)
     decision = decide_term(
         onto,
         # "link" is only the proposal's key when the words have no letters to make one from.
@@ -463,7 +501,11 @@ def place_relationship(
         decision = Refused(REASON_BETWEEN, Fallback(FALLBACK_PREDICATE, text))
     if tally is not None:
         tally.record(decision)
-    if isinstance(decision, Reused) and decision.existing in onto.predicates:
+    if (
+        isinstance(decision, Reused)
+        and decision.existing in onto.predicates
+        and _fits((onto.predicates[decision.existing], False), subject_kind, object_kind, onto)
+    ):
         return onto.predicates[decision.existing], False, ""
     label = " ".join(text.split())
     if len(label) > DETAIL_MAX:
@@ -490,6 +532,8 @@ class Names:
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
     # Each character's (role, its player) by entry id, for who speaks for it (#2562)
     roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
+    # Each entry's source by id: only the party entry is told apart by it (#3176)
+    sources: Mapping[str, str] = field(default_factory=dict)
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -533,7 +577,8 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         for e in entities
         if str(e["type"]) == "character"
     }
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
+    sources = {str(e["id"]): str(e.get("source") or "") for e in entities}
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources)
 
 
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
@@ -658,6 +703,21 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
         onto, claim.relationship, who[1], other[1], tally, claim.details or ""
     )
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
+    if term.key == TRAVELS_WITH:
+        # The store refuses a companion link whose ends are wrong (#3176), so the DM is never
+        # asked a question whose "yes" it would turn down. The reader is a session reader.
+        first, second = (other, who) if said_from_object else (who, other)
+        problem = _companion_problem(
+            {"type": first[1], "role": names.roles.get(first[0], (None, None))[0]},
+            {
+                "type": second[1],
+                "role": names.roles.get(second[0], (None, None))[0],
+                "source": names.sources.get(second[0], ""),
+            },
+            EXTRACTOR,
+        )
+        if problem is not None:
+            return TRAVELS_REASON
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
         return f"{term.label} doesn't fit those two"
     if term.object_types and not onto.is_any(o_kind, term.object_types):
@@ -1261,7 +1321,10 @@ class ClaimStore:
                         "description": f"Heard {sum(times[k] for k in group)} times",
                         "status": PROPOSED, "merged_into": None, "source": EXTRACTOR,
                         "created_at": w.now, "played_by": None,
-                        "needs_look": False, "unique_item": None,
+                        "needs_look": False,
+                        # an item reaches here only when `_generic_items` judged it one particular
+                        # thing (#3618), so a second owner is flagged like a named item's
+                        "unique_item": True if onto.is_a(kind, "item") else None,
                     },
                 )  # fmt: skip
                 alias = await w.insert(
@@ -1655,13 +1718,16 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
+        went."""
 
         from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
 
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await scenes.forget(conn, guild_id, user_id)
+            answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",
@@ -1671,7 +1737,7 @@ class ClaimStore:
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-            return len(gone) + readings
+            return len(gone) + readings + answers  # (claims, readings and Who-is-this answers)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""

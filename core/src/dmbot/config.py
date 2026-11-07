@@ -94,14 +94,24 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    ai_feed_on: bool = False  # the DM's live window on the AI's prompts and replies (#3710)
     # The second question of each batch (#2412): theories, reveals, frame-ups and divinations,
     # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
     # extractor does, inside the same call limits.
     story_readings_on: bool = False
+    # The scene of each waiting question (#3596): a short AI summary of who, where and what, written
+    # after the session from the lines the question came from. Off until the extractor is; it
+    # only runs when the extractor does, inside the same call limits.
+    story_scenes_on: bool = False
     # A third question of each batch (#3175 slice 4): deeds the party did, proposed for the DM to
     # record. Off until the extractor is; it only runs when the extractor does, inside the same
     # call limits. Nothing is stored yet while storing is not built.
     story_deeds_on: bool = False
+    # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
+    # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
+    # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
+    story_who_on: bool = False
+    story_who_apply_on: bool = False  # DMbot joins a name itself when sure (#3602, slice 4)
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -355,6 +365,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
         )
+    feed_raw = (get("DMBOT_AI_FEED") or "0").lower()
+    if feed_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_AI_FEED must be 1 (on) or 0 (off), got "' + feed_raw + '".')
     family_raw = (get("DMBOT_STORY_FAMILY_ONLY") or "0").lower()
     if family_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -372,6 +385,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
+        )
+    scenes_raw = (get("DMBOT_STORY_SCENES") or "0").lower()
+    if scenes_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_SCENES must be 1 (on) or 0 (off), got "' + scenes_raw + '".')
+    who_raw = (get("DMBOT_STORY_WHO") or "0").lower()
+    if who_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_WHO must be 1 (on) or 0 (off), got "' + who_raw + '".')
+    who_apply_raw = (get("DMBOT_STORY_WHO_APPLY") or "0").lower()
+    if who_apply_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_WHO_APPLY must be 1 (on) or 0 (off), got "' + who_apply_raw + '".'
         )
     deeds_raw = (get("DMBOT_STORY_DEEDS") or "0").lower()
     if deeds_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -551,8 +575,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        ai_feed_on=feed_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
+        story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_deeds_on=deeds_raw in ("1", "true", "on"),
+        story_who_on=who_raw in ("1", "true", "on"),
+        # (applying needs the ranking: on alone does nothing)
+        story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),

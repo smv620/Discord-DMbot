@@ -7,10 +7,11 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.bot import DMBot
-from dmbot.memory.claims import ClaimStore, Extracted
+from dmbot.memory.claims import PAGE, ClaimStore, Extracted
+from dmbot.memory.models import MemoryRuleError
 from dmbot.ui import claims_review
 from tests.asking import with_asking
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
@@ -51,6 +52,7 @@ class Review(ConfirmedMemoryTest):
             consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
         )
         it.response.is_done = lambda: False
+        it.response.defer = AsyncMock()
         it.response.send_message = reply
         it.response.edit_message = reply
         it.followup.send = reply
@@ -74,8 +76,9 @@ class Review(ConfirmedMemoryTest):
         self.assertIn("**Hesper** is **captured**? _(a player said)_", text)
         self.assertLess(text.index("__Bram__"), text.index("__Hesper__"))
         self.assertEqual(text.count("__Hesper__"), 1)  # one heading for a name's questions
-        # a yes and a no for each of three, and a secret yes for the two that are not a state
-        self.assertEqual(len(view.children), 8)
+        # a yes and a no for each of three, a secret yes for the two that are not a state, and the
+        # two buttons that answer the whole page (#3624)
+        self.assertEqual(len(view.children), 10)
         self.assertNotIn("extractor", text.lower())
 
     async def test_yes_remembers_it_and_no_turns_it_down_and_the_next_page_follows(self) -> None:
@@ -107,11 +110,12 @@ class Review(ConfirmedMemoryTest):
         text = it.sent[-1]
         self.assertIn("1. ✅ Remembered:", text)
         self.assertIn("2. **", text)  # the others kept their numbers
+        rows = [b for b in view.children if "All" not in str(getattr(b, "label", ""))]
         self.assertEqual(
-            [getattr(b, "disabled", None) for b in view.children][:3], [True] * 3
+            [getattr(b, "disabled", None) for b in rows][:3], [True] * 3
         )  # 1 is done: its yes, its secret yes and its no
-        self.assertEqual([getattr(b, "disabled", None) for b in view.children][3:9], [False] * 6)
-        self.assertIn("Top row ✅", text)
+        self.assertEqual([getattr(b, "disabled", None) for b in rows][3:9], [False] * 6)
+        self.assertIn("✅ All true", text)
 
     async def test_truth_but_secret_remembers_it_and_keeps_it_from_the_players(self) -> None:
         await self.ask(said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram"))
@@ -149,7 +153,7 @@ class Review(ConfirmedMemoryTest):
         await self.ask(said("Hesper", "is", "captured", "player_said"))
         view = claims_review.ClaimsReview(self.c, GUILD_A)
         await view.current_text(self.interaction())
-        self.assertEqual(len(view.children), 2)  # a yes and a no, no 🤫
+        self.assertEqual(len(view.children), 3)  # a yes and a no, and All true; no 🤫 anywhere
 
     async def test_a_speaker_who_stopped_since_deletes_the_question_and_says_so(self) -> None:
         await self.ask(said("Bram", "carries", "Heartseeker"))
@@ -189,6 +193,20 @@ class Review(ConfirmedMemoryTest):
         self.assertIsNone(await view.current_text(it))
         self.assertNotIn("Heartseeker", "\n".join(it.sent))
 
+    async def test_a_new_item_the_judge_kept_is_stored_unique(self) -> None:
+        # (#3618) the session path stores the judge's yes like the lore path does
+        await self.ask(said("Bram", "carries", "Moonblade"))
+        made = [e for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))]
+        (moonblade,) = [e for e in made if e.name == "Moonblade"]
+        self.assertTrue(moonblade.unique_item)
+        await self.ask(said("Bram", "knows", "Marek"))  # (a person is never stored unique)
+        marek = next(
+            e
+            for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))
+            if e.name == "Marek"
+        )
+        self.assertIsNone(marek.unique_item)
+
     async def test_a_second_holder_says_so_in_plain_words(self) -> None:
         await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")
         await self.ask(
@@ -210,6 +228,202 @@ class Review(ConfirmedMemoryTest):
         self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
         self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in={7})), 1)
         self.assertNotIn("Heartseeker", "\n".join(it.sent))  # nothing of the questions leaked
+
+    async def page(self, *found: Extracted, user: int = DM) -> tuple[Any, Any]:
+        await self.ask(*found)
+        it = self.interaction(user)
+        view = claims_review.ClaimsReview(self.c, GUILD_A)
+        await view.current_text(it)
+        return it, view
+
+    def labelled(self, view: Any, label: str) -> Any:
+        return next(b for b in view.children if str(getattr(b, "label", "")) == label)
+
+    async def waiting(self) -> int:
+        return len(await self.claims.waiting(GUILD_A, self.c, opted_in={7}))
+
+    async def test_all_true_answers_exactly_the_questions_waiting_on_the_page(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram"),
+            said("Bram", "knows", "Hesper"),
+        )  # fmt: skip
+        first = view.page[0]
+        await view._decide(it, first.id, False)  # one is already answered: it is left alone
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 2)
+        self.assertIn("Saved 2 as true", it.sent[-1])
+        self.assertIn(claims_review.NOTHING_WAITING, it.sent[-1])
+        self.assertEqual(await self.waiting(), 0)
+
+    async def test_it_never_answers_questions_on_a_page_not_shown(self) -> None:
+        names = [f"Hero{n}" for n in range(PAGE + 2)]
+        for name in names:
+            await self.add(name, type="character")
+        it, view = await self.page(*[said(n, "carries", "Heartseeker") for n in names])
+        self.assertEqual(len(view.page), PAGE)
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), PAGE)
+        self.assertEqual(await self.waiting(), 2)  # the next page is still waiting
+        self.assertIn("Hero", it.sent[-1])  # ... and is shown now, as today
+
+    async def test_all_secret_keeps_them_from_the_players_and_skips_the_states(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "is", "captured", "player_said")
+        )
+        await view._answer_all(secret=True)(it)
+        known = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        self.assertEqual([r.secret for r in known], [True])
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])  # players: none
+        self.assertIn("Saved 1 as true, and secret from your players", it.sent[-1])
+        self.assertIn("1 left for you: a state like “is dead” can't be secret", it.sent[-1])
+        self.assertEqual(await self.waiting(), 1)
+
+    async def test_one_undo_takes_the_whole_press_back_and_asks_again(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram")
+        )
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 2)
+        self.assertEqual(len(view.last_bulk), 2)
+        self.assertEqual(self.labelled(view, "↩️ Undo all 2").row, 0)  # still on offer
+        await view._take_back_all(it)
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        self.assertEqual(await self.waiting(), 2)
+        self.assertIn("Undid 2 answers", it.sent[-1])
+        self.assertEqual(view.last_bulk, [])
+
+    async def test_a_refused_one_is_counted_and_the_rest_still_go_in(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Bram", "knows", "Hesper")
+        )
+        # the item's name is turned down on another screen after the page was shown
+        await self.memory.set_entity_status(GUILD_A, self.c, self.bow, "rejected", source="dm")
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 1)  # the other went in
+        self.assertIn("Saved 1 as true", it.sent[-1])
+        self.assertIn("1 not saved: Can't write that now", it.sent[-1])
+        self.assertEqual(len(view.last_bulk), 1)  # and one Undo for what did go in
+
+    async def test_a_second_holder_is_saved_and_flagged_for_a_later_question(self) -> None:
+        await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "carries", "Heartseeker")
+        )
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 2)
+        self.assertIn("⚠️ 1 saved, and DMbot noticed something odd. It will ask you.", it.sent[-1])
+
+    async def test_a_speaker_who_stopped_since_is_counted_and_the_page_still_moves_on(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"))
+        it.client.consent.consenting = AsyncMock(return_value=set())
+        await view._answer_all(secret=False)(it)
+        self.assertIn("Saved 0 as true", it.sent[-1])
+        self.assertIn("stopped being recorded", it.sent[-1])
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+
+    async def test_a_single_answer_after_the_press_ends_the_whole_undo(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Hesper", "knows", "Bram"),
+            said("Bram", "knows", "Hesper"),
+        )  # fmt: skip
+        first = view.page[0]
+        await view._decide(it, first.id, True)
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(len(view.last_bulk), 2)
+        await view._take_back_all(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 1)  # the first stays
+
+    async def test_nobody_but_the_dm_can_use_the_two_buttons(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"), user=STRANGER)
+        await view._answer_all(secret=False)(it)
+        await view._answer_all(secret=True)(it)
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c, include_secret=True), [])
+        self.assertEqual(await self.waiting(), 1)
+        self.assertNotIn("Heartseeker", "\n".join(it.sent))
+        await view._take_back_all(it)  # and nothing to take back
+
+    async def test_the_colours_the_secret_row_is_blurple_and_all_true_is_green(self) -> None:
+        import discord
+
+        _, view = await self.page(said("Bram", "carries", "Heartseeker"))
+        self.assertEqual(self.labelled(view, "🤫 1").style, discord.ButtonStyle.primary)
+        self.assertEqual(self.labelled(view, "🤫 All secret").style, discord.ButtonStyle.primary)
+        self.assertEqual(self.labelled(view, "✅ All true").style, discord.ButtonStyle.success)
+        self.assertEqual(self.labelled(view, "❌ 1").style, discord.ButtonStyle.secondary)
+        rows = {b.label: b.row for b in view.children}
+        self.assertEqual(
+            [rows[k] for k in ("✅ All true", "✅ 1", "🤫 1", "❌ 1")], [0, 1, 2, 3]
+        )  # the whole-page buttons share the top row, above the rows
+
+    async def test_the_press_answers_discord_first_before_any_write(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"))
+        order: list[str] = []
+        it.response.defer = AsyncMock(side_effect=lambda *a, **k: order.append("defer"))
+        real = ClaimStore.confirm
+
+        async def spy(self_: Any, *a: Any, **k: Any) -> Any:
+            order.append("confirm")
+            return await real(self_, *a, **k)
+
+        with patch.object(ClaimStore, "confirm", spy):
+            await view._answer_all(secret=False)(it)
+        self.assertEqual(order[:2], ["defer", "confirm"])
+
+    async def test_an_error_part_way_keeps_what_was_saved_with_its_undo_and_says_so(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Bram", "knows", "Hesper"),
+            said("Hesper", "knows", "Bram"),
+        )  # fmt: skip
+        real = ClaimStore.confirm
+        calls = {"n": 0}
+
+        async def flaky(self_: Any, *a: Any, **k: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("down")
+            return await real(self_, *a, **k)
+
+        with patch.object(ClaimStore, "confirm", flaky):
+            await view._answer_all(secret=False)(it)
+        self.assertEqual(len(await self.memory.relations(GUILD_A, self.c)), 2)
+        self.assertEqual(len(view.last_bulk), 2)  # the two that went in can be taken back
+        self.assertIn("Saved 2 as true", it.sent[-1])
+        self.assertIn("1 could not be saved. Try those again.", it.sent[-1])
+        self.assertNotIn("down", it.sent[-1])  # the error's text is never shown
+        self.assertEqual(await self.waiting(), 1)
+
+    async def test_a_second_press_while_the_first_is_writing_waits(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"))
+        view.busy = True
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        self.assertIn("Still saving", it.sent[-1])
+
+    async def test_a_press_that_keeps_nothing_leaves_the_earlier_undo_alone(self) -> None:
+        it, view = await self.page(
+            said("Bram", "carries", "Heartseeker"), said("Bram", "knows", "Hesper")
+        )
+        view.last_bulk = [("x", 1)]  # an earlier press's Undo
+        it.client.consent.consenting = AsyncMock(return_value=set())  # nothing can be kept now
+        await view._answer_all(secret=False)(it)
+        self.assertEqual(view.last_bulk, [("x", 1)])
+
+    async def test_a_long_reason_is_cut_in_the_summary(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"))
+
+        async def refuse(self_: Any, *a: Any, **k: Any) -> Any:
+            raise MemoryRuleError("x" * 900)
+
+        with patch.object(ClaimStore, "confirm", refuse):
+            await view._answer_all(secret=False)(it)
+        self.assertLess(len(it.sent[-1]), 1500)
+
+    async def test_an_all_answered_page_offers_neither_button(self) -> None:
+        it, view = await self.page(said("Bram", "carries", "Heartseeker"))
+        await view._answer_all(secret=False)(it)
+        self.assertFalse(
+            [b for b in view.children if str(getattr(b, "label", "")).endswith("All true")]
+        )
 
     async def test_with_nothing_waiting_it_says_so(self) -> None:
         it = self.interaction()

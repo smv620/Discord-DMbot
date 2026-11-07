@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
+from dmbot import ai_feed
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
@@ -90,7 +91,7 @@ from dmbot.transcript.import_job import ImportStore, Ready
 from dmbot.transcription.base import (
     TranscriptionProblem,
 )
-from dmbot.ui import recap_audio
+from dmbot.ui import dm_links, recap_audio
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.names import (
     RecapNamesButton,
@@ -347,7 +348,12 @@ class RecapFeatures:
         async def keep_web_restores_alive(self) -> None: ...
         async def wait_until_ready(self) -> None: ...
         async def sidebar_send_dm(
-            self, user_id: int, text: str, view: discord.ui.View | None = None
+            self,
+            user_id: int,
+            text: str,
+            view: discord.ui.View | None = None,
+            *,
+            link_to_itself: bool = False,
         ) -> str: ...
 
     def recap_tasks(self) -> list[asyncio.Task[None]]:
@@ -482,14 +488,24 @@ class RecapFeatures:
             return False
         stopped = await self.recap_feedback_gate(campaign, job)
         if stopped is not None:
-            await self.sidebar_send_dm(user_id, stopped)
+            await self.sidebar_send_dm(
+                user_id,
+                stopped,
+                _recap_links(self.settings, campaign, job.session_at),
+                link_to_itself=True,  # (both buttons, like every private message, #3663)
+            )
             return True
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
         if sorted_ is None or not (sorted_.style or sorted_.corrections or sorted_.replies):
             return False  # nothing to act on (or the sort failed): it is an ordinary question
 
         async def send(message: str, view: discord.ui.View | None) -> Any:
-            return await self._dm_message(user_id, message, view)
+            shown = dm_links.add_links(
+                view, site_url=_recap_site(self.settings, campaign, job.session_at)
+            )
+            sent = await self._dm_message(user_id, message, shown)
+            await dm_links.point_at_itself(sent, shown)
+            return sent
 
         await recap_feedback_screen.present(send, sorted_, self.recaps, campaign, job.session_at)
         return True
@@ -1648,11 +1664,19 @@ class RecapFeatures:
         log: the DM screen has it too. Never raises."""
         try:
             user = await self.fetch_user(dm_user_id)
-            await user.send(
+            base = recap_names_dm_view(gid, cid)
+            view = (
+                dm_links.for_campaign(
+                    base, self.settings.site_url, gid, cid, dm_links.DMLinks(page="names")
+                )
+                or base
+            )
+            sent = await user.send(
                 recap_names_text(added),
-                view=recap_names_dm_view(gid, cid),
+                view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
+            await dm_links.point_at_itself(sent, view)
         except discord.Forbidden:
             log.info("Recap: the DM's private messages are closed (names note)")
         except Exception:
@@ -2045,6 +2069,11 @@ class RecapFeatures:
                             await self.web_line_fixes.sweep(guild.id)
                         except Exception as exc:
                             log.warning("The line fix sweep failed: %s", type(exc).__name__)
+                    try:  # its own try: the DM-window feed is gone within a day (#3710)
+                        if self.recaps is not None:
+                            await ai_feed.sweep(self.recaps.db, guild.id)
+                    except Exception as exc:
+                        log.warning("The AI feed sweep failed: %s", type(exc).__name__)
                     try:
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:
@@ -2656,3 +2685,20 @@ class RecapFeatures:
         if self.transcripts is None:
             return True
         return await self.transcripts.names_repaired(gid, cid, job.session_at)
+
+
+def _recap_site(settings: Any, campaign: Campaign, session_at: int) -> str:
+    """This recap's page on the website ("" when the site has no https address), for the "Open on
+    the website" button of a private message about it (#3663)."""
+    return dm_links.site_link(
+        str(getattr(settings, "site_url", "") or ""),
+        "recaps",
+        campaign.guild_id,
+        campaign.id,
+        tail=str(session_at),
+    )
+
+
+def _recap_links(settings: Any, campaign: Campaign, session_at: int) -> discord.ui.View | None:
+    """A link-only view for a plain private line about a recap (None when there is no site)."""
+    return dm_links.add_links(None, site_url=_recap_site(settings, campaign, session_at))
