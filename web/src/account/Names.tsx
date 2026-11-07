@@ -12,6 +12,7 @@ import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
@@ -467,6 +468,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </fieldset>
       </form>
 
+      {PLACE_SPELLING_LIVE && data.canEdit && api.placeSpellings !== undefined && (
+        <LazyPanel
+          load={() => import("./PlaceSpellings")}
+          what="the places written two ways"
+          props={{ api, campaignRef: ref, onSignedOut: () => setView("signed-out"), onChanged: () => void reload() }}
+        />
+      )}
+
       {smartOn && (
         <LazyPanel
           load={() => import("./NamesSmart")}
@@ -747,6 +756,14 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
       </div>
       {canEdit && open && row.unnamed && (
         <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
+      )}
+      {canEdit && open && !row.unnamed && (
+        // The graph opens with this name in the middle and its details beside it (the address's #centre= is read there).
+        <p>
+          <a class="button secondary" href={`/account/web/${encodeURIComponent(refId)}#centre=${encodeURIComponent(row.id)}`} aria-label={words.seeInGraphFor(row.name)}>
+            {words.seeInGraph}
+          </a>
+        </p>
       )}
       {canEdit && open && !row.unnamed && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
