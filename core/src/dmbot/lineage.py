@@ -14,9 +14,10 @@ transaction with `dmbot.commit`, and the trigger `dmbot_stamp_commit()` (migrati
 into `made_by_commit`. On INSERT the row gets the running commit. On UPDATE the stored stamp is
 kept, so a DM's own edit never changes it, unless the writer is DMbot itself rewriting its own work
 (`dmbot.rewrites`, opened by `Database.guild(..., by_dmbot=True)`; story memory opens it for every
-write whose source is not the DM). A restore opens `dmbot.restoring` around its section loads, and the trigger then keeps exactly the
-stamp the row carries, NULL included: an old row is never stamped with the build that restored it.
-An Undo is the DM's act and updates without restamping. A writer that forgets to opt in keeps the older stamp, which never
+write whose source is not the DM). A restore opens `dmbot.restoring` around its section loads, and
+the trigger then keeps exactly the stamp the row carries, NULL included: an old row is never stamped
+with the build that restored it. An Undo is the DM's act and updates without restamping. A writer
+that forgets to opt in keeps the older stamp, which never
 claims a version made something it did not.
 
 **Per transaction, not per row:** a write that opted in restamps every row it updates, a dependent
