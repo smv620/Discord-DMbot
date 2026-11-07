@@ -107,7 +107,7 @@ describe("the picker", () => {
   });
 
   it("leaves a connection that is not a knows with the words box", async () => {
-    const panel = await openPanel(pageWith(graph([knows({ words: "trusts", quote: undefined })])));
+    const panel = await openPanel(pageWith(graph([knows({ words: "trusts", quote: null })])));
     expect(within(panel).getByLabelText(/^Words for connection 1/)).toBeTruthy();
     expect(within(panel).queryByLabelText(w.label(1))).toBeNull();
   });
