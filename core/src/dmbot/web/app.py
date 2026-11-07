@@ -101,6 +101,7 @@ from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.improvement import read_choice as read_improvement
 from dmbot.web.improvement import save_choice as save_improvement
+from dmbot.web.kind_offers import read_kind_offers
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
@@ -1109,6 +1110,17 @@ def create_app(
         session, _token = signed
         try:
             return await read_campaign_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The words DMbot stopped asking about, for the DM to lift (#3577): the words, Never or Not
+    # now.
+    @app.get("/me/campaigns/{ref}/kind-offers")
+    async def me_campaign_kind_offers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_kind_offers(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
