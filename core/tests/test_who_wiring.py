@@ -191,7 +191,7 @@ class Asking(Wiring):
             if posts:
                 channel, text = me.post.await_args.args
                 self.assertEqual(channel, 77)
-                self.assertIn("answered 3 names itself", text)
+                self.assertIn("matched 3 names on its own", text)
                 self.assertNotIn("Vale", text)  # (counts only)
         me = self.fake(story_who_apply_on=True)
         me.campaigns.get = AsyncMock(return_value=SimpleNamespace(id="c", dm_screen_channel_id=77))

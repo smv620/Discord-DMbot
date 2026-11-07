@@ -8936,8 +8936,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 try:  # a count on the DM screen: players never see it, and a failure only logs
                     await self.post(
                         campaign.dm_screen_channel_id,
-                        f"{summary_line(report.joined)} Open **/dmbot names**, then "
-                        "**Check DMbot's joins**.",
+                        f"{summary_line(report.joined)} Press **Check guesses** in "
+                        "**/dmbot names**.",
                     )
                 except Exception as exc:
                     log.warning(

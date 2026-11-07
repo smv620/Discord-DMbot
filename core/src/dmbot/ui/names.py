@@ -225,7 +225,7 @@ def review_line(reviews: Reviews) -> str | None:
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
         f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
         f"{_plural(reviews.said, 'name')} to say out loud" if reviews.said else "",
-        f"{_plural(reviews.joined, 'name')} DMbot joined itself" if reviews.joined else "",
+        f"{_plural(reviews.joined, 'name')} DMbot matched on its own" if reviews.joined else "",
     ]
     parts = [p for p in parts if p]
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
@@ -357,7 +357,7 @@ class NamesHome(_Menu):
                 (reviews.people, "🧑 Check who is who", self._check_people, 4),
                 (reviews.claims, "🗣️ Check what was said", self._check_claims, 4),
                 (reviews.said, "🔊 Check how to say", self._check_said, 4),
-                (reviews.joined, "🤖 Check DMbot's joins", self._check_joined, 3),
+                (reviews.joined, "🤖 Check guesses", self._check_joined, 3),
             ):
                 if count:
                     shown_count = str(count) if count < 100 else "99+"  # keeps the label short

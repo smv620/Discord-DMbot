@@ -16,25 +16,27 @@ from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
 log = logging.getLogger(__name__)
 
-NOTHING_WAITING = "✅ Nothing to check right now. DMbot will say here when it joins a name itself."
-GONE = "That one was already answered. Press **Check DMbot's joins** again to see the next."
+NOTHING_WAITING = "✅ Nothing to check right now."
+GONE = "That one is already done. Press **Check guesses** again for the next."
 ONLY_DMS = "Only a DM of this campaign can do that."
-CHANGED = "That can't be undone any more: something changed since. Fix it from the name's card."
+CHANGED = "Can't undo this one: the name was changed since. Open the name's card to fix it."
 
 
 def question_text(j: WaitingJoin, count: int) -> str:
     """The join in plain words, with how many more wait."""
     more = f"\n_{count - 1} more after this._" if count > 1 else ""
     return (
-        f"🤖 DMbot took **{_md(j.spelling)}** to be another name of **{_md(j.keep_name)}**.\n"
-        f"Players won't see it until you say it's right.{more}"
+        f"🤖 DMbot guessed that **{_md(j.spelling)}** is **{_md(j.keep_name)}**.\n"
+        f"Only you know this for now. Players and recaps still treat them as two names until "
+        f"you press Yes.{more}"
     )
 
 
 def summary_line(count: int) -> str:
     """The line for the after-session post and the names home: a count only."""
     noun = "name" if count == 1 else "names"
-    return f"🤖 DMbot answered {count} {noun} itself: check {'it' if count == 1 else 'them'}."
+    it = "it" if count == 1 else "them"
+    return f"🤖 DMbot matched {count} {noun} on its own. Please check {it}."
 
 
 async def start_joined_review(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -82,13 +84,13 @@ class JoinedReview(_Menu):
         self.shown = waiting[0]
         for handler, label, style in (
             (self._yes, "✅ Yes, that's right", discord.ButtonStyle.success),
-            (self._undo, "↩️ Undo", discord.ButtonStyle.danger),
+            (self._undo, "↩️ Undo", discord.ButtonStyle.secondary),
             (self._later, "⏳ Later", discord.ButtonStyle.secondary),
         ):
             self.add_item(_Button(handler, label=label, style=style))
         if len(waiting) > 1:
             self.add_item(
-                _Button(self._all, label="✅ All fine", style=discord.ButtonStyle.secondary)
+                _Button(self._all, label="✅ All are right", style=discord.ButtonStyle.secondary)
             )
         return question_text(self.shown, len(waiting))
 
@@ -123,7 +125,8 @@ class JoinedReview(_Menu):
             return
         await self._after_change(interaction)
         await self._next(
-            interaction, f"✅ **{_md(j.spelling)}** is now another name of **{_md(j.keep_name)}**."
+            interaction,
+            f"✅ **{_md(j.spelling)}** is now **{_md(j.keep_name)}**. Players can see it.",
         )
 
     async def _undo(self, interaction: discord.Interaction) -> None:
@@ -140,8 +143,8 @@ class JoinedReview(_Menu):
         await self._after_change(interaction)
         await self._next(
             interaction,
-            f"↩️ Undone. **{_md(j.spelling)}** is a new name to check again, "
-            f"not **{_md(j.keep_name)}**.",
+            f"↩️ Undone. **{_md(j.spelling)}** is no longer **{_md(j.keep_name)}**. "
+            "It goes back to your list of names to check.",
         )
 
     async def _all(self, interaction: discord.Interaction) -> None:
@@ -157,14 +160,16 @@ class JoinedReview(_Menu):
             except MemoryRuleError:
                 continue  # (answered on another screen meanwhile)
         await self._after_change(interaction)
-        await self._next(interaction, f"✅ {done} confirmed.")
+        await self._next(
+            interaction, f"✅ {done} {'name is' if done == 1 else 'names are'} now matched."
+        )
 
     async def _later(self, interaction: discord.Interaction) -> None:
         if not await self._may_answer(interaction):
             return
         if self.shown is not None:
             self.later.add(self.shown.batch)
-        await self._next(interaction, "⏳ Left for later.")
+        await self._next(interaction, "⏳ Left for later. It stays on your list.")
 
     async def _after_change(self, interaction: discord.Interaction) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)

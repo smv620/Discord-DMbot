@@ -26,13 +26,16 @@ class Words(unittest.TestCase):
         text = ui.question_text(JOIN, 1)
         self.assertIn("**The Ferry Lady**", text)
         self.assertIn("**Old Tam**", text)
-        self.assertIn("won't see it until you say it's right", text)
+        self.assertIn("DMbot guessed that **The Ferry Lady** is **Old Tam**", text)
+        self.assertIn("Players and recaps still treat them as two names", text)
         self.assertNotIn("more after", text)
         self.assertIn("1 more after this", ui.question_text(JOIN, 2))
 
     def test_the_count_line_says_how_many_and_nothing_else(self) -> None:
-        self.assertEqual(ui.summary_line(1), "🤖 DMbot answered 1 name itself: check it.")
-        self.assertEqual(ui.summary_line(4), "🤖 DMbot answered 4 names itself: check them.")
+        self.assertEqual(ui.summary_line(1), "🤖 DMbot matched 1 name on its own. Please check it.")
+        self.assertEqual(
+            ui.summary_line(4), "🤖 DMbot matched 4 names on its own. Please check them."
+        )
 
     def test_names_with_markdown_are_escaped(self) -> None:
         odd = WaitingJoin(1, "k", "g", "**Bold**", "_It_", 1)
@@ -43,11 +46,11 @@ class Words(unittest.TestCase):
 class OnTheHome(unittest.TestCase):
     def test_the_home_line_and_button_show_only_while_something_waits(self) -> None:
         self.assertIsNone(review_line(Reviews()))
-        self.assertIn("2 names DMbot joined itself", review_line(Reviews(joined=2)) or "")
+        self.assertIn("2 names DMbot matched on its own", review_line(Reviews(joined=2)) or "")
         none = NamesHome("c1", 0, None, Reviews())
-        self.assertFalse([x for x in labels(none) if "joins" in x])
+        self.assertFalse([x for x in labels(none) if "guesses" in x])
         some = NamesHome("c1", 0, None, Reviews(joined=3))
-        self.assertIn("🤖 Check DMbot's joins (3)", labels(some))
+        self.assertIn("🤖 Check guesses (3)", labels(some))
         self.assertLessEqual(len(some.children), 25)
 
 
@@ -87,14 +90,14 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         await view.current_text(interaction)
         await view._yes(interaction)
         self.memory.confirm_join.assert_awaited_once_with(1, "c1", 41)
-        self.assertIn("is now another name of", self.replaced[-1])
+        self.assertIn("Players can see it", self.replaced[-1])
 
     async def test_undo_takes_back_that_batch(self) -> None:
         interaction, view = self.setup()
         await view.current_text(interaction)
         await view._undo(interaction)
         self.memory.undo.assert_awaited_once_with(1, "c1", 41)
-        self.assertIn("Undone", self.replaced[-1])
+        self.assertIn("goes back to your list of names to check", self.replaced[-1])
 
     async def test_a_refused_undo_says_so_and_changes_nothing_else(self) -> None:
         interaction, view = self.setup()
@@ -127,14 +130,14 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         await view.current_text(interaction)
         await view._all(interaction)
         self.assertEqual(self.memory.confirm_join.await_count, 2)
-        self.assertIn("1 confirmed", self.replaced[-1])
+        self.assertIn("1 name is now matched", self.replaced[-1])
 
     async def test_later_leaves_it_waiting_and_all_fine_needs_more_than_one(self) -> None:
         interaction, view = self.setup(joins=[JOIN, TWO])
         await view.current_text(interaction)
-        self.assertIn("✅ All fine", labels(view))
+        self.assertIn("✅ All are right", labels(view))
         await view._later(interaction)
         self.assertEqual(view.later, {41})
         _i, single = self.setup()
         await single.current_text(interaction)
-        self.assertNotIn("✅ All fine", labels(single))
+        self.assertNotIn("✅ All are right", labels(single))
