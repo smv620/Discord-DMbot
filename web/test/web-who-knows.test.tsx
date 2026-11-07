@@ -57,7 +57,7 @@ function pageWith(g: WebGraph, changes: WebLinkChange[] = []): AccountApi {
 
 async function openPanel(api: AccountApi) {
   render(<Web api={api} path="/account/web/100.cmp1" />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
   return (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
 }
@@ -85,7 +85,7 @@ describe("who knows this, on a held connection", () => {
 
     // A player: a held connection is not drawn to them at all, so there is no picker to show.
     render(<Web api={pageWith(graph([held()], false))} path="/account/web/100.cmp1" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     expect(screen.queryAllByRole("button", { name: /^See the connections between/ })).toHaveLength(0);
     expect(screen.queryByText(w.whoKnowsHeading)).toBeNull();
     cleanup();
@@ -93,7 +93,7 @@ describe("who knows this, on a held connection", () => {
     // Players View: the DM sees what the players see, read-only, and a held connection is not drawn to them.
     const api = pageWith(graph([held()]));
     render(<Web api={api} path="/account/web/100.cmp1" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getByLabelText(w.playersView));
     await waitFor(() => expect(screen.getByLabelText(w.seeAsLabel)).toBeTruthy());
     await waitFor(() => expect(screen.queryAllByRole("button", { name: /^See the connections between/ })).toHaveLength(0));
@@ -103,7 +103,7 @@ describe("who knows this, on a held connection", () => {
     // See as…: read-only as one character knows it; the held connection is not drawn there either.
     const seeAs = pageWith(graph([held()]));
     render(<Web api={seeAs} path="/account/web/100.cmp1" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getByLabelText(w.playersView));
     fireEvent.click(await screen.findByRole("button", { name: w.seeAsParty }));
     await screen.findByText(w.seeAsNow("The party"));

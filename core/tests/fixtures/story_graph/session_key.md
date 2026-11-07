@@ -6,10 +6,10 @@ What the graph should hold after the sample session is read: [the session transc
 
 | Speaker in the transcript | Player character | Username |
 |---|---|---|
-| Cerric | Cerric Vanya'elen | `user_ist` |
-| Belleros | Belleros Stormgrace | `user_jac` |
-| Okthandom | Okthandom Korran | `user_eri` |
-| Claude | Claude Ambere | `user_owe` |
+| Cerric | Cerric Vanya'elen | `player_ist` |
+| Belleros | Belleros Stormgrace | `player_jac` |
+| Okthandom | Okthandom Korran | `player_eri` |
+| Claude | Claude Ambere | `player_owe` |
 | DM | (no player character; voices Keegan and Jebidiah) | a DM account |
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered to the DM and never extracted · `needs_context` only readable with the lore or the recap ('she' is Keegan) · `recap_only` only in the 'Previously' recap on line 1: background, never this session's event · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history: true earlier in the session, not at its end.
