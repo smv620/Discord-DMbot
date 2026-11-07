@@ -288,6 +288,7 @@ from dmbot.memory import (
     plan_reader,
     report_make,
     scan_kinds,
+    scene_step,
     voyage,
     web_actions,
     web_report_requests,
@@ -342,6 +343,7 @@ from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.scenes_backup import ScenesSection
 from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
 from dmbot.memory.secret_reveal import revealed_in
@@ -616,6 +618,7 @@ log = logging.getLogger(__name__)
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
 WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
+SCENES_PER_SESSION = 120  # questions given a scene in one session's step: about three calls
 
 SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
@@ -3099,6 +3102,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # The scene of each waiting question, from the lines it came from (#3596): after the
+            # extractor, so the questions it made are there, and inside the same call limit.
+            ("scenes", lambda: self.write_scenes(table)),
             # Who each name to check could be (#3602): after the extractor made them, inside the
             # same call limit; off unless its switch is on.
             ("who is this", lambda: self.write_who(table)),
@@ -8842,6 +8848,77 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.warning(
                 "Story-plan reader: couldn't post the finish notice (%s)", type(exc).__name__
             )
+
+    async def write_scenes(self, table: Table) -> None:
+        """After a live session (#3596), only with DMBOT_STORY_SCENES and the extractor on: write
+        the scene of each waiting question that has none (see `memory.scene_step`). Inside the
+        extractor's session and daily call limits, only lines of people who agree, counts only in
+        the log."""
+        if (
+            not self.settings.story_scenes_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return  # (off means off: nothing is read or asked)
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            session = await transcripts.session(gid, sid)
+            _after_ms, used = await transcripts.extraction(gid, sid)
+            now = int(time.time())
+            allowed = extractor.calls_left(
+                self.settings.story_extractor_max_calls,
+                used,
+                self.settings.story_extractor_max_calls_day,
+                await transcripts.extractor_calls_since(gid, cid, now - 86400),
+            )
+            scenes = Scenes(memory)
+            await scenes.sweep(gid, cid)  # (a scene stays only while its question is open)
+            open_names = [
+                e
+                for e in await memory.entities(gid, cid, statuses=("proposed", "confirmed"))
+                if scene_step.is_open_name(e)
+            ]
+            missing = set(await scenes.missing(gid, cid, ENTITY, [e.id for e in open_names]))
+            waiting = [e for e in open_names if e.id in missing][:SCENES_PER_SESSION]
+            if not waiting:
+                return
+            agreed = await self.consent.consenting(gid)
+            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            items, empty = await scene_step.items_for(
+                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, dm_ids, agreed
+            )
+            report = scene_step.Report(no_lines=empty)
+
+            async def count_call() -> None:
+                await transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                )
+
+            await scene_step.run(
+                ai,
+                scenes,
+                items,
+                guild_id=gid,
+                campaign_id=cid,
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: ai.model,
+                session_started_at=session.started_at if session else None,
+                max_calls=allowed,
+                count_call=count_call,
+                report=report,
+            )
+            report.questions += empty  # (the questions asked about, with and without lines)
+            log.info(report.line())
 
     async def write_who(self, table: Table) -> None:
         """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
