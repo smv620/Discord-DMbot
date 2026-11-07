@@ -13,6 +13,7 @@ from dmbot.memory.models import (
     PROPOSED,
     WHO_SOURCE,
     MemoryRuleError,
+    TooLateToUndo,
 )
 from dmbot.memory.store import AI_JOIN_REFUSED
 from tests.test_web_relationships import Web
@@ -244,19 +245,69 @@ class TheDmsCheck(Base):
         with self.assertRaises(MemoryRuleError):
             await self.memory.confirm_join(self.g, self.one.id, done.batch)
 
-    async def test_a_confirmed_join_is_not_confirmed_twice_and_a_dm_change_is_not_a_join(
-        self,
-    ) -> None:
+    async def test_a_confirmed_join_is_not_confirmed_twice(self) -> None:
         _, _, done = await self.joined()
         await self.memory.confirm_join(self.g, self.one.id, done.batch)
         with self.assertRaises(MemoryRuleError):
             await self.memory.confirm_join(self.g, self.one.id, done.batch)
+
+    async def test_a_dm_merge_is_not_a_dmbot_join(self) -> None:
         other = await self.add("Old Nan", "npc")
         spare = await self.waiting_name("The Net Mender")
         merged = await self.memory.merge(
             self.g, self.one.id, other, spare, source=DM, dm_said_same=True
         )
-        self.assertEqual(await self.waiting(), [])  # (the DM's own merge is not DMbot's)
+        self.assertEqual(await self.waiting(), [])
         assert merged.batch is not None
         with self.assertRaises(MemoryRuleError):
             await self.memory.confirm_join(self.g, self.one.id, merged.batch)
+
+    async def test_only_the_names_the_join_moved_are_confirmed(self) -> None:
+        zed = await self.add("Zed", "npc")
+        await self.memory.add_alias(
+            self.g, self.one.id, zed, "Zedd", kind="short", source="scan", used_by=None
+        )
+        tam = await self.add("Old Tam", "npc")
+        gone = await self.waiting_name("The Ferry Lady")
+        # an alias of another entry that points at the waiting name (`used_by`), also in the batch
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_aliases SET used_by = %s WHERE entity_id = %s AND text = 'Zedd'",
+                (gone, zed),
+            )
+        done = await self.join(tam, gone)
+        await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        self.assertEqual((await self.aliases_of(zed))["Zedd"], PROPOSED)  # untouched
+
+    async def test_a_name_marked_secret_since_is_not_confirmed(self) -> None:
+        tam, _, done = await self.joined()
+        await self.sql("UPDATE memory_aliases SET secret = TRUE WHERE entity_id = %s", tam)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_a_name_the_dm_turned_down_does_not_come_back_through_a_join(self) -> None:
+        tam = await self.add("Old Tam", "npc")
+        await self.memory.add_alias(
+            self.g, self.one.id, tam, "The Ferry Lady", kind="short", source="scan"
+        )
+        await self.sql(
+            "UPDATE memory_aliases SET status = 'rejected' WHERE entity_id = %s AND text = %s",
+            tam, "The Ferry Lady",
+        )  # fmt: skip
+        gone = await self.waiting_name("The Ferry Lady")
+        self.assertEqual(await self.refusal(tam, gone), AI_JOIN_REFUSED)
+
+    async def test_another_campaigns_batch_is_never_confirmed(self) -> None:
+        _, _, done = await self.joined()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_join(self.g, self.two.id, done.batch)
+        self.assertEqual(len(await self.waiting()), 1)
+        self.assertEqual(await self.memory.waiting_joins(self.g, self.two.id), [])
+
+    async def test_an_undo_after_a_confirm_is_refused_and_the_join_stays_confirmed(self) -> None:
+        tam, _, done = await self.joined()
+        await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        with self.assertRaises((MemoryRuleError, TooLateToUndo)):
+            await self.memory.undo(self.g, self.one.id, done.batch)
+        self.assertEqual((await self.aliases_of(tam))["The Ferry Lady"], CONFIRMED)
