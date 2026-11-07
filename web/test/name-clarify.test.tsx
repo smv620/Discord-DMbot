@@ -4,7 +4,7 @@
 // campaign's own names, each answer with its Undo, "Trivial" asking once, a player getting nothing, and the switch off
 // hiding the page. Runs against the pretend API.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
 import Clarify from "../src/account/Clarify";
