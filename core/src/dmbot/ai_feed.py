@@ -1,25 +1,26 @@
-"""The AI feed (#3710): what DMbot asks the AI, and what comes back, for the DM's live windows on
-the
-lore upload and import pages. Only `complete()` calls made inside a lore or import job are
-captured: embeddings (Voyage) and speech-to-text are not prompts and stay out, and so does every
-call
-outside a job (a table answer, a sheet import).
+"""The AI feed (#3710): what DMbot asks the AI and what comes back, for the DM's live windows on the
+lore upload and import pages.
+
+Scope: only `complete()` calls made inside a lore or import job are captured (`with job(...)`).
+Embeddings (Voyage) and speech-to-text are not prompts and stay out, and so does every call outside
+a job (a table answer, a sheet import). Today the lore runner and the import steps set the job (a
+separate change by the readers' owner); until they do, nothing is captured.
 
 What is stored, in the `ai_feed` table, for one call: the time, the service and model in plain
-words,
-which step it was, the **first 500 characters** of the user text (the instructions are the same
-constant every time, so they are not stored) then `[...]` when there was more, and the first 500
-characters of the reply the same way; an image is the word `[image]`. The cut is made here, in
-Python, before anything is written, so nothing longer ever reaches the database. Never a key, a
-header or an account detail. Nothing is logged: not a word of a prompt or a reply, only counts.
+words, the step, the first 500 characters of the user text (the instructions are the same constant
+every call, so they are not stored) then `[...]` when there was more, and the first 500
+characters of the reply the same way. An image is the word `[image]`. The cut is made here, in Python, before
+anything is written, so nothing longer reaches the database. Never a key, a header or an account
+detail. Nothing is logged: not a word of a prompt or a reply, only counts and exception class names.
 
-It is kept at most 24 hours (`sweep`), "Stop recording me" deletes every row of the server at once
-(`ConsentStore.revoke`), a deleted campaign takes its rows, and it is never in a backup.
+It is kept at most 24 hours (`sweep`). "Stop recording me" deletes every row of the server at once
+(`ConsentStore.revoke` calls `forget_server`, which also drops a write that was already on its way).
+A deleted campaign takes its rows. It is never in a backup.
 
-It must never slow or fail the real work: the job's context is a `contextvars` value set where a job
-starts (`with job(...)`), `begin` and `finish` are plain functions that only schedule a short write
-on a connection of their own with a 2-second timeout, and every failure is swallowed and counted in
-`lost` ("Some calls aren't shown"). With `DMBOT_AI_FEED` off, nothing is written.
+It must never slow or fail the real work. `begin`, `done` and `failed` are plain functions that only
+schedule a short write on a connection of their own, with a 2-second timeout; they never raise and
+never wait. A skipped write is counted in `lost` ("Some calls aren't shown"). With `DMBOT_AI_FEED`
+off, nothing is written.
 """
 
 from __future__ import annotations
@@ -29,8 +30,9 @@ import contextlib
 import contextvars
 import logging
 import time
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections import defaultdict
+from collections.abc import Coroutine, Iterator, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -64,6 +66,7 @@ _db: Database | None = None
 _on = False
 _pending = 0
 _tasks: set[asyncio.Task[None]] = set()  # (kept so a running write is not garbage collected)
+_epoch: defaultdict[int, int] = defaultdict(int)  # bumped when a server's feed is wiped
 
 
 def configure(db: Database | None, *, on: bool) -> None:
@@ -97,11 +100,22 @@ def cut(text: str) -> str:
     return text if len(text) <= CUT else text[:CUT] + MORE
 
 
+def forget_server(guild_id: int) -> None:
+    """A person stopped being recorded in this server (called with the delete of its rows): a write
+    that was already on its way is dropped, or undone if it had just landed."""
+    _epoch[guild_id] += 1
+
+
 @dataclass(slots=True)
 class Entry:
     ctx: JobContext
-    n: asyncio.Future[int | None]
     at: int
+    epoch: int
+    prompt: str
+    label: str
+    n: int | None = None  # the number given when the row was written
+    skipped: bool = False  # the row was never written: there is nothing to update
+    finish: tuple[str, str | None, str | None] | None = field(default=None)
 
 
 def begin(
@@ -115,10 +129,8 @@ def begin(
             return None
         shown = cut("[image]\n" + text if images else text)
         at = int(wall if wall is not None else time.time())
-        label = TIER_LABELS.get(tier, "")
-        future: asyncio.Future[int | None] = asyncio.get_running_loop().create_future()
-        entry = Entry(ctx, future, at)
-        _schedule(_insert(entry, shown, label))
+        entry = Entry(ctx, at, _epoch[ctx.guild_id], shown, TIER_LABELS.get(tier, ""))
+        _schedule(_insert(entry), entry)
         return entry
     except Exception as exc:
         log.info("AI feed: a call could not be noted (%s)", type(exc).__name__)
@@ -127,99 +139,135 @@ def begin(
 
 def done(entry: Entry | None, reply_text: str) -> None:
     """The call answered."""
-    if entry is not None:
-        _finish(entry, "done", cut(reply_text), None)
+    _finish(entry, "done", reply_text, None)
 
 
 def failed(entry: Entry | None, reason: str) -> None:
     """The call failed; `reason` is the plain wording the wait panel already gives."""
-    if entry is not None:
-        _finish(entry, "failed", None, reason[:200])
+    _finish(entry, "failed", None, reason)
 
 
-def _finish(entry: Entry, state: str, reply: str | None, reason: str | None) -> None:
+def _finish(entry: Entry | None, state: str, reply: str | None, reason: str | None) -> None:
+    """Record how the call ended. If the row is not written yet, the write applies it as soon as
+    it has its number (no waiting on anything); otherwise it is a write of its own."""
+    if entry is None:
+        return
     try:
-        _schedule(_update(entry, state, reply, reason))
+        entry.finish = (
+            state,
+            None if reply is None else cut(str(reply)),
+            None if reason is None else str(reason)[:200],
+        )
+        if entry.n is not None:
+            _schedule(_update(entry), entry)
     except Exception as exc:
         log.info("AI feed: a reply could not be noted (%s)", type(exc).__name__)
 
 
-def _schedule(work: Any) -> None:
+def _schedule(work: Coroutine[Any, Any, None], entry: Entry) -> None:
     global _pending
     if _pending >= MAX_PENDING:
         work.close()  # (never started: nothing to await)
+        _count_lost(entry)
         raise RuntimeError("too many feed writes waiting")
+    try:
+        task = asyncio.get_running_loop().create_task(_run(work, entry))
+    except BaseException:
+        work.close()
+        raise
     _pending += 1
-    task = asyncio.get_running_loop().create_task(_run(work))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
 
 
-async def _run(work: Any) -> None:
+def _count_lost(entry: Entry) -> None:
+    """Count a call that is not shown, on a write of its own (best effort)."""
+    with contextlib.suppress(Exception):
+        asyncio.get_running_loop().create_task(_lost(entry.ctx))
+
+
+async def _run(work: Coroutine[Any, Any, None], entry: Entry) -> None:
     global _pending
     try:
         await asyncio.wait_for(work, WRITE_TIMEOUT_S)
+    except asyncio.CancelledError:
+        entry.skipped = entry.n is None
+        raise
     except BaseException as exc:
-        if isinstance(exc, asyncio.CancelledError):
-            raise
+        entry.skipped = entry.n is None
         log.info("AI feed: a write was skipped (%s)", type(exc).__name__)
+        await _lost(entry.ctx)
     finally:
         _pending -= 1
 
 
-async def _insert(entry: Entry, prompt: str, label: str) -> None:
+async def _insert(entry: Entry) -> None:
     ctx = entry.ctx
     assert _db is not None
-    try:
-        async with _db.guild(ctx.guild_id) as conn:
-            # The number is given out by one statement on the job's bookkeeping row, so calls
-            # started at the same moment never share one.
-            cur = await conn.execute(
-                "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, state, next_n)"
-                " VALUES (%s, %s, %s, %s, 0, %s, 'done', 1)"
-                " ON CONFLICT (guild_id, campaign_id, kind, job_id, n)"
-                " DO UPDATE SET next_n = ai_feed.next_n + 1 RETURNING next_n",
-                (ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id, entry.at),
-            )
-            n = int((await cur.fetchone() or {"next_n": 0})["next_n"])
-            await conn.execute(
-                "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, service,"
-                " model_label, step, prompt, state) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                " %s, 'waiting')",
-                (
-                    ctx.guild_id,
-                    ctx.campaign_id,
-                    ctx.kind,
-                    ctx.job_id,
-                    n,
-                    entry.at,
-                    SERVICE,
-                    label,
-                    ctx.step,
-                    prompt,
-                ),
-            )
-        if not entry.n.done():
-            entry.n.set_result(n)
-    except BaseException:
-        if not entry.n.done():
-            entry.n.set_result(None)
-        await _lost(ctx)
-        raise
+    if _epoch[ctx.guild_id] != entry.epoch:
+        return  # the server's feed was wiped while this was waiting: nothing is written
+    async with _db.guild(ctx.guild_id) as conn:
+        # The number is given out by one statement on the job's bookkeeping row (`n = 0`), so calls
+        # started at the same moment never share one. `at` moves with it, so the sweep never takes
+        # the bookkeeping of a job that is still going.
+        cur = await conn.execute(
+            "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, state, next_n)"
+            " VALUES (%s, %s, %s, %s, 0, %s, 'done', 1)"
+            " ON CONFLICT (guild_id, campaign_id, kind, job_id, n)"
+            " DO UPDATE SET next_n = ai_feed.next_n + 1, at = EXCLUDED.at RETURNING next_n",
+            (ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id, entry.at),
+        )
+        n = int((await cur.fetchone() or {"next_n": 0})["next_n"])
+        state, reply, reason = entry.finish or ("waiting", None, None)
+        await conn.execute(
+            "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, service,"
+            " model_label, step, prompt, state, reply, reason) VALUES (%s, %s, %s, %s, %s, %s, %s,"
+            " %s, %s, %s, %s, %s, %s)",
+            (
+                ctx.guild_id,
+                ctx.campaign_id,
+                ctx.kind,
+                ctx.job_id,
+                n,
+                entry.at,
+                SERVICE,
+                entry.label,
+                ctx.step,
+                entry.prompt,
+                state,
+                reply,
+                reason,
+            ),
+        )
+    entry.n = n  # (no await between this and the check below: the call cannot finish in between)
+    await _after(entry)
+    if entry.finish is not None and state == "waiting":
+        # The call ended after the row was read above but before it was committed.
+        _schedule(_update(entry), entry)
 
 
-async def _update(entry: Entry, state: str, reply: str | None, reason: str | None) -> None:
+async def _update(entry: Entry) -> None:
     ctx = entry.ctx
     assert _db is not None
-    n = await entry.n  # (the insert has finished, or failed: then there is nothing to update)
-    if n is None:
+    if entry.n is None or entry.finish is None or _epoch[ctx.guild_id] != entry.epoch:
         return
+    state, reply, reason = entry.finish
     async with _db.guild(ctx.guild_id) as conn:
         await conn.execute(
             "UPDATE ai_feed SET state = %s, reply = %s, reason = %s WHERE guild_id = %s"
             " AND campaign_id = %s AND kind = %s AND job_id = %s AND n = %s",
-            (state, reply, reason, ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id, n),
+            (state, reply, reason, ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id, entry.n),
         )
+    await _after(entry)
+
+
+async def _after(entry: Entry) -> None:
+    """If the server's feed was wiped (Stop recording me) while this write was in flight, wipe it
+    again: this row may have landed after the delete."""
+    ctx = entry.ctx
+    if _epoch[ctx.guild_id] != entry.epoch and _db is not None:
+        async with _db.guild(ctx.guild_id) as conn:
+            await conn.execute("DELETE FROM ai_feed WHERE guild_id = %s", (ctx.guild_id,))
 
 
 async def _lost(ctx: JobContext) -> None:
@@ -232,7 +280,7 @@ async def _lost(ctx: JobContext) -> None:
                 "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, state, lost)"
                 " VALUES (%s, %s, %s, %s, 0, %s, 'done', 1)"
                 " ON CONFLICT (guild_id, campaign_id, kind, job_id, n)"
-                " DO UPDATE SET lost = ai_feed.lost + 1",
+                " DO UPDATE SET lost = ai_feed.lost + 1, at = EXCLUDED.at",
                 (ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id, int(time.time())),
             )
 

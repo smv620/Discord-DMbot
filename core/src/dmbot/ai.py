@@ -776,7 +776,14 @@ class AnthropicClient:
                 images=images,
             )
         except BaseException as exc:
-            ai_feed.failed(entry, str(exc) if isinstance(exc, AIError) else FAILED)
+            ai_feed.failed(
+                entry,
+                str(exc)  # (an AIError's words are fixed plain sentences, never the service's text)
+                if isinstance(exc, AIError)
+                else "Stopped before it answered."
+                if isinstance(exc, asyncio.CancelledError)
+                else FAILED,
+            )
             raise
         ai_feed.done(entry, reply.text)
         return reply

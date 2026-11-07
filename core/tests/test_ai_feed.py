@@ -146,6 +146,11 @@ class TheFeed(WithFeed):
             )
             self.assertIs(got, reply)  # the call finished long before the write timed out
             await settle()
+        self.assertEqual((ai_feed._pending, len(ai_feed._tasks)), (0, 0))
+        [marker] = await self.rows()
+        self.assertEqual(
+            (marker["n"], marker["lost"]), (0, 1)
+        )  # counted, "Some calls aren't shown"
 
     async def test_a_failed_feed_write_does_not_fail_the_call_and_the_real_error_still_comes(
         self,
@@ -182,6 +187,81 @@ class TheFeed(WithFeed):
             await client.complete("s", "no job here", tier=AIModelTier.FAST)
         await settle()
         self.assertEqual(await self.rows(), [])
+
+
+class TheEdges(WithFeed):
+    async def test_a_reply_that_comes_before_the_slow_row_is_written_is_still_kept(self) -> None:
+        real = ai_feed._insert
+
+        async def slow(entry: Any) -> None:
+            await asyncio.sleep(0.2)
+            await real(entry)
+
+        with patch.object(ai_feed, "_insert", slow), self.job():
+            entry = ai_feed.begin("a question", "fast")
+            ai_feed.done(entry, "the answer")  # the call ended before the row was written
+            await settle()
+        [_, row] = await self.rows()
+        self.assertEqual((row["state"], row["reply"]), ("done", "the answer"))
+
+    async def test_too_many_writes_waiting_are_skipped_and_counted_not_queued(self) -> None:
+        gate = asyncio.Event()
+
+        async def stuck(entry: Any) -> None:
+            await gate.wait()
+
+        with patch.object(ai_feed, "MAX_PENDING", 2), patch.object(ai_feed, "_insert", stuck):
+            with self.job():
+                entries = [ai_feed.begin(f"call {n}", "fast") for n in range(4)]
+            self.assertEqual([e is None for e in entries], [False, False, True, True])
+            self.assertLessEqual(ai_feed._pending, 2)
+            gate.set()
+            await settle()
+        await asyncio.sleep(0.1)
+        [marker] = await self.rows()
+        self.assertEqual(marker["lost"], 2)
+
+    async def test_the_real_error_and_a_cancel_come_through_unchanged_and_are_noted(self) -> None:
+        from dmbot.ai import AIOutOfFunds
+
+        client = AnthropicClient("sk-test-key", AIModels.same("m"))
+        for error in (AIOutOfFunds("No money."), asyncio.CancelledError()):
+            with (
+                patch.object(client, "_complete", AsyncMock(side_effect=error)),
+                self.job(),
+            ):
+                with self.assertRaises(type(error)):
+                    await client.complete("s", "text", tier=AIModelTier.FAST)
+                await settle()
+        failed = [r for r in await self.rows() if r["n"] > 0]
+        self.assertEqual([r["state"] for r in failed], ["failed", "failed"])
+        self.assertEqual(failed[1]["reason"], "Stopped before it answered.")
+
+    async def test_a_write_in_flight_when_a_person_stops_is_dropped(self) -> None:
+        with self.job():
+            entry = ai_feed.begin("words of someone who then stops", "fast")
+            ai_feed.forget_server(GUILD)  # Stop recording me, before the write ran
+            await settle()
+            ai_feed.done(entry, "reply")
+            await settle()
+        self.assertEqual(await self.rows(), [])
+
+    async def test_the_bookkeeping_row_moves_with_the_job_so_the_sweep_never_takes_it(self) -> None:
+        with self.job():
+            ai_feed.begin("first", "fast", wall=1_000_000)
+            await settle()
+            ai_feed.begin("second", "fast", wall=1_900_000_000)
+            await settle()
+        marker = (await self.rows())[0]
+        self.assertEqual((marker["n"], marker["next_n"], marker["at"]), (0, 2, 1_900_000_000))
+
+    async def test_a_dropped_call_row_is_not_a_call_the_reader_would_show(self) -> None:
+        # (the migration says it: n = 0 is the job's bookkeeping, a reader shows n > 0 only)
+        with self.job():
+            ai_feed.begin("one", "fast")
+            await settle()
+        shown = [r for r in await self.rows() if r["n"] > 0]
+        self.assertEqual([r["prompt"] for r in shown], ["one"])
 
 
 class TheLifeOfAnEntry(WithFeed):

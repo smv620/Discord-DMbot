@@ -1,8 +1,7 @@
 """0373_ai_feed
 
 The AI feed (#3710): the first 500 characters of each prompt DMbot sends the AI during a lore read
-or
-a session import, and of each reply, for the DM's live read-only windows.
+or a session import, and of each reply, for the DM's live read-only windows.
 """
 
 from __future__ import annotations
@@ -10,21 +9,19 @@ from __future__ import annotations
 from dmbot.migrations._shared import _isolate
 
 AI_FEED = r"""
-    -- One row per AI call of one lore upload or session import (`kind`, `job_id`), numbered `n` =
-    -- 1,
-    -- 2, 3... in the order the calls started. The prompt and the reply are cut to their first 500
-    -- characters (then `[...]`) in Python before they are written, and the CHECKs refuse more: no
-    -- longer text is ever stored. The row `n = 0` of a job is its bookkeeping, not a call: `next_n`
-    -- is the counter the numbers come from (one `INSERT .. ON CONFLICT DO UPDATE .. RETURNING`, so
-    -- two calls at once never get one number) and `lost` counts the calls whose write was skipped
-    -- ("Some calls aren't shown"). DM-only everywhere: the website reads it only through a door
-    -- that
-    -- answers a DM or game master of the campaign. It holds prompt words (lore, a transcript,
-    -- secret
-    -- names) for a short time: a sweep deletes an entry 24 hours after it was written, "Stop
-    -- recording me" deletes every row of the server at once, and a deleted campaign takes its rows.
-    -- Never in a backup (campaigns/tables.py). The foreign key moves with a campaign
-    -- (ON UPDATE CASCADE).
+    -- One row per AI call of one lore upload or session import (`kind`, `job_id`), numbered `n` = 1,
+    -- 2, 3... in the order the calls were written. The prompt and the reply are cut to their first
+    -- 500 characters (then `[...]`) in Python before they are written, and the CHECKs refuse more:
+    -- no longer text is ever stored. The row `n = 0` of a job is its bookkeeping, NOT a call (a
+    -- reader shows `n > 0` only): `next_n` is the counter the numbers come from (one `INSERT .. ON
+    -- CONFLICT DO UPDATE .. RETURNING`, so two calls at once never get one number), `lost` counts
+    -- the calls whose write was skipped ("Some calls aren't shown"), and its `at` moves with the
+    -- job so the sweep never takes it while the job goes on. DM-only everywhere: the website reads
+    -- it only through a door that answers a DM or game master of the campaign. It holds prompt
+    -- words (lore, a transcript, secret names) for a short time: a sweep deletes an entry 24 hours
+    -- after it was written, "Stop recording me" deletes every row of the server at once, and a
+    -- deleted campaign takes its rows. Never in a backup (campaigns/tables.py). The foreign key
+    -- moves with a campaign (ON UPDATE CASCADE).
     CREATE TABLE ai_feed (
         guild_id    BIGINT NOT NULL,
         campaign_id TEXT NOT NULL,

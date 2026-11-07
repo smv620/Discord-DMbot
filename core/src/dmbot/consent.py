@@ -37,6 +37,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from dmbot import ai_feed
 from dmbot.db import Conn, Database
 
 # Bump whenever the consent request's wording changes what people agree to
@@ -197,6 +198,7 @@ class ConsentStore:
                 # A prompt kept for the DM's live window (#3710) may hold this person's lines, and a
                 # cut text cannot be cleaned line by line, so the server's whole AI feed goes, in
                 # this same step.
+                ai_feed.forget_server(guild_id)  # (a write already on its way is dropped too)
                 await conn.execute("DELETE FROM ai_feed WHERE guild_id = %s", (guild_id,))
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
