@@ -32,7 +32,7 @@ import LazyPanel from "./LazyPanel";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
-import { readAuto, saveAuto } from "./webPrefs";
+import { readAuto, readLook, saveAuto, saveLook, type GraphLook } from "./webPrefs";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 import { npcPageHref } from "./webNodes";
@@ -105,6 +105,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
+  // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
+  const [look, setLookState] = useState<GraphLook>(readLook);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const setLook = (next: GraphLook): void => {
+    setLookState(next);
+    saveLook(next);
+  };
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
@@ -551,7 +558,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const peeking = !isDm && asked === "full";
   // Nor what the players haven't been told yet: the page may still hold the full web for a moment
   // after a switch to the players' view, and this keeps it off the screen.
-  const nodes = graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false));
+  // A kind the viewer left unticked in the graph settings drops its names, and so their lines; the middle name always stays.
+  // (A kind saved from another campaign, that this one has no names of, is ignored: it would otherwise hide everything.)
+  const activeKinds = look.kinds.filter((k) => graph.nodes.some((n) => n.kind === k));
+  const kindShown = (n: { id: string; kind: string }): boolean => activeKinds.length === 0 || activeKinds.includes(n.kind) || n.id === center;
+  const nodes = graph.nodes.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
@@ -567,6 +578,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
+  // The kinds the campaign has, with how many names of each, for the settings' tick boxes (counted before the filter).
+  const kindCounts = [...new Set(graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false)).map((n) => n.kind))].map((key) => ({
+    key,
+    label: kindWords(key),
+    count: graph.nodes.filter((n) => n.kind === key && (showAll || (!n.secret && n.revealed !== false))).length,
+  }));
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
   const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
   const { own, further } = listLines(edges, center, nameOf);
@@ -675,15 +692,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         </div>
       </div>
 
-      <p class="small" role="status" aria-live="polite">
-        {words.howMany(nodes.length, edges.length)}
-      </p>
       {graph.truncated && <p class="note">{words.truncated}</p>}
       <p class={news?.ok ? "ok" : "visually-hidden"} role="status">
         {news?.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
+      </p>
+
+      <p class="web-count" role="status" aria-live="polite">
+        <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
 
       {nodes.length <= 1 && edges.length === 0 ? (
@@ -694,6 +712,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             <a class="small" href="#web-list" onClick={() => setListOpen(true)}>
               {words.skipMap}
             </a>
+            <div class="row">
+              <button type="button" class="button secondary" aria-expanded={settingsOpen} aria-controls="graph-settings" onClick={() => setSettingsOpen((o) => !o)}>
+                {words.settingsButton}
+              </button>
+            </div>
+            {settingsOpen && (
+              <div id="graph-settings">
+                <LazyPanel
+                  load={() => import("./WebSettings")}
+                  what={words.settingsLoading}
+                  props={{ look, kinds: kindCounts, onChange: setLook }}
+                />
+              </div>
+            )}
             <WebMap
               key={ref}
               api={api}
@@ -708,6 +740,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
               onNodePick={() => setLine(null)}
+              look={look}
               canEdit={canEdit}
             >
               {chosen && (

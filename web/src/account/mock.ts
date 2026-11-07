@@ -840,6 +840,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
+  // Spellings of a place waiting for a yes or no (#3533): the pretend places "Saltmarsh" and "Greywatch" each have a new spelling.
+  const spellingQuestions: { id: string; placeId: string; place: string; spelling: string }[] = [
+    { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" },
+    { id: "sp2", placeId: "n25", place: "Greywatch", spelling: "Grey Watch" },
+  ];
   // Secret other names and who holds or was told them (#3542): "the guard" is a secret name of the entry n1, held by one
   // player character and told to another.
   const toldRows: ToldName[] = [
@@ -2795,6 +2800,28 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async placeSpellings(ref) {
+      calls.push(`placeSpellings:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed"); // a player never sees a proposed name
+      return spellingQuestions.map((x) => ({ ...x }));
+    },
+    async answerPlaceSpelling(ref, spelling, yes) {
+      const id = spelling.id;
+      calls.push(`answerPlaceSpelling:${ref}:${id}:${yes}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.spelling-fails\b/.test(ref)) throw new ApiError("server");
+      const at = spellingQuestions.findIndex((x) => x.id === id);
+      if (at < 0) throw new ApiError("gone");
+      const [asked] = spellingQuestions.splice(at, 1);
+      if (yes && asked) {
+        const row = memory.find((n) => n.name === asked.place);
+        if (row) row.others = [...row.others, asked.spelling];
+      }
     },
     async toldPanel(ref) {
       calls.push(`toldPanel:${ref}`);

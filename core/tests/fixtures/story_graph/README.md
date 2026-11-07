@@ -29,6 +29,8 @@ These usernames are made up. Use them when loading the sample session, so no rea
 | [session_key.md](session_key.md) / [.json](session_key.json) | What the sample session should produce, with the transcript line for each tie |
 | [master_key.md](master_key.md) / [.json](master_key.json) | The two together, each tie once: lore first, then session (where they disagree about what is current, the session wins). **This is the one the check scores.** |
 
+A key entry marked `"by_design": true` is a **kind** of creature the rules already hold (a yeti, an ice troll, a mind flayer): DMbot leaves it out of story memory on purpose (`in_the_rules`), so the check does not count it as a miss when it is absent; it lists it on its own "left out by design" line so a change in that rule shows up (Supervisor, 2026-11-06, #3545). A particular creature the lore names or sets apart (a named owlbear) is an entry and stays must-find.
+
 The `.md` files are for reading, the `.json` files for the check; each pair comes from one list, so they cannot disagree.
 
 ## The check script
