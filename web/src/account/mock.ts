@@ -21,6 +21,7 @@ import type {
   NameKind,
   NameRow,
   NamesPage,
+  MatchRow,
   NamesQuery,
   SmartNamesAnswer,
   Offer,
@@ -790,6 +791,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileLooks = 0;
   let loreLooks = 0;
   // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
+  let matchesNow: MatchRow[] =
+    scenario === "table"
+      ? [
+          { batch: "9001", keepId: "e".repeat(32), keepName: "Old Tam", spelling: "The Ferry Lady", at: 1_790_000_000 },
+          { batch: "9002", keepId: "f".repeat(32), keepName: "Mira Voss", spelling: "the smith", at: 1_790_000_100 },
+        ]
+      : [];
   const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
   const defaultMusts = [
@@ -2399,6 +2407,25 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const id = `confirm-${confirmAnswers.size + 1}`;
       confirmAnswers.set(id, { action: "add", counts, looks: 0, createdAt: at, at });
       return { answer: id };
+    },
+    // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
+    async nameMatches(ref): Promise<MatchRow[]> {
+      calls.push(`nameMatches:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return matchesNow.map((m) => ({ ...m }));
+    },
+    async answerMatch(ref, batch, answer, onLook) {
+      calls.push(`answerMatch:${ref}:${batch}:${answer}`);
+      await reachable();
+      signedIn();
+      const found = matchesNow.find((m) => m.batch === batch);
+      if (!found) throw new ApiError("gone");
+      onLook?.({ waits: null });
+      await new Promise((ok) => setTimeout(ok, 300));
+      // Yes keeps the match; Undo takes it back. Either way it is answered and leaves the list.
+      matchesNow = matchesNow.filter((m) => m.batch !== batch);
     },
     async confirmUndo(ref, answer) {
       calls.push(`confirmUndo:${ref}:${answer}`);

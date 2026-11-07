@@ -9,6 +9,7 @@ import type {
   NameAnswerResult,
   NameCheckList,
   NamesFixed,
+  MatchRow,
   NamesPage,
   ToldName,
   NpcPage,
@@ -120,6 +121,17 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
+    },
+    nameMatches: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names-matches`)) as { matches: MatchRow[] }).matches,
+    // Queued for the bot like every name action (202 {answer}); the answer is read where every all-names answer is.
+    answerMatch: async (ref, batch, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/all-names-matches/${encodeURIComponent(batch)}/${answer}`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
+      );
     },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
