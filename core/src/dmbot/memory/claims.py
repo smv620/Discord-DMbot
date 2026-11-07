@@ -32,6 +32,7 @@ from dmbot.memory import (
     reputation_words,
     scenes,
     unique_item,
+    who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
@@ -1685,6 +1686,7 @@ class ClaimStore:
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
+            answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",
@@ -1694,7 +1696,7 @@ class ClaimStore:
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-            return len(gone) + readings
+            return len(gone) + readings + answers  # (claims, readings and Who-is-this answers)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
