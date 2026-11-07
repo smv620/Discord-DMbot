@@ -136,6 +136,8 @@ FEATURES: tuple[Feature, ...] = (
             "story_extractor_on",
             "story_readings_on",
             "story_deeds_on",
+            "story_who_on",
+            "story_who_apply_on",
             "story_family_only",
             "theatre_on",
             "rel_read_on",

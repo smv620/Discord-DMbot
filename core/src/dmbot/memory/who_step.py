@@ -32,11 +32,14 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds, Reply
+from dmbot.memory import who_apply
 from dmbot.memory import who_ranking as ranking
 from dmbot.memory import who_reading as reading
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import PROPOSED, Entity
 from dmbot.memory.who_answers import ENTITY, MAX_RANK, NEW, StoredAnswer, WhoAnswers
+from dmbot.memory.who_apply import Apply
+from dmbot.transcript.store import TranscriptStore
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +54,7 @@ class Report:
 
     names: int = 0  # waiting names looked at
     no_choices: int = 0  # ... of which nothing could be offered (the caller counts these: `build`)
+    no_lines: int = 0  # ... said in a session, but no line of a recorded person is left
     calls: int = 0
     failed: int = 0
     ranked: int = 0  # names with at least one answer kept
@@ -61,6 +65,9 @@ class Report:
     dropped: int = 0  # answers dropped (off the lists, not offered, odd rows)
     stopped_early: int = 0
     dropped_for_consent: int = 0
+    joined: int = 0  # names DMbot joined itself (sure, and the store's limits agreed; slice 4)
+    join_refused: int = 0  # ... sure, but a limit (or a change since) said no: the DM is asked
+    join_failed: int = 0
     unsent: int = 0  # names left for next time: the call limit, or the run stopped
     stopped: str = ""
 
@@ -68,8 +75,11 @@ class Report:
         return (
             f"Who is this: {self.names} name(s), {self.ranked} ranked, {self.empty} with no "
             f"answer, {self.omitted} left out, {self.no_choices} with no choice, "
+            f"{self.no_lines} with no lines, "
             f"{self.refused} refused, {self.not_kept} not kept, {self.dropped} answer(s) dropped, "
             f"{self.stopped_early} stopped early, {self.dropped_for_consent} dropped for consent, "
+            f"{self.joined} joined by itself, {self.join_refused} join(s) refused, "
+            f"{self.join_failed} join(s) failed, "
             f"{self.calls} call(s), {self.failed} failed, {self.unsent} left for next time"
             + (f", stopped: {self.stopped}" if self.stopped else "")
         )
@@ -88,6 +98,50 @@ class Pending:
 def is_open_name(entity: Entity) -> bool:
     """A suggestion (a name to check), not merged away. An unnamed person is asked another way."""
     return entity.merged_into is None and entity.status == PROPOSED and not entity.unnamed
+
+
+LINE_POINTERS = 4  # how many of a name's pointers ("Where was it said?") are read for its lines
+
+
+def parse_ref(ref: str) -> tuple[str, int, int] | None:
+    """A line reference (`transcript.models.line_ref`: session, when the line began, who said it)
+    back into its parts."""
+    parts = ref.rsplit(":", 2)
+    if len(parts) != 3:
+        return None
+    try:
+        return parts[0], int(parts[1]), int(parts[2])
+    except ValueError:
+        return None
+
+
+async def lines_for(
+    entity_id: str,
+    mentions: Callable[[str], Awaitable[list[tuple[str, int | None]]]],
+    transcripts: TranscriptStore,
+    guild_id: int,
+    dm_ids: Collection[int],
+    agreed: Collection[int],
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    """The lines a waiting name was said in (its pointers' lines with the one before and after),
+    each as "DM: ..." or "Player: ...", and the people who said them. Only lines of people who
+    agree now are read (`transcripts.around` filters to them), so the speakers returned are
+    always recorded."""
+    lines: list[str] = []
+    speakers: set[int] = set()
+    for ref, _at in (await mentions(entity_id))[:LINE_POINTERS]:
+        pointer = parse_ref(ref)
+        if pointer is None:
+            continue
+        around = await transcripts.around(guild_id, pointer[0], pointer[1], pointer[2], agreed)
+        if around is None:
+            continue
+        for seen in (around.before, around.line, around.after):
+            if seen is not None:
+                user, text = seen
+                lines.append(("DM: " if user in dm_ids else "Player: ") + text)
+                speakers.add(user)
+    return tuple(lines), tuple(sorted(speakers))
 
 
 def candidates_from(
@@ -205,6 +259,7 @@ async def run(
     max_calls: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
     report: Report | None = None,
+    apply: Apply | None = None,
 ) -> Report:
     """Ask who each of `pending` is (one campaign's, already holding only lines of people who
     agreed) in as few calls as fit, and keep the ranked answers that come back."""
@@ -304,6 +359,24 @@ async def run(
                 report.ranked += 1
             else:
                 report.not_kept += 1  # (consent was checked above: the store found it malformed)
+                continue
+            if apply is None or who_apply.may_apply(stored) is None:
+                continue
+            try:  # consent once more, right before anything is changed
+                if not set(p.item.speaker_ids) <= set(await consenting()):
+                    report.dropped_for_consent += 1
+                    continue
+            except Exception as exc:
+                log.warning("Who is this: couldn't ask who is recorded (%s)", type(exc).__name__)
+                report.failed += 1
+                continue
+            done = await apply(p.entity_id, stored)
+            if done == who_apply.JOINED:
+                report.joined += 1
+            elif done == who_apply.REFUSED:
+                report.join_refused += 1
+            elif done == who_apply.FAILED:
+                report.join_failed += 1
     try:
         await answers.sweep(guild_id, campaign_id)  # a name answered during the wait goes now
     except Exception as exc:
