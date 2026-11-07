@@ -195,3 +195,10 @@ class PointAtItself(unittest.IsolatedAsyncioTestCase):
         await dl.point_at_itself(message, view)  # type: ignore[arg-type]
         await dl.point_at_itself(None, view)
         await dl.point_at_itself(SimpleNamespace(jump_url="", edit=AsyncMock()), view)  # type: ignore[arg-type]
+
+
+class TheQuestionsPage(unittest.TestCase):
+    def test_it_is_one_page_with_no_ids(self) -> None:
+        self.assertEqual(dl.questions_link(SITE), f"{SITE}/account/questions")
+        self.assertEqual(dl.questions_link(""), "")
+        self.assertEqual(dl.questions_link("http://x.example.com"), "")

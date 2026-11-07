@@ -93,6 +93,12 @@ def site_link(
     return f"https://{host}/account/{page}/{ref}{query}"
 
 
+def questions_link(site_url: str) -> str:
+    """The Questions page: one page for every campaign, so no ids. "" without an https site."""
+    host = _host(site_url)
+    return f"https://{host}/account/questions" if host else ""
+
+
 def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -> str:
     """The clarify page for one name (#3604). It has its own address shape, not `?item=`; "" when
     there is no https address or an id is not a plain id."""
@@ -103,7 +109,7 @@ def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -
     return f"https://{host}/account/clarify?campaign={ref}&name={quote(name_id, safe='')}"
 
 
-def jump_link(message: discord.Message | None) -> str:
+def jump_link(message: discord.Message | discord.PartialMessage | None) -> str:
     """The message's own address in Discord, or "" when there is no message to point at."""
     url = getattr(message, "jump_url", "") if message is not None else ""
     return url if isinstance(url, str) and url.startswith("https://discord.com/") else ""

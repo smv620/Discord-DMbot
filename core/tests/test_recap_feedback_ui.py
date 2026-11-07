@@ -274,8 +274,8 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.call(bot))
         bot.recap_feedback_ai.complete.assert_not_awaited()
         bot.sidebar_send_dm.assert_awaited_once_with(
-            DM_ID, fb.TOO_OFTEN, None
-        )  # (no site: no links)
+            DM_ID, fb.TOO_OFTEN, None, link_to_itself=True
+        )  # (no site: no website link; both buttons when there is one)
 
     async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
         bot = self.host(("style", "x"), draft=False)

@@ -347,7 +347,12 @@ class RecapFeatures:
         async def keep_web_restores_alive(self) -> None: ...
         async def wait_until_ready(self) -> None: ...
         async def sidebar_send_dm(
-            self, user_id: int, text: str, view: discord.ui.View | None = None
+            self,
+            user_id: int,
+            text: str,
+            view: discord.ui.View | None = None,
+            *,
+            link_to_itself: bool = False,
         ) -> str: ...
 
     def recap_tasks(self) -> list[asyncio.Task[None]]:
@@ -483,7 +488,10 @@ class RecapFeatures:
         stopped = await self.recap_feedback_gate(campaign, job)
         if stopped is not None:
             await self.sidebar_send_dm(
-                user_id, stopped, _recap_links(self.settings, campaign, job.session_at)
+                user_id,
+                stopped,
+                _recap_links(self.settings, campaign, job.session_at),
+                link_to_itself=True,  # (both buttons, like every private message, #3663)
             )
             return True
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
