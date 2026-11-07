@@ -80,6 +80,12 @@ ALLOWED: list[tuple[str, str, str]] = [
         "reason for the developer who reads that table, never put in a message to a person",
     ),
     (
+        "features.py",
+        "json",
+        "the file name the web reads the DM-visible list from (features.json): a name to match, "
+        "never shown to a person",
+    ),
+    (
         "recaps/draft.py",
         "prompt",
         "the problems listed back to the AI so it can redo a draft ('give one music prompt for "
