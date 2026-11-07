@@ -286,7 +286,7 @@ describe("how many more connections a line has", () => {
 
   it("says (+3) on the map, and gives each connection its own line in the list, for a DM", async () => {
     render(<Web api={stub(true)} path={at()} />);
-    await screen.findByText("Showing 3 names and 2 connections");
+    await screen.findByText("Showing 3 names and 5 connections");
     for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
       expect(within(document.getElementById("web-list")!).getByText(new RegExp(w))).toBeTruthy();
     }
@@ -300,7 +300,7 @@ describe("how many more connections a line has", () => {
 
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
-    await screen.findByText("Showing 2 names and 1 connection");
+    await screen.findByText("Showing 2 names and 2 connections");
     expect(within(document.getElementById("web-list")!).getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
@@ -377,7 +377,7 @@ describe("every connection between two names, in both directions (#2934)", () =>
       canEdit: true,
     });
     render(<Web api={api} path={at()} />);
-    await screen.findByText("Showing 2 names and 1 connection");
+    await screen.findByText("Showing 2 names and 3 connections");
     fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
     const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
     const both = within(panel).getByRole("region", { name: "Both ways" });

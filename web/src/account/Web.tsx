@@ -675,7 +675,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       </p>
 
       <p class="web-count" role="status" aria-live="polite">
-        <strong>{words.howMany(nodes.length, edges.length)}</strong>
+        <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
 
       {nodes.length <= 1 && edges.length === 0 ? (
