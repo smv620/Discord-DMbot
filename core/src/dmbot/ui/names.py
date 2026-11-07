@@ -1145,9 +1145,8 @@ def suggestion_text(
     return text
 
 
-SUGGESTION_MAX = (
-    1700  # a question's text stays under this (Discord's 2000, with the group line after)
-)
+# a question's text stays under this (Discord's limit, with the group line after)
+SUGGESTION_MAX = MESSAGE_MAX - 300
 SCENE_TITLE = "📍 *DMbot's summary of the scene:*"
 
 
