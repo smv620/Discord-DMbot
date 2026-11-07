@@ -191,6 +191,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.memory.voice import split_effect_note
 from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
@@ -284,8 +285,11 @@ def _alias(r: dict[str, Any]) -> Alias:
 
 
 def _relation(r: dict[str, Any]) -> Relation:
+    # (a connection kept before #3628 may still carry the claim's "happened to them" note, from a
+    # backup or an Undo of an old change: it is not part of the detail, #3650)
+    detail = split_effect_note(r["detail"])[0] if r["detail"] else r["detail"]
     return Relation(
-        r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
+        r["id"], r["subject_id"], r["predicate"], r["object_id"], detail,
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
