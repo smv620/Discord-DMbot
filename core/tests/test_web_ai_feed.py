@@ -122,8 +122,8 @@ class Feed(Web):
         await self.put("lore", LORE, 2, 110)
         first = await self.read(after=0)
         self.assertEqual([e["state"] for e in first["entries"]], ["waiting", "done"])
-        # The call finishes; the writer does not move its time. The page asks from the oldest waiting
-        # call's time (100), not from the newest (110), so the finished call comes back once.
+        # The call finishes; the writer does not move its time. The page asks from the oldest
+        # waiting call's time (100), not from the newest (110), so the finished call comes back once.
         async with self.db.guild(self.g) as conn:
             await conn.execute(
                 "UPDATE ai_feed SET state = 'done', reply = 'Found it late.' WHERE n = 1"
