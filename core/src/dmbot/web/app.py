@@ -51,6 +51,7 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     house_file,
+    import_clock,
     imports,
     line_fixes,
     lore,
@@ -2930,6 +2931,27 @@ def create_app(
             return await imports.progress(
                 db, session, ref, import_id, outside=settings.outside_engine
             )
+        except RecapError as err:
+            raise import_refusal(err) from None
+
+    @app.post(
+        "/me/campaigns/{ref}/imports/{import_id}/clock",
+        status_code=202,
+        dependencies=[Depends(imports_enabled)],
+    )
+    async def me_import_clock(
+        ref: str, import_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """The DM's answer to the clock offer of an imported session (#3199): Set it or Not now,
+        queued for the bot (one quick write, no stage). The page reads the import's progress to
+        see how it ended."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await import_clock.choose(db, session, ref, import_id, body)}
         except RecapError as err:
             raise import_refusal(err) from None
 
