@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory._changes import NOT_FOUND
+from dmbot.memory._changes import ALREADY_UNDONE, NOT_FOUND
 from dmbot.memory.models import (
     CONFIRMED,
     NAME_MAX,
@@ -62,7 +62,11 @@ ANSWERED = "answered"  # undo, after a part was answered or the names changed
 NOT_DM = "not_dm"  # the sender is not a DM of the campaign any more
 SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO = "split", "join_group", "make_group", "undo"
 KEPT_ACTIONS = (SPLIT, JOIN_GROUP, MAKE_GROUP)  # a finished one stays as a `done` row for its Undo
-NEW_ACTIONS = (*KEPT_ACTIONS, UNDO)
+# DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
+# takes it back. The answer's target is the match's batch (digits); its entity is the kept entry.
+CONFIRM_MATCH, UNDO_MATCH = "confirm_match", "undo_match"
+MATCH_ACTIONS = (CONFIRM_MATCH, UNDO_MATCH)
+NEW_ACTIONS = (*KEPT_ACTIONS, UNDO, *MATCH_ACTIONS)
 
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
 
@@ -239,6 +243,8 @@ async def apply(
     cid = answer.campaign_id
     if answer.action == UNDO:
         return await _undo(memory, answers, guild_id, answer)
+    if answer.action in MATCH_ACTIONS:  # (before the waiting-name check: its entity is a known one)
+        return await _match(memory, guild_id, answer)
     entity = await memory.entity(guild_id, cid, answer.entity_id)
     if entity is None or entity.status != PROPOSED:
         return GONE
@@ -298,6 +304,29 @@ async def apply(
             return FAILED
     except MemoryRuleError:
         return GONE  # the name changed under us (answered in Discord a moment ago)
+    return ""
+
+
+async def _match(memory: MemoryStore, guild_id: int, answer: Answer) -> str:
+    """The DM's word on a name DMbot matched on its own, from the page: ✅ confirms it, ↩️ takes it
+    back, the same store calls as Discord's check (`confirm_join`, `undo`). Only a match that is
+    still waiting can be touched: the batch is looked up in the campaign's waiting matches first,
+    so a made-up batch number never reaches `undo` (it would undo any change). Returns "" or the
+    page's fixed word (`not_found`: not a waiting match, `answered`: the store refused)."""
+    cid = answer.campaign_id
+    if not answer.target_id.isdigit():
+        return NOT_FOUND_WORD
+    batch = int(answer.target_id)
+    waiting = await memory.waiting_joins(guild_id, cid)
+    if not any(j.batch == batch and j.keep_id == answer.entity_id for j in waiting):
+        return NOT_FOUND_WORD
+    try:
+        if answer.action == CONFIRM_MATCH:
+            await memory.confirm_join(guild_id, cid, batch)
+        else:
+            await memory.undo(guild_id, cid, batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        return NOT_FOUND_WORD if str(exc) in (NOT_FOUND, ALREADY_UNDONE) else ANSWERED
     return ""
 
 
