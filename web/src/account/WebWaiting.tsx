@@ -10,7 +10,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
+import { itemWords } from "../content/item-words";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
@@ -63,6 +65,10 @@ export default function WebWaiting({
   const [failed, setFailed] = useState(false);
   const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // A private message's "Open on the website" names one waiting item (#3663): it is opened once the list is here, or the page
+  // says it has been answered (here or in Discord).
+  const wanted = useRef(((first) => (first !== null && pairFromItem(first) === null ? first : null))(currentItem())); // (a pair of names is a line: the graph opens that)
+  const [answered, setAnswered] = useState(false);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
   const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
@@ -91,6 +97,15 @@ export default function WebWaiting({
       else setFailed(true);
     }
   }
+
+  useEffect(() => {
+    if (wanted.current === null || list === null) return;
+    const item = wanted.current;
+    wanted.current = null; // (once: later reads never pull focus back)
+    setTimeout(() => {
+      if (!openItem(item)) setAnswered(true);
+    }, 0);
+  }, [list]);
 
   useEffect(() => {
     shown.current = campaignRef;
@@ -168,6 +183,11 @@ export default function WebWaiting({
       </p>
       {counts.all > 0 && <p class="small">{w.intro}</p>}
       {cut && <p class="small">{w.more}</p>}
+      {answered && (
+        <p class="note" role="status">
+          {itemWords.answered}
+        </p>
+      )}
 
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
@@ -212,7 +232,7 @@ export default function WebWaiting({
           <h4>{w.whichHeading}</h4>
           <p class="small">{w.whichNote}</p>
           {names.map((q) => (
-            <div key={q.id} class="panel">
+            <div key={q.id} class="panel" id={itemDomId(q.id)} tabIndex={-1}>
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
               </p>
@@ -262,7 +282,7 @@ export default function WebWaiting({
           <h4>{w.pronounHeading}</h4>
           <p class="small">{w.pronounNote}</p>
           {pronouns.map((q) => (
-            <div key={q.id} class="panel">
+            <div key={q.id} class="panel" id={itemDomId(q.id)} tabIndex={-1}>
               <p>
                 <strong>{w.pronounQuestion(q.word)}</strong>
               </p>
@@ -320,7 +340,7 @@ export default function WebWaiting({
           {list.claims
             .filter((c) => c.choices?.length)
             .map((c) => (
-              <div key={c.id} class="panel">
+              <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
                 <p id={`wc-${c.id}`}>{c.statement}</p>
                 <p class="small muted">{w.tiesWhy}</p>
                 {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
@@ -389,7 +409,7 @@ export default function WebWaiting({
       {list.claims.some((c) => !c.choices?.length) && (
         <div class="stack">
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
-            <div key={c.id} class="panel">
+            <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
@@ -459,7 +479,7 @@ export default function WebWaiting({
                   </div>
                 )}
                 {u.items.map((b) => (
-                  <div key={b.id} class="panel">
+                  <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
                     <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}

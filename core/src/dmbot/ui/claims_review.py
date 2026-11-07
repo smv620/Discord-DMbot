@@ -100,7 +100,11 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
             last = name_key(claim.subject)
             lines.append(f"\n__{_md(claim.subject)}__")
         done = answered.get(claim.id)
-        lines.append(f"{number}. {question_text(claim)}" if done is None else f"{number}. {done}")
+        if done is not None:
+            lines.append(f"{number}. {done}")
+        else:  # (why it is "something that happened to them" goes on its own line, not the details)
+            why = f"\n   _{_md(claim.note)}_" if claim.note else ""
+            lines.append(f"{number}. {question_text(claim)}{why}")
     if total > len(page):
         lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
     return "\n".join(lines)

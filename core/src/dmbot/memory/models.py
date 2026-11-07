@@ -115,6 +115,10 @@ DM_ONLY_TYPES = (*THREAD_TYPES, DEED)
 DEED_TEXT_MAX = 200  # what the DM types for a deed
 DEED_NAME_MAX = 100  # an entry's name is at most this; the full words are its description
 DEED_VIEWERS_MAX = 5  # whom one deed can matter to
+# What kind of deed it was, for the story graph's summary (#3236): kept in the `did` connection's
+# detail. Empty is allowed and reads as "other deeds". Fixed words only; code never takes a kind
+# from a model's free text.
+DEED_KINDS = ("attack", "kill", "rescue", "save", "steal", "help")
 BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
 THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
 CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)
@@ -233,6 +237,9 @@ class NewName:
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
+    # An item the unique-item judge kept (#3373) is stored as one particular thing (#3618), so a
+    # second owner is flagged; None leaves it to the name guess and the DM's switch.
+    unique: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

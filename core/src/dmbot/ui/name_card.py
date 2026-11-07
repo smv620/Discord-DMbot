@@ -17,7 +17,7 @@ import dataclasses
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,6 +50,7 @@ from dmbot.memory.models import (
     MERGED,
     PLAYERS_TEXT_MAX,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
     Alias,
     Entity,
@@ -63,6 +64,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
+from dmbot.memory.standing import dm_line_word
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
@@ -94,6 +96,8 @@ from dmbot.ui.names import (
     already_known,
     changed,
     known_as,
+    scene_line,
+    scene_of,
     sees_secrets,
     split_names,
 )
@@ -261,11 +265,17 @@ class Row:
 
 
 def _rows(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[Row]:
     """The connections the card shows, in its order: those that read the same together, in the
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
-    list the card, Show all and the Edit a connection menu all read, so they never disagree."""
+    list the card, Show all and the Edit a connection menu all read, so they never disagree.
+    `standing`: the DM's own Reputation for pairs (`MemoryStore.dm_line_scores`), whose word wins
+    on a `knows` line (#3642); read only when `secrets`, so a player's card never shows it."""
     found: dict[str, list[Row]] = {}
     guard = _guard(lookup)
     for r in connections:
@@ -282,6 +292,11 @@ def _rows(
         first = lookup.entities.get(r.subject_id)  # the connection's own first name
         subject_kind = first.type if first is not None else ""
         shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
+        # (only the line's own side words a feeling: from the other end it reads "is known to")
+        if secrets and standing and ahead and shown.predicate == "knows":
+            word = dm_line_word(standing, r.subject_id, r.object_id)
+            if word is not None:  # the DM's word always wins over a reader's (#3642)
+                shown = dataclasses.replace(shown, detail=word)
         words = (
             fact_words(shown, subject_kind, feeling=secrets)
             if ahead
@@ -310,12 +325,16 @@ def _rows(
 
 
 def _groups(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Connections grouped by how they're connected, read from this name's side: "is a member of
     **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
     groups: dict[str, list[str]] = {}
-    for row in _rows(lookup, entity_id, connections, secrets):
+    for row in _rows(lookup, entity_id, connections, secrets, standing):
         groups.setdefault(row.words, []).append(
             f"**{_md(row.other)}**"
             + (f" {row.after}" if row.after else "")
@@ -341,7 +360,12 @@ PAGE_LINES = 25  # most lines in one Show all message, then Earlier / Later
 
 
 def sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Every entry of each section the card cuts, in the card's words and order. A section with
     nothing in it is left out, and the secret names and secret connections only when `secrets`
@@ -356,7 +380,7 @@ def sections(
         SECRETS: [_md(e.text) for e in mine if e.secret] if secrets else [],
         LINKS: [
             f"{words} {who}"
-            for words, group in _groups(lookup, entity_id, connections, secrets).items()
+            for words, group in _groups(lookup, entity_id, connections, secrets, standing).items()
             for who in group
         ],
     }
@@ -364,10 +388,15 @@ def sections(
 
 
 def cut_sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[tuple[str, str]]:
     """(key, "Other names (12)") for each section the card shows only the start of."""
-    full = sections(lookup, entity_id, connections, secrets=secrets)
+    full = sections(lookup, entity_id, connections, secrets=secrets, standing=standing)
     # (the connections are one line each and the card cuts them only at Discord's limit, where
     # show_card offers every section)
     cut_keys = [key for key, lines in full.items() if key != LINKS and len(lines) > SHOWN]
@@ -415,12 +444,14 @@ def card_text(
     book_line: str | None = None,
     more_url: str = "",
     title: str = "",
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
     kind or one a campaign added under it (None: only the core kind counts). `title`: the name with
     its tag for the DM's card, when it is only a description (#3431). `more_url`: the
-    website page that lists every connection, for the ones that don't fit (#2323)."""
+    website page that lists every connection, for the ones that don't fit (#2323). `standing`: the
+    DM's own Reputation for pairs, whose word wins on a `knows` line (#3642; DMs only)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -476,10 +507,20 @@ def card_text(
     if secrets and hidden:
         lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
     text = "\n".join(lines)
-    rows = _rows(lookup, entity_id, connections, secrets)
+    rows = _rows(lookup, entity_id, connections, secrets, standing)
     if rows:
         text = _with_connections(text, rows, limit, more_url)
     return cut(text, limit)
+
+
+async def _dm_standing(
+    memory: MemoryStore, campaign: Campaign, entity_id: str, secrets: bool
+) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for the pairs this card's `knows` lines join (#3642): read only for
+    a reader who sees secrets, so a player's card is never handed it."""
+    if not secrets:
+        return {}
+    return await memory.dm_line_scores(campaign.guild_id, campaign.id, entity_id)
 
 
 async def _names(interaction: discord.Interaction, campaign: Campaign) -> CampaignLookup | None:
@@ -532,6 +573,7 @@ async def show_card(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     player = sheet = None
     has_sheet = False
@@ -620,6 +662,7 @@ async def show_card(
         book_line=book_line,
         more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
         title=title,
+        standing=dm_standing,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -627,14 +670,15 @@ async def show_card(
         else:
             await _tell(interaction, GONE)
         return
-    cuts = cut_sections(names, entity_id, connections, secrets=secrets)
+    cuts = cut_sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
         limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
+        standing=dm_standing,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
-        everything = sections(names, entity_id, connections, secrets=secrets)
+        everything = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
         cuts = [(k, f"{SECTION_WORDS[k]} ({len(v)})") for k, v in everything.items()]
     own = name_key(entity.name)
     others = any(
@@ -649,6 +693,12 @@ async def show_card(
             "(they read this in recaps and answers)"
         )
         if len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets and (entity.status == PROPOSED or entity.unnamed):
+        # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
+        # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
+        line = scene_line(await scene_of(interaction, campaign, entity))
+        if line and len(text) + len(line) <= CARD_MAX:
             text += line
     # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
     # narrator's dictionary goes to the voice company; the store refuses it too).
@@ -749,11 +799,12 @@ async def show_section(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         await _tell(interaction, GONE)
         return
-    lines = sections(names, entity_id, connections, secrets=secrets).get(key)
+    lines = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing).get(key)
     if not lines:  # changed since the card was drawn, or a secret section for someone who can't
         await _tell(interaction, NOTHING_MORE)
         return
@@ -1162,6 +1213,8 @@ class NameCard(_Menu):
                 include_secret=secrets,
             ),
             secrets,
+            # (the menu reads the card's words, the DM's Reputation included, #3642)
+            await _dm_standing(memory, campaign, self.entity_id, secrets),
         )
         self.stop()
         back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""

@@ -21,7 +21,10 @@ EVERY_ACTION = (
     "claim-undo",  # takes back an All true / All secret press (#3645)
     "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
     "players-line",  # the line for the players (#3568)
+    "offer-clear",  # lift a Never on words (#3577)
     "told-add", "told-remove",  # "Tell a character" (#3542)
+    "clock-set", "clock-skip",  # the import clock offer (#3199)
+    "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
 )  # fmt: skip
 
 

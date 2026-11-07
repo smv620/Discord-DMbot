@@ -15,6 +15,7 @@ import {
   confirmWords,
   importPage as words,
 } from "../content/import-words";
+import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
@@ -30,6 +31,7 @@ import {
 import CampaignNav from "./CampaignNav";
 import WorkProgress, { RunningCounts } from "./WorkProgress";
 import ClockOffer from "./ClockOffer";
+import LazyPanel from "./LazyPanel";
 import { stageWords } from "../content/work-progress";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
@@ -788,6 +790,13 @@ export default function Import({
               progress.sessions.length,
             )}
           </p>
+        )}
+        {AI_FEED_LIVE && importId && api.aiFeed && (
+          <LazyPanel
+            load={() => import("./AiFeed")}
+            what="what DMbot asked the AI"
+            props={{ api, campaignRef: ref, kind: "import" as const, job: importId, running: progress.sessions.some((s) => !isFinal(s)) }}
+          />
         )}
         <ul class="campaigns">
           {progress.sessions.map((s) => (
