@@ -77,7 +77,13 @@ export default function AiFeed({
     setLost(0);
     setStalled(false);
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let busy = false; // a look is on its way: a second one must not start beside it
+    let finalLook = false; // the look after the job ended has been made, so the window rests
     const look = async (last: boolean): Promise<void> => {
+      // A hidden tab asks nothing (#3710): the visibility handler below looks again when it is shown.
+      if (document.hidden) return;
+      busy = true;
+      if (last) finalLook = true;
       try {
         const got = await api.aiFeed!(campaignRef, kind, job, after.current);
         if (!live) return;
@@ -103,15 +109,34 @@ export default function AiFeed({
         if (!live) return;
         fails += 1;
         if (fails >= TRIES) setStalled(true);
+      } finally {
+        busy = false;
       }
       // One more look after the job ends, to catch the last reply; then it rests. After failed looks it asks
-      // less often but keeps going, and clears the note on the first look that works.
-      if (live && (runningNow.current || !last)) timer = setTimeout(() => void look(!runningNow.current), fails >= TRIES ? SLOW_MS : everyMs);
+      // less often but keeps going, and clears the note on the first look that works. A hidden tab sets no timer.
+      if (live && !document.hidden && (runningNow.current || !last))
+        timer = setTimeout(() => void look(!runningNow.current), fails >= TRIES ? SLOW_MS : everyMs);
     };
+    // Shown again (#3710): one look at once if the job is still going, or its final look has not been made yet, then
+    // the usual rhythm. A look already on its way sets the next one itself.
+    const shown = (): void => {
+      if (!live) return;
+      // Hidden: nothing may stay pending (a timer set before the hide would fire as a no-op later).
+      if (document.hidden) {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        return;
+      }
+      if (busy) return;
+      if (timer !== undefined) clearTimeout(timer);
+      if (runningNow.current || !finalLook) void look(!runningNow.current);
+    };
+    document.addEventListener("visibilitychange", shown);
     void look(false);
     return () => {
       live = false;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", shown);
     };
   }, [api, campaignRef, kind, job]);
 

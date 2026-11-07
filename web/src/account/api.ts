@@ -1672,6 +1672,13 @@ export interface WebNode {
   canSetIcon?: boolean;
   /** Which pictures exist to pick, sent only with `canSetIcon`. */
   iconHas?: { discord: boolean; dndbeyond: boolean };
+  /** True only on a person the story never named, in the DM's Full View (#3732; core #3733). `name` is then the label
+   * ("Ken's sister (name unknown)"), built from the anchor's current name. */
+  unnamed?: boolean;
+  /** Who they are in the story's words ("sister"). */
+  unnamedWhat?: string;
+  /** The name they hang from ("Ken"), or null when it isn't a name. */
+  unnamedAnchor?: string | null;
 }
 export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
 
@@ -1761,6 +1768,8 @@ export interface WebGraph {
   view?: WebView;
   /** The web as one character knows it (#2999): whose it is. Null or left out for the DM's own web. */
   seeAs?: { viewer: string; name: string } | null;
+  /** How many unnamed people still wait to be kept (#3732): only in the DM's Full View, left out otherwise. */
+  waitingUnnamed?: number;
 }
 
 /** One group of linked names, as the overview lists it (#2632): the name to put in the middle to see it. */
