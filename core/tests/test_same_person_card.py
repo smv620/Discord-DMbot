@@ -202,7 +202,7 @@ class TheTwoWomenCard(NamesTest):
         text = view.text()
         self.assertIn("Is the woman", text)
         self.assertIn("(in Termalaine)", text)  # the tag tells the two apart
-        self.assertIn("(name unknown)", text)  # the other has nothing to tell it apart yet
+        self.assertIn("(first seen ", text)  # the other: only when it was first seen (#3736)
         self.assertIn("they are described the same way", text)
         self.assertIn(KEEPS, text)
 

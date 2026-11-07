@@ -105,7 +105,7 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         shown = await self.memory.display_names(
             GUILD_A, self.c, Viewer.player([self.sees_guard]), [sister_id]
         )
-        self.assertEqual(shown[sister_id], "someone's sister (name unknown)")
+        self.assertEqual(shown[sister_id], "unnamed - someone's sister")
         # ... and the reader that lists what a player's characters know uses the same words
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         self.assertNotIn("Ken", repr(mine))
@@ -139,7 +139,7 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         await self.know(ENTRY, sister_id, [self.sees_guard])
         await self.memory.join_same_person(GUILD_A, self.c, sister_id, self.ken)
         found = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
-        label_alias = next(a.id for a in found if a.text.endswith("(name unknown)"))
+        label_alias = next(a.id for a in found if a.text.startswith("unnamed - "))
         await self.memory.set_alias_knowers(
             GUILD_A, self.c, label_alias, [self.sees_guard], source="dm"
         )
@@ -147,5 +147,5 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         self.assertNotIn("Ken", repr(mine))
         # (the joined label is a person of its own for them: no "name of" line, which would say who)
         self.assertEqual(mine.names, ())
-        self.assertEqual([c.subject for c in mine.connections], ["someone's sister (name unknown)"])
+        self.assertEqual([c.subject for c in mine.connections], ["unnamed - someone's sister"])
         self.assertTrue(all(c.detail == "" for c in mine.connections))

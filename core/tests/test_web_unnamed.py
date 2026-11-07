@@ -43,7 +43,7 @@ class Reading(Unnamed):
         got = await self.not_named()
         rows = {r["id"]: r for r in got["names"]}
         self.assertEqual(
-            rows[self.sister]["name"], "Ken's sister (name unknown)",
+            rows[self.sister]["name"], "unnamed - Ken's sister",
         )  # fmt: skip
         self.assertEqual(
             (
@@ -53,7 +53,7 @@ class Reading(Unnamed):
             ),
             (True, "sister", "Ken"),
         )
-        self.assertEqual(rows[self.figure]["name"], "a hooded figure (name unknown)")
+        self.assertEqual(rows[self.figure]["name"], "unnamed - a hooded figure")
         self.assertIsNone(rows[self.figure]["unnamedAnchor"])
         self.assertEqual(got["total"], 2)
         first = (await self.page())["kinds"][0]
@@ -73,7 +73,7 @@ class Reading(Unnamed):
     async def test_the_label_follows_the_anchor_when_the_anchor_is_renamed(self) -> None:
         await self.memory.rename_entity(self.g, self.one.id, self.ken, "Kenneth", source=DM_SOURCE)
         rows = {r["id"]: r for r in (await self.not_named())["names"]}
-        self.assertEqual(rows[self.sister]["name"], "Kenneth's sister (name unknown)")
+        self.assertEqual(rows[self.sister]["name"], "unnamed - Kenneth's sister")
 
     async def test_one_hanging_off_another_unnamed_person_is_built_from_that_ones_label(
         self,
@@ -82,9 +82,7 @@ class Reading(Unnamed):
             self.g, self.one.id, what="cousin", anchor_id=self.sister
         )
         rows = {r["id"]: r for r in (await self.not_named())["names"]}
-        self.assertEqual(
-            rows[made.entity.id]["name"], "Ken's sister (name unknown)'s cousin (name unknown)"
-        )
+        self.assertEqual(rows[made.entity.id]["name"], "unnamed - Ken's sister's cousin")
 
     async def test_named_people_are_not_unnamed_and_have_no_such_fields_set(self) -> None:
         mira = next(n for n in (await self.page())["names"] if n["id"] == self.mira)

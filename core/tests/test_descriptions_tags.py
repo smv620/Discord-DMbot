@@ -140,10 +140,10 @@ class TheTag(unittest.TestCase):
         self.assertLessEqual(len(tags.tag_for(long, dm=True)), len("the woman ()") + tags.TAG_MAX)
 
     def test_an_unnamed_person_keeps_its_label(self) -> None:
-        e = _entity("Ken's sister (name unknown)", unnamed=True)
+        e = _entity("unnamed - Ken's sister", unnamed=True)
         self.assertEqual(
-            tags.tag_for(e, [self.place], shown_name="Ken's sister (name unknown)"),
-            "Ken's sister (name unknown) (in Termalaine)",
+            tags.tag_for(e, [self.place], shown_name="unnamed - Ken's sister"),
+            "unnamed - Ken's sister (in Termalaine)",
         )
 
 
