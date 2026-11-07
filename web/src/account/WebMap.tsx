@@ -117,6 +117,17 @@ const reducedMotion = (): boolean => {
   }
 };
 
+const SIDE_KEY = "dmbot.web.details";
+function readSide(): "left" | "right" | "under" {
+  try {
+    const v = localStorage.getItem(SIDE_KEY);
+    if (v === "left" || v === "under") return v;
+  } catch {
+    // (no storage: the default)
+  }
+  return "right";
+}
+
 export default function WebMap({
   nodes,
   edges,
@@ -125,6 +136,8 @@ export default function WebMap({
   selected,
   onCenter,
   onLine,
+  onNodePick,
+  canEdit = false,
   children,
   api,
   onDragging,
@@ -142,6 +155,10 @@ export default function WebMap({
   selected: { a: string; b: string } | null;
   onCenter: (id: string) => void;
   onLine: (a: string, b: string) => void;
+  /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
+  onNodePick?: () => void;
+  /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
+  canEdit?: boolean;
   /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
   children?: ComponentChildren;
 }) {
@@ -151,6 +168,16 @@ export default function WebMap({
   const modeNow: LayoutMode = mode === "quests" && !hasQuests ? "free" : mode;
   // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
   const [full, setFull] = useState(false);
+  // Where the details panel sits on a wide screen; a narrow one always puts it under the map (the style sheet decides).
+  const [side, setSide] = useState<"left" | "right" | "under">(readSide);
+  const chooseSide = (to: "left" | "right" | "under"): void => {
+    setSide(to);
+    try {
+      localStorage.setItem(SIDE_KEY, to);
+    } catch {
+      // (a browser that won't keep it: the choice lasts until the page closes)
+    }
+  };
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [frame, setFrame] = useState(0);
   const [extent, setExtent] = useState(260);
@@ -162,7 +189,10 @@ export default function WebMap({
   const [pickedAt, setPickedAt] = useState<{ id: string; center: string } | null>(null);
   const picked = pickedAt && pickedAt.center === center ? pickedAt.id : null;
   if (pickedAt && pickedAt.center !== center) setPickedAt(null); // (forgotten for good, not only hidden while the middle differs)
-  const setPicked = (id: string) => setPickedAt({ id, center });
+  const setPicked = (id: string) => {
+    onNodePick?.();
+    setPickedAt({ id, center });
+  };
   const touched = useRef(false);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
 
@@ -485,9 +515,9 @@ export default function WebMap({
   const anyPinned = sim.current.some((n) => n.pinned);
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
-  // The side panel: the name in focus, or the middle name, with its connections in words.
+  // The side panel: the name that was clicked or tapped (never one the pointer only passes over), or the middle name, with its connections in words.
   // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
-  const detail = byId.get(focus ?? "") ?? byId.get(picked ?? "") ?? byId.get(center) ?? null;
+  const detail = byId.get(picked ?? "") ?? byId.get(center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
@@ -532,6 +562,13 @@ export default function WebMap({
             </button>
           )}
         </div>
+        <div class="web-seg web-side-seg" role="group" aria-label={words.sideLabel}>
+          {(["left", "right", "under"] as const).map((k) => (
+            <button key={k} type="button" class="button secondary" aria-pressed={side === k} onClick={() => chooseSide(k)}>
+              {k === "left" ? words.sideLeft : k === "right" ? words.sideRight : words.sideUnder}
+            </button>
+          ))}
+        </div>
         <button type="button" class="button secondary" aria-pressed={full} onClick={() => setFull((f) => !f)}>
           {full ? words.leaveFullScreen : words.fullScreen}
         </button>
@@ -564,7 +601,7 @@ export default function WebMap({
       )}
       {kindsPresent.length > 0 && <p class="small muted">{words.kindHint}</p>}
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
-      <div class="web-stage">
+      <div class={`web-stage web-side-${side}`}>
       <svg
         ref={svg}
         class="web-svg"
@@ -743,7 +780,9 @@ export default function WebMap({
           })}
         </g>
       </svg>
-      {detail && (
+      {selected && children ? (
+        <div class="web-side">{children}</div>
+      ) : detail && (
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
@@ -787,6 +826,11 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
+          {canEdit && (
+            <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(detail.name)}`}>
+              {words.editFull(detail.name)}
+            </a>
+          )}
           {detail.id === center ? <p class="small muted">{words.inMiddle}</p> : <p class="small muted">{words.doubleTapHint}</p>}
           {detail.id !== center && (
             <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>
@@ -796,7 +840,6 @@ export default function WebMap({
         </aside>
       )}
       </div>
-      {children}
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}

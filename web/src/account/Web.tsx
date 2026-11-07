@@ -46,6 +46,13 @@ export function webRefFromPath(path: string): string | null {
   }
 }
 
+/** The name a link asked to have in the middle (`#centre=<id>`, from the Names page's "See in the story graph"), or null. */
+export function centreFromHash(hash: string): string | null {
+  if (!hash.startsWith("#")) return null; // (only a fragment is read, never a query string)
+  const id = new URLSearchParams(hash.slice(1)).get("centre")?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
+}
+
 type View = "loading" | "ok" | "none" | "down" | "signed-out";
 
 const DEFAULT_HOPS = 2;
@@ -425,7 +432,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAlone(null);
     seeAsNow.current = undefined; // and a campaign never inherits the character it was read as (#3161)
     setSeeAsNote("");
-    void load(null, DEFAULT_HOPS);
+    void load(centreFromHash(typeof window === "undefined" ? "" : window.location.hash), DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -698,6 +705,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}
+              onNodePick={() => setLine(null)}
+              canEdit={canEdit}
             >
               {chosen && (
                 <LinePanel
@@ -1124,6 +1133,14 @@ function LinePanel({
   return (
     <section class="panel stack" aria-labelledby="web-line-h" tabIndex={-1} ref={box}>
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
+      {/* Connections are changed right here; the full editor is each name's own row on the Names page. */}
+      {canEdit && <p class="row small">
+        {[edge.a, edge.b].map((id) => (
+          <a key={id} class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(nameOf(id))}`}>
+            {words.editFull(nameOf(id))}
+          </a>
+        ))}
+      </p>}
       {/* Every connection between the two names, in both directions (#2934): the two-way ones first, then
           one column for each way. The numbers stay the same in every group so "Words for connection 2" is unique. */}
       <div class="stack">

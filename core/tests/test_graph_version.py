@@ -129,6 +129,7 @@ FILES: dict[str, str] = {
     "memory/beliefs.py": INSIDE_WRITE,
     "memory/claims.py": NOT_DRAWN,
     "memory/contradiction_grades.py": NOT_DRAWN,
+    "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
     "memory/evidence.py": NOT_DRAWN + " (evidence ids)",
     "memory/forget_readings.py": BUMPS,
     "memory/heard_backup.py": NOT_DRAWN,

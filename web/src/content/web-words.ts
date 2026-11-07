@@ -70,6 +70,12 @@ export const webPage = {
   fullScreen: "Full screen",
   leaveFullScreen: "Leave full screen",
   layoutLabel: "How the names are laid out",
+  // Where the details panel goes on a wide screen (a phone always puts it under the map).
+  sideLabel: "Where the details go",
+  sideLeft: "Left",
+  sideRight: "Right",
+  sideUnder: "Under",
+  editFull: (name: string): string => `Open ${name} in the full editor`,
   layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   sideNone: "No connections shown for this name.",
   putInMiddle: "Put it in the middle",
