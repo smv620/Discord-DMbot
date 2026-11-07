@@ -67,7 +67,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type IconChoice, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -794,6 +794,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let matchesNow: MatchRow[] =
     scenario === "table"
@@ -2440,6 +2441,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       houseFileLooks = 0;
       houseFileNow = { id: "0".repeat(31) + "2", action: input.action, state: "waiting", stage: "waiting", error: "", toAdd: 0, toChange: 0, toRemove: 0, rulesRead: 0, createdAt: at, updatedAt: at };
       return { linked: houseFileSite !== "", site: houseFileSite, request: houseFileNow, serverNow: at };
+    },
+    // What DMbot asked the AI (#3710): a few calls that arrive one by one as the pretend job runs. The words are in
+    // their own file, loaded only when a pretend feed is asked for, so the pages stay within their weight budget.
+    async aiFeed(ref, kind, job, after): Promise<AiFeedRead> {
+      calls.push(`aiFeed:${ref}:${kind}:${job.slice(0, 4)}:${after}`);
+      await reachable();
+      signedIn();
+      aiFeedLooks += 1;
+      return (await import("./mock-ai-feed")).pretendFeed(job, aiFeedLooks);
     },
     async loreRead(ref, id): Promise<LoreUpload | null> {
       calls.push(`loreRead:${ref}:${id ?? "-"}`);
