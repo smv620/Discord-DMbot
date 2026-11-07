@@ -41,6 +41,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
 | Names DMbot has met but not named yet (name them, remove, same as someone) | `/account/names` | live | `NOT_NAMED_LIVE` |
+| Graph clean-up: the people and groups not linked to a player character, with their scenes, Add a connection and the Names page's panel | `/account/web` (the Clean up the map button) | built, switched off | `GRAPH_CLEANUP_LIVE` (#3740); Discord shows a count with a link (CloudDev-lead, after this page): desk work, so the page is the place to work |
 | Who is this? for one name (the clarify page) | `/account/clarify` | in an open PR (not yet on development), behind its own switch | `name-clarify-switch` |
 | The names waiting for a check; the recap's name checks | `/account/questions`, recap page | built, switched off | `QUESTIONS_LIVE`, `RECAP_NAME_CHECKS_LIVE` |
 | Confirm kinds of names; places written two ways | Names, Story Graph | built, switched off | `CONFIRM_KINDS_LIVE`, `NAME_PLACES_LIVE` |

@@ -1,0 +1,246 @@
+/** @jsxImportSource preact */
+// The Story Graph's clean-up (#3740): the people and groups no chain of connections links to a player character, each
+// with the scene DMbot kept, and the game master's Add a connection, plus, for a person the story never named, the Names
+// page's own panel (give a name, same as someone DMbot knows, remove). Nothing is deleted by DMbot; a group leaves the
+// list as soon as the page reads it again and finds it linked. Its own file, fetched only when a game master opens it.
+import { useEffect, useRef, useState } from "preact/hooks";
+
+import { cleanupWords as w } from "../content/graph-cleanup-words";
+import { kindWords } from "../content/web-words";
+import { ApiError, type AccountApi, type CleanupEntry, type CleanupView, type NameChange, type WebNode } from "./api";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
+import LazyPanel from "./LazyPanel";
+
+function asNode(e: CleanupEntry): WebNode {
+  return { id: e.id, name: e.name, kind: e.kind, unnamed: true, ...(e.unnamedWhat ? { unnamedWhat: e.unnamedWhat } : {}), ...(e.unnamedAnchor !== undefined ? { unnamedAnchor: e.unnamedAnchor } : {}) };
+}
+
+/** Add a connection for one entry: find who it is connected to, say how, and send it (the same call the map's form makes). */
+function AddConnection({ entry, api, refId, onAdded, onSignedOut }: { entry: CleanupEntry; api: AccountApi; refId: string; onAdded: () => Promise<void>; onSignedOut: () => void }) {
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState<{ id: string; name: string; kind: string }[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const [words, setWords] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const latest = useRef(0);
+
+  useEffect(() => {
+    const text = q.trim();
+    if (text.length < 2 || !api.webFind) return void setFound(null);
+    const mine = ++latest.current;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      api.webFind!(refId, { q: text }).then(
+        (rows) => {
+          if (mine !== latest.current) return;
+          setFound(rows.filter((r) => r.id !== entry.id).slice(0, 8));
+          setSearching(false);
+        },
+        () => {
+          if (mine !== latest.current) return;
+          setFound([]);
+          setSearching(false);
+        },
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  async function add(e: Event): Promise<void> {
+    e.preventDefault();
+    if (busy) return;
+    if (!target || words.trim() === "" || !api.changeWebLink) return setSaid({ ok: false, text: w.needBoth });
+    setBusy(true);
+    setSaid(null);
+    try {
+      await api.changeWebLink(refId, { action: "add", a: entry.id, b: target.id, words: words.trim(), secret: false });
+      setSaid({ ok: true, text: w.added });
+      setTarget(null);
+      setWords("");
+      setQ("");
+      await onAdded();
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut();
+      setSaid({ ok: false, text: w.addFailed });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form class="stack" onSubmit={add} aria-label={w.addHeading(entry.name)}>
+      <label class="field">
+        {w.findLabel}
+        <input type="text" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} aria-describedby={`find-hint-${entry.id}`} />
+      </label>
+      <p class="small muted" id={`find-hint-${entry.id}`}>
+        {searching ? w.findWorking : found !== null && found.length === 0 ? w.findNone : w.findHint}
+      </p>
+      {found && found.length > 0 && (
+        <ul class="stack">
+          {found.map((r) => (
+            <li key={r.id}>
+              <button type="button" class="button secondary" aria-pressed={target?.id === r.id} aria-label={w.pick(r.name)} onClick={() => setTarget({ id: r.id, name: r.name })}>
+                {r.name} <span class="tag">{kindWords(r.kind)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {target && <p class="small">{w.picked(target.name)}</p>}
+      <label class="field">
+        {w.wordsLabel}
+        <input type="text" value={words} maxLength={100} onInput={(e) => setWords((e.target as HTMLInputElement).value)} aria-describedby={`words-hint-${entry.id}`} />
+      </label>
+      <p class="small muted" id={`words-hint-${entry.id}`}>
+        {w.wordsHint}
+      </p>
+      <button type="submit" class="button" disabled={busy}>
+        {w.add}
+      </button>
+      {busy && <p role="status">{w.adding}</p>}
+      {said && (
+        <p class={said.ok ? "ok" : "warn"} role={said.ok ? "status" : "alert"}>
+          {said.text}
+        </p>
+      )}
+    </form>
+  );
+}
+
+export default function GraphCleanup({ api, refId, onSignedOut }: { api: AccountApi; refId: string; onSignedOut: () => void }) {
+  const [view, setView] = useState<CleanupView | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState<string | null>(null); // the entry whose actions are open
+  const [naming, setNaming] = useState<CleanupEntry | null>(null);
+  const [tick, setTick] = useState(0);
+  const wait = useObservedWait(loading, String(tick));
+
+  async function read(): Promise<void> {
+    if (!api.graphCleanup) return;
+    setLoading(true);
+    setFailed(false);
+    try {
+      setView(await api.graphCleanup(refId));
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut();
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    void read();
+  }, [refId, tick]);
+
+  const shown = view ? view.groups.reduce((n, g) => n + g.entries.length, 0) : 0;
+  const act = async (id: string, change: NameChange, ok: string): Promise<string | null> => {
+    if (!api.changeName) return w.addFailed;
+    try {
+      await api.changeName(refId, id, change);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "signed-out") {
+        onSignedOut();
+        return "";
+      }
+      return w.addFailed;
+    }
+    void ok;
+    await read();
+    return null;
+  };
+
+  return (
+    <section class="panel stack" aria-labelledby="cleanup-h">
+      <h2 id="cleanup-h">{w.heading}</h2>
+      <p class="small muted">{w.lead}</p>
+      {loading && <WorkProgress stage={w.stage} startedAt={wait.startedAt} updatedAt={wait.movedAt} state={wait.quiet ? "stalled" : "running"} progressUnknown whatToDo={w.quiet} />}
+      {failed && !loading && (
+        <div class="stack">
+          <p class="warn" role="alert">
+            {w.down}
+          </p>
+          <button type="button" class="button" onClick={() => setTick((n) => n + 1)}>
+            {w.tryAgain}
+          </button>
+        </div>
+      )}
+      {view && !failed && (
+        <>
+          {view.review && view.review.state === "waiting" && <p class="small" role="status">{w.reviewWaiting(view.review.minutesLeft ?? 15, view.review.fixes ?? 0)}</p>}
+          {view.review && view.review.state === "running" && <p class="small" role="status">{w.reviewRunning}</p>}
+          {view.review && view.review.state === "done" && <p class="small" role="status">{w.reviewDone(view.review.missed ?? 0)}</p>}
+          {view.groups.length === 0 ? (
+            <p role="status">{view.noPlayerCharacter ? w.noPlayerCharacter : w.nothing}</p>
+          ) : (
+            <>
+              <p role="status">
+                <strong>{w.count(view.total, view.groups.length)}</strong>
+              </p>
+              {view.truncated && <p class="small muted">{w.showing(shown, view.total)}</p>}
+              <ol class="stack">
+                {view.groups.map((g, n) => (
+                  <li key={g.entries[0]?.id ?? n} class="stack">
+                    <h3 class="small">{w.group(n + 1)}</h3>
+                    <ul class="stack">
+                      {g.entries.map((e) => (
+                        <li key={e.id} class="stack">
+                          <p>
+                            <strong>{e.name}</strong> <span class="tag">{kindWords(e.kind)}</span>
+                            {e.waiting && <span class="small muted"> ({w.waiting})</span>}
+                          </p>
+                          <p class="small">{e.scene ? `${w.scene} ${e.scene}` : w.noScene}</p>
+                          <p>
+                            <button type="button" class="button secondary" aria-expanded={open === e.id} aria-label={w.addHeading(e.name)} onClick={() => setOpen(open === e.id ? null : e.id)}>
+                              {open === e.id ? w.done : w.addHeading(e.name)}
+                            </button>
+                            {e.unnamed && api.nameThem && (
+                              <button type="button" class="button secondary" aria-expanded={naming?.id === e.id} onClick={() => setNaming(naming?.id === e.id ? null : e)}>
+                                {naming?.id === e.id ? w.done : w.nameThem}
+                              </button>
+                            )}
+                          </p>
+                          {open === e.id && <AddConnection entry={e} api={api} refId={refId} onAdded={read} onSignedOut={onSignedOut} />}
+                        </li>
+                      ))}
+                    </ul>
+                    {g.links.length > 0 && (
+                      <>
+                        <h4 class="small">{w.linksHeading}</h4>
+                        <ul>
+                          {g.links.map((edge) => (
+                            <li key={`${edge.a}-${edge.b}`} class="small">
+                              {g.entries.find((x) => x.id === edge.a)?.name} — {edge.label} — {g.entries.find((x) => x.id === edge.b)?.name}
+                              {edge.more > 0 && ` (+${edge.more})`}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
+          {naming && (
+            <LazyPanel
+              key={naming.id}
+              load={() => import("./WebUnnamed")}
+              what="the name editor"
+              props={{ node: asNode(naming), api, refId, act: (change: NameChange, ok: string) => act(naming.id, change, ok), reload: read, onSignedOut, onClose: () => setNaming(null) }}
+            />
+          )}
+          <p>
+            <button type="button" class="button secondary" disabled={loading} onClick={() => setTick((n) => n + 1)}>
+              {w.refresh}
+            </button>
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
