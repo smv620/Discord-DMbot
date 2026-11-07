@@ -178,6 +178,46 @@ class TheTrigger(DatabaseTest):
             await store.update(GUILD, self.campaign.id, 1000, title="T2")
         self.assertEqual(await stamp(), NEW)
 
+    async def _audio_job(self) -> Any:
+        from dmbot.recaps.store import RecapStore
+
+        store = RecapStore(self.db)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            await store.add_finished(
+                GUILD, self.campaign.id, 1000, dm_user_id=USER, title="T", summary="S",
+                original="o", housekeeping=[], music=[], game_day=None, speakers=[], grade={},
+                beats=[],
+            )  # fmt: skip
+        return store
+
+    async def _stamps_of_job(self) -> tuple[str | None, str | None]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT made_by_commit AS t, audio_made_by_commit AS a FROM recap_jobs"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["t"], row["a"]
+
+    async def test_a_voiceover_by_a_later_build_has_its_own_stamp_and_leaves_the_texts(
+        self,
+    ) -> None:
+        store = await self._audio_job()
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.set_audio(GUILD, self.campaign.id, 1000, audio="ready")
+        self.assertEqual(await self._stamps_of_job(), (OLD, NEW))
+
+    async def test_a_failed_or_requeued_voiceover_has_no_audio_stamp(self) -> None:
+        store = await self._audio_job()
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.set_audio(GUILD, self.campaign.id, 1000, audio="ready")
+            await store.set_audio(GUILD, self.campaign.id, 1000, audio="failed", error="x")
+        self.assertEqual(await self._stamps_of_job(), (OLD, None))
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.set_audio(GUILD, self.campaign.id, 1000, audio="ready")
+            await store.reset_audio(GUILD, self.campaign.id, 1000)
+        self.assertEqual(await self._stamps_of_job(), (OLD, None))
+
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`
         (`as_person` for the campaign store, `user` for account doors), so a row a website door

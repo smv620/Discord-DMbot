@@ -40,5 +40,11 @@ SQL = (
                 t || '_stamp_commit', t);
         END LOOP;
     END $$;
+
+    -- The voiceover has its own stamp (#3739): a later build narrating an older text must not
+    -- overwrite the text's. Set when the audio is finished, NULL on a failure or a re-queue.
+    ALTER TABLE recap_jobs ADD COLUMN audio_made_by_commit TEXT
+        CONSTRAINT recap_jobs_audio_made_by_commit_check
+        CHECK (audio_made_by_commit ~ '^[0-9a-f]{40}$');
 """
 )

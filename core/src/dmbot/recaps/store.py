@@ -26,6 +26,7 @@ from psycopg.types.json import Jsonb
 
 # Re-exported with the `as` form, which mypy strict needs: the worker reads AUDIO_MAX_TRIES from
 # here, and the tests read both.
+from dmbot import lineage
 from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
 from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
@@ -572,6 +573,11 @@ class RecapStore:
             "audio_total = 0", _AUDIO_CLOCK_OFF,
         ]  # fmt: skip
         values: list[Any] = [audio, error[:200]]
+        # The voiceover has its own stamp (#3739): a later build's narration of an older text must
+        # not overwrite the text's stamp. Set when the audio is finished, empty on a failure or a
+        # re-queue; readers show it only while the audio is ready.
+        sets.append("audio_made_by_commit = %s")
+        values.append(lineage.running_commit() if audio == "ready" else None)
         if how is not None:
             sets += ["audio_how = %s", "audio_why = %s"]
             values += [how, why]
@@ -594,7 +600,7 @@ class RecapStore:
         if unchanged is not None:
             where += " AND title = %s AND summary = %s"
             args += [unchanged[0], unchanged[1]]
-        async with self._db.guild(guild_id, by_dmbot=True) as conn:
+        async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(sets)}, updated_at = %s" + where,
                 (*values, int(self._now()), *args),
@@ -656,7 +662,8 @@ class RecapStore:
                 return "too_soon"
             await conn.execute(
                 "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0,"
-                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s"
+                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s,"
+                " audio_made_by_commit = NULL"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (now, now, guild_id, campaign_id, session_at),
             )
@@ -848,7 +855,8 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE recap_jobs SET audio = 'off', audio_tries = 0, audio_next_at = 0,"
-                f" audio_credits = 0, audio_error = '', audio_text_hash = '', {_AUDIO_CLOCK_OFF}"
+                " audio_credits = 0, audio_error = '', audio_text_hash = '',"
+                f" audio_made_by_commit = NULL, {_AUDIO_CLOCK_OFF}"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (guild_id, campaign_id, session_at),
             )
