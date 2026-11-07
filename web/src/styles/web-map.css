@@ -101,7 +101,8 @@ body:has(.account-wide) .wrap {
   max-height: none;
 }
 
-/* The chosen name's details always go under the map, so the map keeps the whole width (owner, #2984). */
+/* The details of what was clicked sit under the map by default (a phone's only choice, #2984). On a wide screen the
+   game master picks left, right or under (owner, 2026-11-06); the choice buttons are hidden on a narrow one. */
 .account .web-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -111,6 +112,34 @@ body:has(.account-wide) .wrap {
 
 .account .web-side {
   min-width: 0;
+}
+
+.account .web-side-seg {
+  display: none;
+}
+
+@media (min-width: 56rem) {
+  .account .web-side-seg {
+    display: inline-flex;
+  }
+  .account .web-stage.web-side-right {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
+  }
+  .account .web-stage.web-side-left {
+    grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  }
+  .account .web-stage.web-side-left .web-svg {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .account .web-stage.web-side-left .web-side {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .account .web-stage:is(.web-side-left, .web-side-right) .web-side {
+    max-height: 78vh;
+    overflow: auto;
+  }
 }
 
 @container (min-width: 64rem) {
@@ -136,6 +165,7 @@ body:has(.account-wide) .wrap {
 .account .web-map.web-full .web-stage {
   flex: 1;
   min-height: 0;
+  grid-template-rows: minmax(0, 1fr); /* (so a tall details panel scrolls inside its own box, not the window) */
 }
 
 .account .web-map.web-full .web-svg {

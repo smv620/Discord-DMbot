@@ -19,6 +19,7 @@ from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
+from dmbot.web import scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -134,6 +135,7 @@ async def read_page(
         _label_unnamed(row)
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
+        await _add_scenes(db, session, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
@@ -185,6 +187,19 @@ async def _add_said_as(
         if mine is not None:
             row["aliasId"] = mine["aliasId"]
             row["saidAs"] = mine["saidAs"]
+
+
+async def _add_scenes(
+    db: Database, session: Session, guild_id: int, campaign_id: str, names: list[dict[str, Any]]
+) -> None:
+    """Give a DM's unnamed people their `scene` (#3644), when DMbot kept one: a short summary of
+    where the story mentioned them. Only the unnamed rows are asked about (a named entry's question
+    is not open), through the DM-only door, so a player's list never carries one."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        await scenes.attach(
+            conn, guild_id, campaign_id, names, only=lambda r: bool(r.get("unnamed"))
+        )
 
 
 # ---- the DM's actions: queued for the bot, read back by polling ----------------------------------
@@ -415,6 +430,61 @@ async def queue_confirm(db: Database, session: Session, ref: str, body: object) 
         cur = await conn.execute(
             "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (guild_id, campaign_id, None, action, kind, target, text, flag),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
+async def read_matches(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """DMbot's own matches that the DM has not answered yet (#3602), for the DM only: names, the
+    batch to answer by and when, never a line of the transcript. Anyone who is not a DM of the
+    campaign gets "not allowed" before anything is read."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_waiting_matches(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    return {
+        "matches": [
+            {
+                "batch": str(m["batch"]),
+                "keepId": str(m["keepId"]),
+                "keepName": str(m["keepName"]),
+                "spelling": str(m["spelling"]),
+                "at": int(m["at"]),
+            }
+            for m in got["matches"]
+        ]
+    }
+
+
+async def queue_match(db: Database, session: Session, ref: str, batch: str, answer: str) -> str:
+    """Queue "yes, that's right" or the Undo of one of DMbot's own matches for the bot and return
+    the action's id (polled like any name action). The batch is digits as an Undo number; one that
+    DMbot did not make in this campaign is "not found" (the door checks; the bot checks again and
+    re-reads that the match is still waiting)."""
+    if answer not in ("confirm", "undo"):
+        raise RecapError("bad_action")
+    if not (batch.isascii() and batch.isdecimal() and 1 <= len(batch) <= 12):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, f"match-{answer}", "", batch, "", None),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
