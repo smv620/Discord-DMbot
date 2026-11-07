@@ -1101,6 +1101,8 @@ async def store(
                 # DM confirms it, at the hook's 1.0: only a connection's certainty is lowered for
                 # a smart guess, #2959)
                 shown=known,
+                # only an item the unique-item judge kept reaches this point (#3618)
+                unique=True if item.kind == "item" else None,
             )
         )
         items.append(item)

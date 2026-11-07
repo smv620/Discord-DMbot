@@ -193,6 +193,20 @@ class Review(ConfirmedMemoryTest):
         self.assertIsNone(await view.current_text(it))
         self.assertNotIn("Heartseeker", "\n".join(it.sent))
 
+    async def test_a_new_item_the_judge_kept_is_stored_unique(self) -> None:
+        # (#3618) the session path stores the judge's yes like the lore path does
+        await self.ask(said("Bram", "carries", "Moonblade"))
+        made = [e for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))]
+        (moonblade,) = [e for e in made if e.name == "Moonblade"]
+        self.assertTrue(moonblade.unique_item)
+        await self.ask(said("Bram", "knows", "Marek"))  # (a person is never stored unique)
+        marek = next(
+            e
+            for e in await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))
+            if e.name == "Marek"
+        )
+        self.assertIsNone(marek.unique_item)
+
     async def test_a_second_holder_says_so_in_plain_words(self) -> None:
         await self.memory.set_unique(GUILD_A, self.c, self.bow, True, source="dm")
         await self.ask(
