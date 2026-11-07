@@ -31,8 +31,8 @@ from dmbot.db import Conn
 DAMAGED = "This backup file is damaged (bad build records)."
 # The columns that hold a stamp: the row's own, and the voiceover's (`recap_jobs`, 0380).
 STAMP_COLUMNS = ("made_by_commit", "audio_made_by_commit")
-MAX_ROWS = 500_000
-KEY_TEXT_MAX = 200
+MAX_ROWS = 100_000  # (far above any carried table; bounds the work for an untrusted file)
+KEY_TEXT_MAX = 300  # (the longest text key a carried table allows: `memory_kind_offers.words_key`)
 KEY_PARTS_MAX = 8
 _SCOPE = ("guild_id", "campaign_id")
 
@@ -76,8 +76,8 @@ class LineageSection:
             )
             for row in await cur.fetchall():
                 key = [row[c] for c in keys]
-                if any(type(v) not in (int, str) for v in key):
-                    continue  # (a key this section cannot carry: the row restores with none)
+                if not all(_key_part(v) for v in key):
+                    continue  # (a key `check` would refuse: the row restores with none)
                 out.append(
                     {
                         "table": table,
@@ -112,30 +112,36 @@ class LineageSection:
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
         checked = self.check(rows or [])
         shapes: dict[str, tuple[list[str], list[str]] | None] = {}
+        # One statement per table and set of stamp columns, run for all its rows at once.
+        batches: dict[tuple[str, tuple[str, ...]], list[tuple[Any, ...]]] = {}
+        for row in checked:
+            table = row["table"]
+            if table not in shapes:
+                shapes[table] = await _shape(conn, table)
+            shape = shapes[table]
+            if shape is None or len(row["key"]) != len(shape[0]):
+                continue  # (the table's key is not the one the file was made with)
+            stamps = {c: v for c, v in row["stamps"].items() if c in shape[1]}
+            if stamps:
+                batches.setdefault((table, tuple(stamps)), []).append(
+                    (*stamps.values(), guild_id, campaign_id, *row["key"])
+                )
         try:
-            for row in checked:
-                table = row["table"]
-                if table not in shapes:
-                    shapes[table] = await _shape(conn, table)
-                shape = shapes[table]
-                if shape is None or len(row["key"]) != len(shape[0]):
-                    continue  # (the table's key is not the one the file was made with)
-                keys, columns = shape
-                stamps = {c: v for c, v in row["stamps"].items() if c in columns}
-                if not stamps:
-                    continue
+            for (table, columns), params in batches.items():
+                keys = shapes[table][0]  # type: ignore[index]
                 sets = sql.SQL(", ").join(
-                    sql.SQL("{} = %s").format(sql.Identifier(c)) for c in stamps
+                    sql.SQL("{} = %s").format(sql.Identifier(c)) for c in columns
                 )
                 where = sql.SQL("").join(
                     sql.SQL(" AND {} = %s").format(sql.Identifier(c)) for c in keys
                 )
-                await conn.execute(
-                    sql.SQL("UPDATE {} SET {} WHERE guild_id = %s AND campaign_id = %s{}").format(
-                        sql.Identifier(table), sets, where
-                    ),
-                    (*stamps.values(), guild_id, campaign_id, *row["key"]),
-                )
+                async with conn.cursor() as cur:
+                    await cur.executemany(
+                        sql.SQL(
+                            "UPDATE {} SET {} WHERE guild_id = %s AND campaign_id = %s{}"
+                        ).format(sql.Identifier(table), sets, where),
+                        params,
+                    )
         except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
             raise CampaignError(DAMAGED) from exc
 
@@ -173,4 +179,18 @@ async def _shape(conn: Conn, table: str) -> tuple[list[str], list[str]] | None:
     pk = [str(r["name"]) for r in await cur.fetchall()]
     if not pk:
         return None
-    return [c for c in pk if c not in _SCOPE], stamps
+    keys = [c for c in pk if c not in _SCOPE]
+    # A generated key (identity or serial) is made afresh at restore, so the file's value would
+    # stamp nothing, or a different row: such a table is not carried (`map_notes`,
+    # `memory_importance`).
+    cur = await conn.execute(
+        "SELECT a.attname AS name FROM pg_attribute a"
+        " WHERE a.attrelid = (quote_ident(current_schema()) || '.' || quote_ident(%s))::regclass"
+        " AND a.attname = ANY(%s) AND (a.attidentity <> ''"
+        "  OR pg_get_serial_sequence(quote_ident(current_schema()) || '.' || quote_ident(%s),"
+        "     a.attname) IS NOT NULL)",
+        (table, keys, table),
+    )
+    if await cur.fetchall():
+        return None
+    return keys, stamps
