@@ -11,6 +11,7 @@ import type {
   ClarifyName,
   NameCheckList,
   NamesFixed,
+  CleanupView,
   NameSource,
   KindOffer,
   MatchRow,
@@ -131,6 +132,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    graphCleanup: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/graph-cleanup`)) as CleanupView,
     nameSources: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/name-sources`)) as { sources: NameSource[] }).sources,
     nameMatches: async (ref) =>

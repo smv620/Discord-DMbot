@@ -1682,6 +1682,57 @@ export interface WebNode {
 }
 export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
 
+/** The Story Graph's clean-up (#3740; core by GraphEngineer, the door `dmbot_web_graph_cleanup` and `memory/isolated.py`): the
+ * people and groups no chain of connections links to a player character (or the party). Seeded by confirmed player
+ * characters; waiting, ended and secret connections join, rejected ones and `led_to` do not. DM and game masters only. */
+export interface CleanupEntry {
+  id: string;
+  name: string;
+  kind: string;
+  /** For a person the story never named: who they are ("sister") and the name they hang from ("Ken"), as `WebNode`. */
+  unnamed?: boolean;
+  unnamedWhat?: string;
+  unnamedAnchor?: string | null;
+  /** "waiting": DMbot found it and the DM has not kept it yet. */
+  status: "confirmed" | "waiting";
+  /** DMbot's short summary of the scene it came up in (#3596); missing or null when none is kept: the page then offers "Where was it said?". */
+  scene?: string | null;
+}
+/** A connection between two entries of one group. */
+export interface CleanupLink {
+  id: string;
+  a: string;
+  b: string;
+  words: string;
+  status: "confirmed" | "waiting";
+  ended?: boolean;
+  secret?: boolean;
+}
+/** One group of entries linked only to each other (a lone entry is a group of one). */
+export interface CleanupGroup {
+  id: string;
+  entries: CleanupEntry[];
+  links: CleanupLink[];
+}
+/** The 15-minute check of the DM's fixes (#3741): counts only, and only when the campaign shares its story to improve DMbot. */
+export interface CleanupReview {
+  state: "off" | "idle" | "waiting" | "running" | "done";
+  /** While `waiting`: whole minutes until DMbot looks, and how many fixes it will look at. */
+  minutesLeft?: number;
+  fixes?: number;
+  /** When `done`: how many of the DM's connections DMbot should have caught. */
+  missed?: number;
+}
+export interface CleanupView {
+  /** Largest group first. At most 300 entries are listed (`shown`) of `total`. */
+  groups: CleanupGroup[];
+  total: number;
+  shown: number;
+  /** True when the campaign has no player character yet: nothing is isolated then, and the page says so. */
+  noPlayerCharacter: boolean;
+  review?: CleanupReview;
+}
+
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
 export interface WebBelief {
   /** Under 1 for a theory. */
@@ -2675,6 +2726,8 @@ export interface AccountApi {
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** The sessions and lore a name can be found in, for the Names page's Partial campaign filter (#3675). */
   nameSources?(ref: string): Promise<NameSource[]>;
+  /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
+  graphCleanup?(ref: string): Promise<CleanupView>;
   /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
    * an API older than that. */
   nameMatches?(ref: string): Promise<MatchRow[]>;
@@ -3215,7 +3268,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "graphCleanup", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
