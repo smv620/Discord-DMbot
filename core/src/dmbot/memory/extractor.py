@@ -33,6 +33,7 @@ from dmbot.memory.claims import (
     ONE_OFF_REASON,
     PLAN_REASON,
     PREDICTION_REASON,
+    RULES_REASON,
     SAME_ENTRY_REASON,
     SECRET_NAME_REASON,
     SESSION_CLAIMS,
@@ -243,6 +244,7 @@ _LOGGED_REASONS = {
     STATE_REASON: "bad condition",
     NAME_REJECTED_REASON: "not a name",
     ITEM_REASON: "generic item",
+    RULES_REASON: "in the rules",
     SECRET_NAME_REASON: "secret name",
 }
 
@@ -260,6 +262,7 @@ class Report:
     named: int = 0  # new names made for the DM to check
     new_names: list[str] = field(default_factory=list)  # as said, for the DM screen; not logged
     joined: int = 0  # spellings joined to a name already waiting
+    tidied: int = 0  # claims with a name tidied before judging (#3634)
     deferred: int = 0  # claims left for next time (their name was past the limit)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
     readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
@@ -287,7 +290,7 @@ class Report:
             f"Story extractor: {self.calls} call(s), {self.failed} failed, "
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
-            f"{self.deferred} deferred, {self.unsent} line(s) not sent"
+            f"{self.tidied} tidied, {self.deferred} deferred, {self.unsent} line(s) not sent"
             + (f", {self.cut} answer(s) cut short" if self.cut else "")
             + (f", {self.recap_lines} recap line(s) left out" if self.recap_lines else "")
             + (
@@ -649,6 +652,7 @@ async def run(
             report.named += done.named
             report.new_names.extend(done.new)
             report.joined += done.joined
+            report.tidied += done.tidied
             report.deferred += done.deferred
             for reason, n in done.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
