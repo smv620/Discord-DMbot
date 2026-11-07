@@ -38,6 +38,7 @@ from dmbot.memory.link_words import KIN, predicate_for_either
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.who_resolve import UnnamedLink
+from dmbot.word_end import at_word_end
 
 # Unnamed people from one read. Nothing is dropped early (owner, #3736), so the limit is only a
 # guard against a runaway read: a document's own people fit well inside it. The rest are counted.
@@ -133,7 +134,7 @@ def _tie(role: str, quote: str, place: bool) -> tuple[str, str, bool, bool] | No
         how = bg.CONNECTIONS.get(key) or bg.LORE_KEPT.get(key)
         if how is not None and how not in (KIN, "located_in", "knows"):
             return how, "", False, False
-    label = bg.at_word_end(words, bg.WORDS_CHARS)
+    label = at_word_end(words, bg.WORDS_CHARS)
     quoted = set(re.findall(r"\w+", bg._squash(quote)))
     if not label or "|" in label or not set(re.findall(r"\w+", bg._squash(label))) <= quoted:
         return None
