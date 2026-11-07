@@ -918,6 +918,10 @@ export interface CampaignName {
   text: string;
   kind: string;
   saidAs: string | null;
+  /** The sessions that mention this name, as recap refs (`<server>.<campaign>.<session>`): lets the
+   * recap page list the names found in its episode (#3675). Missing from an API that doesn't send
+   * it: the page then offers no such list. */
+  sessions?: string[];
 }
 
 /** A campaign with a saved transcript in one of the person's servers (#1501). `ref` is
@@ -1922,6 +1926,17 @@ export interface NamesQuery {
   /** Ask for the people the story never named too (#2803): without it the list, its counts and its totals
    * leave them out, whatever the page's switch says. A DM's list only; anyone else gets none either way. */
   unnamed?: boolean;
+  /** Only names found in these sessions or lore (ids from `nameSources`), #3675. Missing or empty: the
+   * full campaign. */
+  sources?: string[];
+}
+
+/** A session or a piece of uploaded lore that names are found in (#3675). */
+export interface NameSource {
+  id: string;
+  kind: "session" | "lore";
+  /** Words for the list: "Session 4", or the lore's title. */
+  label: string;
 }
 
 /** One secret other name in the Story Graph's name panel and who holds or was told it (#3542, core #3563). */
@@ -2625,6 +2640,8 @@ export interface AccountApi {
   /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** The sessions and lore a name can be found in, for the Names page's Partial campaign filter (#3675). */
+  nameSources?(ref: string): Promise<NameSource[]>;
   /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
    * an API older than that. */
   nameMatches?(ref: string): Promise<MatchRow[]>;
@@ -3162,7 +3179,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "setPcIcon", "clarifyName", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
