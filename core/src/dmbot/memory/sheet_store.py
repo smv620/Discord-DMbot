@@ -223,7 +223,9 @@ class SheetStore:
                 "  AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s"
                 "  AND (%s::text IS NULL OR s.entity_id = %s)"
-                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL"
+                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by > 0"
+                # (`> 0`: a player without Discord has a negative number, #3690, and DMbot never
+                # asks or messages one, so its character has no sheet to re-read)
                 # Only the sheet of whoever plays it now: never a previous player's.
                 "  AND s.player_id = e.played_by"
                 " ORDER BY lower(e.name), s.entity_id",
@@ -292,6 +294,7 @@ class SheetStore:
             row is None
             or row["status"] in ("merged", "rejected")
             or row["played_by"] is None
+            or int(row["played_by"]) < 0  # a player without Discord: no sheet to ask about (#3690)
             or row["type"] == "person"  # a player, not their character (#1188)
             or (player is not None and row["played_by"] != player)
         ):

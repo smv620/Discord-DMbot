@@ -193,6 +193,14 @@ def _valid(column: str, value: object) -> bool:
         return is_id(value)
     if column in _VERSIONS:
         return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
+    if column == "played_by":
+        # A Discord user (positive), or a speaker of this campaign without Discord (negative,
+        # #3690): that one is checked against the restored speakers when they load.
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and (0 <= value <= INT64_MAX or -INT64_MAX <= value < 0)
+        )
     if column in _INTS:
         return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
     if column in _LISTS:
@@ -664,7 +672,8 @@ def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
     url, snapshot, source, fetched = raw["url"], raw["sheet"], raw["source"], raw["fetched_at"]
     if not is_id(raw["entity_id"]) or not _valid("played_by", raw["player_id"]):
         raise CampaignError(DAMAGED)
-    if raw["player_id"] is None or raw["player_id"] == 0:
+    # (a sheet belongs to a Discord player: a speaker without Discord has none, #3690)
+    if raw["player_id"] is None or raw["player_id"] <= 0:
         raise CampaignError(DAMAGED)
     if url is not None and (
         not isinstance(url, str) or sheets.sheet_url(sheets.character_id(url) or 0) != url

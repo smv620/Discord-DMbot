@@ -12,14 +12,14 @@ The documents themselves are linked, not copied.
 
 ## The test players
 
-| Player character | Username |
+| Player character | Player (not on Discord) |
 |---|---|
-| Cerric Vanya'elen | `user_ist` |
-| Belleros Stormgrace | `user_jac` |
-| Okthandom Korran | `user_eri` |
-| Claude Ambere | `user_owe` |
+| Belleros Stormgrace | `player_jac` |
+| Cerric Vanya'elen | `player_ist` |
+| Claude Ambere | `player_owe` |
+| Okthandom Korran | `player_eri` |
 
-These usernames are made up. Use them when loading the sample session, so no real account is needed.
+These names are made up, and the players are **not on Discord**: the session file names its speakers `player_jac`, `player_ist`, `player_owe` and `player_eri`, and the DM's lines `DM`. They are imported the way the website's import takes a speaker who is not on Discord, with the uploader's (the DM's) confirmation. The older labels (`user_ist`, `ist`, and so on) still work, so an older session file still runs. No real account is needed beyond the DM's own.
 
 ## The keys
 
@@ -44,16 +44,16 @@ python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      #
 
 ### The one command (#3547): what dev1 runs now
 
-`sample_run` does steps 1 to 4 below by itself, with no one in Discord: it deletes the last run's sample campaign and makes a new one (only that exact name, and only when it is plainly the tool's), queues the lore the way the website's upload does and waits for the running bot to read it, accepts what was found, backs up and scores the lore **exactly as the reader left it** (the report says how many of the four player characters the read found by itself), only then sets the four itself (Cerric to `ist`, Belleros to `jac`, Okthandom to `eri`, Claude to `owe`, through the store's own "who plays" calls, so `--players` must give those four labels), imports the session file as a past session mapped to the four test accounts, waits for the bot, accepts again, backs up and scores both, and writes the recap with no audio. It prints one block of counts and times to paste on #3545, where regressions are reported. Download the two documents above as plain text files first (the session in a timestamped form the import reads, such as `[0:00:05] ist: ...`, with the speakers named by the labels you give).
+`sample_run` does steps 1 to 4 below by itself, with no one in Discord: it deletes the last run's sample campaign and makes a new one (only that exact name, and only when it is plainly the tool's), queues the lore the way the website's upload does and waits for the running bot to read it, accepts what was found, backs up and scores the lore **exactly as the reader left it** (the report says how many of the four player characters the read found by itself), only then sets the four itself (each to its player who is not on Discord, through the store's own "who plays" calls), imports the session file as a past session through the website import's own code, with the four players as speakers without Discord and the DM's confirmation recorded as the import records it, waits for the bot, accepts again, backs up and scores both, and writes the recap with no audio. It prints one block of counts and times to paste on #3545, where regressions are reported. Download the two documents above as plain text files first (the session in a timestamped form the import reads, such as `[0:00:05] player_ist: ...`, with the DM's lines as `DM`).
 
 ```bash
 cd core
 python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \
-    --players ist=ID,jac=ID,eri=ID,owe=ID --lore lore.txt --session session.txt [--keep-old]
+    --lore lore.txt --session session.txt [--keep-old]
 # the first run prints the most paid AI calls it can use and stops; add --yes to run it
 ```
 
-It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot running with the lore and story switches on as the test plan says, a DM account with a paid plan or free access (the tool never grants one), and the four test accounts must already have agreed to being recorded in Discord (the tool checks this before it spends anything and stops if one has not, or has said no). Backups go to `--backup-dir` (default `/var/lib/dmbot-sample-backups`, outside the repository). The report names which `DMBOT_` switches were on. The manual steps below are what the command does, for when one step must be run alone.
+It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot running with the lore and story switches on as the test plan says, a DM account with a paid plan or free access (the tool never grants one), and the DM's account must not have said no to being recorded. The older `--players ist=ID,jac=ID,eri=ID,owe=ID` (four real test accounts that agreed in Discord) still works. Backups go to `--backup-dir` (default `/var/lib/dmbot-sample-backups`, outside the repository). The report names which `DMBOT_` switches were on. The manual steps below are what the command does, for when one step must be run alone.
 
 ### How dev1 runs it each time (a test campaign, never a real one)
 
@@ -63,7 +63,7 @@ Run it after any deploy that changes what the story reader or the story graph do
 2. Load the **small sample lore** (link above) as the campaign's lore (the "your notes" upload of the names panel, or the website's lore page). Wait for the read to finish, then **accept everything that waits** with `accept_all` (below), so no one has to press anything in Discord. (The old way, answering nothing and leaving the suggestions waiting, is still worth one optional second pass for comparison: the check then scores them as found-waiting.)
    `accept_all` (#3544) is dev1's command, run on the server as the normal `dmbot` user (the database refuses a superuser, as for `movers_check`): `cd core && python -m dmbot.devtools.accept_all --guild GUILD_ID --campaign CAMPAIGN_ID --dry-run` counts what it would accept, and the same line with `--yes` instead of `--dry-run` does it. It confirms every waiting name, other name, connection, "Which one?" and same-person question through the store's own DM calls (so each rule is checked again and each change can be undone), and prints counts only (accepted, left waiting, refused by a rule). A name that needs a person to say who plays it, and a question with no suggestion, stay waiting. It refuses any campaign not named **test of the frostmaiden (sample)**, with no override.
 3. Make a backup (the backup button, then download the attached file; it holds the test campaign's DM secrets, so keep it off the repo and out of issues) and run the check with `--docs lore --json lore-run.json`. Keep the report and the json file for the comparison in step 5.
-4. Import the **sample session** (link above) as a past session. Map the transcript's speakers to four test accounts: Cerric to `user_ist`, Belleros to `user_jac`, Okthandom to `user_eri`, Claude to `user_owe` (the made-up names stand for whichever four test accounts are used; say which). The **DM** is a fifth account. Give the import-consent confirmation the uploader is asked for. Wait for the import to finish, run `accept_all --yes` again (the session's suggestions), make a backup, and run the check with `--docs both --json both-run.json`.
+4. Import the **sample session** (link above) as a past session. Name the transcript's speakers `player_ist` (Cerric), `player_jac` (Belleros), `player_eri` (Okthandom) and `player_owe` (Claude): each is a speaker who is not on Discord. The **DM** is the DM's own account, written `DM`. Give the import-consent confirmation the uploader is asked for. Wait for the import to finish, run `accept_all --yes` again (the session's suggestions), make a backup, and run the check with `--docs both --json both-run.json`.
 5. Put the **totals and the lists of missing tie ids** (entries have no ids: the count is enough) in `docs/testing-history.log` (counts and ids only: the sample's names are public, but the habit is the same), and the latest in `docs/testing-status.log`. Compare the json files with the previous run's: **a lower "found" count, a new must-not-find name or a new wrong-type tie is a regression**; report it on #3545 (the sample run's issue).
 6. If a run shows a real entry or tie the key missed, or a key row that is wrong, comment on #3244: GraphEngineer updates the keys in a small PR with the reason.
 
