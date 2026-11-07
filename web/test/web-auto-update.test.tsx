@@ -48,7 +48,7 @@ function counting(grow: boolean): { api: AccountApi; reads: () => number } {
 
 async function ready(api: AccountApi) {
   render(<Web api={api} path={PATH} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
 }
 
 const tick = async (ms: number): Promise<void> => {

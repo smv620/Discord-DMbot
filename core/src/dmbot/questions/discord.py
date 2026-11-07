@@ -21,6 +21,7 @@ from dmbot.questions.counts import Counted, Sources
 from dmbot.questions.loop import ROUND_S, Round
 from dmbot.questions.notices import NoticeStore
 from dmbot.questions.store import QuestionCounts
+from dmbot.ui import dm_links
 from dmbot.ui.dmbot_commands import _tell, dmbot_group
 
 if TYPE_CHECKING:
@@ -79,7 +80,12 @@ class DiscordSender:
     async def send(self, user_id: int, text: str) -> int | None:
         view = discord.ui.View(timeout=None)
         view.add_item(NotNowButton())
-        sent = await self.bot._dm_message(user_id, text, view)
+        # The two links (#3663): the Questions page, and the message's own address, edited in
+        # once it is sent (never fatal).
+        site = dm_links.questions_link(self.bot.settings.site_url)
+        shown = dm_links.add_links(view, site_url=site)
+        sent = await self.bot._dm_message(user_id, text, shown)
+        await dm_links.point_at_itself(sent, shown)
         return None if sent is None else sent.id
 
     async def board(
@@ -95,19 +101,26 @@ class DiscordSender:
         was deleted. A DM whose private chat is closed gets nothing (None, no link)."""
         content = board.text(campaign.name, found)
         view = board.view(campaign.guild_id, campaign.id, found)
+        site = dm_links.questions_link(self.bot.settings.site_url)
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
             channel = user.dm_channel or await user.create_dm()
             if message_id is not None:
                 try:
                     kept = channel.get_partial_message(message_id)
-                    await kept.edit(content=content, view=view)
+                    # (its address is known before the edit, so it goes in the same edit)
+                    linked = dm_links.add_links(
+                        view, discord_url=dm_links.jump_link(kept), site_url=site
+                    )
+                    await kept.edit(content=content, view=linked)
                     return message_id, kept.jump_url
                 except discord.NotFound:
                     message_id = None  # they deleted it
             if not create:
                 return None, ""
-            sent = await channel.send(content, view=view, allowed_mentions=NO_PINGS)
+            linked = dm_links.add_links(view, site_url=site) or view
+            sent = await channel.send(content, view=linked, allowed_mentions=NO_PINGS)
+            await dm_links.point_at_itself(sent, linked)
             return sent.id, sent.jump_url
         except discord.HTTPException as exc:
             log.info("Questions: couldn't show the list to a DM (%s)", type(exc).__name__)

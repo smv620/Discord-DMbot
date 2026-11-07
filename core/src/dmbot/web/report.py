@@ -63,6 +63,7 @@ def _words(rel: dict[str, Any]) -> str:
             detail,
             bool(rel.get("directional")),
             subject_kind=str(rel.get("subjectKind") or ""),
+            feeling=True,  # (the report is the DM's alone)
         )
     )
     return f"{rel['subject']} {said} {rel['object']}"
