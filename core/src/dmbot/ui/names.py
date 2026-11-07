@@ -1218,6 +1218,7 @@ async def _offer_add_all(
     from dmbot.ui.name_background import BulkConfirm  # (it imports this module)
 
     by_kind: dict[str, list[str]] = {}
+    looks_alike = 0  # guessed a kind, but sounds like a known name: counted, never added in bulk
     for entity in waiting:
         kind = background_kind(entity)
         if (
@@ -1226,17 +1227,28 @@ async def _offer_add_all(
             or entity.source != "scan"
             or entity.description.startswith(SPELLED_OUT)
             or spelled_fix(entity)
-            or await _review_match(memory, campaign, entity) is not None
         ):
             continue
+        if await _review_match(memory, campaign, entity) is not None:
+            looks_alike += 1  # (#3683: it used to hide the whole button, so a DM with a few such
+            continue  # names had to click through every one; it just stays out of "Add all")
         by_kind.setdefault(kind, []).append(entity.id)
-    if not any(len(ids) > 1 for ids in by_kind.values()):  # one name is one press on its card
-        return False
     count = sum(len(ids) for ids in by_kind.values())
+    # Two or more names that qualify, of any kinds, make the button (one name is one press on its
+    # card). It used to need two of the SAME kind, which a mixed list of places and people never
+    # has.
+    if count < 2:
+        return False
+    left = (
+        f" {_plural(looks_alike, 'name')} that sound{'s' if looks_alike == 1 else ''} like one "
+        "you know stay for you to check one by one."
+        if looks_alike
+        else ""
+    )
     await _send(
         interaction,
         f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
-        "are. Nothing is added until you press a button.",
+        f"are. Nothing is added until you press a button.{left}",
         BulkConfirm(campaign.id, by_kind),
     )
     return True
