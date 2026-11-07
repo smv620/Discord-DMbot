@@ -135,9 +135,61 @@ class OnTheDoor(Web):
         self.assertIsNone(theirs[link]["label"])
         self.assertNotIn("Tavin", str(theirs))
 
+    async def test_the_quote_goes_to_the_dm_alone(self) -> None:
+        link = self.links["mira-keep"]
+        said = "Tavin and Voss argued all night"
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, said)
+        mine = await self.door(self.session, [link])
+        theirs = await self.door(self.player, [link])
+        self.assertEqual(mine[link]["quote"], said)
+        self.assertIsNone(theirs[link]["quote"])
+        self.assertNotIn("argued", str(theirs))
+
+    async def test_a_long_quote_is_cut_and_spaces_are_collapsed(self) -> None:
+        link = self.links["mira-keep"]
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, "x" * 400)
+        self.assertEqual(len((await self.door(self.session, [link]))[link]["quote"]), 240)
+        plain = self.links["rook-keep"]
+        await self.memory.record_link_source(self.g, self.one.id, plain, LABEL, "a   b \n c")
+        self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
+        self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
+
+    async def test_control_and_zero_width_characters_are_dropped_first_quote_stays(self) -> None:
+        link = self.links["mira-rook"]
+        await self.memory.record_link_source(
+            self.g, self.one.id, link, LABEL, "x\u200by\x00z \u00e9"
+        )
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, "a later quote")
+        self.assertEqual((await self.door(self.session, [link]))[link]["quote"], "xyz \u00e9")
+        none = self.links["mira-keep"]
+        await self.memory.record_link_source(self.g, self.one.id, none, LABEL)
+        self.assertEqual((await self.door(self.session, [none]))[none]["quote"], "")  # (none given)
+
     async def test_only_the_asked_for_connections_are_read(self) -> None:
         one, two = self.links["mira-keep"], self.links["mira-rook"]
         got = await self.door(self.session, [one])
         self.assertEqual(set(got), {one})
         self.assertEqual(set(await self.door(self.session, [one, two])), {one, two})
         self.assertEqual(await self.door(self.session, []), {})
+
+
+class OnTheAttach(unittest.TestCase):
+    """`attach` sets the quote on a connection only for the DM's full view, and only when stored."""
+
+    def page(self) -> dict[str, Any]:
+        return {"edges": [{"links": [{"id": "a"}, {"id": "b"}]}]}
+
+    def test_the_dm_gets_the_quote_where_there_is_one(self) -> None:
+        page = self.page()
+        rows = {"a": {"source": "background", "label": "Upload", "quote": "they argued"}, "b": {}}
+        link_sources.attach(page, rows, True)
+        first, second = page["edges"][0]["links"]
+        self.assertEqual(first["quote"], "they argued")
+        self.assertNotIn("quote", second)
+
+    def test_nobody_else_is_given_it_even_if_the_door_sent_it(self) -> None:
+        page = self.page()
+        rows = {"a": {"source": "background", "label": "Upload", "quote": "they argued"}}
+        link_sources.attach(page, rows, False)
+        self.assertNotIn("quote", page["edges"][0]["links"][0])
+        self.assertNotIn("argued", str(page))
