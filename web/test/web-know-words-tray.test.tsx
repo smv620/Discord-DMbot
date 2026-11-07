@@ -15,7 +15,7 @@ afterEach(cleanup);
 const REF = "100.cmp1.web-lonely";
 async function open(api = mockApi("table")) {
   render(<Web api={api} path={`/account/web/${REF}`} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   await waitFor(() => expect(document.getElementById("web-tray-heading")).toBeTruthy());
   return api;
 }
