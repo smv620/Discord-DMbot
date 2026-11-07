@@ -10,6 +10,7 @@ import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { cleanupWords as w } from "../src/content/graph-cleanup-words";
+import { webPage } from "../src/content/web-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/graph-cleanup-switch", () => ({
@@ -26,16 +27,15 @@ afterEach(() => {
 async function open(kind = "cleanup", api = mockApi("table")) {
   render(<Web api={api} path={`/account/web/100.cmp1.${kind}`} />);
   await screen.findByText(/Showing \d+ names? and \d+ connections?/);
-  fireEvent.click(screen.getByRole("button", { name: w.open }));
+  fireEvent.click(screen.getByRole("button", { name: webPage.cleanupOpen }));
   return api;
 }
 
 describe("the clean-up", () => {
   it("lists the groups largest first with their scenes, and says what has none", async () => {
     await open();
-    await screen.findByText(w.count(6, 3));
-    const headings = screen.getAllByRole("heading", { level: 3, name: /^Group \d$/ }).map((h) => h.textContent);
-    expect(headings).toEqual([w.group(1), w.group(2), w.group(3)]);
+    await screen.findByText(w.count(6));
+    expect(screen.getAllByRole("heading", { level: 3, name: w.group })).toHaveLength(3);
     expect(screen.getByText(/Okthandom led the party over the pass at dusk\./)).toBeTruthy();
     expect(screen.getAllByText(w.noScene).length).toBe(3);
     expect(screen.getByText("unnamed - Okthandom's child")).toBeTruthy();
@@ -65,7 +65,7 @@ describe("the clean-up", () => {
     expect(await screen.findByText(w.reviewDone(2))).toBeTruthy();
     cleanup();
     await open("cleanup-off");
-    await screen.findByText(w.count(6, 3));
+    await screen.findByText(w.count(6));
     expect(screen.queryByText(/DMbot will check/)).toBeNull();
   });
 
@@ -78,20 +78,42 @@ describe("the clean-up", () => {
       return { removed: true };
     };
     await open("cleanup", api);
-    await screen.findByText(w.count(6, 3));
+    await screen.findByText(w.count(6));
     fireEvent.click(screen.getByRole("button", { name: w.addHeading("Old Pell") }));
     fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "Mira" } });
     fireEvent.click(await screen.findByRole("button", { name: /^Connect to Mira/ }));
     fireEvent.input(screen.getByLabelText(w.wordsLabel), { target: { value: "sells rope to" } });
     fireEvent.click(screen.getByRole("button", { name: w.add }));
     await waitFor(() => expect(sent.some((c) => c.includes("sells rope to") && c.includes('"a":"e4"'))).toBe(true));
-    await screen.findByText(w.added);
+    expect((await screen.findAllByText(w.added)).length).toBeGreaterThan(0);
     expect(api.calls.filter((c) => c.startsWith("graphCleanup")).length).toBeGreaterThan(1);
+  });
+
+  it("says neutral words, not an all-clear, when the door doesn't say whether there is a player character", async () => {
+    const api = mockApi("table");
+    const real = api.graphCleanup!.bind(api);
+    api.graphCleanup = async (ref) => {
+      const { noPlayerCharacter: _gone, ...rest } = await real(ref);
+      return { ...rest, groups: [], total: 0 };
+    };
+    await open("cleanup", api);
+    expect(await screen.findByText(w.nothingListed)).toBeTruthy();
+  });
+
+  it("clears the search when the text is cleared", async () => {
+    await open();
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: w.addHeading("Old Pell") }));
+    const box = screen.getByLabelText(w.findLabel);
+    fireEvent.input(box, { target: { value: "Mi" } });
+    fireEvent.input(box, { target: { value: "" } });
+    await waitFor(() => expect(screen.getByText(w.findHint)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /^Connect to / })).toBeNull();
   });
 
   it("asks for both a person and words before adding", async () => {
     await open();
-    await screen.findByText(w.count(6, 3));
+    await screen.findByText(w.count(6));
     fireEvent.click(screen.getByRole("button", { name: w.addHeading("Old Pell") }));
     fireEvent.click(screen.getByRole("button", { name: w.add }));
     expect(await screen.findByText(w.needBoth)).toBeTruthy();
@@ -111,20 +133,20 @@ describe("the clean-up", () => {
     await open("cleanup", api);
     await screen.findByText(w.down);
     fireEvent.click(screen.getByRole("button", { name: w.tryAgain }));
-    await screen.findByText(w.count(6, 3));
+    await screen.findByText(w.count(6));
   });
 
   it("offers the Names page's panel for an unnamed person only", async () => {
     await open();
-    await screen.findByText(w.count(6, 3));
-    expect(screen.getAllByRole("button", { name: w.nameThem })).toHaveLength(2);
+    await screen.findByText(w.count(6));
+    expect(screen.getAllByRole("button", { name: new RegExp(`^${w.nameThem}: `) })).toHaveLength(2);
   });
 
   it("is not offered while the switch is off", async () => {
     live.on = false;
     render(<Web api={mockApi("table")} path="/account/web/100.cmp1.cleanup" />);
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
-    expect(screen.queryByRole("button", { name: w.open })).toBeNull();
+    expect(screen.queryByRole("button", { name: webPage.cleanupOpen })).toBeNull();
   });
 
   it("is not offered to someone who can't edit", async () => {
@@ -133,6 +155,6 @@ describe("the clean-up", () => {
     api.webGraph = async (ref, q) => ({ ...(await real(ref, q)), canEdit: false });
     render(<Web api={api} path="/account/web/100.cmp1.cleanup" />);
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
-    expect(screen.queryByRole("button", { name: w.open })).toBeNull();
+    expect(screen.queryByRole("button", { name: webPage.cleanupOpen })).toBeNull();
   });
 });

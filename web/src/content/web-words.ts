@@ -318,6 +318,8 @@ export const webPage = {
         `${who === null ? "One end of this connection has" : `${who} has`} no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.`,
   openNames: "Open Names page",
   // People the story never named (#3732): a kind in Graph settings, the line above the map and the panel's heading.
+  cleanupOpen: "Clean up the map",
+  cleanupClose: "Close the clean-up",
   notNamedKind: "People not named yet",
   waitingUnnamed: (n: number): string => `${n} ${n === 1 ? "person the story described is" : "people the story described are"} not named yet and waiting.`,
   reading: "DMbot is reading the map again.",

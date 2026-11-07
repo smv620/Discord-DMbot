@@ -17,7 +17,7 @@ function asNode(e: CleanupEntry): WebNode {
 }
 
 /** Add a connection for one entry: find who it is connected to, say how, and send it (the same call the map's form makes). */
-function AddConnection({ entry, api, refId, onAdded, onSignedOut }: { entry: CleanupEntry; api: AccountApi; refId: string; onAdded: () => Promise<void>; onSignedOut: () => void }) {
+function AddConnection({ entry, api, refId, onAdded, onSaid, onSignedOut }: { entry: CleanupEntry; api: AccountApi; refId: string; onAdded: () => Promise<void>; onSaid: (text: string) => void; onSignedOut: () => void }) {
   const [q, setQ] = useState("");
   const [found, setFound] = useState<{ id: string; name: string; kind: string }[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -29,7 +29,11 @@ function AddConnection({ entry, api, refId, onAdded, onSignedOut }: { entry: Cle
 
   useEffect(() => {
     const text = q.trim();
-    if (text.length < 2 || !api.webFind) return void setFound(null);
+    if (text.length < 2 || !api.webFind) {
+      latest.current += 1; // a reply for text that has since been cleared must not fill the list
+      setSearching(false);
+      return void setFound(null);
+    }
     const mine = ++latest.current;
     setSearching(true);
     const timer = setTimeout(() => {
@@ -46,7 +50,10 @@ function AddConnection({ entry, api, refId, onAdded, onSignedOut }: { entry: Cle
         },
       );
     }, 250);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      setSearching(false);
+    };
   }, [q]);
 
   async function add(e: Event): Promise<void> {
@@ -58,6 +65,7 @@ function AddConnection({ entry, api, refId, onAdded, onSignedOut }: { entry: Cle
     try {
       await api.changeWebLink(refId, { action: "add", a: entry.id, b: target.id, words: words.trim(), secret: false });
       setSaid({ ok: true, text: w.added });
+      onSaid(w.added);
       setTarget(null);
       setWords("");
       setQ("");
@@ -118,19 +126,25 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
   const [open, setOpen] = useState<string | null>(null); // the entry whose actions are open
   const [naming, setNaming] = useState<CleanupEntry | null>(null);
   const [tick, setTick] = useState(0);
+  // What the last change did, kept here because the form that made it leaves with a group that has just been linked.
+  const [news, setNews] = useState("");
   const wait = useObservedWait(loading, String(tick));
+  const reads = useRef(0); // an older, slower reply must not overwrite a newer list
 
   async function read(): Promise<void> {
     if (!api.graphCleanup) return;
+    const mine = ++reads.current;
     setLoading(true);
     setFailed(false);
     try {
-      setView(await api.graphCleanup(refId));
+      const got = await api.graphCleanup(refId);
+      if (mine === reads.current) setView(got);
     } catch (error) {
+      if (mine !== reads.current) return;
       if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut();
       setFailed(true);
     } finally {
-      setLoading(false);
+      if (mine === reads.current) setLoading(false);
     }
   }
   useEffect(() => {
@@ -138,18 +152,18 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
   }, [refId, tick]);
 
   const shown = view ? view.groups.reduce((n, g) => n + g.entries.length, 0) : 0;
-  const act = async (id: string, change: NameChange, ok: string): Promise<string | null> => {
-    if (!api.changeName) return w.addFailed;
+  // (`ok` is part of the shape the panel is given; the panel says what happened itself, so it is not used here)
+  const act = async (id: string, change: NameChange, _ok: string): Promise<string | null> => {
+    if (!api.changeName) return w.changeFailed;
     try {
       await api.changeName(refId, id, change);
     } catch (error) {
       if (error instanceof ApiError && error.kind === "signed-out") {
         onSignedOut();
-        return "";
+        return ""; // (the panel treats an empty problem as "nothing to say": the page is already on the sign-in screen)
       }
-      return w.addFailed;
+      return w.changeFailed;
     }
-    void ok;
     await read();
     return null;
   };
@@ -158,6 +172,9 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
     <section class="panel stack" aria-labelledby="cleanup-h">
       <h2 id="cleanup-h">{w.heading}</h2>
       <p class="small muted">{w.lead}</p>
+      <p class={news ? "ok" : "visually-hidden"} role="status">
+        {news}
+      </p>
       {loading && <WorkProgress stage={w.stage} startedAt={wait.startedAt} updatedAt={wait.movedAt} state={wait.quiet ? "stalled" : "running"} progressUnknown whatToDo={w.quiet} />}
       {failed && !loading && (
         <div class="stack">
@@ -175,17 +192,17 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
           {view.review && view.review.state === "running" && <p class="small" role="status">{w.reviewRunning}</p>}
           {view.review && view.review.state === "done" && <p class="small" role="status">{w.reviewDone(view.review.missed ?? 0)}</p>}
           {view.groups.length === 0 ? (
-            <p role="status">{view.noPlayerCharacter ? w.noPlayerCharacter : w.nothing}</p>
+            <p role="status">{view.noPlayerCharacter === true ? w.noPlayerCharacter : view.noPlayerCharacter === false ? w.nothing : w.nothingListed}</p>
           ) : (
             <>
               <p role="status">
-                <strong>{w.count(view.total, view.groups.length)}</strong>
+                <strong>{w.count(view.total)}</strong>
               </p>
-              {view.truncated && <p class="small muted">{w.showing(shown, view.total)}</p>}
+              {view.truncated && <p class="small">{w.showing(shown, view.total)}</p>}
               <ol class="stack">
                 {view.groups.map((g, n) => (
                   <li key={g.entries[0]?.id ?? n} class="stack">
-                    <h3 class="small">{w.group(n + 1)}</h3>
+                    <h3 class="small">{w.group}</h3>
                     <ul class="stack">
                       {g.entries.map((e) => (
                         <li key={e.id} class="stack">
@@ -195,16 +212,16 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
                           </p>
                           <p class="small">{e.scene ? `${w.scene} ${e.scene}` : w.noScene}</p>
                           <p>
-                            <button type="button" class="button secondary" aria-expanded={open === e.id} aria-label={w.addHeading(e.name)} onClick={() => setOpen(open === e.id ? null : e.id)}>
-                              {open === e.id ? w.done : w.addHeading(e.name)}
+                            <button type="button" class="button secondary" aria-expanded={open === e.id} aria-label={open === e.id ? `${w.done}: ${e.name}` : w.addHeading(e.name)} onClick={() => setOpen(open === e.id ? null : e.id)}>
+                              {open === e.id ? w.done : w.addShort}
                             </button>
                             {e.unnamed && api.nameThem && (
-                              <button type="button" class="button secondary" aria-expanded={naming?.id === e.id} onClick={() => setNaming(naming?.id === e.id ? null : e)}>
+                              <button type="button" class="button secondary" aria-expanded={naming?.id === e.id} aria-label={naming?.id === e.id ? `${w.done}: ${e.name}` : `${w.nameThem}: ${e.name}`} onClick={() => setNaming(naming?.id === e.id ? null : e)}>
                                 {naming?.id === e.id ? w.done : w.nameThem}
                               </button>
                             )}
                           </p>
-                          {open === e.id && <AddConnection entry={e} api={api} refId={refId} onAdded={read} onSignedOut={onSignedOut} />}
+                          {open === e.id && <AddConnection entry={e} api={api} refId={refId} onAdded={read} onSaid={setNews} onSignedOut={onSignedOut} />}
                         </li>
                       ))}
                     </ul>
@@ -214,7 +231,7 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
                         <ul>
                           {g.links.map((edge) => (
                             <li key={`${edge.a}-${edge.b}`} class="small">
-                              {g.entries.find((x) => x.id === edge.a)?.name} — {edge.label} — {g.entries.find((x) => x.id === edge.b)?.name}
+                              {g.entries.find((x) => x.id === edge.a)?.name ?? w.someone} — {edge.label} — {g.entries.find((x) => x.id === edge.b)?.name ?? w.someone}
                               {edge.more > 0 && ` (+${edge.more})`}
                             </li>
                           ))}

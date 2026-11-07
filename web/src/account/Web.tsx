@@ -11,7 +11,6 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { GRAPH_CLEANUP_LIVE } from "../content/graph-cleanup-switch";
-import { cleanupWords } from "../content/graph-cleanup-words";
 import { UNNAMED_MAP_LIVE } from "../content/unnamed-map-switch";
 import { BIG_WEB, kindWords, UNNAMED_KIND, webPage as words } from "../content/web-words";
 import {
@@ -769,7 +768,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         <div class="stack">
           <p>
             <button type="button" class="button secondary" aria-expanded={cleaning} onClick={() => setCleaning(!cleaning)}>
-              {cleaning ? cleanupWords.close : cleanupWords.open}
+              {cleaning ? words.cleanupClose : words.cleanupOpen}
             </button>
           </p>
           {cleaning && <LazyPanel load={() => import("./GraphCleanup")} what="the clean-up" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />}
