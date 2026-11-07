@@ -4,7 +4,7 @@
 // the server cut it, a reply arriving where its prompt already is, the "not shown" line, a look that stops after
 // repeated failures, and no buttons on an entry. Plain text only.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AiFeed from "../src/account/AiFeed";
 import { ApiError, type AccountApi, type AiFeedEntry } from "../src/account/api";
@@ -27,6 +27,7 @@ const entry = (n: number, over: Partial<AiFeedEntry> = {}): AiFeedEntry => ({
   ...over,
 });
 
+const slow = { timeout: 5000 };
 const apiWith = (aiFeed: AccountApi["aiFeed"]): AccountApi => ({ ...mockApi("table"), aiFeed }) as AccountApi;
 const props = { campaignRef: "100.cmp1", kind: "lore" as const, job: "a".repeat(32), everyMs: 15 };
 
@@ -135,5 +136,69 @@ describe("AiFeed", () => {
     box.scrollTop = 0;
     fireEvent.scroll(box); // the reader is at the top, far from the newest
     expect((await screen.findAllByRole("button", { name: w.jump })).length).toBeGreaterThan(0);
+  });
+});
+
+describe("the look waits while the tab is hidden (#3710)", () => {
+  // A fake `document.hidden`: setting it fires the same event a browser fires when the tab is hidden or shown.
+  let hiddenNow = false;
+  const setHidden = (value: boolean): void => {
+    hiddenNow = value;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  const pause = (ms: number): Promise<void> => new Promise((ok) => setTimeout(ok, ms));
+  beforeEach(() => {
+    hiddenNow = false;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hiddenNow });
+  });
+  afterEach(() => {
+    hiddenNow = false;
+  });
+
+  it("does not ask while the tab is hidden", async () => {
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(1));
+    setHidden(true);
+    await pause(20); // a look already on its way may finish; nothing new is asked
+    const atHide = aiFeed.mock.calls.length;
+    await pause(120); // several intervals go by
+    expect(aiFeed.mock.calls.length).toBe(atHide);
+  });
+
+  it("asks at once when the tab is shown again, and carries on", async () => {
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(1));
+    setHidden(true);
+    await pause(60);
+    const atHide = aiFeed.mock.calls.length;
+    setHidden(false);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(atHide));
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(atHide + 1), slow);
+  });
+
+  it("a tab hidden from the start asks nothing until it is shown", async () => {
+    hiddenNow = true;
+    const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
+    await pause(60);
+    expect(aiFeed.mock.calls.length).toBe(0);
+    setHidden(false);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(0));
+  });
+
+  it("keeps what it showed while hidden, and while shown again", async () => {
+    const api = apiWith(async () => ({ lost: 0, entries: [entry(1), entry(2)] }));
+    render(<AiFeed api={api} running {...props} />);
+    const back = await screen.findByRole("region", { name: w.windowLabel(w.repliesHeading) });
+    const before = back.textContent;
+    expect(before).toContain("Found 2.");
+    setHidden(true);
+    await pause(40);
+    expect(back.textContent).toBe(before);
+    setHidden(false);
+    await pause(40);
+    expect(back.textContent).toBe(before);
   });
 });
