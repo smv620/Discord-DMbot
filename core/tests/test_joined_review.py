@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from dmbot.memory._changes import ALREADY_UNDONE, NOT_FOUND
 from dmbot.memory.models import MemoryRuleError, WaitingJoin
 from dmbot.ui import joined_review as ui
 from dmbot.ui.names import NamesHome, Reviews, review_line
@@ -63,6 +64,7 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         )
         self.told: list[str] = []
         self.replaced: list[str] = []
+        self.changed = 0
 
         async def tell(_i: Any, text: str, **_k: Any) -> None:
             self.told.append(text)
@@ -70,74 +72,114 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         async def replace(_i: Any, text: str, _view: Any) -> None:
             self.replaced.append(text)
 
+        def changed(*_a: Any) -> None:
+            self.changed += 1
+
         patches: list[Any] = [
             patch.object(ui, "_memory", lambda _i: self.memory),
-            patch.object(ui, "_campaign_for", AsyncMock(return_value=SimpleNamespace(id="c1"))),
+            patch.object(
+                ui, "_campaign_for", AsyncMock(return_value=SimpleNamespace(id="c1", guild_id=5))
+            ),
             patch.object(ui, "sees_secrets", lambda _c, _u: dm),
-            patch.object(ui, "changed", lambda *_a: None),
+            patch.object(ui, "changed", changed),
             patch.object(ui, "_tell", tell),
             patch.object(ui, "_replace", replace),
+            patch.object(ui, "_answer_first", AsyncMock()),
         ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
-        interaction = SimpleNamespace(guild=SimpleNamespace(id=1), user=SimpleNamespace(id=9))
+        # (no guild on the interaction: a DM in a private chat works from the campaign's own)
+        interaction = SimpleNamespace(guild=None, user=SimpleNamespace(id=9))
         view = ui.JoinedReview("c1")
         return interaction, view
 
-    async def test_yes_confirms_that_batch_and_moves_on(self) -> None:
+    async def test_yes_confirms_that_batch_in_the_campaigns_own_server(self) -> None:
         interaction, view = self.setup()
-        await view.current_text(interaction)
+        await view.current_text(interaction, 5)
         await view._yes(interaction)
-        self.memory.confirm_join.assert_awaited_once_with(1, "c1", 41)
+        self.memory.confirm_join.assert_awaited_once_with(5, "c1", 41)
         self.assertIn("Players can see it", self.replaced[-1])
+        self.assertEqual(self.changed, 1)
 
     async def test_undo_takes_back_that_batch(self) -> None:
         interaction, view = self.setup()
-        await view.current_text(interaction)
+        await view.current_text(interaction, 5)
         await view._undo(interaction)
-        self.memory.undo.assert_awaited_once_with(1, "c1", 41)
+        self.memory.undo.assert_awaited_once_with(5, "c1", 41)
         self.assertIn("goes back to your list of names to check", self.replaced[-1])
 
     async def test_a_refused_undo_says_so_and_changes_nothing_else(self) -> None:
         interaction, view = self.setup()
         self.memory.undo.side_effect = MemoryRuleError("x")
-        await view.current_text(interaction)
+        await view.current_text(interaction, 5)
         await view._undo(interaction)
         self.assertEqual(self.told, [ui.CHANGED])
         self.assertEqual(self.replaced, [])
 
-    async def test_a_join_answered_elsewhere_says_it_was_answered(self) -> None:
-        interaction, view = self.setup()
-        self.memory.confirm_join.side_effect = MemoryRuleError(
-            "DMbot doesn't remember that any more."
-        )
-        await view.current_text(interaction)
-        await view._yes(interaction)
-        self.assertEqual(self.told, [ui.GONE])
+    async def test_a_guess_already_answered_elsewhere_moves_on_with_the_right_words(self) -> None:
+        for press, error in (("_yes", NOT_FOUND), ("_undo", ALREADY_UNDONE), ("_undo", NOT_FOUND)):
+            interaction, view = self.setup()
+            self.memory.confirm_join.side_effect = MemoryRuleError(error)
+            self.memory.undo.side_effect = MemoryRuleError(error)
+            await view.current_text(interaction, 5)
+            self.memory.waiting_joins.return_value = []  # (it is gone now)
+            await getattr(view, press)(interaction)
+            self.assertIn(ui.GONE, self.replaced[-1], (press, error))
+            self.assertEqual(self.told, [])
 
     async def test_a_player_can_do_nothing(self) -> None:
         interaction, view = self.setup(dm=False)
-        await view.current_text(interaction)
+        await view.current_text(interaction, 5)
         for press in (view._yes, view._undo, view._all, view._later):
             await press(interaction)
         self.assertEqual(self.told, [ui.ONLY_DMS] * 4)
         self.assertFalse(self.memory.confirm_join.await_count + self.memory.undo.await_count)
+        self.assertEqual(self.replaced, [])
 
-    async def test_all_fine_confirms_each_and_skips_one_answered_meanwhile(self) -> None:
+    async def test_all_are_right_confirms_each_but_not_one_left_for_later(self) -> None:
+        interaction, view = self.setup(joins=[JOIN, TWO])
+        await view.current_text(interaction, 5)
+        view.later.add(42)
+        await view._all(interaction)
+        self.memory.confirm_join.assert_awaited_once_with(5, "c1", 41)
+        self.assertIn("1 name is now matched", self.replaced[-1])
+
+    async def test_all_are_right_skips_one_answered_meanwhile_and_says_when_none_were_left(
+        self,
+    ) -> None:
         interaction, view = self.setup(joins=[JOIN, TWO])
         self.memory.confirm_join.side_effect = [None, MemoryRuleError("gone")]
-        await view.current_text(interaction)
+        await view.current_text(interaction, 5)
         await view._all(interaction)
         self.assertEqual(self.memory.confirm_join.await_count, 2)
         self.assertIn("1 name is now matched", self.replaced[-1])
+        self.memory.confirm_join.side_effect = MemoryRuleError("gone")
+        await view._all(interaction)
+        self.assertIn(ui.NOTHING_LEFT, self.replaced[-1])
 
-    async def test_later_leaves_it_waiting_and_all_fine_needs_more_than_one(self) -> None:
+    async def test_the_cache_is_refreshed_even_if_all_are_right_breaks_part_way(self) -> None:
         interaction, view = self.setup(joins=[JOIN, TWO])
-        await view.current_text(interaction)
+        self.memory.confirm_join.side_effect = [None, RuntimeError("boom")]
+        await view.current_text(interaction, 5)
+        with self.assertRaises(RuntimeError):
+            await view._all(interaction)
+        self.assertEqual(self.changed, 1)
+
+    async def test_later_leaves_it_waiting_and_all_are_right_needs_more_than_one(self) -> None:
+        interaction, view = self.setup(joins=[JOIN, TWO])
+        await view.current_text(interaction, 5)
         self.assertIn("✅ All are right", labels(view))
         await view._later(interaction)
         self.assertEqual(view.later, {41})
         _i, single = self.setup()
-        await single.current_text(interaction)
+        await single.current_text(interaction, 5)
         self.assertNotIn("✅ All are right", labels(single))
+
+    async def test_a_failed_first_read_says_so_instead_of_nothing_waiting(self) -> None:
+        interaction, _view = self.setup()
+        self.memory.waiting_joins.side_effect = RuntimeError("down")
+        with patch.object(ui, "_send", AsyncMock()) as send:
+            await ui.start_joined_review(interaction, "c1")
+        self.assertEqual(self.told, [ui.COULDNT_LOAD])
+        self.assertFalse(send.await_count)

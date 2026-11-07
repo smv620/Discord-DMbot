@@ -9,9 +9,10 @@ import logging
 
 import discord
 
-from dmbot.memory._changes import NOT_FOUND
+from dmbot.campaigns import Campaign
+from dmbot.memory._changes import ALREADY_UNDONE, NOT_FOUND
 from dmbot.memory.models import MemoryRuleError, WaitingJoin
-from dmbot.ui.dmbot_commands import _Button, _Menu, _replace, _send, _tell
+from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,10 @@ def summary_line(count: int) -> str:
     return f"🤖 DMbot matched {count} {noun} on its own. Please check {it}."
 
 
+COULDNT_LOAD = "Couldn't load DMbot's guesses just now. Try again in a moment."
+NOTHING_LEFT = "Nothing was left to confirm: they were all answered already."
+
+
 async def start_joined_review(interaction: discord.Interaction, campaign_id: str) -> None:
     memory = _memory(interaction)
     if memory is None:
@@ -51,7 +56,12 @@ async def start_joined_review(interaction: discord.Interaction, campaign_id: str
         await _tell(interaction, ONLY_DMS)
         return
     view = JoinedReview(campaign.id)
-    text = await view.current_text(interaction)
+    try:
+        text = await view.current_text(interaction, campaign.guild_id)
+    except Exception:
+        log.exception("Couldn't read the names DMbot matched on its own")
+        await _tell(interaction, COULDNT_LOAD)
+        return
     if text is None:
         await _tell(interaction, NOTHING_WAITING)
         return
@@ -59,7 +69,7 @@ async def start_joined_review(interaction: discord.Interaction, campaign_id: str
 
 
 class JoinedReview(_Menu):
-    """Yes / Undo / Later, and All fine. Later keeps the join waiting for another time."""
+    """Yes / Undo / Later, and All are right. Later keeps the guess waiting for another time."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__()
@@ -67,14 +77,13 @@ class JoinedReview(_Menu):
         self.later: set[int] = set()
         self.shown: WaitingJoin | None = None
 
-    async def current_text(self, interaction: discord.Interaction) -> str | None:
+    async def current_text(self, interaction: discord.Interaction, guild_id: int) -> str | None:
         memory = _memory(interaction)
-        guild = interaction.guild
-        if memory is None or guild is None:
+        if memory is None:
             return None
         waiting = [
             j
-            for j in await memory.waiting_joins(guild.id, self.campaign_id)
+            for j in await memory.waiting_joins(guild_id, self.campaign_id)
             if j.batch not in self.later
         ]
         self.clear_items()
@@ -94,84 +103,108 @@ class JoinedReview(_Menu):
             )
         return question_text(self.shown, len(waiting))
 
-    async def _next(self, interaction: discord.Interaction, done: str) -> None:
-        text = await self.current_text(interaction)
+    async def _next(self, interaction: discord.Interaction, guild_id: int, done: str) -> None:
+        try:
+            text = await self.current_text(interaction, guild_id)
+        except Exception:
+            log.exception("Couldn't read the names DMbot matched on its own")
+            self.stop()
+            await _replace(interaction, f"{done}\n\n{COULDNT_LOAD}".strip(), None)
+            return
         if text is None:
             self.stop()
             await _replace(interaction, f"{done}\n\n{NOTHING_WAITING}".strip(), None)
             return
         await _replace(interaction, f"{done}\n\n{text}".strip(), self)
 
-    async def _may_answer(self, interaction: discord.Interaction) -> bool:
-        """Is this person a DM of the campaign (checked on every press)?"""
+    async def _may_answer(self, interaction: discord.Interaction) -> Campaign | None:
+        """The campaign when this person is a DM of it (checked on every press), else None after
+        saying why. The server is the campaign's own, so it works from a private chat too."""
         campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None or interaction.guild is None:
-            return False
+        if campaign is None:
+            return None
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, ONLY_DMS)
-            return False
-        return True
+            return None
+        return campaign
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         j = self.shown
         memory = _memory(interaction)
-        if j is None or memory is None or not await self._may_answer(interaction):
+        campaign = await self._may_answer(interaction)
+        if j is None or memory is None or campaign is None:
             return
-        assert interaction.guild is not None  # (`_may_answer` checked)
+        await _answer_first(interaction, in_place=True)
         try:
-            await memory.confirm_join(interaction.guild.id, self.campaign_id, j.batch)
+            await memory.confirm_join(campaign.guild_id, self.campaign_id, j.batch)
         except MemoryRuleError as exc:
-            await _tell(interaction, GONE if str(exc) == NOT_FOUND else f"Couldn't do that. {exc}")
+            if str(exc) == NOT_FOUND:  # answered on another screen: move on to the next
+                await self._next(interaction, campaign.guild_id, GONE)
+            else:
+                await _tell(interaction, f"Couldn't do that. {exc}")
             return
-        await self._after_change(interaction)
+        changed(interaction, campaign)
         await self._next(
             interaction,
+            campaign.guild_id,
             f"✅ **{_md(j.spelling)}** is now **{_md(j.keep_name)}**. Players can see it.",
         )
 
     async def _undo(self, interaction: discord.Interaction) -> None:
         j = self.shown
         memory = _memory(interaction)
-        if j is None or memory is None or not await self._may_answer(interaction):
+        campaign = await self._may_answer(interaction)
+        if j is None or memory is None or campaign is None:
             return
-        assert interaction.guild is not None
+        await _answer_first(interaction, in_place=True)
         try:
-            await memory.undo(interaction.guild.id, self.campaign_id, j.batch)
-        except MemoryRuleError:  # (TooLateToUndo is one: a name was changed since)
-            await _tell(interaction, CHANGED)
+            await memory.undo(campaign.guild_id, self.campaign_id, j.batch)
+        except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+            if str(exc) in (NOT_FOUND, ALREADY_UNDONE):  # answered on another screen
+                await self._next(interaction, campaign.guild_id, GONE)
+            else:
+                await _tell(interaction, CHANGED)
             return
-        await self._after_change(interaction)
+        changed(interaction, campaign)
         await self._next(
             interaction,
+            campaign.guild_id,
             f"↩️ Undone. **{_md(j.spelling)}** is no longer **{_md(j.keep_name)}**. "
             "It goes back to your list of names to check.",
         )
 
     async def _all(self, interaction: discord.Interaction) -> None:
         memory = _memory(interaction)
-        if memory is None or not await self._may_answer(interaction):
+        campaign = await self._may_answer(interaction)
+        if memory is None or campaign is None:
             return
-        assert interaction.guild is not None
+        await _answer_first(interaction, in_place=True)
         done = 0
-        for j in await memory.waiting_joins(interaction.guild.id, self.campaign_id):
-            try:
-                await memory.confirm_join(interaction.guild.id, self.campaign_id, j.batch)
-                done += 1
-            except MemoryRuleError:
-                continue  # (answered on another screen meanwhile)
-        await self._after_change(interaction)
-        await self._next(
-            interaction, f"✅ {done} {'name is' if done == 1 else 'names are'} now matched."
-        )
+        try:
+            for j in await memory.waiting_joins(campaign.guild_id, self.campaign_id):
+                if j.batch in self.later:
+                    continue  # (the DM pressed Later on it: it stays for another time)
+                try:
+                    await memory.confirm_join(campaign.guild_id, self.campaign_id, j.batch)
+                    done += 1
+                except MemoryRuleError:
+                    continue  # (answered on another screen meanwhile)
+        finally:
+            if done:
+                changed(interaction, campaign)  # (even if something broke part-way)
+        if not done:
+            await self._next(interaction, campaign.guild_id, NOTHING_LEFT)
+            return
+        noun = "name is" if done == 1 else "names are"
+        await self._next(interaction, campaign.guild_id, f"✅ {done} {noun} now matched.")
 
     async def _later(self, interaction: discord.Interaction) -> None:
-        if not await self._may_answer(interaction):
+        campaign = await self._may_answer(interaction)
+        if campaign is None:
             return
+        await _answer_first(interaction, in_place=True)
         if self.shown is not None:
             self.later.add(self.shown.batch)
-        await self._next(interaction, "⏳ Left for later. It stays on your list.")
-
-    async def _after_change(self, interaction: discord.Interaction) -> None:
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is not None:
-            changed(interaction, campaign)
+        await self._next(
+            interaction, campaign.guild_id, "⏳ Left for later. It stays on your list."
+        )
