@@ -1,6 +1,7 @@
 """What follows from the family links a campaign has stated (#2959, item 2).
 
-Pure: no database, no AI.
+Pure: no database, no AI. Callers pass one campaign's stated links only: the ids are not
+campaign-scoped, so links from two campaigns would merge into one family.
 
 Two rules, each built from exactly two stated links, so a derived link is never a source for
 another:
@@ -32,6 +33,8 @@ from dataclasses import dataclass
 _PARENT = "parent"
 _GRANDPARENT = "grandparent"
 _SIBLING = "sibling"
+_CHILD = "child"
+_GRANDCHILD = "grandchild"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +61,7 @@ def _parent_of(link: Stated) -> tuple[str, str] | None:
     """(parent, child) for a parent or child link, read in the parent's direction."""
     if link.role == _PARENT:
         return link.a_id, link.b_id
-    if link.role == "child":
+    if link.role == _CHILD:
         return link.b_id, link.a_id
     return None
 
@@ -87,7 +90,7 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
             siblings.setdefault(link.b_id, []).append((link.a_id, link.link_id))
         elif link.role == _GRANDPARENT:
             known.add((link.a_id, _GRANDPARENT, link.b_id))
-        elif link.role == "grandchild":
+        elif link.role == _GRANDCHILD:
             known.add((link.b_id, _GRANDPARENT, link.a_id))
 
     found: dict[tuple[str, str, str], Derived] = {}

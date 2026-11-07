@@ -151,9 +151,26 @@ class TheStableOrder(unittest.TestCase):
             self.assertEqual(derive(shuffled), expected)
 
 
+class TheSourceTieBreak(unittest.TestCase):
+    def test_a_fact_with_two_paths_names_the_same_sources_in_any_order(self) -> None:
+        links = [
+            link("1", "X", "parent", "A"),
+            link("2", "A", "sibling", "B"),
+            link("3", "X", "parent", "C"),
+            link("4", "C", "sibling", "B"),
+        ]
+        expected = derive(links)
+        self.assertEqual(expected[0].source_ids, ("1", "2"))
+        rng = random.Random(11)
+        for _ in range(20):
+            shuffled = list(links)
+            rng.shuffle(shuffled)
+            self.assertEqual(derive(shuffled)[0].source_ids, ("1", "2"))
+
+
 class TheHalfSiblingCase(unittest.TestCase):
-    def test_a_half_sibling_still_gives_the_parent_link_as_documented(self) -> None:
-        # A and B share only the other parent: the rule still fires, as the module says
+    def test_rule_one_fires_for_a_pair_that_may_be_half_siblings(self) -> None:
+        # A and B may share only the other parent: the rule still fires, as the module documents
         out = derive(
             [
                 link("1", "X", "parent", "A"),
@@ -161,6 +178,21 @@ class TheHalfSiblingCase(unittest.TestCase):
             ],
         )
         self.assertEqual(out, [Derived("X", "parent", "B", ("1", "2"))])
+
+
+class TheDerivedLinksFeedNothing(unittest.TestCase):
+    def test_a_derived_parent_does_not_become_a_source_for_a_grandparent(self) -> None:
+        # X parent A and A sibling B derive X parent B; B parent C must not then
+        # give X grandparent C
+        out = derive(
+            [
+                link("1", "X", "parent", "A"),
+                link("2", "A", "sibling", "B"),
+                link("3", "B", "parent", "C"),
+            ],
+        )
+        self.assertNotIn(("X", "grandparent", "C"), [(d.a_id, d.role, d.b_id) for d in out])
+        self.assertIn(("X", "parent", "B"), [(d.a_id, d.role, d.b_id) for d in out])
 
 
 class TheModuleIsPure(unittest.TestCase):
@@ -173,8 +205,11 @@ class TheModuleIsPure(unittest.TestCase):
                 names.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names.add(node.module)
-        for name in names:
-            self.assertFalse(name.startswith(("dmbot.db", "dmbot.ai", "psycopg", "discord")), name)
+        # Standard library only: nothing from the bot, the database or the AI can get in
+        self.assertLessEqual(
+            {name.split(".")[0] for name in names},
+            {"__future__", "collections", "dataclasses", "re", "typing"},
+        )
 
 
 if __name__ == "__main__":
