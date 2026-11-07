@@ -109,7 +109,9 @@ class SheetStore:
         cleaned = sheets.clean(snapshot)
         if cleaned is None:
             raise SheetRefused("That isn't a character sheet DMbot can keep.")
-        async with self._db.guild(guild_id) as conn:
+        # Lineage (#3739): a snapshot read from a link is DMbot's work and takes the running build's
+        # stamp; one the DM typed is theirs and keeps it.
+        async with self._db.guild(guild_id, by_dmbot=url is not None) as conn:
             if url is not None:
                 cur = await conn.execute(
                     "UPDATE character_sheets SET sheet = %s, source = %s, fetched_at = %s"
