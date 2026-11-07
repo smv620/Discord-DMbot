@@ -86,7 +86,7 @@ EXPORT_FORMAT = "dmbot-campaign"
 # works them out from the old flags; a file of this version keeps the lists it holds, however few.
 # 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
 # simply has none; a DMbot that predates the section refuses a file of this version as too new.
-EXPORT_VERSION = 4
+EXPORT_VERSION = 5
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -1865,6 +1865,9 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
+            # A restore keeps the stamp each row was made with, NULL included, and never stamps a
+            # row with the build that loaded it (#3739, `dmbot.lineage`).
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
             for name, rows in sections.items():
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)

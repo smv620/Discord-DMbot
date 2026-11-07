@@ -26,9 +26,130 @@ import os
 import re
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
-# Schema-side pattern, shared by every migration's CHECK so the column means one thing everywhere.
-COMMIT_CHECK = "~ '^[0-9a-f]{40}$'"
-NOT_STAMPED = "made before versions were recorded"
+OLD_ROW = "made before versions were recorded"
+
+
+# The tables that carry the stamp now (the catalog test checks this against the database). Each part
+# of #3739 adds its area's tables; `NOT_YET` shrinks by the same amount.
+STAMPED_MEMORY = (
+    "memory_entities", "memory_aliases", "memory_relations", "memory_claims", "memory_states",
+    "memory_perspectives", "memory_beliefs", "memory_evidence", "memory_impressions",
+    "memory_attitudes", "memory_deed_proposals", "memory_scenes", "memory_changes",
+    "memory_contradictions", "memory_differences", "memory_heard", "memory_mentions",
+    "memory_vectors", "memory_who_answers", "memory_kind_offers", "memory_knowers",
+    "memory_alias_knowers", "memory_told", "memory_link_sources", "memory_importance",
+    "memory_flags", "memory_rule_links", "memory_report_runs", "backstory_links",
+    "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
+    "rel_ties", "lore_uploads",
+)  # fmt: skip
+STAMPED = frozenset(STAMPED_MEMORY)
+
+# Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
+# (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
+# moves its tables to `STAMPED`; the list ends empty.
+NOT_YET: tuple[str, ...] = (
+    # part 2: recaps and audio
+    "recap_accepted", "recap_dictionaries", "recap_holds", "recap_jobs", "recap_name_checks",
+    "recap_requests", "theatre_lines", "theatre_runs",
+    # part 3: transcripts and imports
+    "transcript_lines", "transcript_respells", "transcript_sessions", "transcript_suggestions",
+    "session_imports", "import_plays", "import_speakers", "said_as_suggestions", "session_notes",
+    # part 4: the rest
+    "ai_feed", "map_notes", "campaign_pictures", "picture_actions", "plot_chat", "plot_checks",
+    "plot_fine", "plot_issues", "pack_suggestions", "rule_set_suggestions", "import_clock_offers",
+    "character_sheets", "memory_corrections",
+)  # fmt: skip
+
+_DM = "what the DM wrote or chose"
+_QUEUE = "a queue of the DM's website choices, waiting for the bot"
+_PLUMBING = "bookkeeping, not something DMbot generated"
+# Campaign tables that are never stamped, each with why. A new campaign table must be stamped or
+# be added here with its reason (the catalog test, `tests/test_lineage_catalog.py`).
+NOT_STAMPED: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "campaign_dms",
+            "campaign_optional_rules",
+            "homebrew_entries",
+            "house_rule_wins",
+            "house_rules",
+            "house_rules_file",
+            "memory_predicates",
+            "memory_types",
+            "name_later",
+            "name_not_same",
+            "name_answers",
+            "npc_notes",
+            "npc_roster",
+            "recap_must_haves",
+            "recap_style_examples",
+            "recap_style_notes",
+            "recap_upload_rights",
+            "rule_set_codes",
+            "rule_set_editors",
+            "rule_set_follows",
+            "rule_set_versions",
+            "rule_sets",
+            "shared_confirmations",
+            "site_approvals",
+            "speaker_erasures",
+            "speaker_removals",
+            "import_consents",
+            "campaign_speakers",
+            "adventure_chunks",
+            "adventure_documents",
+            "fightbot_players",
+            "game_clocks",
+            "game_clock_groups",
+            "game_effects",
+            "plan_divergences",
+            "plan_links",
+            "plan_nodes",
+            "plan_position",
+            "plan_same_as",
+            "report_answers",
+            "secret_exposures",
+        ),
+        _DM,
+    ),
+    **dict.fromkeys(
+        (
+            "name_actions",
+            "setting_actions",
+            "web_backup_parts",
+            "web_backups",
+            "web_house_file_actions",
+            "web_line_fixes",
+            "web_peeks",
+            "web_recap_style_actions",
+            "web_report_requests",
+            "web_rule_actions",
+            "web_sheet_actions",
+            "campaign_handover_offers",
+            "merge_restores",
+        ),
+        _QUEUE,
+    ),
+    **dict.fromkeys(
+        (
+            "active_sessions",
+            "adventure_reads",
+            "dm_waiting_sent",
+            "game_clock_group_log",
+            "game_clock_log",
+            "image_day_use",
+            "npcs_channel_messages",
+            "owner_campaigns",
+            "pack_suggestions_sent",
+            "plan_spend",
+            "question_counts",
+            "question_notices",
+            "rule_set_suggestions_sent",
+            "session_usage",
+        ),
+        _PLUMBING,
+    ),
+}
 
 
 def running_commit() -> str | None:
@@ -45,4 +166,4 @@ def valid(value: object) -> bool:
 
 def short(value: str | None) -> str:
     """What the website's details show: "made by DMbot version abc1234", or the old-row words."""
-    return f"made by DMbot version {value[:7]}" if value else NOT_STAMPED
+    return f"made by DMbot version {value[:7]}" if value else OLD_ROW

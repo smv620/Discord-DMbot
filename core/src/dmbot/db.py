@@ -159,9 +159,10 @@ class Database:
         every stamp exactly as the row carries it.
         """
         async with self._pool.connection() as conn, conn.transaction():
-            await self._stamp(conn, by_dmbot=by_dmbot, restoring=restoring)
             if snapshot:
                 await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            # (after the isolation level: that must be the transaction's first statement)
+            await self._stamp(conn, by_dmbot=by_dmbot, restoring=restoring)
             await conn.execute(
                 "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
             )
