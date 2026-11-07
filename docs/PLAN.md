@@ -6003,6 +6003,20 @@ dozen screens, and gets the same list, words and context in both places.
   "beggar woman", "a hooded figure") never becomes an other name that matches on its own. A merge or reader that
   would add one keeps it as a description of that entry, shown on the entry and in its evidence, never used to place
   a new line. Readers file such people as unnamed (#2790) when the text gives no proper name.
+- **The sample run's answer keys follow the documents** (owner, 2026-11-07, #3714): when a deployed run finds a
+  clear improvement over the keys (something the sample documents plainly say that the key lacks), GraphEngineer
+  adds it to the keys in its own PR. The PR names the document line and records it in the README's "Changes to the
+  keys" log, and scores are only compared on the same key version (`core/tests/fixtures/story_graph/README.md`). A
+  find the documents don't support is reported on #3545, never added.
+- **Watching DMbot's AI calls on the upload pages** (owner, 2026-11-07, #3710): while a lore upload or a session
+  import is read, its page shows two read-only windows: each prompt DMbot sends to the AI and each reply. Each
+  entry is cut to its first 500 characters, then `[...]`, before it is stored. **An exception to "every wait
+  shows counts and stages only":** these windows show transcript and lore words, to the campaign's DM and game
+  masters only, never to players or peek viewers. Entries are deleted 24 hours after they're made, at once when
+  anyone in the server presses Stop recording me, and with the campaign. They're never in a backup and never logged,
+  and capturing a call never slows or fails it. The prompt shown is the material sent, not DMbot's fixed
+  instructions. Off by default (`DMBOT_AI_FEED` and the page's switch); whether paying customers' DMs get it is the
+  owner's call before it goes on for them.
 
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 
