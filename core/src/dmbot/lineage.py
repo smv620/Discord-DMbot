@@ -55,7 +55,7 @@ STAMPED_MEMORY = (
     "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
     "rel_ties", "lore_uploads",
 )  # fmt: skip
-# Part 2: recaps, name checks and the theatre script (migration 0379).
+# Part 2: recaps, name checks and the theatre script (migration 0380).
 STAMPED_RECAPS = (
     "recap_jobs", "recap_dictionaries", "recap_requests", "recap_accepted", "theatre_lines",
 )  # fmt: skip

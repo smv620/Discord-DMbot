@@ -1,6 +1,6 @@
-"""0379_made_by_commit_recaps
+"""0380_made_by_commit_recaps
 
-Data lineage, part 2 (#3739): recaps, name checks and the theatre script record the build that made
+Data lineage, part 2 (#3739): recaps and the theatre script record the build that made
 each row.
 """
 
