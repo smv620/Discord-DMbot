@@ -167,15 +167,30 @@ describe("the look waits while the tab is hidden (#3710)", () => {
   });
 
   it("asks at once when the tab is shown again, and carries on", async () => {
+    // The rhythm is slow here, so a look soon after the show can only be the one shown-again look.
     const aiFeed = vi.fn(async () => ({ lost: 0, entries: [entry(1)] }));
-    render(<AiFeed api={apiWith(aiFeed)} running {...props} />);
-    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(1));
+    render(<AiFeed api={apiWith(aiFeed)} running {...props} everyMs={60_000} />);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBe(1));
     setHidden(true);
     await pause(60);
-    const atHide = aiFeed.mock.calls.length;
     setHidden(false);
-    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(atHide));
-    await waitFor(() => expect(aiFeed.mock.calls.length).toBeGreaterThan(atHide + 1), slow);
+    await waitFor(() => expect(aiFeed.mock.calls.length).toBe(2), { timeout: 200 });
+    await pause(60);
+    expect(aiFeed.mock.calls.length).toBe(2); // and the usual rhythm, not a flood
+  });
+
+  it("keeps the out-of-date note while hidden, and while shown again", async () => {
+    const api = apiWith(async () => {
+      throw new ApiError("server");
+    });
+    render(<AiFeed api={api} running {...props} />);
+    expect(await screen.findByText(w.stalled)).toBeTruthy();
+    setHidden(true);
+    await pause(40);
+    expect(screen.getByText(w.stalled)).toBeTruthy();
+    setHidden(false);
+    await pause(40);
+    expect(screen.getByText(w.stalled)).toBeTruthy();
   });
 
   it("a tab hidden from the start asks nothing until it is shown", async () => {

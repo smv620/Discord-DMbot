@@ -120,7 +120,14 @@ export default function AiFeed({
     // Shown again (#3710): one look at once if the job is still going, or its final look has not been made yet, then
     // the usual rhythm. A look already on its way sets the next one itself.
     const shown = (): void => {
-      if (document.hidden || !live || busy) return;
+      if (!live) return;
+      // Hidden: nothing may stay pending (a timer set before the hide would fire as a no-op later).
+      if (document.hidden) {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+        return;
+      }
+      if (busy) return;
       if (timer !== undefined) clearTimeout(timer);
       if (runningNow.current || !finalLook) void look(!runningNow.current);
     };
