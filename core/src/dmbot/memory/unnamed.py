@@ -11,11 +11,17 @@ later ("Give them a name"), and DMbot only ever proposes it as a question.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
+from datetime import UTC, datetime
 
 from dmbot.memory.models import name_key
 
-SUFFIX = "(name unknown)"
+# Every person or group the story never named still has a name (owner, 2026-11-07, #3736):
+# "unnamed - " and the most distinguishing description the story gives ("unnamed - Ken's sister",
+# "unnamed - barmaid at Three Flags Sailing with red hair"). Never a made-up name: DMbot never
+# invents story. It replaces the old "<description> (name unknown)" label everywhere.
+PREFIX = "unnamed - "
+SOMEONE = PREFIX + "someone"  # one whose description this reader may not be told
 NAME_FIRST = "Give them a name first: DMbot doesn't know who they are yet."
 # Showing a connection to an end the story never named (#3426); the website says what to do.
 # (`web_actions` matches this text to give the website its own refusal word: reword both together.)
@@ -85,19 +91,52 @@ def _without_owner(word: str, anchor_name: str) -> str:
     return word
 
 
+# The label before #3736: "<description> (name unknown)". A chain held it twice ("Ken's sister (name
+# unknown)'s son (name unknown)"), and an anchor cut to `ANCHOR_MAX` could leave it half there
+# ("… (name unk's son (name unknown)"). Read only to bring old rows and old backups forward.
+OLD_SUFFIX = " (name unknown)"
+_OLD_WHOLE = re.compile(r" \(name unknown\)")
+_OLD_CUT = re.compile(
+    r" \(n(?:a(?:m(?:e(?: (?:u(?:n(?:k(?:n(?:o(?:w(?:n)?)?)?)?)?)?)?)?)?)?)?(?='s )"
+)
+
+
+def is_old_label(text: str) -> bool:
+    """A name written in the old form, in a row or a backup from before #3736."""
+    return text.endswith(OLD_SUFFIX)
+
+
+def from_old_label(text: str) -> str:
+    """ "Ken's sister (name unknown)'s son (name unknown)" as it is called now: "unnamed - Ken's
+    sister's son". Migration 0379 does the same in SQL; a backup is brought forward with this."""
+    return PREFIX + _OLD_CUT.sub("", _OLD_WHOLE.sub("", text))
+
+
+def is_label(text: str) -> bool:
+    """Is this an unnamed person's name ("unnamed - Ken's sister"), not a name the story gave?"""
+    return text.startswith(PREFIX)
+
+
+def description(text: str) -> str:
+    """The description in an unnamed person's name ("Ken's sister"); any other text as it is."""
+    return text[len(PREFIX) :] if is_label(text) else text
+
+
 def label(what: str, anchor_name: str | None = None) -> str:
-    """ "Ken's sister (name unknown)", or "a hooded figure (name unknown)" with nobody to hang
-    them off."""
+    """ "unnamed - Ken's sister", or "unnamed - a hooded figure" with nobody to hang them off. An
+    anchor that is itself unnamed lends its description, so a chain reads "unnamed - Ken's
+    sister's son", never "unnamed - unnamed - …"."""
     word = tidy(what)
     if anchor_name:
+        anchor_name = description(anchor_name)
         whose = possessive(anchor_name[:ANCHOR_MAX].rstrip())
-        return f"{whose} {_ARTICLE.sub('', _without_owner(word, anchor_name))} {SUFFIX}"
-    return f"{word} {SUFFIX}"
+        return f"{PREFIX}{whose} {_ARTICLE.sub('', _without_owner(word, anchor_name))}"
+    return f"{PREFIX}{word}"
 
 
 def stored(what: str, anchor_name: str | None = None) -> str:
-    """The copy kept in the name column (it must fit 100 characters and still end in the suffix,
-    so the word is shortened, never the suffix): lists that show the stored name stay right."""
+    """The copy kept in the name column (it must fit 100 characters and keep its "unnamed - ", so
+    the word is shortened, never the prefix): lists that show the stored name stay right."""
     full = label(what, anchor_name)
     if len(full) <= STORED_MAX:
         return full
@@ -105,11 +144,50 @@ def stored(what: str, anchor_name: str | None = None) -> str:
     return label(tidy(what)[: max(room, 1)].rstrip(), anchor_name)
 
 
+# The last resort that keeps a name unique (#3736). English month names, fixed, so the words are the
+# same whatever the server's locale, and the same as migration 0379's SQL `Mon`.
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_FIRST_SEEN = re.compile(r"\s*\(first seen [^)]*\)$")
+
+
+def without_tag(what: str) -> str:
+    """The description without its "(first seen …)": that tells two people apart in their name,
+    but is no word of the story, so it never decides whether two descriptions are one person."""
+    return _FIRST_SEEN.sub("", what)
+
+
+def first_seen(seen_at: int, *, with_time: bool = False) -> str:
+    """ "7 Nov 2026", or "7 Nov 2026 19:05": when they were first seen, in UTC so every reader of
+    the name sees the same words."""
+    when = datetime.fromtimestamp(seen_at, tz=UTC)
+    day = f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
+    return f"{day} {when:%H:%M}" if with_time else day
+
+
+def unique_what(what: str, anchor_name: str | None, taken: Collection[str], seen_at: int) -> str:
+    """The description to keep, so the name is unique in the campaign (#3736). `taken` holds the
+    `name_key` of every live unnamed name. When the story gives nothing more to tell two people
+    apart, the last resort is when this one was first seen, from the session's own date, then its
+    time (Supervisor's ruling on #3736): a fact of the table, never invented story. The words are
+    cut to leave room for the tag inside the stored name, so the tag is never the part cut off."""
+    word = tidy(what)
+    if name_key(stored(word, anchor_name)) not in taken:
+        return word
+    room = min(MAX_WHAT, STORED_MAX - len(label("", anchor_name)) - 1)
+    more = word
+    for with_time in (False, True):
+        tag = f" (first seen {first_seen(seen_at, with_time=with_time)})"
+        more = word[: max(room - len(tag), 1)].rstrip() + tag
+        if name_key(stored(more, anchor_name)) not in taken:
+            return more
+    return more  # (two in the same minute with the same words: a second look will ask the DM)
+
+
 def same_person_key(what: str, role: str | None) -> str:
     """What makes two descriptions the same person when they hang off the same entry: the same
     relationship and the same word, ignoring case, an article and punctuation. "His other sister"
     is a different word, so it is a different person."""
-    return f"{(role or '').casefold()}|{name_key(_ARTICLE.sub('', tidy(what)))}"
+    return f"{(role or '').casefold()}|{name_key(_ARTICLE.sub('', tidy(without_tag(what))))}"
 
 
 def shown(what: str, anchor_id: str | None, names: Mapping[str, str]) -> str:

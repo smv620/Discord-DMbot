@@ -103,6 +103,35 @@ class TheTrigger(DatabaseTest):
             await self.memory.undo(GUILD, self.campaign.id, batch)
         self.assertEqual(await self._stamp(entity), NEW)  # the rewrite's, not the undoing build's
 
+    async def test_undo_works_for_a_dmbot_write_under_a_set_build(self) -> None:
+        """The stamp is never part of "changed since": DMbot writes, the DM undoes."""
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            entity = await self._add("Mira", source="extractor")
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            batch = await self._reader_rewrite(entity)
+            await self.memory.undo(GUILD, self.campaign.id, batch)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT description AS d FROM memory_entities WHERE id = %s", (entity,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["d"], "")
+
+    async def test_undo_ignores_a_stamp_in_a_logged_row_as_the_web_doors_log_it(self) -> None:
+        """The website's SQL doors log `to_jsonb(row)`, whole rows, which carry the stamp."""
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            entity = await self._add("Mira", source="extractor")
+            batch = await self._reader_rewrite(entity)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_changes SET before = before || jsonb_build_object("
+                "'made_by_commit', %s::text), after = after || jsonb_build_object("
+                "'made_by_commit', %s::text) WHERE batch = %s",
+                (OLD, OLD, batch),
+            )
+        await self.memory.undo(GUILD, self.campaign.id, batch)
+
     async def test_an_old_row_reads_fine_and_a_dm_edit_leaves_it_empty(self) -> None:
         entity = await self._add("Mira")
         async with self.db.guild(GUILD, restoring=True) as conn:

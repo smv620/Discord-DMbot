@@ -6003,6 +6003,25 @@ dozen screens, and gets the same list, words and context in both places.
   "beggar woman", "a hooded figure") never becomes an other name that matches on its own. A merge or reader that
   would add one keeps it as a description of that entry, shown on the entry and in its evidence, never used to place
   a new line. Readers file such people as unnamed (#2790) when the text gives no proper name.
+- **Unnamed people and groups still have a name** (owner, 2026-11-07, #3736): an entry the story never named is
+  written `unnamed - <its most distinguishing description>` ("unnamed - barmaid at Three Flags Sailing with red
+  hair", "unnamed - loud sailors sitting in the corner"). The name comes from what the story says, never an invented
+  personal name, and is unique in the campaign. It is kept, with a connection saved, when it interacts with a named
+  entry, a player character included, even in a small way. An unnamed entry connected only to other unnamed ones, or
+  to nothing yet, is **not** dropped, in the session or after it: a later session may link the chain to the story
+  (the bald man hands the eye-patch drunk a pouch). What to do with isolated entries is decided later, and nothing
+  deletes them meanwhile.
+- **Everything is kept; the DM cleans up** (owner, 2026-11-07): anyone who interacts with a player character is
+  kept, and so is anyone they interact with, and every entity is saved. An entry or group **not linked to any player
+  character by any chain** is "isolated". The website's graph clean-up page lists them, with their scene summaries, so
+  the DM can add the missing connections (#3740); Discord shows a count and the link. When the DM's fixes there have
+  been quiet for 15 minutes, a careful AI check asks whether the story held clues DMbot missed. A connection that
+  was only in the DM's head is fine and isn't reported. A missed clue is written up as
+  `DMbot_graph_improvements_<timestamp>.md` (#3741), and for campaigns that share to improve DMbot, posted as a
+  Discussion in the owner's **private** repository, never this public one (#3742).
+- **Every thing DMbot makes records the commit that made it** (owner, 2026-11-07, #3739): entries, connections,
+  claims, recaps, music, voiceovers, map coordinates, pictures, transcript cleaning and anything else generated, so a
+  fault is pinned to a version, and an old row from a version that's already fixed isn't taken for a new bug.
 - **The sample run's answer keys follow the documents** (owner, 2026-11-07, #3714): when a deployed run finds a
   clear improvement over the keys (something the sample documents plainly say that the key lacks), GraphEngineer
   adds it to the keys in its own PR. The PR names the document line and records it in the README's "Changes to the

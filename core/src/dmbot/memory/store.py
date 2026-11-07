@@ -1606,6 +1606,7 @@ class MemoryStore:
         role: str | None = None,
         details: str = "",
         read: dict[str, str] | None = None,
+        seen_at: int | None = None,
     ) -> UnnamedAdded:
         """The unnamed person a stated relationship needs ("Ken's sister", "a hooded figure"):
         a proposed character with no alias, so no name match can find it.
@@ -1625,7 +1626,9 @@ class MemoryStore:
         if len(details) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, "extractor") as w:
-            return await self._add_unnamed_in(w, word, role, details, anchor_id, read)
+            return await self._add_unnamed_in(
+                w, word, role, details, anchor_id, read, seen_at=seen_at
+            )
 
     async def _add_unnamed_in(
         self,
@@ -1635,8 +1638,11 @@ class MemoryStore:
         details: str,
         anchor_id: str | None,
         read: dict[str, str] | None = None,
+        seen_at: int | None = None,
     ) -> UnnamedAdded:
-        """`add_unnamed` inside an open write."""
+        """`add_unnamed` inside an open write. `seen_at`: when the session that met them began, for
+        the last-resort "(first seen …)" that keeps the name unique (#3736); the write's own time
+        when not given."""
         same = unnamed_mod.same_person_key(word, role)
         anchor_name: str | None = None
         if anchor_id is not None:
@@ -1660,6 +1666,11 @@ class MemoryStore:
             for r in found:
                 if r["id"] == read[key]:
                     return UnnamedAdded(_entity(r), False)
+        # a different person whose name would read the same gets the next thing that tells them
+        # apart (#3736; under the campaign's write lock, so two reads never take one name)
+        taken = {name_key(str(r["name"])) for r in live}
+        when = w.now if seen_at is None else seen_at
+        word = unnamed_mod.unique_what(word, anchor_name, taken, when)
         row = await w.insert(
             ENTITIES,
             {
@@ -1731,7 +1742,7 @@ class MemoryStore:
         self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
     ) -> Written[Entity]:
         """The DM says this entry named by a description ("the woman") is a person the story never
-        named (#3431): it becomes an unnamed person, shown as "the woman (name unknown)", and the
+        named (#3431): it becomes an unnamed person, shown as "unnamed - the woman", and the
         DM can give them a name later. Only for an entry `described_entries` offers; one undo."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
@@ -2375,12 +2386,33 @@ class MemoryStore:
             changes: dict[str, Any] = {"name": name}
             if current["unnamed"]:
                 # The DM giving a person the story never named a name (#2790): they are named now,
-                # and the label they had is no name, so it is not kept as an old spelling.
+                # and the label they had is no name, so it is not kept as an old spelling. What it
+                # said of them is kept as their description (#3736): "barmaid at Three Flags
+                # Sailing with red hair" is still true of her.
+                # (built from the parts and the anchor's name now, never the stored copy, which
+                # may be cut short; and without the "(first seen …)", which is no fact about them)
+                anchor_name = None
+                if current["unnamed_anchor"] is not None:
+                    anchor_name = str((await _entity_row(w, current["unnamed_anchor"]))["name"])
+                said = unnamed_mod.description(
+                    unnamed_mod.label(
+                        unnamed_mod.without_tag(str(current["unnamed_what"] or "")), anchor_name
+                    )
+                )
+                had = str(current["description"] or "").strip()
+                if not had:
+                    description = said[:DESCRIPTION_MAX]
+                elif said.casefold() in had.casefold():
+                    description = had  # (it says so already)
+                else:  # (the DM's own words are kept whole: what the label said is cut to fit)
+                    description = f"{said[: max(DESCRIPTION_MAX - len(had) - 2, 0)]}. {had}"
+                    description = description.removeprefix(". ")
                 changes |= {
                     "unnamed": False,
                     "unnamed_anchor": None,
                     "unnamed_role": None,
                     "unnamed_what": None,
+                    "description": description,
                 }
                 keep_old = False
             row = await w.update(ENTITIES, entity_id, changes)
@@ -6229,7 +6261,7 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
 async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
     """The people who hang off an entry that was rejected (#2790). One whose only connections are
     to that entry is rejected with it: nothing else says they exist. One with other connections is
-    kept, with no anchor, and its label built from its word alone ("a sister (name unknown)"). All
+    kept, with no anchor, and its label built from its word alone ("unnamed - a sister"). All
     in the rejection's own change, so one Undo brings every one of them back."""
     hanging = await w.select(
         ENTITIES, " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')", [anchor_id]

@@ -1,7 +1,7 @@
 """The scene of a question: a short AI summary of who, where and what happened around it
 (#3596, PLAN "Questions for you", card part 4a). Pure: no database, no AI call, nothing written.
 
-A waiting question such as "someone (name unknown)" carries no context, so the DM cannot tell which
+A waiting question such as "unnamed - someone" carries no context, so the DM cannot tell which
 someone it was. The scene is written by the AI from the lines the question came from, once, when
 the question is made, and kept with it until it is answered. This module builds what the AI is
 asked and reads what it answers; the store, the step that asks and the cards are elsewhere.
