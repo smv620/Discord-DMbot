@@ -6,6 +6,8 @@ script=$here/../ci-already-green.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export CI_API_DIR=$tmp GITHUB_SHA=abc GITHUB_RUN_ID=9
+# CI sets GITHUB_REF to the branch; these cases must not read the real branch head (#3723).
+unset GITHUB_REF
 fails=0
 
 job() { printf '{"name":"%s","conclusion":"%s"}' "$1" "$2"; }

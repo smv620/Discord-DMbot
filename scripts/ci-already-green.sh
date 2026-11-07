@@ -48,7 +48,8 @@ branch_head() {
   if [ -n "${CI_REMOTE_HEAD+x}" ]; then
     echo "$CI_REMOTE_HEAD"
   else
-    git ls-remote origin "refs/heads/${GITHUB_REF#refs/heads/}" 2>/dev/null | head -1 | cut -f1
+    # a stalled network must not stall the reuse step: no answer in 20 s means everything runs
+    timeout 20 git ls-remote origin "refs/heads/${GITHUB_REF#refs/heads/}" 2>/dev/null | head -1 | cut -f1
   fi
 }
 
