@@ -41,6 +41,7 @@ from dmbot.memory import (
     descriptions,
     evidence,
     gate,
+    graph_review,
     kin,
     kind_offers,
     knowers,
@@ -474,8 +475,8 @@ class MemoryStore:
             # clash. NO KEY UPDATE still lets other tables add rows that link to the
             # campaign (a session starting) while a long write runs.
             cur = await conn.execute(
-                "SELECT memory_version FROM campaigns WHERE guild_id = %s AND id = %s"
-                " FOR NO KEY UPDATE",
+                "SELECT memory_version, share_improve FROM campaigns"
+                " WHERE guild_id = %s AND id = %s FOR NO KEY UPDATE",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
@@ -486,7 +487,21 @@ class MemoryStore:
                 conn, guild_id, campaign_id, start, source=source, now=int(self._clock()),
                 undoes=undoes,
             )  # fmt: skip
+            # The DM's own fix to a name no chain linked to the party is checked later, 15 minutes
+            # after the last one, when the campaign shares its story to improve DMbot (#3741). Who
+            # was isolated is read before the write, in its transaction; with the switch off this
+            # costs nothing.
+            review = bool(row["share_improve"]) and source == DM and undoes is None
+            isolated_before = (
+                isolated_mod.isolated_ids(*await isolated_rows_in(changes)) if review else set()
+            )
             yield changes
+            if review and (changes.relation_changes or changes.entity_changes):
+                fixes = graph_review.fixes_from(
+                    isolated_before, changes.relation_changes, changes.entity_changes
+                )
+                if fixes:
+                    await graph_review.note_fixes(conn, guild_id, campaign_id, fixes, changes.now)
             if changes.relation_changes or changes.belief_additions or changes.deleted_items:
                 await self._report_fixed(conn, guild_id, campaign_id, changes)
             if changes.restored or changes.unbelieved:
