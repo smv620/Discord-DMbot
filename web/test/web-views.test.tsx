@@ -177,6 +177,7 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     expect(w.showNamesFirst(["Brannoch"])).toBe("Brannoch isn't shown to the players yet. Show that name first, on the Names page.");
     expect(w.showNamesFirst(["Brannoch", "Veshla"])).toContain("Brannoch and Veshla aren't shown");
     expect(w.nameThemFirst("someone's sister", true)).toBe("This connection needs a name first: someone's sister has none yet. Add one on the Names page.");
+    expect(w.nameThemFirst(null, true)).toBe("One end of this connection has no name yet. Add one on the Names page.");
     expect(w.nameThemFirst("someone's sister", false)).toBe("someone's sister has no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.");
   });
 });
