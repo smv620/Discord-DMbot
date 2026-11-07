@@ -62,7 +62,7 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(offered)
         self.assertEqual(sorted(i for ids in view.ids.values() for i in ids), ["a", "b"])
-        self.assertIn("1 name that sounds like one you know", text)
+        self.assertIn("1 name that sounds like one you know stays for you", text)
         self.assertIn("✅ Add all 2", [getattr(c, "label", "") for c in view.children])
 
     async def test_one_qualifying_name_has_no_button_and_ideas_and_player_characters_stay_out(
@@ -84,3 +84,15 @@ class TheOffer(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(offered)
         self.assertEqual(view.ids, {"place": ["a", "b"]})
+
+    async def test_two_that_sound_like_known_ones_say_stay_not_stays(self) -> None:
+        _, _, text = await self.offer(
+            [
+                entity("a", "Karn", "place"),
+                entity("b", "Dell", "place"),
+                entity("c", "Marin", "character", "npc"),
+                entity("d", "Maro", "character", "npc"),
+            ],
+            alike={"c", "d"},
+        )
+        self.assertIn("2 names that sound like one you know stay for you", text)

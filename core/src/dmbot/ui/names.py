@@ -1241,7 +1241,7 @@ async def _offer_add_all(
         return False
     left = (
         f" {_plural(looks_alike, 'name')} that sound{'s' if looks_alike == 1 else ''} like one "
-        "you know stay for you to check one by one."
+        f"you know stay{'s' if looks_alike == 1 else ''} for you to check one by one."
         if looks_alike
         else ""
     )
