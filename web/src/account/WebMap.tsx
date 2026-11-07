@@ -34,7 +34,7 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
-import { readMode, readPlaces, saveMode, savePlaces } from "./webPrefs";
+import { DEFAULT_LOOK, readMode, readPlaces, saveMode, savePlaces, type GraphLook } from "./webPrefs";
 import { isTheory, zoomAbout, type View } from "./webLayout";
 import { dimmedName, markSecret } from "./know";
 
@@ -42,18 +42,25 @@ const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal 
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
 const DOUBLE_MS = 400; // two clicks on one name within this are a double click
 /** A small arrowhead just outside the other name's shape, pointing away from the name in focus. */
-function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }): string {
+function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }, scale = 1): string {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
-  const back = SHAPE_R * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
+  const back = SHAPE_R * scale * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
   const tx = to.x - ux * back;
   const ty = to.y - uy * back;
   const bx = tx - ux * 11;
   const by = ty - uy * 11;
   return `M${tx.toFixed(1)} ${ty.toFixed(1)}L${(bx - uy * 5).toFixed(1)} ${(by + ux * 5).toFixed(1)}L${(bx + uy * 5).toFixed(1)} ${(by - ux * 5).toFixed(1)}Z`;
+}
+/** A line's width by how many connections it holds (#3620): 2, 3, 4.5 and 6 px for one, two, three and four or more, so
+ * one busy pair never swamps the map; the chosen line is two wider so it still stands out. Nothing set when off. */
+export function lineWidthOf(count: number, on: boolean, chosen: boolean): { strokeWidth: number } | undefined {
+  if (!on) return undefined;
+  const base = [2, 3, 4.5, 6][Math.min(Math.max(count, 1), 4) - 1] ?? 2;
+  return { strokeWidth: chosen ? base + 2 : base };
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
@@ -137,6 +144,7 @@ export default function WebMap({
   onCenter,
   onLine,
   onNodePick,
+  look = DEFAULT_LOOK,
   canEdit = false,
   children,
   api,
@@ -157,12 +165,18 @@ export default function WebMap({
   onLine: (a: string, b: string) => void;
   /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
   onNodePick?: () => void;
+  /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
+  look?: GraphLook;
   /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
   canEdit?: boolean;
   /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
   children?: ComponentChildren;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
+  // The size of a name's shape and its words follow the viewer's choice; the settle reads the spacing from a ref.
+  const R = SHAPE_R * look.nodeSize;
+  const spreadRef = useRef(look.spacing);
+  spreadRef.current = look.spacing;
   // "Cluster by quest" needs the door's quests, which only a DM in Full View is sent: without them it is the spread layout.
   const hasQuests = nodes.some((n) => n.quests !== undefined);
   const modeNow: LayoutMode = mode === "quests" && !hasQuests ? "free" : mode;
@@ -238,6 +252,17 @@ export default function WebMap({
     };
   };
 
+  // A new spacing from the settings warms the settle up again, so the names move to where it puts them.
+  const firstSpacing = useRef(true);
+  useEffect(() => {
+    if (firstSpacing.current) {
+      firstSpacing.current = false;
+      return;
+    }
+    reheat(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [look.spacing]);
+
   const zoom = (factor: number, at = { x: 0, y: 0 }): void => setView((v) => zoomAbout(v, at, factor));
 
   /** Keep the places of every pinned name, for this campaign, in this browser. */
@@ -256,7 +281,7 @@ export default function WebMap({
     if (reducedMotion()) {
       // Less motion: names move to their new places at once, with no animation, after a drag as at the start.
       const list = sim.current;
-      settle(list, linksRef.current, list.findIndex((n) => n.id === centerRef.current), modeRef.current, anchorsRef.current);
+      settle(list, linksRef.current, list.findIndex((n) => n.id === centerRef.current), modeRef.current, anchorsRef.current, spreadRef.current);
       setExtent(extentOf(list));
       setFrame((f) => f + 1);
       return;
@@ -267,7 +292,7 @@ export default function WebMap({
       const centreAt = list.findIndex((n) => n.id === centerRef.current);
       let moved = 0;
       for (let i = 0; i < STEPS_PER_FRAME; i += 1) {
-        moved = forceStep(list, linksRef.current, centreAt, modeRef.current, anchorsRef.current, heat.current.alpha);
+        moved = forceStep(list, linksRef.current, centreAt, modeRef.current, anchorsRef.current, heat.current.alpha, spreadRef.current);
         heat.current.alpha *= COOLING;
         heat.current.steps += 1;
       }
@@ -317,7 +342,7 @@ export default function WebMap({
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
       // Less motion: place the names at once. A very big web keeps its rings and is only moved by hand.
-      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current);
+      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current, spreadRef.current);
       setExtent(extentOf(next));
       setFrame((f) => f + 1);
     } else {
@@ -605,6 +630,7 @@ export default function WebMap({
       <svg
         ref={svg}
         class="web-svg"
+        style={look.textSize === 1 ? undefined : { "--web-text": `${14 * look.textSize}px` }}
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
         role="group"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
@@ -688,7 +714,7 @@ export default function WebMap({
                 key={`${edge.a}|${edge.b}`}
                 class={`web-edge web-link-${kind}${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
               >
-                <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" />
+                <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" style={lineWidthOf(edge.links.length, look.lineWidth, chosen)} />
                 {/* A fat invisible line: easy to hit with a finger, and reachable by keyboard. */}
                 <line
                   x1={p.x}
@@ -709,7 +735,7 @@ export default function WebMap({
                 >
                   <title>{tip}</title>
                 </line>
-                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
+                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo, look.nodeSize)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
                     <title>{tip}</title>
@@ -769,9 +795,9 @@ export default function WebMap({
                 }}
               >
                 <title>{n.name}</title>
-                <Shape kind={n.kind} r={n.id === center ? SHAPE_R * 1.25 : SHAPE_R} />
-                {place.pinned && <circle class="web-pin" r={5} cx={SHAPE_R * 0.8} cy={-SHAPE_R * 0.8} aria-hidden="true" />}
-                <text y={SHAPE_R * 1.25 + 18} text-anchor="middle" class="web-node-text">
+                <Shape kind={n.kind} r={n.id === center ? R * 1.25 : R} />
+                {place.pinned && <circle class="web-pin" r={5} cx={R * 0.8} cy={-R * 0.8} aria-hidden="true" />}
+                <text y={R * 1.25 + 18 * look.textSize} text-anchor="middle" class="web-node-text">
                   {markSecret(n) ? `${words.secretMark} ` : ""}
                   {short(n.name)}
                 </text>

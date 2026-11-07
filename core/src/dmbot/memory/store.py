@@ -1930,9 +1930,8 @@ class MemoryStore:
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
-        if played_by is not None and not 0 < played_by <= INT64_MAX:
-            raise ValueError("Bad Discord user ID")
         async with self._write(guild_id, campaign_id, source) as w:
+            await _check_player(w, played_by)
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
@@ -2504,13 +2503,12 @@ class MemoryStore:
         role), confirmed with all its names, in one change (one undo, one reload)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
-        if played_by is not None and not 0 < played_by <= INT64_MAX:
-            raise ValueError("Bad Discord user ID")
         asked = type
         type, role = resolve_kind(type, role)
         if type == PERSON:
             raise MemoryRuleError(PERSON_NOT_LISTED)
         async with self._write(guild_id, campaign_id, source) as w:
+            await _check_player(w, played_by)
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
@@ -5892,7 +5890,30 @@ def _is_character(row: dict[str, Any]) -> bool:
     return bool(row["type"] == "character")
 
 
+async def _check_player(w: Changes, played_by: int | None) -> None:
+    """Who may play a character (#3690): a Discord user (a positive id), or a speaker of THIS
+    campaign who has no Discord, the negative number the import gave them (#3305). The row is read
+    here, in the write's own transaction and scope, so an id from another campaign or server is
+    refused like any bad id. A player without Discord is never messaged or mentioned."""
+    if played_by is None:
+        return
+    if 0 < played_by <= INT64_MAX:
+        return
+    if -INT64_MAX <= played_by < 0:
+        cur = await w.conn.execute(
+            "SELECT 1 FROM campaign_speakers WHERE guild_id = %s AND campaign_id = %s"
+            " AND user_id = %s",
+            (*w.ids, played_by),
+        )
+        if await cur.fetchone() is not None:
+            return
+    raise ValueError("Bad Discord user ID")
+
+
 async def _ensure_person(w: Changes, user_id: int) -> str:
+    # (Callers pass a transcript speaker or an existing `played_by`; the rule that a negative
+    # number must be this campaign's own speaker is `_check_player`, in `add_entity` and
+    # `confirm_entity` where a player is set.)
     """The campaign's entry for this Discord user, made if there is none. A person made
     here is named `Player 1234` (the last four digits of their ID, never their Discord
     name: that is read only in the live session) until a better name is known (#1188)."""
@@ -5926,6 +5947,8 @@ async def _ensure_person(w: Changes, user_id: int) -> str:
 
 
 def _placeholder_name(user_id: int) -> str:
+    if user_id < 0:  # a player without Discord (#3690): never a made-up piece of a Discord id
+        return f"Player {-user_id} (no Discord)"
     return f"Player {str(user_id)[-4:]}"
 
 

@@ -47,7 +47,7 @@ const graphCanEdit = (api: AccountApi): boolean => (api as unknown as { canEdit?
 
 async function openPanel(api: AccountApi): Promise<HTMLElement> {
   render(<Web api={api} path="/account/web/100.cmp1" />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
   const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
   // The form is its own file, fetched when a DM opens a line (the page-weight budget): wait for it, unless it is not there
