@@ -110,7 +110,7 @@ class RequestStore:
         by another changes nothing. False: it was not this worker's row any more. A voice clip
         goes in the same statement, whatever the outcome: the words (or the failure) and the
         deleted audio are one change."""
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE recap_requests SET state = %s, error = %s, answer = %s, clip = NULL"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
