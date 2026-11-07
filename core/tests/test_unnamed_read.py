@@ -26,12 +26,16 @@ def run(
     text: str = PLAIN,
     links: list[bg.Connection] | None = None,
     names: tuple[str, ...] = ("Garrick Pell", "Ashmere"),
+    *,
+    people: tuple[str, ...] = (),
+    places: tuple[str, ...] = (),
 ) -> tuple[list[UnnamedLink], Counter[str]]:
     lost: Counter[str] = Counter()
     keys = {name_key(n) for n in names}
     got = ur.read_unnamed(
-        lines, text, {n: [] for n in names}, links or [], names, bg.reach_names(keys), lost
-    )
+        lines, text, {n: [] for n in names}, links or [], names, bg.reach_names(keys), lost,
+        bg.reach_names({name_key(n) for n in people}), {name_key(n) for n in places},
+    )  # fmt: skip
     return got, lost
 
 
@@ -99,7 +103,7 @@ class TheUnnamedRead(unittest.TestCase):
 
     def test_every_other_way_a_line_fails_is_counted_and_nothing_is_made(self) -> None:
         got, lost = run(
-            [line("Garrick Pell", "rival", "stern ropemaker mother"),  # not a kept family role
+            [line("Garrick Pell", "mother", " ".join(["word"] * 13)),  # past 12 words: no phrase
              line("Garrick Pell", "mother", "kindly cook"),  # the words are not in the quote
              line("Garrick Pell", "mother", "stern ropemaker mother", "he was never born at all"),
              "- not a well formed line"]
@@ -112,9 +116,8 @@ class TheUnnamedRead(unittest.TestCase):
     def test_the_same_person_twice_and_the_cap(self) -> None:
         _, lost = run([line("Garrick Pell", "mother", "stern ropemaker mother")] * 2)
         self.assertEqual(lost["same_pair"], 1)
-        text = " ".join(
-            f"Garrick Pell had an uncle of kind{c}." for c in "abcdefghijklmnopqrstuvwxyz"
-        )
+        kinds = [f"k{i:02d}" for i in range(ur.MAX_UNNAMED + 5)]
+        text = " ".join(f"Garrick Pell had an uncle of kind{c}." for c in kinds)
         many = [
             line(
                 "Garrick Pell",
@@ -122,10 +125,10 @@ class TheUnnamedRead(unittest.TestCase):
                 f"uncle of kind{c}",
                 f"Garrick Pell had an uncle of kind{c}",
             )
-            for c in "abcdefghijklmnopqrstuvwxyz"
+            for c in kinds
         ]
         got, lost = run(many, text)
-        self.assertEqual((len(got), lost["over_cap"]), (ur.MAX_UNNAMED, 26 - ur.MAX_UNNAMED))
+        self.assertEqual((len(got), lost["over_cap"]), (ur.MAX_UNNAMED, 5))
 
     def test_a_second_person_in_the_quote_leaves_it_unclear_whose_parent_it_is(self) -> None:
         text = "Garrick Pell met Tamsin Rook, the son of a stern ropemaker mother."
@@ -142,11 +145,85 @@ class TheUnnamedRead(unittest.TestCase):
         self.assertEqual(len(got), 1)
 
     def test_only_the_roles_the_prompt_offers_are_family_here(self) -> None:
-        for role in ("apprentice", "rival", "mentor"):
-            got, lost = run([line("Garrick Pell", role, "stern ropemaker mother")])
-            self.assertEqual((got, lost["word_not_allowed"]), ([], 1), role)
         for role in ("wife", "grandfather", "child"):
             self.assertEqual(ur._kin(role) is not None, True, role)  # (the neutral words too)
+        for role in ("apprentice", "rival", "mentor"):
+            self.assertIsNone(ur._kin(role), role)
+
+    def test_any_other_tie_is_kept_with_a_person_on_their_own(self) -> None:
+        """Owner's rule (#3736): anyone the story mentions beside a named entry is kept. The line
+        reads from the person to the named one; the person is not hung off it."""
+        text = "At the Three Flags Sailing, a barmaid with red hair warned Garrick Pell."
+        quote = "a barmaid with red hair warned Garrick Pell"
+        cases = {
+            "knows (neutral)": ("knows", ""),
+            "is a rival of": ("rival_of", ""),
+            "warned": ("associated_with", "warned"),
+        }
+        for role, (how, words) in cases.items():
+            with self.subTest(role):
+                got, _ = run([line("Garrick Pell", role, "barmaid with red hair", quote)], text)
+                (u,) = got
+                self.assertEqual(
+                    (u.how, u.words, u.anchored, u.fixed_is_a, u.what),
+                    (how, words, False, False, "barmaid with red hair"),
+                )
+        place = "At the Three Flags Sailing, a barmaid with red hair warned Garrick Pell"
+        at_the_inn = line("Three Flags Sailing", "works in", "barmaid with red hair", place)
+        names = ("Garrick Pell", "Three Flags Sailing")
+        got, _ = run([at_the_inn], text, names=names, places=("Three Flags Sailing",))
+        self.assertEqual((got[0].how, got[0].words), ("located_in", "works in"))
+        # (a place word only on a place: Garrick Pell is no place)
+        on_a_person = line("Garrick Pell", "works in", "barmaid with red hair", quote)
+        got, lost = run([on_a_person], text, names=names, places=("Three Flags Sailing",))
+        self.assertEqual((got, lost["word_not_allowed"]), ([], 1))
+
+    def test_the_relationship_s_words_are_held_to_the_quote(self) -> None:
+        """Nothing rides in that the text does not say, as for a relationship line (#3606)."""
+        text = "At the Three Flags Sailing, a barmaid with red hair warned Garrick Pell."
+        quote = "a barmaid with red hair warned Garrick Pell"
+        for role in ("plotted to murder the king alongside", "w" * 60):
+            with self.subTest(role[:10]):
+                got, lost = run([line("Garrick Pell", role, "barmaid with red hair", quote)], text)
+                self.assertEqual((got, lost["word_not_allowed"]), ([], 1))
+        got, _ = run(
+            [line("Garrick Pell", "knows (sworn enemy)", "barmaid with red hair", quote)], text
+        )
+        self.assertNotEqual(got[0].words, "sworn enemy")  # (no cue in "warned": stepped down)
+
+    def test_someone_tied_to_two_named_people_in_one_quote_is_kept_for_each(self) -> None:
+        text = "A barmaid with red hair warned Garrick Pell and Mira Vane."
+        quote = "A barmaid with red hair warned Garrick Pell and Mira Vane"
+        names = ("Garrick Pell", "Mira Vane")
+        got, lost = run(
+            [line("Garrick Pell", "warned", "barmaid with red hair", quote),
+             line("Mira Vane", "warned", "barmaid with red hair", quote)],
+            text, names=names, people=names,
+        )  # fmt: skip
+        self.assertEqual((sorted(u.fixed for u in got), sum(lost.values())), (list(names), 0))
+        self.assertTrue(all(u.role == "" for u in got))  # (on their own: no role to an anchor)
+
+    def test_the_head_word_is_no_little_word(self) -> None:
+        text = "A man with a cane warned Garrick Pell."
+        got, lost = run(
+            [
+                line(
+                    "Garrick Pell",
+                    "warned",
+                    "man with cane",
+                    "A man with a cane warned Garrick Pell",
+                )
+            ],
+            text,
+        )
+        self.assertEqual((len(got), sum(lost.values())), (1, 0))
+
+    def test_the_description_s_own_words_must_be_in_the_quote(self) -> None:
+        text = "At the Three Flags Sailing, a barmaid with red hair warned Garrick Pell."
+        got, lost = run(
+            [line("Garrick Pell", "knows", "cook with a limp", "warned Garrick Pell")], text
+        )
+        self.assertEqual((got, lost["not_in_text"]), ([], 1))
 
     def test_a_description_that_shares_a_word_with_a_name_is_still_a_person(self) -> None:
         got, lost = run(
@@ -187,7 +264,7 @@ class TheListParser(unittest.TestCase):
             self.assertEqual(len(listed.unnamed), 1, heading)
 
     def test_the_seventh_example_reads_back_to_two_unnamed_parents(self) -> None:
-        example = lr.EXAMPLES.split("Example 7.", 1)[1]
+        example = lr.EXAMPLES.split("Example 7.", 1)[1].split("Example 8.", 1)[0]
         document = example.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
         listed = lr.parse_plain(example.split("Output:\n", 1)[1])
         lost: Counter[str] = Counter()
@@ -230,6 +307,31 @@ class TheListParser(unittest.TestCase):
             self.assertIn(word, prompt)
             self.assertIn(word, ur.ROLES)
             self.assertIsNotNone(ur._kin(word))
+
+
+class TheEighthExample(unittest.TestCase):
+    def test_it_reads_back_to_one_barmaid_with_two_ties(self) -> None:
+        example = lr.EXAMPLES.split("Example 8.", 1)[1]
+        document = example.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
+        listed = lr.parse_plain(example.split("Output:\n", 1)[1])
+        lost: Counter[str] = Counter()
+        got = ur.read_unnamed(
+            listed.unnamed,
+            document,
+            {},
+            [],
+            ["Tavin", "Three Flags Sailing"],
+            set(),
+            lost,
+            people=bg.reach_names({"tavin"}),
+            places={name_key("Three Flags Sailing")},
+        )  # fmt: skip  (as `lore_read` passes them)
+        self.assertEqual(sum(lost.values()), 0)
+        self.assertEqual(
+            sorted((u.fixed, u.how, u.anchored) for u in got),
+            [("Tavin", "knows", False), ("Three Flags Sailing", "located_in", False)],
+        )
+        self.assertEqual({u.what for u in got}, {"barmaid with red hair"})
 
 
 if __name__ == "__main__":
