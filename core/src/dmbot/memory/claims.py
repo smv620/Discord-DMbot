@@ -562,7 +562,7 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         # a person no longer makes one, so this only holds back the ones made before. One the DM
         # typed, and an unnamed person's stored label, are left to their own rules.
         if not (
-            descriptions.is_described_person(str(e["name"]))
+            descriptions.is_described(str(e["name"]))
             and not descriptions.matches_alone(str(e["name"]), "full", str(e.get("source") or ""))
         ):
             seen.setdefault(name_key(str(e["name"])), {})[str(e["id"])] = str(e["type"])
@@ -813,12 +813,28 @@ def _unknown_names(claim: Extracted, names: Names) -> list[str]:
     return [n for n in said if n.strip() and not names.by_key.get(name_key(n))]
 
 
+def _described_shape(text: str) -> str | None:
+    """`not_names.shape_of` for a description (#3736): its head phrase only ("the barmaid" of "the
+    barmaid with red hair"), since the tail says which one, and a counted group is a group ("three
+    hooded figures"), never a number."""
+    shape = not_names.shape_of(descriptions.head_phrase(text))
+    if shape == "clause" or (shape == "number" and descriptions.is_described_group(text)):
+        return None
+    return shape
+
+
+def _unnamed_kind(end: str) -> str:
+    """What an unnamed end is made as: a particular group ("the loud sailors in the corner") is a
+    group, anyone else a person (#3736)."""
+    return "faction" if descriptions.is_described_group(end) else "character"
+
+
 def _only_described_unknown(claim: Extracted, names: Names) -> bool:
     """Is every end of the claim that matches no entry a person the story describes but never
     names (#3736)? Then the claim waits for the DM's Keep, which makes or finds them, rather than
     for a name to be proposed."""
     unknown = _unknown_names(claim, names)
-    return bool(unknown) and all(descriptions.is_described_person(n) for n in unknown)
+    return bool(unknown) and all(descriptions.is_described(n) for n in unknown)
 
 
 def _a_kind_of_creature(name: str) -> bool:
@@ -1093,7 +1109,11 @@ class ClaimStore:
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                     elif any(
                         kinds := [
-                            not_names.why_not(
+                            # (a person or group the story describes is no name and is not meant
+                            # to be one, #3736: only the shape of its head phrase can drop it)
+                            _described_shape(n)
+                            if descriptions.is_described(n)
+                            else not_names.why_not(
                                 n,
                                 text="\n".join((said or {}).get(r, "") for r in claim.lines),
                                 offered=len(lines_by_name.get(name_key(n), ())),
@@ -1114,7 +1134,7 @@ class ClaimStore:
                         # A new item that is clearly everyday gear is not made into an entry, so
                         # its claim goes with it (#3373): no owns, carries or kept-in is stored.
                         reason, unknown = ITEM_REASON, []
-                    elif any(descriptions.is_described_person(n) for n in unknown):
+                    elif any(descriptions.is_described(n) for n in unknown):
                         # A person the story describes but never names ("the woman") is never
                         # made into a name to check (#3431), and is never dropped either (owner,
                         # 2026-11-07, #3736): Keep makes or finds each described end. Every
@@ -1122,7 +1142,7 @@ class ClaimStore:
                         # alone with a fact about them): kept for the DM's answer. A described
                         # end beside a new name: the name goes to the names to check, and the
                         # claim waits on it like any claim with a new name.
-                        named = [n for n in unknown if not descriptions.is_described_person(n)]
+                        named = [n for n in unknown if not descriptions.is_described(n)]
                         if condition_of(claim) is None and name_key(claim.subject) == name_key(
                             claim.object
                         ):
@@ -1149,9 +1169,7 @@ class ClaimStore:
                 # a described end is never made into a name to check (#3431), here either: only
                 # the claim's new names are proposed, and Keep makes the person later (#3736)
                 unknown = [
-                    n
-                    for n in _unknown_names(kept, names)
-                    if not descriptions.is_described_person(n)
+                    n for n in _unknown_names(kept, names) if not descriptions.is_described(n)
                 ]
                 if any(name_key(n) in refused_names for n in unknown):
                     await w.update(
@@ -1694,7 +1712,7 @@ class ClaimStore:
                 said = [
                     n
                     for n in said
-                    if live.by_key.get(name_key(n)) or not descriptions.is_described_person(n)
+                    if live.by_key.get(name_key(n)) or not descriptions.is_described(n)
                 ]
             found = [live.by_key.get(name_key(n), ()) for n in said]
             unnamed = [n for n, f in zip(said, found, strict=True) if not f]
@@ -1929,7 +1947,9 @@ class ClaimStore:
         return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
     @staticmethod
-    async def _same_session_person(w: Changes, claim: Claim, described: str) -> str | None:
+    async def _same_session_person(
+        w: Changes, claim: Claim, described: str, kind: str = "character"
+    ) -> str | None:
         """The unnamed person an earlier Keep of this same session already made for the same
         words (#3431): within one session "the woman" is one woman. Across sessions it is a new
         person, and the same-person question offers the join; never campaign-wide, since two
@@ -1955,9 +1975,10 @@ class ClaimStore:
             ends.add(str(row["entity_id"]))
         for row in await w.select(
             ENTITIES,
-            " AND unnamed AND status = 'confirmed' AND unnamed_anchor IS NULL AND id = ANY(%s)"
+            " AND unnamed AND status = 'confirmed' AND unnamed_anchor IS NULL AND type = %s"
+            " AND id = ANY(%s)"
             " ORDER BY created_at, id",
-            [sorted(ends)],
+            [kind, sorted(ends)],
         ):
             if unnamed_mod.same_person_key(str(row["unnamed_what"]), row["unnamed_role"]) == same:
                 return str(row["id"])
@@ -1974,7 +1995,7 @@ class ClaimStore:
         for n in said:  # (one end per person: "The woman" and "the woman" are one)
             if not names.by_key.get(name_key(n)) and name_key(n) not in map(name_key, ends):
                 ends.append(n)
-        if any(not descriptions.is_described_person(n) for n in ends):
+        if any(not descriptions.is_described(n) for n in ends):
             raise MemoryRuleError(GONE)
         return ends
 
@@ -2041,7 +2062,7 @@ class ClaimStore:
             if described:
                 found = dict(names.by_key)
                 for i, end in enumerate(described):
-                    found[name_key(end)] = ((f"{NEW_PERSON}:{i}", "character"),)
+                    found[name_key(end)] = ((f"{NEW_PERSON}:{i}", _unnamed_kind(end)),)
                 names = replace(names, by_key=found)
         waiting_ids = {str(e["id"]) for e in entities if e["status"] == PROPOSED}
         # Asked again against what is known now: a name may have been merged or renamed since.
@@ -2077,14 +2098,15 @@ class ClaimStore:
                 raise MemoryRuleError(GONE)
             made: dict[str, tuple[str, str]] = {}  # stand-in -> the person, made or found
             for i, end in enumerate(described):
-                person_id = await self._same_session_person(w, claim, end)
+                kind = _unnamed_kind(end)  # (a person, or a particular group, #3736)
+                person_id = await self._same_session_person(w, claim, end, kind)
                 if person_id is None:
                     added = await self._store._add_unnamed_in(
-                        w, end, None, "", None, seen_at=claim.session_started_at
+                        w, end, None, "", None, seen_at=claim.session_started_at, kind=kind
                     )
                     person_id = added.entity.id
                 person = await w.update(ENTITIES, person_id, {"status": CONFIRMED})
-                made[f"{NEW_PERSON}:{i}"] = (str(person["id"]), "character")
+                made[f"{NEW_PERSON}:{i}"] = (str(person["id"]), kind)
             who = made.get(who[0], who)
             if other and not isinstance(other, str):
                 other = made.get(other[0], other)

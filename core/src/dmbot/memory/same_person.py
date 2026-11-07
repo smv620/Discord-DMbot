@@ -173,7 +173,7 @@ def unnamed_pairs(
     for e in entries:
         if (
             e["unnamed"]
-            and e["type"] == "character"  # (the only kind a join accepts)
+            and e["type"] in ("character", "faction")  # (a join takes a kind to the same kind)
             and e.get("unnamed_anchor") is None
             and e["status"] in ("proposed", "confirmed")
         ):
