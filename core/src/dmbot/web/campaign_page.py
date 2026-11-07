@@ -35,6 +35,7 @@ async def read_campaign(
     ref: str,
     *,
     imports_for: Callable[[int], bool] = lambda guild_id: False,
+    features: Callable[[], dict[str, Any] | None] = lambda: None,
 ) -> dict[str, Any]:
     """The campaign's name, its server's name, the person's role in it ("owner", "co-dm" or
     "player") and whether importing works in its server. Raises `not_found` for anyone not in the
@@ -95,4 +96,8 @@ async def read_campaign(
     }
     if settings is not None:
         page["settings"] = settings
+        # What the bot has switched on (#3693): server-wide, so not secret, but a DM's page only.
+        listed = features()
+        if listed is not None:
+            page["features"] = listed
     return page
