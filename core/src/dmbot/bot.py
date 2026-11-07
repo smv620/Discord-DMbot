@@ -1560,6 +1560,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
         log.info(features.features_line(self.settings))  # what is switched on (#1831)
+        # The DM-visible list for the web (#3693). A failed write is logged once; start-up goes on.
+        try:
+            features.write_snapshot(
+                self.settings, os.environ.get("DMBOT_STATUS_DIR", "/data/status"), time.time()
+            )
+        except Exception as exc:
+            log.warning("Feature list: not written (%s)", type(exc).__name__)
         # DMbot's knowledge of itself (#1195): read its documents now, not on the first question.
         await asyncio.to_thread(knowledge.load)
         register_commands(self.tree)
