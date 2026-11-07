@@ -203,3 +203,60 @@ class WhatItRefuses(Base):
         before = await self.aliases_of(self.mira)
         self.assertEqual(await self.refusal(self.mira, gone), AI_JOIN_REFUSED)
         self.assertEqual(await self.aliases_of(self.mira), before)
+
+
+class TheDmsCheck(Base):
+    """What the DM sees and does about DMbot's own joins: a list, ✅ (confirm) and ↩️ (Undo)."""
+
+    async def joined(self) -> tuple[str, str, Any]:
+        tam = await self.add("Old Tam", "npc")
+        gone = await self.waiting_name("The Ferry Lady")
+        return tam, gone, await self.join(tam, gone)
+
+    async def waiting(self) -> list[Any]:
+        return await self.memory.waiting_joins(self.g, self.one.id)
+
+    async def test_a_join_is_listed_with_its_batch_until_it_is_confirmed(self) -> None:
+        tam, gone, done = await self.joined()
+        (one,) = await self.waiting()
+        self.assertEqual(
+            (one.batch, one.keep_id, one.gone_id, one.spelling, one.keep_name),
+            (done.batch, tam, gone, "The Ferry Lady", "Old Tam"),
+        )
+        self.assertEqual(
+            await self.memory.confirm_join(self.g, self.one.id, done.batch), 1
+        )  # (the one name that moved)
+        self.assertEqual(await self.waiting(), [])
+        names = await self.aliases_of(tam)
+        self.assertEqual(names["The Ferry Lady"], CONFIRMED)
+
+    async def test_once_confirmed_the_spelling_is_used_like_any_other_name(self) -> None:
+        _, _, done = await self.joined()
+        await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
+        mine = [e for e in lookup.for_viewer(False).names if e.text == "The Ferry Lady"]
+        self.assertTrue(mine and all(e.confirmed for e in mine))
+
+    async def test_an_undone_join_is_no_longer_listed_and_cannot_be_confirmed(self) -> None:
+        _, _, done = await self.joined()
+        await self.memory.undo(self.g, self.one.id, done.batch)
+        self.assertEqual(await self.waiting(), [])
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_join(self.g, self.one.id, done.batch)
+
+    async def test_a_confirmed_join_is_not_confirmed_twice_and_a_dm_change_is_not_a_join(
+        self,
+    ) -> None:
+        _, _, done = await self.joined()
+        await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_join(self.g, self.one.id, done.batch)
+        other = await self.add("Old Nan", "npc")
+        spare = await self.waiting_name("The Net Mender")
+        merged = await self.memory.merge(
+            self.g, self.one.id, other, spare, source=DM, dm_said_same=True
+        )
+        self.assertEqual(await self.waiting(), [])  # (the DM's own merge is not DMbot's)
+        assert merged.batch is not None
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.confirm_join(self.g, self.one.id, merged.batch)

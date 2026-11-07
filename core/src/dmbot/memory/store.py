@@ -160,6 +160,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    WaitingJoin,
     Written,
     check_status_change,
     clean_text,
@@ -5633,6 +5634,70 @@ class MemoryStore:
             final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
+
+    async def waiting_joins(self, guild_id: int, campaign_id: str) -> list[WaitingJoin]:
+        """The joins DMbot made by itself (`join_by_ai`) that the DM has neither confirmed nor
+        undone, oldest first: what the after-session card lists ("DMbot answered N names itself;
+        check them"). Read from the change log, so nothing else is stored; a join is waiting while
+        its batch is not undone and a name it moved is still waiting on the entry."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT c.batch, c.row_id AS gone_id, c.after->>'merged_into' AS keep_id,"
+                " c.made_at, g.name AS spelling, k.name AS keep_name"
+                " FROM memory_changes c"
+                " JOIN memory_entities g ON g.guild_id = c.guild_id"
+                " AND g.campaign_id = c.campaign_id AND g.id = c.row_id"
+                " JOIN memory_entities k ON k.guild_id = c.guild_id"
+                " AND k.campaign_id = c.campaign_id AND k.id = c.after->>'merged_into'"
+                " WHERE c.guild_id = %s AND c.campaign_id = %s AND c.source = %s"
+                " AND c.table_name = 'memory_entities' AND c.op = 'update' AND c.undoes IS NULL"
+                " AND c.after->>'status' = 'merged' AND k.status = 'confirmed'"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+                " AND EXISTS (SELECT 1 FROM memory_changes m JOIN memory_aliases a"
+                " ON a.guild_id = m.guild_id AND a.campaign_id = m.campaign_id AND a.id = m.row_id"
+                " WHERE m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id"
+                " AND m.batch = c.batch AND m.table_name = 'memory_aliases'"
+                " AND a.entity_id = k.id AND a.status = 'proposed')"
+                " ORDER BY c.batch",
+                (*scope.ids, WHO_SOURCE),
+            )
+            return [
+                WaitingJoin(
+                    int(r["batch"]), str(r["keep_id"]), str(r["gone_id"]),
+                    str(r["spelling"]), str(r["keep_name"]), int(r["made_at"]),
+                )
+                for r in await cur.fetchall()
+            ]  # fmt: skip
+
+    async def confirm_join(self, guild_id: int, campaign_id: str, batch: int) -> int:
+        """The DM says DMbot's own join was right (✅ / All fine): the names it moved onto the
+        entry are confirmed, in one change by the DM. Refused when that batch is not one of
+        DMbot's joins still waiting (undone since, or already confirmed). Returns how many names
+        were confirmed."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
+                "SELECT m.row_id FROM memory_changes c JOIN memory_changes m"
+                " ON m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id"
+                " AND m.batch = c.batch"
+                " WHERE c.guild_id = %s AND c.campaign_id = %s AND c.batch = %s AND c.source = %s"
+                " AND c.undoes IS NULL AND c.table_name = 'memory_entities'"
+                " AND m.table_name = 'memory_aliases' AND NOT EXISTS"
+                " (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)",
+                (*w.ids, batch, WHO_SOURCE),
+            )
+            ids = sorted({str(r["row_id"]) for r in await cur.fetchall()})
+            confirmed = 0
+            for alias_id in ids:
+                current = await w.get(ALIASES, alias_id)
+                if current is None or current["status"] != PROPOSED:
+                    continue
+                await self._change_alias(w, alias_id, DM, CONFIRMED, None)
+                confirmed += 1
+            if not confirmed:
+                raise MemoryRuleError(NOT_FOUND)
+            return confirmed
 
     async def undo(
         self,
