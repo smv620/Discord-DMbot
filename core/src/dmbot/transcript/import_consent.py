@@ -103,6 +103,10 @@ class SpeakersSection:
                 " created_at) VALUES (%s, %s, %s, %s, %s, %s)",
                 [(guild_id, campaign_id, *row) for row in checked],
             )
+        # (A character played by a speaker without Discord, #3690, keeps that speaker's number:
+        # a restore keeps the numbers as they were, see the module docstring. A number whose
+        # speaker the DM later removed has no row here, and that is a legal state: readers treat it
+        # as "a player not on Discord", so a backup of such a campaign must still come back.)
         await apply_erasures(conn, guild_id, campaign_id)
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:

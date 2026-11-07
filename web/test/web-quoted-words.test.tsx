@@ -31,7 +31,7 @@ describe("the table's own words", () => {
   it("shows them in quotes on the connection, and the edit form starts from the raw words", async () => {
     const api = quotedApi();
     render(<Web api={api} path="/account/web/100.cmp1" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
     const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
     await waitFor(() => expect(panel.textContent).toContain(QUOTED));

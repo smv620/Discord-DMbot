@@ -28,7 +28,7 @@ const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 async function open(suffix = "", api = mockApi("table")) {
   render(<Web api={api} path={at(suffix)} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 const notRevealed = () => screen.queryAllByText(`(${w.notRevealed})`, { exact: false });
@@ -219,7 +219,7 @@ describe("Find a name in the players' view (#2989)", () => {
     const graph = await api.webGraph!("100.cmp1", { center: null, hops: 8 });
     const hidden = graph.nodes.find((n) => n.revealed === false)!.name;
     render(<Web api={api} path={at()} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: hidden } });
     expect(await screen.findByRole("button", { name: hidden })).toBeTruthy(); // Full View: offered
     fireEvent.click(screen.getByLabelText(w.playersView));
@@ -244,7 +244,7 @@ describe("Find a name in the players' view (#2989)", () => {
     const old = mockApi("table");
     delete (old as { webFind?: unknown }).webFind;
     render(<Web api={old} path={at(".web-player")} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: "a" } });
     await act(async () => {});
     expect(calls(old, "allNames")).toHaveLength(0);
@@ -282,7 +282,7 @@ describe("theories", () => {
   it("does not tell a player the party is wrong", async () => {
     const api = mockApi("table");
     render(<Web api={api} path={at(".web-player")} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     const buttons = screen
       .getAllByRole("listitem")
       .filter((x) => x.textContent?.startsWith(w.theoryMark))
