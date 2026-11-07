@@ -853,7 +853,8 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
+            if k
+            not in ("quote_widened", "quote_reach", "feeling_demoted")  # (kept lines: log only)
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
