@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 89 entries, 119 connections (80 must-find), 19 events.
+**Totals:** 89 entries, 120 connections (80 must-find), 19 events.
 
 ## Connections
 
@@ -160,6 +160,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l113 | Three Flags Sailing | in | Targos | inferred | no | yes | 96 |  |
 | l117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | yes | 96 | vanished five days ago leading an expedition up it |
 | l119 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
+| l120 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | 18 | born in the Temple of the Seldarine (the more exact place; l019 says the city) |
 
 ## Events
 
@@ -224,7 +225,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Cerric's paternal grandfather |  | Unnamed. Died in a storm. |
 | Okthandom's child | Okthandom Korran's child (name unknown) | Unnamed. Mentioned once. |
 | Brewner's daughter | Brewner's daughter (name unknown) | Unnamed. Leads Brewner home. |
-| The minotaur captain | Minotaur captain of the first ship | Unnamed. Captain of the first ship. |
+| The minotaur captain | Minotaur captain of the first ship, Minotaur captain | Unnamed. Captain of the first ship. |
 | The beggar woman | beggar woman | Unnamed. Gives a prophecy. |
 
 ### Creatures (8)

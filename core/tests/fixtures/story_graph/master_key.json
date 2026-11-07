@@ -381,7 +381,8 @@
    "name": "The minotaur captain",
    "kind": "person",
    "aliases": [
-    "Minotaur captain of the first ship"
+    "Minotaur captain of the first ship",
+    "Minotaur captain"
    ],
    "note": "Unnamed. Captain of the first ship.",
    "docs": [
@@ -3595,6 +3596,25 @@
     }
    ],
    "note": "the most recent place: the graph shows this one"
+  },
+  {
+   "id": "m134",
+   "a": "Cerric Vanya'elen",
+   "relation": "comes_from",
+   "b": "Temple of the Seldarine",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l120",
+     "line": 18
+    }
+   ],
+   "note": "born in the Temple of the Seldarine (the more exact place; m019 says the city)"
   }
  ],
  "events": [
