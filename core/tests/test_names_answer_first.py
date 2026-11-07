@@ -114,6 +114,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
 
         memory = MagicMock()
         memory.relations = AsyncMock(return_value=[])
+        memory.dm_line_scores = AsyncMock(return_value={})  # (the DM's Reputation, #3642)
         memory.entities = AsyncMock(return_value=[])
         memory.entity = AsyncMock(side_effect=lambda g, c, eid: ENTITIES.get(eid))
         memory.confirm_kinds = AsyncMock(side_effect=slow_kinds)
