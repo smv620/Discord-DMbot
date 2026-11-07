@@ -14,7 +14,7 @@ SENDS = re.compile(
 )
 
 # Reaches the DM through `ask_privately`, `ask_live` or `tell_dms` in bot.py, which add the links.
-THROUGH_THE_HELPER = {"bot.py"}
+THROUGH_THE_HELPER = {"bot.py", "recaps/discord.py"}
 # Not converted yet: each is a later piece of #3663 Part A, and the list shrinks to empty there.
 NOT_YET = {
     "dm_screen/game_masters.py",
@@ -22,7 +22,6 @@ NOT_YET = {
     "dm_screen/site_offers.py",
     "fightbot.py",
     "questions/discord.py",
-    "recaps/discord.py",
     "sheet_reread.py",
     "ui/dmbot_commands.py",
     "ui/theatre_button.py",

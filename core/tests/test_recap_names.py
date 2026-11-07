@@ -238,6 +238,7 @@ def bot_with(**kw: Any) -> Any:
         recaps=recaps,
         lookup=None,
         tables={},
+        settings=SimpleNamespace(site_url=""),
         post=AsyncMock(return_value=True),
         recap_secret_names=AsyncMock(return_value=[]),
         **kw,
@@ -355,3 +356,22 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLinks(unittest.IsolatedAsyncioTestCase):
+    """The private names note ends with the website button, and edits itself once to point at
+    its own message (#3663)."""
+
+    async def test_the_note_carries_the_names_page_and_its_own_discord_link(self) -> None:
+        bot = bot_with()
+        bot.settings = SimpleNamespace(site_url="https://dmbot.example.com")
+        bot.dm.send.return_value = SimpleNamespace(
+            jump_url="https://discord.com/channels/@me/2/3", edit=AsyncMock()
+        )
+        await DMBot._private_names_note(cast(Any, bot), GUILD, CID, DM_ID, 2)
+        (call,) = bot.dm.send.await_args_list
+        labels = [getattr(c, "label", "") for c in call.kwargs["view"].children]
+        self.assertIn("Open on the website", labels)
+        urls = [getattr(c, "url", None) for c in call.kwargs["view"].children]
+        self.assertIn(f"https://dmbot.example.com/account/names/{GUILD}.{CID}", urls)
+        bot.dm.send.return_value.edit.assert_awaited_once()  # the one edit adding Open in Discord
