@@ -357,7 +357,7 @@ Each role is woken once an hour by a scheduled task (dev1 twice), at staggered m
 | WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
 | CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
 | GraphEngineer | :09 (hourly check) | long-lived cloud session (from 2026-10-31) |
-| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| RepoManager | :24 and :54 (twice an hour, owner 2026-11-07; :54 is the hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
 
 **Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
