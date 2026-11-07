@@ -949,6 +949,8 @@ export interface NameCheck {
    * and how many more places there are. Missing from an API older than that. */
   places?: NamePlace[];
   morePlaces?: number;
+  /** DMbot's short summary of the scene this name came up in (#3644). Missing when there is none, and from an older API. */
+  scene?: string | null;
   /** This waiting name is a list of names, so "These are separate names" applies (#3406). Missing from an API older than that. */
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
@@ -1785,6 +1787,17 @@ export type WebLinkChange =
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
+/** A new spelling of a place the campaign already has, waiting for the game master's yes or no (#3533, core #3532). */
+export interface PlaceSpelling {
+  /** The proposed other name's id. */
+  id: string;
+  /** The place's id: the answer is filed under it. */
+  placeId: string;
+  /** The place as the campaign knows it ("Northhaven"). */
+  place: string;
+  /** The new spelling ("North Haven"). */
+  spelling: string;
+}
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow {
   id: string;
@@ -1813,6 +1826,8 @@ export interface NameRow {
   unnamed?: boolean;
   /** For an unnamed person: who they are, in the story's words ("sister"). */
   unnamedWhat?: string;
+  /** DMbot's short summary of the scene this unnamed person came up in, for a DM only (#3644, core #3601). Missing when there is none. */
+  scene?: string | null;
   /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
   unnamedAnchor?: string | null;
   /** The line the players are told about this name (#3568, core #3564): a DM's list only, null when there is none. Missing
@@ -1848,6 +1863,19 @@ export interface SmartNamesAnswer {
   names: NameRow[];
   /** True when only the newest notes were searched (the search looks at the newest 10,000 at most; core #2756). */
   capped?: boolean;
+}
+
+/** One match DMbot made by itself that the DM has not answered (#3602). Names, the change's number and
+ * when only: never a line of the transcript. */
+export interface MatchRow {
+  /** The change's number, in digits: what an answer is queued by. */
+  batch: string;
+  keepId: string;
+  keepName: string;
+  /** The waiting name DMbot put with it. */
+  spelling: string;
+  /** Unix seconds. */
+  at: number;
 }
 
 export interface NamesQuery {
@@ -2098,6 +2126,9 @@ export interface QuestionCampaign {
   total: number;
   kinds: QuestionKind[];
   countedAt: number | null;
+  /** How many of DMbot's own matches wait for the DM (#3701): a count, from the same door as the Names page's
+   * list. Missing from an API older than that. */
+  guesses?: number;
 }
 export interface CampaignNameChecks {
   recaps: { ref: string; at: number; count: number }[];
@@ -2561,6 +2592,12 @@ export interface AccountApi {
   /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
+   * an API older than that. */
+  nameMatches?(ref: string): Promise<MatchRow[]>;
+  /** "Yes, that's right" or the Undo of one of them: queued for the bot, which applies it as the DM; resolves when
+   * it is done, rejects with the bot's reason. `onLook` hears the wait each time the page looks (#2564). */
+  answerMatch?(ref: string, batch: string, answer: "confirm" | "undo", onLook?: (look: WaitingLook) => void): Promise<void>;
   /** Names by meaning, for "ice goddess" or "friend of Brannoc" (#2733). The words go in a POST body, never the
    * address (a query string is written to logs). Missing from an API older than that. */
   smartNames?(ref: string, words: string): Promise<SmartNamesAnswer>;
@@ -2610,6 +2647,11 @@ export interface AccountApi {
   /** Delete all of my notes in a campaign; how many there were. */
   deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** The spellings of places waiting for a yes or no (DM only; #3533, core migration 0354). */
+  placeSpellings?(ref: string): Promise<PlaceSpelling[]>;
+  /** Yes: the spelling becomes another name of the place. No: it is turned down and not offered again. The
+   * bot applies it, so this waits for its answer like any name change. */
+  answerPlaceSpelling?(ref: string, spelling: PlaceSpelling, yes: boolean): Promise<void>;
   /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
    * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
   /** The secret other names of a campaign and who holds or was told each (DM only; #3542). */
@@ -3081,7 +3123,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "smartNames", "changeName", "nameThem", "toldPanel", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "setPcIcon", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "setPcIcon"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

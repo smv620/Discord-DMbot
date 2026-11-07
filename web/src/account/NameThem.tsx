@@ -8,6 +8,7 @@ import { useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
 import { notNamedWords as w } from "../content/not-named-words";
+import SceneLine from "./SceneLine";
 import { ApiError, type AccountApi, type NameRow, type NameThemResult } from "./api";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
@@ -93,6 +94,7 @@ export default function NameThem({
   return (
     <div class="stack name-them" id={id}>
       <p class="small muted">{w.hint}</p>
+      <SceneLine scene={row.scene} />
       {question ? (
         <div class="stack" role="group" aria-label={w.known(row.name, question.name)}>
           <p role="status" tabIndex={-1} ref={questionBox}>

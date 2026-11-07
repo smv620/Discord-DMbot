@@ -39,6 +39,26 @@ class Pure(unittest.TestCase):
         with self.assertRaises(SampleError):
             plan.parse_players(",".join(f"p{i}={i + 1}" for i in range(13)))
 
+    def test_the_players_not_on_discord_are_found_by_their_labels_and_the_old_ones(self) -> None:
+        # (#3690) player_jac and friends, the older user_ and bare labels, and "DM"
+        names = {label: label for label in ("player_ist", "user_jac", "eri", "player_owe", "DM")}
+        roles, dm = plan.off_discord_roles(list(names), names)
+        self.assertEqual(
+            roles, {"player_ist": "ist", "user_jac": "jac", "eri": "eri", "player_owe": "owe"}
+        )
+        self.assertEqual(dm, "DM")
+        # a label with a username part is read by its name, and case does not matter
+        roles, _ = plan.off_discord_roles(
+            ["Player_Jac (jac_v)"], {"Player_Jac (jac_v)": "Player_Jac"}
+        )
+        self.assertEqual(roles, {"Player_Jac (jac_v)": "jac"})
+        with self.assertRaises(SampleError):
+            plan.off_discord_roles(["stranger"], {"stranger": "stranger"})
+
+    def test_players_are_no_longer_required(self) -> None:
+        args = cli.parse_args(["--guild", "1", "--dm", "2", "--lore", "l", "--session", "s"])
+        self.assertEqual(args.players, "")
+
     def test_only_the_dms_own_import_only_campaign_may_be_replaced(self) -> None:
         mine = Existing("c", DM, frozenset({DM}), sessions=2, imported=2)
         self.assertIsNone(plan.can_replace(mine, DM))
@@ -271,6 +291,74 @@ class Steps(DatabaseTest):
         # and the guard sees it as the tool's own, so the next run may replace it
         [seen] = await steps.existing_samples(self.db, self.campaigns, GUILD)
         self.assertIsNone(plan.can_replace(seen, DM))
+
+    async def test_players_not_on_discord_are_imported_through_the_websites_own_import(
+        self,
+    ) -> None:
+        from dmbot.consent import ConsentStore
+
+        camp = await self.made()
+        async with self.db.user(DM) as conn:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at)"
+                " VALUES (%s, NULL, 0, 0) ON CONFLICT DO NOTHING",
+                (DM,),
+            )
+        await ConsentStore(self.db).grant(GUILD, DM)  # the DM agreed in Discord
+        text = (
+            "[0:00:05] player_ist: We open the door.\n[0:01:00] player_jac: I check the lock.\n"
+            "[0:02:00] DM: It is stuck.\n"
+        )
+        async with steps.site_session(self.db, DM, GUILD, now=NOW) as site:
+            made = await steps.make_speakers(
+                self.db, site, GUILD, camp.id, ["player_ist", "player_jac"]
+            )
+            self.assertTrue(all(n < 0 for n in made.values()))
+            sid = await steps.import_through_site(
+                self.db, site, GUILD, camp.id, text,
+                {
+                    "player_ist": {"confirmed": True},
+                    "player_jac": {"confirmed": True},
+                    "DM": {"member": str(DM)},
+                },
+                started_at=NOW - 86400, now=NOW,
+            )  # fmt: skip
+        ids = await steps.speaker_ids(self.db, GUILD, camp.id)
+        self.assertEqual(ids, {"player_ist": made["player_ist"], "player_jac": made["player_jac"]})
+        lines = await self.transcripts.lines(GUILD, sid)
+        self.assertEqual(sorted(line.user_id for line in lines), sorted([*made.values(), DM]))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, basis FROM import_consents WHERE campaign_id = %s", (camp.id,)
+            )
+            records = {int(r["user_id"]): r["basis"] for r in await cur.fetchall()}
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM web_sessions WHERE user_id = %s", (DM,)
+            )
+            left = (await cur.fetchone() or {})["n"]
+        # the uploader's confirmation is recorded for each player not on Discord, as the import does
+        self.assertEqual(set(records), set(made.values()))
+        self.assertEqual(left, 0)  # the throwaway website session is gone
+
+    async def test_a_speaker_nobody_confirmed_is_not_kept(self) -> None:
+        from dmbot.consent import ConsentStore
+
+        camp = await self.made()
+        async with self.db.user(DM) as conn:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at)"
+                " VALUES (%s, NULL, 0, 0) ON CONFLICT DO NOTHING",
+                (DM,),
+            )
+        await ConsentStore(self.db).grant(GUILD, DM)
+        text = "[0:00:05] player_ist: Hello.\n[0:01:00] DM: Hi.\n"
+        async with steps.site_session(self.db, DM, GUILD, now=NOW) as site:
+            sid = await steps.import_through_site(
+                self.db, site, GUILD, camp.id, text,
+                {"player_ist": "drop", "DM": {"member": str(DM)}},
+                started_at=NOW - 86400, now=NOW,
+            )  # fmt: skip
+        self.assertEqual([line.user_id for line in await self.transcripts.lines(GUILD, sid)], [DM])
 
     async def test_a_stop_half_way_leaves_no_session_to_jam_the_guard(self) -> None:
         camp = await self.made()
