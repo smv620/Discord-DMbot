@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Says which CI jobs a push needs (#1323), as lines for $GITHUB_OUTPUT: core=…, ears=…, web=….
+# Says which CI jobs a push needs (#1323), as lines for $GITHUB_OUTPUT: core=…, ears=…, web=…, docker=….
+#
+# The docker images job builds the images, so it runs only when something the images are built from
+# changed (#3715); its builds are the slowest part of CI and the runners are shared.
 #
 # A job is skipped only when nothing it reads can have changed. Anything this script does not
 # know by name runs everything, so a new folder can never slip past CI. Pushes to development,
@@ -14,6 +17,7 @@ everything() {
   echo "core=true"
   echo "ears=true"
   echo "web=true"
+  echo "docker=true"
   exit 0
 }
 
@@ -32,13 +36,19 @@ files=$(git diff --no-renames --name-only "$base" HEAD 2>/dev/null) || everythin
 core=false
 ears=false
 web=false
+docker=false
 while IFS= read -r f; do
   case "$f" in
+    # core/ and ears/ are copied into the images (COPY src, the Dockerfiles, tsconfig*.json), so any
+    # change there builds the docker images (#3715); web, docs, protocol and the logs are not copied
+    core/Dockerfile | core/.dockerignore | core/pyproject.toml) core=true docker=true ;;
+    ears/Dockerfile | ears/.dockerignore | ears/package*.json | ears/tsconfig*.json)
+      ears=true docker=true ;;
     # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
-    core/src/dmbot/*.py) core=true web=true ;;
+    core/src/dmbot/*.py) core=true web=true docker=true ;;
     # the Credits page and its tests read the rules data and its ATTRIBUTION.md files (#1923, #1932)
-    core/src/dmbot/rules/data/*) core=true web=true ;;
-    core/*) core=true ;;
+    core/src/dmbot/rules/data/*) core=true web=true docker=true ;;
+    core/*) core=true docker=true ;;
     # the website's owner-check test reads this doc against the held What's new entries
     docs/OWNER_CHECKS.md) web=true ;;
     # core's tests read the plans the website shows (core/tests/test_plans.py)
@@ -48,7 +58,7 @@ while IFS= read -r f; do
     web/*) web=true ;;
     # ears' tests read the protocol fixtures; core's read them too (test_protocol.py)
     protocol/*) core=true ears=true ;;
-    ears/*) ears=true ;;
+    ears/*) ears=true docker=true ;;
     # Core reads most of docs/ (the plan and story memory feed the sidebar, the test scripts feed
     # devtools and tests, docs/ci/ holds a workflow its tests check) and CLAUDE.md. Only these are
     # words nobody reads. The two testing logs are written by devtools (--log) but no test reads
@@ -66,3 +76,4 @@ done <<<"$files"
 echo "core=$core"
 echo "ears=$ears"
 echo "web=$web"
+echo "docker=$docker"

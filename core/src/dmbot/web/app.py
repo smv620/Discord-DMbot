@@ -46,6 +46,7 @@ from dmbot.web import (
     email_change,
     email_signin,
     entitlements_writer,
+    features_view,
     feedback,
     game_masters,
     handover_accept,
@@ -1908,7 +1909,13 @@ def create_app(
         campaign's server, and a campaign that isn't there, get the same 404."""
         session, _token = signed
         try:
-            return await read_campaign(db, session, ref, imports_for=settings.imports_enabled_for)
+            return await read_campaign(
+                db,
+                session,
+                ref,
+                imports_for=settings.imports_enabled_for,
+                features=lambda: features_view.read_features(settings.status_dir),
+            )
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 

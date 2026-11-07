@@ -52,6 +52,9 @@ services:
       # The recaps' narration and music (#1383). Its own volume so the website's API can read it
       # (read-only, below) without seeing anything else in /data. Mounted over /data/recap-audio.
       - recap-audio:/data/recap-audio
+      # The finished list of switched-on features, for the website's campaign settings (#3693). Its
+      # own volume so the API reads names and sentences only (read-only, below), never a key.
+      - bot-status:/data/status
       - whisper-models:/models # downloaded Whisper models, kept across updates
       - test-recordings:/var/lib/dmbot/test-recordings   # saved test sessions (#1019), test server only
       # Read at start-up to warn when .env is missing newer settings (#31). Names only.
@@ -214,6 +217,8 @@ services:
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
       # container, so not an .env setting.
       WEB_RECAP_AUDIO_DIR: /recap-audio
+      # Where the bot writes the list of switched-on features (#3693): the volume below, read-only.
+      WEB_STATUS_DIR: /status
       # Kept pictures (#3274): the open link signs short-lived read addresses with a READ-ONLY key
       # to the one private bucket, and the gallery's usage line reads the campaign storage. All
       # four blank: the link answers "not open yet".
@@ -224,6 +229,7 @@ services:
       WEB_PICTURES_R2_SECRET: ${WEB_PICTURES_R2_SECRET:-}
     volumes:
       - recap-audio:/recap-audio:ro
+      - bot-status:/status:ro
     expose:
       - "${WEB_API_PORT:-8080}"
     healthcheck:
@@ -260,5 +266,6 @@ volumes:
   postgres-data:
   dmbot-data:
   recap-audio:   # the bot writes it; the website API reads it (#1418)
+  bot-status:    # the bot writes its feature list; the website API reads it (#3693)
   whisper-models:
   test-recordings:
