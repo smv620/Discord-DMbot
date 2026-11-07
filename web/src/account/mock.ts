@@ -67,6 +67,7 @@ import type {
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
+import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -598,6 +599,8 @@ interface WebState {
     belief?: WebLink["belief"];
     pinned?: boolean;
     check?: string;
+    quote?: string;
+    line?: number;
   }[];
   nextLink: number;
 }
@@ -837,6 +840,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
+  // Spellings of a place waiting for a yes or no (#3533): the pretend places "Saltmarsh" and "Greywatch" each have a new spelling.
+  const spellingQuestions: { id: string; placeId: string; place: string; spelling: string }[] = [
+    { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" },
+    { id: "sp2", placeId: "n25", place: "Greywatch", spelling: "Grey Watch" },
+  ];
   // Secret other names and who holds or was told them (#3542): "the guard" is a secret name of the entry n1, held by one
   // player character and told to another.
   const toldRows: ToldName[] = [
@@ -866,7 +874,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
     let found = webs.get(ref);
-    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
+    if (!found) {
+      webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
+      // A "knows (wary)" connection with its lore line, for the feeling picker (#3607).
+      if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
+    }
     return found;
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
@@ -900,7 +912,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
           // Where it came from (#2946): the DM gets all four kinds, a player only a session or unknown (never a label).
-          source: pretendSource(l.id, pins),
+          source: l.line && pins ? { ...(pretendSource(l.id, pins) as { type: "upload"; label: string }), type: "upload" as const, line: l.line } : pretendSource(l.id, pins),
+          // The words it came from are the DM's alone, like a pin (#3607).
+          ...(pins && l.quote !== undefined ? { quote: l.quote } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
           // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).
@@ -2195,6 +2209,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         link.secret = change.secret;
       } else if (change.action === "pin") {
         link.pinned = change.pinned;
+      } else if (change.action === "feeling") {
+        // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
+        if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
+        link.words = `knows (${change.feeling})`;
       } else if (change.action === "who") {
         // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
         const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
@@ -2787,6 +2805,28 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async placeSpellings(ref) {
+      calls.push(`placeSpellings:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed"); // a player never sees a proposed name
+      return spellingQuestions.map((x) => ({ ...x }));
+    },
+    async answerPlaceSpelling(ref, spelling, yes) {
+      const id = spelling.id;
+      calls.push(`answerPlaceSpelling:${ref}:${id}:${yes}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.spelling-fails\b/.test(ref)) throw new ApiError("server");
+      const at = spellingQuestions.findIndex((x) => x.id === id);
+      if (at < 0) throw new ApiError("gone");
+      const [asked] = spellingQuestions.splice(at, 1);
+      if (yes && asked) {
+        const row = memory.find((n) => n.name === asked.place);
+        if (row) row.others = [...row.others, asked.spelling];
+      }
     },
     async toldPanel(ref) {
       calls.push(`toldPanel:${ref}`);
