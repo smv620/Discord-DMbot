@@ -7,14 +7,14 @@
 // readers. For the keyboard each name is a stop (Enter puts it in the middle, arrow keys move it), and
 // the lines of the name in focus become stops too, so a map of hundreds of lines is not hundreds of Tabs.
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 
 import { mapReadLine } from "./webReading";
 
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import NodeSummary from "./NodeSummary";
-import type { AccountApi, WebEdge, WebNode } from "./api";
+import type { AccountApi, IconChoice, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
   MAX_SIM_STEPS,
@@ -34,7 +34,10 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
-import { readMode, readPlaces, saveMode, savePlaces } from "./webPrefs";
+import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
+import { pcIconWords } from "../content/pc-icon-words";
+import LazyPanel from "./LazyPanel";
+import { DEFAULT_LOOK, readMode, readPlaces, saveMode, savePlaces, type GraphLook } from "./webPrefs";
 import { isTheory, zoomAbout, type View } from "./webLayout";
 import { dimmedName, markSecret } from "./know";
 
@@ -42,18 +45,25 @@ const SHAPE_R = 24; // half the width of a name's shape: 48 px across at normal 
 const STEPS_PER_FRAME = 2; // the settle runs a couple of steps each frame: calm, and quick to finish
 const DOUBLE_MS = 400; // two clicks on one name within this are a double click
 /** A small arrowhead just outside the other name's shape, pointing away from the name in focus. */
-function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }): string {
+function arrowhead(from: { x: number; y: number }, to: { x: number; y: number }, scale = 1): string {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
-  const back = SHAPE_R * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
+  const back = SHAPE_R * scale * 1.25 + 4; // (clear of the shape, even the bigger one of the middle name)
   const tx = to.x - ux * back;
   const ty = to.y - uy * back;
   const bx = tx - ux * 11;
   const by = ty - uy * 11;
   return `M${tx.toFixed(1)} ${ty.toFixed(1)}L${(bx - uy * 5).toFixed(1)} ${(by + ux * 5).toFixed(1)}L${(bx + uy * 5).toFixed(1)} ${(by - ux * 5).toFixed(1)}Z`;
+}
+/** A line's width by how many connections it holds (#3620): 2, 3, 4.5 and 6 px for one, two, three and four or more, so
+ * one busy pair never swamps the map; the chosen line is two wider so it still stands out. Nothing set when off. */
+export function lineWidthOf(count: number, on: boolean, chosen: boolean): { strokeWidth: number } | undefined {
+  if (!on) return undefined;
+  const base = [2, 3, 4.5, 6][Math.min(Math.max(count, 1), 4) - 1] ?? 2;
+  return { strokeWidth: chosen ? base + 2 : base };
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
@@ -100,6 +110,36 @@ function Shape({ kind, r }: { kind: string; r: number }) {
   }
 }
 
+/** A player character's icon (#3622): its picture clipped to the circle with a plain border, 👤 when it has none or the picture
+ * does not load, and nothing at all when the icon is hidden. The browser fetches the picture after the drawing is up (an SVG image has no lazy attribute, but it never blocks the paint). */
+function PcIcon({ node, r }: { node: WebNode; r: number }) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const icon = node.icon;
+  const clipId = useId();
+  if (icon?.kind === "hidden") return null;
+  // Only an https address is ever drawn (the door sends Discord's and dndbeyond.com's, never one a person typed); a failed
+  // picture is remembered until its address changes, so a bad link is not retried on every draw.
+  const url = icon?.url && /^(https:|data:image\/)/.test(icon.url) ? icon.url : null;
+  const clip = `pcc-${clipId.replace(/[^A-Za-z0-9_-]/g, "_")}`; // (one per drawing of one name, never shared)
+  if (url && failed !== url) {
+    const k = r * 0.78;
+    return (
+      <g class="web-pc-icon" pointer-events="none">
+        <clipPath id={clip}>
+          <circle r={k} />
+        </clipPath>
+        <image href={url} x={-k} y={-k} width={2 * k} height={2 * k} clip-path={`url(#${clip})`} preserveAspectRatio="xMidYMid slice" role="img" aria-label={pcIconWords.alt(node.name)} onError={() => setFailed(url)} />
+        <circle r={k} class="web-pc-icon-border" />
+      </g>
+    );
+  }
+  return (
+    <text class="web-pc-person" y={r * 0.38} text-anchor="middle" font-size={r * 1.05} aria-hidden="true" pointer-events="none">
+      👤
+    </text>
+  );
+}
+
 /** The groups of names, in the order their areas and anchors are given: kinds people first, quests as the door
  * sent them with "not part of a quest" last. */
 function areaKeys(groups: string[], mode: LayoutMode): string[] {
@@ -117,6 +157,17 @@ const reducedMotion = (): boolean => {
   }
 };
 
+const SIDE_KEY = "dmbot.web.details";
+function readSide(): "left" | "right" | "under" {
+  try {
+    const v = localStorage.getItem(SIDE_KEY);
+    if (v === "left" || v === "under") return v;
+  } catch {
+    // (no storage: the default)
+  }
+  return "right";
+}
+
 export default function WebMap({
   nodes,
   edges,
@@ -125,6 +176,11 @@ export default function WebMap({
   selected,
   onCenter,
   onLine,
+  onNodePick,
+  onIcon,
+  iconUndo = null,
+  look = DEFAULT_LOOK,
+  canEdit = false,
   children,
   api,
   onDragging,
@@ -142,15 +198,39 @@ export default function WebMap({
   selected: { a: string; b: string } | null;
   onCenter: (id: string) => void;
   onLine: (a: string, b: string) => void;
+  /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
+  onNodePick?: () => void;
+  /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
+  onIcon?: ((id: string, choice: IconChoice) => Promise<string | null>) | undefined;
+  /** The id of the character whose last icon change can be taken back, and the Undo itself. */
+  iconUndo?: { id: string; now: IconChoice; undo: () => Promise<string | null> } | null;
+  /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
+  look?: GraphLook;
+  /** Only the campaign's DM is offered the links to the full editor (the Names page is the DM's list). */
+  canEdit?: boolean;
   /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
   children?: ComponentChildren;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
+  // The size of a name's shape and its words follow the viewer's choice; the settle reads the spacing from a ref.
+  const R = SHAPE_R * look.nodeSize;
+  const spreadRef = useRef(look.spacing);
+  spreadRef.current = look.spacing;
   // "Cluster by quest" needs the door's quests, which only a DM in Full View is sent: without them it is the spread layout.
   const hasQuests = nodes.some((n) => n.quests !== undefined);
   const modeNow: LayoutMode = mode === "quests" && !hasQuests ? "free" : mode;
   // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
   const [full, setFull] = useState(false);
+  // Where the details panel sits on a wide screen; a narrow one always puts it under the map (the style sheet decides).
+  const [side, setSide] = useState<"left" | "right" | "under">(readSide);
+  const chooseSide = (to: "left" | "right" | "under"): void => {
+    setSide(to);
+    try {
+      localStorage.setItem(SIDE_KEY, to);
+    } catch {
+      // (a browser that won't keep it: the choice lasts until the page closes)
+    }
+  };
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [frame, setFrame] = useState(0);
   const [extent, setExtent] = useState(260);
@@ -162,7 +242,10 @@ export default function WebMap({
   const [pickedAt, setPickedAt] = useState<{ id: string; center: string } | null>(null);
   const picked = pickedAt && pickedAt.center === center ? pickedAt.id : null;
   if (pickedAt && pickedAt.center !== center) setPickedAt(null); // (forgotten for good, not only hidden while the middle differs)
-  const setPicked = (id: string) => setPickedAt({ id, center });
+  const setPicked = (id: string) => {
+    onNodePick?.();
+    setPickedAt({ id, center });
+  };
   const touched = useRef(false);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
 
@@ -208,6 +291,17 @@ export default function WebMap({
     };
   };
 
+  // A new spacing from the settings warms the settle up again, so the names move to where it puts them.
+  const firstSpacing = useRef(true);
+  useEffect(() => {
+    if (firstSpacing.current) {
+      firstSpacing.current = false;
+      return;
+    }
+    reheat(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [look.spacing]);
+
   const zoom = (factor: number, at = { x: 0, y: 0 }): void => setView((v) => zoomAbout(v, at, factor));
 
   /** Keep the places of every pinned name, for this campaign, in this browser. */
@@ -226,7 +320,7 @@ export default function WebMap({
     if (reducedMotion()) {
       // Less motion: names move to their new places at once, with no animation, after a drag as at the start.
       const list = sim.current;
-      settle(list, linksRef.current, list.findIndex((n) => n.id === centerRef.current), modeRef.current, anchorsRef.current);
+      settle(list, linksRef.current, list.findIndex((n) => n.id === centerRef.current), modeRef.current, anchorsRef.current, spreadRef.current);
       setExtent(extentOf(list));
       setFrame((f) => f + 1);
       return;
@@ -237,7 +331,7 @@ export default function WebMap({
       const centreAt = list.findIndex((n) => n.id === centerRef.current);
       let moved = 0;
       for (let i = 0; i < STEPS_PER_FRAME; i += 1) {
-        moved = forceStep(list, linksRef.current, centreAt, modeRef.current, anchorsRef.current, heat.current.alpha);
+        moved = forceStep(list, linksRef.current, centreAt, modeRef.current, anchorsRef.current, heat.current.alpha, spreadRef.current);
         heat.current.alpha *= COOLING;
         heat.current.steps += 1;
       }
@@ -287,7 +381,7 @@ export default function WebMap({
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
       // Less motion: place the names at once. A very big web keeps its rings and is only moved by hand.
-      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current);
+      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current, spreadRef.current);
       setExtent(extentOf(next));
       setFrame((f) => f + 1);
     } else {
@@ -485,9 +579,9 @@ export default function WebMap({
   const anyPinned = sim.current.some((n) => n.pinned);
   const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
-  // The side panel: the name in focus, or the middle name, with its connections in words.
+  // The side panel: the name that was clicked or tapped (never one the pointer only passes over), or the middle name, with its connections in words.
   // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
-  const detail = byId.get(focus ?? "") ?? byId.get(picked ?? "") ?? byId.get(center) ?? null;
+  const detail = byId.get(picked ?? "") ?? byId.get(center) ?? null;
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
@@ -532,6 +626,13 @@ export default function WebMap({
             </button>
           )}
         </div>
+        <div class="web-seg web-side-seg" role="group" aria-label={words.sideLabel}>
+          {(["left", "right", "under"] as const).map((k) => (
+            <button key={k} type="button" class="button secondary" aria-pressed={side === k} onClick={() => chooseSide(k)}>
+              {k === "left" ? words.sideLeft : k === "right" ? words.sideRight : words.sideUnder}
+            </button>
+          ))}
+        </div>
         <button type="button" class="button secondary" aria-pressed={full} onClick={() => setFull((f) => !f)}>
           {full ? words.leaveFullScreen : words.fullScreen}
         </button>
@@ -564,10 +665,11 @@ export default function WebMap({
       )}
       {kindsPresent.length > 0 && <p class="small muted">{words.kindHint}</p>}
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
-      <div class="web-stage">
+      <div class={`web-stage web-side-${side}`}>
       <svg
         ref={svg}
         class="web-svg"
+        style={look.textSize === 1 ? undefined : { "--web-text": `${14 * look.textSize}px` }}
         viewBox={`${-e} ${-e} ${2 * e} ${2 * e}`}
         role="group"
         aria-label={words.mapLabel(nodes.length, byId.get(center)?.name ?? "")}
@@ -651,7 +753,7 @@ export default function WebMap({
                 key={`${edge.a}|${edge.b}`}
                 class={`web-edge web-link-${kind}${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
               >
-                <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" />
+                <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" style={lineWidthOf(edge.links.length, look.lineWidth, chosen)} />
                 {/* A fat invisible line: easy to hit with a finger, and reachable by keyboard. */}
                 <line
                   x1={p.x}
@@ -672,7 +774,7 @@ export default function WebMap({
                 >
                   <title>{tip}</title>
                 </line>
-                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo)} class="web-arrow" aria-hidden="true" />}
+                {arrowFrom && arrowTo && <path d={arrowhead(arrowFrom, arrowTo, look.nodeSize)} class="web-arrow" aria-hidden="true" />}
                 {shown && (
                   <text x={mx} y={my - 5} transform={`rotate(${upright.toFixed(1)} ${mx} ${my})`} class="web-edge-text" text-anchor="middle" onClick={open}>
                     <title>{tip}</title>
@@ -732,9 +834,10 @@ export default function WebMap({
                 }}
               >
                 <title>{n.name}</title>
-                <Shape kind={n.kind} r={n.id === center ? SHAPE_R * 1.25 : SHAPE_R} />
-                {place.pinned && <circle class="web-pin" r={5} cx={SHAPE_R * 0.8} cy={-SHAPE_R * 0.8} aria-hidden="true" />}
-                <text y={SHAPE_R * 1.25 + 18} text-anchor="middle" class="web-node-text">
+                <Shape kind={n.kind} r={n.id === center ? R * 1.25 : R} />
+                {PC_ICONS_LIVE && kindStyle(n.kind) === "player_character" && <PcIcon node={n} r={n.id === center ? R * 1.25 : R} />}
+                {place.pinned && <circle class="web-pin" r={5} cx={R * 0.8} cy={-R * 0.8} aria-hidden="true" />}
+                <text y={R * 1.25 + 18 * look.textSize} text-anchor="middle" class="web-node-text">
                   {markSecret(n) ? `${words.secretMark} ` : ""}
                   {short(n.name)}
                 </text>
@@ -743,10 +846,20 @@ export default function WebMap({
           })}
         </g>
       </svg>
-      {detail && (
+      {selected && children ? (
+        <div class="web-side">{children}</div>
+      ) : detail && (
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {PC_ICONS_LIVE && onIcon && detail.canSetIcon && kindStyle(detail.kind) === "player_character" && (
+            <LazyPanel
+              key={detail.id}
+              load={() => import("./PcIconRow")}
+              what="the icon choices"
+              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
+            />
+          )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
@@ -787,6 +900,11 @@ export default function WebMap({
           >
             {detailPinned ? words.letMove : words.keepHere}
           </button>
+          {canEdit && (
+            <a class="button secondary" href={`/account/names/${encodeURIComponent(refId)}#said=${encodeURIComponent(detail.name)}`}>
+              {words.editFull(detail.name)}
+            </a>
+          )}
           {detail.id === center ? <p class="small muted">{words.inMiddle}</p> : <p class="small muted">{words.doubleTapHint}</p>}
           {detail.id !== center && (
             <button type="button" class="button secondary" onClick={() => onCenter(detail.id)}>
@@ -796,7 +914,6 @@ export default function WebMap({
         </aside>
       )}
       </div>
-      {children}
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}

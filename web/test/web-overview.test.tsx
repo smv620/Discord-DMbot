@@ -16,7 +16,7 @@ afterEach(cleanup);
 const at = (suffix: string): string => `/account/web/100.cmp1${suffix}`;
 async function open(suffix = ".web-lonely", api = mockApi("table")) {
   render(<Web api={api} path={at(suffix)} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 

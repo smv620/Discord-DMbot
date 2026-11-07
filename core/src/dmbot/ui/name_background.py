@@ -1884,7 +1884,7 @@ class WhichOffer(_Menu):
                 f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
                 "check once their names are confirmed (press 📜 Check the connections)."
             )
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         asked = _md(bare(c.word))  # (the end as written stays in the quote line)
@@ -2106,7 +2106,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2123,7 +2123,7 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (

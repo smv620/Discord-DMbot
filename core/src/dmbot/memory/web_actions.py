@@ -25,6 +25,7 @@ from dmbot.memory import beliefs, evidence, link_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
+from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
@@ -88,6 +89,7 @@ WAITING = (
     "claim-reject",
     "claim-pick",  # "Which one?" for a claim kept because a name could be two entries (#3463)
     "claim-unpick",
+    "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
     "backstory-skip",
     "backstory-keep-all",
@@ -105,6 +107,9 @@ CONFIRM_ACTIONS = ("confirm-kinds", "confirm-undo")
 # "Tell a character" (#3542, #3089): the DM tells one player character that a secret other name is
 # this entry, or takes the telling back.
 TOLD_ACTIONS = ("told-add", "told-remove")
+# DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
+# takes it back. Filed under no name; the target is the match's batch, in digits.
+MATCH_ACTIONS = ("match-confirm", "match-undo")
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -316,6 +321,20 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else int(row["result_other"])
 
+    async def claim_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done `claim-confirm` of this claim made,
+        so an Undo can only take back what they answered themselves from the website (#3645)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'claim-confirm' AND target_id = %s"
+                " AND state = 'done' AND result_other = %s",
+                (guild_id, campaign_id, user_id, claim_id, str(batch)),
+            )
+            return await cur.fetchone() is not None
+
     async def kept_reading(
         self, guild_id: int, campaign_id: str, user_id: int, answer_id: str
     ) -> tuple[str, int] | None:
@@ -404,13 +423,27 @@ async def apply(
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
+    if (
+        action.action == "offer-clear"
+    ):  # lift a Never or Not now on words (#3577); filed under no name
+        await memory.clear_kind_offer(guild_id, cid, action.text)
+        return Outcome()  # (lifting words that are already lifted is done, not a failure)
     if action.action in CONFIRM_ACTIONS:
         if actions is None:
             return _failed(FAILED)
         return await _confirm(memory, actions, guild_id, cid, action)
+    if action.action in MATCH_ACTIONS:
+        return await _match(memory, guild_id, cid, action)
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
+        except MemoryRuleError:
+            return _failed(GONE)
+    if action.action == "claim-undo":
+        if actions is None or waiting is None:
+            return _failed(FAILED)
+        try:
+            return await _claim_undo(memory, actions, guild_id, cid, action, waiting)
         except MemoryRuleError:
             return _failed(GONE)
     if (
@@ -432,6 +465,27 @@ async def apply(
             return Outcome()
         if action.action == "merge" and entity.merged_into == action.target_id:
             return Outcome(result_id=action.target_id)
+    if (
+        action.action == "remove"
+        and entity is not None
+        and entity.unnamed
+        and entity.status == REJECTED
+    ):
+        return Outcome()  # taken again after a first run that did its work but did not say so
+    if (
+        action.action == "remove"
+        and action.flag
+        and entity is not None
+        and entity.unnamed
+        and entity.status in (PROPOSED, CONFIRMED)
+    ):
+        # A person the story never named (#2803), waiting or kept: removed like any name, in one
+        # change (one batch, so it can be taken back); the door asked for the confirmation.
+        try:
+            await memory.set_entity_status(guild_id, cid, entity.id, REJECTED, source=DM)
+        except MemoryRuleError:
+            return _failed(NOT_FOUND)
+        return Outcome()
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:
@@ -625,6 +679,28 @@ async def _confirm(
     if refused and not parts:
         return _failed(BAD_TARGET)
     return Outcome(counts=" ".join(parts), batches=tuple(batches))
+
+
+async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's word on a name DMbot matched on its own, from the page: ✅ confirms it, ↩️ takes it
+    back, the same store calls as Discord's check (`confirm_join`, `undo`). Only a match that is
+    still waiting can be touched: the batch is looked up in the campaign's waiting matches first
+    (read again now, as the door only checked that the batch was one of DMbot's), so a made-up
+    number never reaches `undo`, which would undo any change. `not_found` covers a match already
+    answered or undone; `gone` is the store refusing (a name was changed since)."""
+    if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
+        return _failed(NOT_FOUND)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.target_id)
+    if not any(j.batch == batch for j in await memory.waiting_joins(guild_id, cid)):
+        return _failed(NOT_FOUND)
+    try:
+        if a.action == "match-confirm":
+            await memory.confirm_join(guild_id, cid, batch)
+        else:
+            await memory.undo(guild_id, cid, batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        return _failed(NOT_FOUND if str(exc) in (STORE_NOT_FOUND, ALREADY_UNDONE) else GONE)
+    return Outcome()
 
 
 async def _confirm_undo(
@@ -940,6 +1016,48 @@ async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> O
     return Outcome() if made else _failed(GONE)
 
 
+async def _claim_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action, w: Waiting
+) -> Outcome:
+    """Take back one fact of an "All true" / "All secret" press and ask its question again (#3645):
+    the change log's Undo and `ClaimStore.reopen_in`, the calls of Discord's "Undo all". Only the
+    change this DM's own done `claim-confirm` of that claim made can be undone here. A claim already
+    waiting again, or a batch already undone, is done (a retried job); a later change to what the
+    fact made is refused with `gone`, the page's "something changed since"."""
+    claim = await w.claims.get(guild_id, cid, a.target_id)
+    if claim is None:
+        return _failed(GONE)
+    # Before anything else, so a retried job still succeeds when the answer row it came from has
+    # been pruned (rows go after an hour). A reopened claim is hidden from a speaker who stopped
+    # being recorded by the waiting list itself (it filters on who is recorded now).
+    if claim.status == CLAIM_PROPOSED:
+        return Outcome()  # asked again already
+    if not (a.text.isascii() and a.text.isdecimal()) or len(a.text) > 12:
+        return _failed(GONE)
+    batch = int(a.text)
+    if not await actions.claim_batch_made(guild_id, cid, a.user_id, a.target_id, batch):
+        return _failed(GONE)
+    claim_id = a.target_id
+    try:
+        await memory.undo(
+            guild_id,
+            cid,
+            batch,
+            source=DM,
+            after=lambda changes: ClaimStore.reopen_in(changes, claim_id),
+        )
+    except MemoryRuleError as exc:  # (TooLateToUndo is one)
+        if str(exc) == ALREADY_UNDONE:
+            # undone before, so a retry is done: unless the claim was kept again since (from
+            # Discord), when that old batch is not the fact's now
+            again = await w.claims.get(guild_id, cid, claim_id)
+            return (
+                Outcome() if again is not None and again.status == CLAIM_PROPOSED else _failed(GONE)
+            )
+        return _failed(GONE)
+    return Outcome()
+
+
 async def _answer_waiting(
     memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
 ) -> Outcome:
@@ -970,7 +1088,11 @@ async def _answer_waiting(
             # the page words these: the question is gone, a new name has to be answered first,
             # someone who said it stopped being recorded, or the rules refuse the fact now
             return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
-        return Outcome(result_id=confirmed.claim.fact_id or "")
+        # The change batch rides on the answer, for the page's one Undo of a press (#3645).
+        return Outcome(
+            result_id=confirmed.claim.fact_id or "",
+            result_other="" if confirmed.batch is None else str(confirmed.batch),
+        )
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)
     if a.action in NAMES_FIXED_ACTIONS:

@@ -7,9 +7,14 @@ import type {
   MyNpcNote,
   NameAnswer,
   NameAnswerResult,
+  IconChoice,
+  ClarifyName,
   NameCheckList,
   NamesFixed,
+  KindOffer,
+  MatchRow,
   NamesPage,
+  PlaceSpelling,
   ToldName,
   NpcPage,
   CampaignNameChecks,
@@ -80,6 +85,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    // One name on its own page (#3604): the same address as its answer, read with GET; the core door comes with #3596/#3602.
+    clarifyName: async (ref, id) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`)) as ClarifyName,
     answerNameCheck: async (ref, id, answer) => {
       await call(
         "POST",
@@ -121,6 +129,17 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    nameMatches: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names-matches`)) as { matches: MatchRow[] }).matches,
+    // Queued for the bot like every name action (202 {answer}); the answer is read where every all-names answer is.
+    answerMatch: async (ref, batch, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/all-names-matches/${encodeURIComponent(batch)}/${answer}`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
+      );
+    },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
@@ -151,6 +170,51 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       // The bot may still apply it later: the page says so and reads the list again, never "nothing
       // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
+    },
+    placeSpellings: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/place-spellings`)) as {
+        spellings: PlaceSpelling[];
+      }).spellings,
+    // Queued like any name change (the bot confirms or turns down the proposed name), then waited for.
+    answerPlaceSpelling: async (ref, spelling, yes) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(spelling.placeId)}`, {
+        action: yes ? "spelling-yes" : "spelling-no",
+        alias: spelling.id,
+      })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
+    campaignKindOffers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/kind-offers`)) as { offers: KindOffer[] }).offers,
+    // Queued like any name change (the bot lifts the answer), then waited for.
+    liftKindOffer: async (ref, words) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/all-names-confirm`, { action: "offer-clear", words })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/all-names/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
       throw new ApiError("still-waiting");
     },
     toldPanel: async (ref) =>
@@ -249,7 +313,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
       const kept = (got as { kept?: unknown }).kept;
-      return typeof kept === "number" ? { kept } : {};
+      const batch = (got as { batch?: unknown }).batch; // the change an answer made, for its Undo (#3645)
+      return { ...(typeof kept === "number" ? { kept } : {}), ...(typeof batch === "number" ? { batch } : {}) };
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
@@ -283,6 +348,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
     // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
+    // The icon choice is instant: the door answers with what it was and what it is now (#3621).
+    setPcIcon: async (ref, entityId, choice) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       let queued: { answer: string };
