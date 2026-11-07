@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
+import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
@@ -396,6 +397,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           </p>
         )}
       </section>
+
+      {NAME_MATCHES_LIVE && data.canEdit && api.nameMatches !== undefined && (
+        <LazyPanel
+          load={() => import("./NameMatches")}
+          what="DMbot's guesses"
+          props={{ api, campaignRef: ref, onChanged: () => void load(pageNow.current, true) }}
+        />
+      )}
 
       <form class="names-tools" role="search" onSubmit={(e) => e.preventDefault()} noValidate>
         <label class="field">

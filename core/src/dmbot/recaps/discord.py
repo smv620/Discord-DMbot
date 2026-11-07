@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
+from dmbot import ai_feed
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
@@ -2068,6 +2069,11 @@ class RecapFeatures:
                             await self.web_line_fixes.sweep(guild.id)
                         except Exception as exc:
                             log.warning("The line fix sweep failed: %s", type(exc).__name__)
+                    try:  # its own try: the DM-window feed is gone within a day (#3710)
+                        if self.recaps is not None:
+                            await ai_feed.sweep(self.recaps.db, guild.id)
+                    except Exception as exc:
+                        log.warning("The AI feed sweep failed: %s", type(exc).__name__)
                     try:
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:

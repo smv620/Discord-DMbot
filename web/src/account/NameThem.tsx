@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { NAME_LIMIT } from "../content/names-words";
 import { REMOVE_UNNAMED_LIVE } from "../content/remove-unnamed-switch";
 import { notNamedWords as w } from "../content/not-named-words";
+import SceneLine from "./SceneLine";
 import { ApiError, type AccountApi, type NameChange, type NameRow, type NameThemResult } from "./api";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
@@ -159,8 +160,7 @@ export default function NameThem({
   return (
     <div class="stack name-them panel" id={id}>
       <p class="small muted">{w.hint}</p>
-      {/* A short who, where and what from the story, when the API has one (#3596): room is kept for it. */}
-      {row.scene && <p class="small">{row.scene}</p>}
+      <SceneLine scene={row.scene} />
       {question ? (
         <div class="stack" role="group" aria-label={w.known(row.name, question.name)}>
           <p role="status" tabIndex={-1} ref={questionBox}>

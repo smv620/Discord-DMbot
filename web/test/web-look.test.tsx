@@ -118,7 +118,7 @@ async function openPage() {
   api.webGraph = async () => graph();
   api.webSize = async () => ({ names: 4 });
   render(<Web api={api} path="/account/web/100.cmp1" />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
 }
 
 describe("the settings on the page", () => {
