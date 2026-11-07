@@ -132,8 +132,17 @@ describe("a DM's Full View and Players View", () => {
 });
 
 describe("a connection that can't be shown until its names are (#3426)", () => {
-  async function pressRevealOnAConnection(kind: "names-not-shown" | "name-unnamed") {
-    const api = await open();
+  async function pressRevealOnAConnection(kind: "names-not-shown" | "name-unnamed", rename?: (name: string) => string) {
+    const api = mockApi("table");
+    if (rename) {
+      // Every name the page is given is renamed, so the connection whose Reveal is pressed has the name asked about at an end.
+      const real = api.webGraph!.bind(api);
+      api.webGraph = async (ref, query) => {
+        const graph = await real(ref, query);
+        return { ...graph, nodes: graph.nodes.map((n) => ({ ...n, name: rename(n.name) })) };
+      };
+    }
+    await open("", api);
     api.webReveal = async () => {
       throw new ApiError(kind);
     };
@@ -171,6 +180,18 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     expect(alert.textContent).toMatch(/(needs a name first|has no name yet)/);
     expect(alert.textContent).toContain("Add one on the Names page.");
     expect(screen.getByRole("link", { name: w.openNames })).toBeTruthy();
+  });
+
+  it("names the person the story never named by the words after the 'unnamed - ' prefix (#3747)", async () => {
+    named.on = true;
+    const alert = await pressRevealOnAConnection("name-unnamed", () => "unnamed - Ken's sister");
+    expect(alert.textContent).toContain("This connection needs a name first: Ken's sister has none yet.");
+  });
+
+  it("falls back to the generic words when no end carries the prefix (#3747)", async () => {
+    named.on = true;
+    const alert = await pressRevealOnAConnection("name-unnamed");
+    expect(alert.textContent).toContain("One end of this connection has no name yet. Add one on the Names page.");
   });
 
   it("builds each sentence from the names that are held back", () => {
