@@ -55,6 +55,24 @@ class TheCleanup(Web):
         page = await graph_cleanup.read_cleanup(self.web, self.session, f"{self.g}.{other.id}")
         self.assertEqual((page["groups"], page["total"]), ([], 0))
 
+    async def test_a_guess_connection_ties_nobody_and_a_waiting_one_does(self) -> None:
+        async def listed() -> set[str]:
+            page = await graph_cleanup.read_cleanup(self.web, self.session, self.cref)
+            assert await self.memory.isolated_count(self.g, self.one.id) == page["total"]
+            return {e["id"] for g in page["groups"] for e in g["entries"]}
+
+        # (what someone believes, held as a secret waiting connection, is no connection, #2412)
+        await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "knows", self.drunk, source="extractor",
+            confidence=0.5, status="proposed", secret=True,
+        )  # fmt: skip
+        self.assertIn(self.drunk, await listed())
+        await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "knows", self.sailors, source="scan",
+            confidence=0.8, status="proposed",
+        )  # fmt: skip
+        self.assertFalse({self.drunk, self.sailors} & await listed())
+
     async def test_linking_one_to_the_party_takes_the_group_off(self) -> None:
         await self.link("knows", self.rook, self.drunk, "rook-drunk")
         page = await graph_cleanup.read_cleanup(self.web, self.session, self.cref)

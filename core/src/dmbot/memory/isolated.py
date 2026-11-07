@@ -12,7 +12,8 @@ The rule, as Supervisor ruled on #3740:
   the people.
 - A link joins whether it is kept or still waiting (DMbot heard them together; the DM answers the
   waiting one on its own list), ended or not, secret or not. A rejected link never counts, nor
-  does the story plan's "led to".
+  does the story plan's "led to", nor a guess connection (secret, waiting and the reader's: it
+  only holds what someone believes, #2412), which the readers leave out before this runs.
 - A rejected or merged entry never counts. A waiting named entry joins a chain but is not listed
   (it is the names-to-check list's); a person the story never named is listed whether it is
   waiting or kept.

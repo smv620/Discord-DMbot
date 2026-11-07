@@ -10,10 +10,11 @@ from __future__ import annotations
 # character or the party (owner, 2026-11-07, #3740). The rule is one pure function in core
 # (`memory/isolated.py`), shared with the Discord count, so this door only hands a DM of the
 # campaign the rows it reads: every live character and group (with the parts an unnamed one's
-# label is built from), every link between two of them that is not rejected, and the kept scene of
-# each (#3596; the scene sweep keeps an isolated entry's scene for this page). Anyone else, a member
-# who is not a DM included, gets NULL. Names, kinds, link words and scenes only: what a DM already
-# sees on the map and the name card. Nothing is written.
+# label is built from), every link between two of them that is kept or waiting (never a guess
+# connection, #2412), and the kept scene of each (#3596; the scene sweep keeps an isolated entry's
+# scene for this page). Anyone else, a member who is not a DM included, gets NULL. Names, kinds,
+# link words and scenes only: what a DM already sees on the map and the name card. Nothing is
+# written.
 GRAPH_CLEANUP = r"""
     CREATE FUNCTION dmbot_web_graph_cleanup(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -62,7 +63,11 @@ GRAPH_CLEANUP = r"""
                     'secret', r.secret, 'at', r.created_at)
                     ORDER BY r.id)
                 FROM memory_relations r
-                WHERE r.guild_id = g AND r.campaign_id = c AND r.status <> 'rejected'
+                WHERE r.guild_id = g AND r.campaign_id = c
+                  -- (kept, or waiting for the DM; never a guess connection, which only holds
+                  -- what someone believes and is no connection yet, #2412)
+                  AND (r.status = 'confirmed' OR (r.status = 'proposed'
+                       AND NOT (r.secret AND r.source = 'extractor')))
                   AND r.subject_id = ANY (ids) AND r.object_id = ANY (ids)), '[]'::jsonb),
             'scenes', COALESCE((
                 SELECT jsonb_object_agg(s.subject_id, s.scene)

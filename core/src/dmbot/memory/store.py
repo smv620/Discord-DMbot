@@ -7229,9 +7229,10 @@ async def _check_growth(w: Changes, session_started_at: int | None) -> None:
 async def isolated_rows_in(
     scope: Scope,
 ) -> tuple[list[isolated_mod.Entry], list[isolated_mod.Link]]:
-    """Every live character and group, and every link between two of them that is not rejected,
-    as the graph clean-up's rule takes them (#3740). Only the columns the rule reads: a lore
-    campaign can hold thousands of entries, and the scene sweep calls this on each card open.
+    """Every live character and group, and every link between two of them that is kept or
+    waiting (never a guess connection, #2412), as the graph clean-up's rule takes them (#3740).
+    Only the columns the rule reads: a lore campaign can hold thousands of entries, and the scene
+    sweep calls this on each card open.
     Inside the caller's scope, so the sweep decides and deletes in one transaction."""
     cur = await scope.conn.execute(
         "SELECT id, type, status, unnamed, role, party FROM memory_entities"
@@ -7243,7 +7244,8 @@ async def isolated_rows_in(
     ids = [str(r["id"]) for r in rows]
     cur = await scope.conn.execute(
         "SELECT id, subject_id, object_id, predicate, status FROM memory_relations"
-        " WHERE guild_id = %s AND campaign_id = %s AND status <> 'rejected'"
+        " WHERE guild_id = %s AND campaign_id = %s AND status IN ('proposed', 'confirmed')"
+        " AND NOT (status = 'proposed' AND secret AND source = 'extractor')"  # (a guess, #2412)
         " AND subject_id = ANY(%s::text[]) AND object_id = ANY(%s::text[])",
         (*scope.ids, ids, ids),
     )
