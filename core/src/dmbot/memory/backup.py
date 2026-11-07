@@ -16,6 +16,7 @@ from psycopg import errors as pg_errors
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
 from dmbot.memory import beliefs, evidence, notify, sheets
@@ -277,7 +278,10 @@ class MemorySection:
         out: list[Any] = []
         for tag, table in _TAGS.items():
             order = sql.SQL(" ORDER BY {}").format(sql.Identifier(table.key))
-            cur = await conn.execute(scoped_select(table, order), (guild_id, campaign_id))
+            cur = await conn.execute(
+                scoped_select(table, order, stamp=table.name in lineage.STAMPED),
+                (guild_id, campaign_id),
+            )
             raws = await cur.fetchall()
             # Building the rows is pure CPU (a big campaign takes a good fraction of a
             # second): off the event loop, so voice and other servers don't wait (#164).
@@ -304,7 +308,13 @@ class MemorySection:
             for tag, table in _TAGS.items():
                 if not by_tag[tag]:
                     continue
-                cols = ("guild_id", "campaign_id", *table.columns)
+                stamped = table.name in lineage.STAMPED
+                cols = (
+                    "guild_id",
+                    "campaign_id",
+                    *table.columns,
+                    *(("made_by_commit",) if stamped else ()),
+                )
                 query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
                     sql.Identifier(table.name),
                     sql.SQL(", ").join(sql.Identifier(c) for c in cols),
@@ -314,7 +324,12 @@ class MemorySection:
                     await cur.executemany(
                         query,
                         [
-                            (guild_id, campaign_id, *(_db_value(c, r[c]) for c in table.columns))
+                            (
+                                guild_id,
+                                campaign_id,
+                                *(_db_value(c, r[c]) for c in table.columns),
+                                *((r.get("made_by"),) if stamped else ()),
+                            )
                             for r in by_tag[tag]
                         ],
                     )
@@ -350,6 +365,9 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
     for tag, table, raws in fetched:
         for raw in raws:
             row = row_of(raw, table)
+            if table.name in lineage.STAMPED:
+                # the build that made the row travels with it (#3739); None for an old row
+                row["made_by"] = raw["made_by_commit"]
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
             if table is CLAIMS:
@@ -385,7 +403,15 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
         table = _TAGS[raw["table"]]
-        if set(raw) != {"table", *table.columns}:
+        # `made_by` (#3739) is optional: a file from before versions were recorded has none, and
+        # is read as made before versions were recorded. It is checked, as the file is untrusted.
+        made_by = raw.get("made_by")
+        stamped = table.name in lineage.STAMPED
+        if set(raw) - {"made_by"} != {"table", *table.columns} or (
+            "made_by" in raw and not stamped
+        ):
+            raise CampaignError(DAMAGED)
+        if not lineage.valid(made_by):
             raise CampaignError(DAMAGED)
         if table is RELATIONS and raw["mention_ids"]:
             raise CampaignError(DAMAGED)

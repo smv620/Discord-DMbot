@@ -86,7 +86,10 @@ EXPORT_FORMAT = "dmbot-campaign"
 # works them out from the old flags; a file of this version keeps the lists it holds, however few.
 # 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
 # simply has none; a DMbot that predates the section refuses a file of this version as too new.
-EXPORT_VERSION = 4
+# 5: story-memory rows carry `made_by`, the build that made them (#3739). Optional on load, so an
+# older file restores with none (read as "made before versions were recorded"). The bump is needed
+# so a DMbot that knows no `made_by` refuses the file instead of failing its strict row check.
+EXPORT_VERSION = 5
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -1865,6 +1868,9 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
+            # A restore keeps the stamp each row was made with, NULL included, and never stamps a
+            # row with the build that loaded it (#3739, `dmbot.lineage`).
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
             for name, rows in sections.items():
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)
@@ -1873,6 +1879,9 @@ class CampaignStore:
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
                 await tell(step)
+            # What follows is DMbot working the old file out (`move_flags`): the running build made
+            # those rows, so the restore's keep-the-stamp setting ends with the loads.
+            await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             if _has_no_lists(sections, data):
                 from dmbot.memory import knowers
 

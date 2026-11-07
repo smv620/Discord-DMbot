@@ -20,6 +20,11 @@ WRITES = "writes the ties (the run) or erases them with the words they came from
 # path (under src/dmbot) → (kind, why). Add a reader of the table only with Supervisor's yes.
 FILES: dict[str, tuple[str, str]] = {
     "campaigns/tables.py": (OWNS, "the 'not in a backup' list"),
+    "lineage.py": (OWNS, "names the table only on the list that carries the build's stamp (#3739)"),
+    "migrations/0378_made_by_commit_memory.py": (
+        OWNS,
+        "adds the stamp column; names the table only",
+    ),
     "migrations/0345_rel_ties.py": (OWNS, "the table and the triggers that erase it"),
     "transcript/rel_run.py": (WRITES, "saves the ties through RelStore.replace, reads none"),
     "transcript/rel_store.py": (OWNS, "the store; `read` is the comparison's only door"),
