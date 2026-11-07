@@ -16,7 +16,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory import beliefs, gate
+from dmbot.memory import beliefs, gate, unnamed
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -584,7 +584,7 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
             entity_id: str, through: str | None = through, alias_end: str | None = alias_end
         ) -> str | None:
             if through is not None and entity_id == alias_end:
-                return safe_texts.get(through, "someone (name unknown)")
+                return safe_texts.get(through, unnamed.SOMEONE)
             return name(entity_id)
 
         subject, target = end(r["subject_id"]), end(r["object_id"])
@@ -621,7 +621,7 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
             continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:
-            text = safe_texts.get(str(a["id"]), "someone (name unknown)")
+            text = safe_texts.get(str(a["id"]), unnamed.SOMEONE)
             names.append(MineName(a["id"], text, owner, others(a_who.get(a["id"], []))))
     return Mine(
         characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),

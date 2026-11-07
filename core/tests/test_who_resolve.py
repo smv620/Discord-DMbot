@@ -447,7 +447,7 @@ class ThePath(NamesTest):
         queued, lost = await self.run_links(Scripted([(NOT_LISTED, 95)], NOT_LISTED))
         self.assertEqual((queued, lost["not_in_text"]), (1, 0))
         ((entity, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "someone (name unknown)")
+        self.assertEqual(label, "unnamed - someone")
         self.assertFalse(entity.hidden_from_players)
 
     async def test_two_pronouns_for_nobody_are_two_people_never_one_invented_one(self) -> None:
@@ -557,7 +557,7 @@ class ThePath(NamesTest):
             known_by="everyone",
         )  # fmt: skip
         ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "Ken's stern mother (name unknown)")
+        self.assertEqual(label, "unnamed - Ken's stern mother")
         self.assertEqual((person.unnamed_what, person.unnamed_role), ("stern mother", "parent"))
         self.assertEqual(person.unnamed_anchor, self.ken)
         self.assertTrue(person.unseen_by_players)
