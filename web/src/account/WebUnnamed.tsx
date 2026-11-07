@@ -39,6 +39,16 @@ export default function WebUnnamed({
   const [done, setDone] = useState<NamedInfo | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [looks, setLooks] = useState(0);
+  // The map is read again after a step: the panel says so and takes no second press until it has been.
+  const [reading, setReading] = useState(false);
+  const read = async (): Promise<void> => {
+    setReading(true);
+    try {
+      await reload();
+    } finally {
+      setReading(false);
+    }
+  };
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const seen = useObservedWait(undoing, String(looks));
 
@@ -59,12 +69,12 @@ export default function WebUnnamed({
     } finally {
       setUndoing(false);
     }
-    await reload();
+    await read();
   }
 
   return (
     <section class="panel stack" aria-label={words.unnamedHeading(node.name)}>
-      {!done && !undoing && <NameThem id={`unnamed-${node.id}`} row={rowOf(node)} api={api} refId={refId} act={async (change, ok) => { const problem = await act(change, ok); if (problem === null) onClose(); return problem; }} onDone={async (info) => { setDone(info); setSaid(null); await reload(); }} onSignedOut={onSignedOut} />}
+      {!done && !undoing && !reading && <NameThem id={`unnamed-${node.id}`} row={rowOf(node)} api={api} refId={refId} act={async (change, ok) => { const problem = await act(change, ok); if (problem === null) onClose(); return problem; }} onDone={async (info) => { setDone(info); setSaid(null); await read(); }} onSignedOut={onSignedOut} />}
       {done && !undoing && (
         <div class="stack">
           <p role="status">{w.undoWhat(done.text)}</p>
@@ -79,6 +89,7 @@ export default function WebUnnamed({
       {undoing && (
         <WorkProgress stage={looks === 0 ? (w.stage["waiting"] as string) : (w.stage["undoing"] as string)} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} progressUnknown whatToDo={w.quiet} />
       )}
+      {reading && <p role="status">{words.reading}</p>}
       {said && (
         <p class={said.ok ? "ok" : "warn"} role={said.ok ? "status" : "alert"}>
           {said.text}

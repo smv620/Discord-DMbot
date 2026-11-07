@@ -7,7 +7,7 @@ import type { KnowWord } from "../account/api";
 export const BIG_WEB = 300;
 
 /** The Graph settings kind for people the story never named (#3732): not a kind of name, a way to filter. */
-export const UNNAMED_KIND = "not_named";
+export const UNNAMED_KIND = "~unnamed";
 
 export const webPage = {
   heading: "Story Graph",
@@ -319,9 +319,10 @@ export const webPage = {
   openNames: "Open Names page",
   // People the story never named (#3732): a kind in Graph settings, the line above the map and the panel's heading.
   notNamedKind: "People not named yet",
-  waitingUnnamed: (n: number): string => `${n} ${n === 1 ? "person is" : "people are"} not named yet and waiting. Check them on Names`,
-  waitingUnnamedLink: "Open Names → Not named yet",
-  unnamedHeading: (label: string): string => `${label}: give them a name, join them to someone DMbot knows, or remove them`,
+  waitingUnnamed: (n: number): string => `${n} ${n === 1 ? "person the story described is" : "people the story described are"} not named yet and waiting.`,
+  reading: "DMbot is reading the map again.",
+  waitingUnnamedLink: "Name them on the Names page",
+  unnamedHeading: (label: string): string => `${label} has no name yet`,
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */

@@ -755,7 +755,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
-      {UNNAMED_MAP_LIVE && canEdit && (graph.waitingUnnamed ?? 0) > 0 && (
+      {UNNAMED_MAP_LIVE && NOT_NAMED_LIVE && canEdit && (graph.waitingUnnamed ?? 0) > 0 && (
         <p class="small">
           {words.waitingUnnamed(graph.waitingUnnamed ?? 0)}{" "}
           <a href={`/account/names/${encodeURIComponent(ref)}`}>{words.waitingUnnamedLink}</a>
@@ -798,7 +798,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               center={center}
               refId={ref}
               selected={line}
-              onCenter={(id) => void load(id, hops)}
+              onCenter={(id) => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); }}
               onLine={(a, b) => setLine({ a, b })}
               onNodePick={() => setLine(null)}
               look={look}
@@ -901,7 +901,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                   {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
                   {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
-                  <span class="tag">{kindWords(n.kind)}</span>
+                  <span class="tag">{kindWords(kindKey(n))}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
                 {open && (
@@ -912,12 +912,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                       </a>
                     )}
-                    {n.id !== center && (
+                    {n.id !== center && !n.unnamed && (
                       <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
                         {words.makeMiddleShort}
                       </button>
                     )}
-                    {canEdit && n.revealed === false && api.webReveal && (
+                    {canEdit && n.revealed === false && !n.unnamed && api.webReveal && (
                       <button
                         type="button"
                         class="button secondary"
@@ -944,7 +944,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         {editing === n.id ? words.doneShort : words.changeShort}
                       </button>
                     )}
-                    {canEdit && api.changeName && n.unnamed && api.nameThem && (
+                    {NOT_NAMED_LIVE && canEdit && api.changeName && n.unnamed && api.nameThem && (
                       <button type="button" class="button secondary" aria-expanded={naming?.id === n.id} aria-label={words.changeFor(n.name)} onClick={() => setNaming(naming?.id === n.id ? null : n)}>
                         {naming?.id === n.id ? words.doneShort : words.changeShort}
                       </button>
@@ -956,7 +956,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             );
           })}
         </ul>
-        {UNNAMED_MAP_LIVE && canEdit && naming && api.changeName && (
+        {UNNAMED_MAP_LIVE && NOT_NAMED_LIVE && canEdit && naming && api.changeName && (
           <LazyPanel
             key={naming.id}
             load={() => import("./WebUnnamed")}

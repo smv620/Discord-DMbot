@@ -18,9 +18,17 @@ vi.mock("../src/content/unnamed-map-switch", () => ({
   },
 }));
 
+const named = vi.hoisted(() => ({ on: true }));
+vi.mock("../src/content/not-named-switch", () => ({
+  get NOT_NAMED_LIVE() {
+    return named.on;
+  },
+}));
+
 afterEach(() => {
   cleanup();
   live.on = true;
+  named.on = true;
 });
 
 const path = "/account/web/100.cmp1.unnamed";
@@ -75,6 +83,23 @@ describe("people not named yet on the map", () => {
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     expect(document.querySelector(".web-node.web-unnamed")).toBeNull();
     expect(screen.queryByText(words.waitingUnnamed(2), { exact: false })).toBeNull();
+  });
+
+  it("offers no panel and no waiting line while the Names routes are off", async () => {
+    named.on = false;
+    await open();
+    expect(screen.queryByText(words.waitingUnnamed(2), { exact: false })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /Ken's sister \(name unknown\)/, expanded: false }));
+    expect(screen.queryByRole("button", { name: words.changeFor(label) })).toBeNull();
+  });
+
+  it("offers neither 'make middle' nor reveal on an unnamed person, and tags it with the new kind", async () => {
+    await open();
+    const row = await screen.findByRole("button", { name: /Ken's sister \(name unknown\)/, expanded: false });
+    fireEvent.click(row);
+    expect(screen.queryByRole("button", { name: words.makeMiddle(label) })).toBeNull();
+    expect(screen.queryByRole("button", { name: words.revealFor(label) })).toBeNull();
+    expect(row.textContent).toContain(words.notNamedKind);
   });
 
   it("shows nothing of them while the switch is off", async () => {
