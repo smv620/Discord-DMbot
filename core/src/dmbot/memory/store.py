@@ -107,6 +107,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
+    DEED_KINDS,
     DEED_NAME_MAX,
     DEED_TEXT_MAX,
     DEED_VIEWERS_MAX,
@@ -1313,12 +1314,15 @@ class MemoryStore:
         *,
         source: str,
         from_session_at: int | None = None,
+        kind: str = "",
     ) -> Written[Entity]:
         """The DM records a deed (#1732): something a player character or the party did that
         mattered to up to five NPCs, groups or places, and how it landed (`DEED_EFFECTS`). One
         change, so one Undo takes all of it back. The deed is an entry of its own (the words are
         its description), joined to the doer by `did` and to each one it mattered to by `affected`
-        with the effect as the detail. Only the DM, and nothing here reads speech."""
+        with the effect as the detail. `kind` (#3236): one of `DEED_KINDS` or empty, kept in the
+        doer's connection for the story graph's summary. Only the DM, and nothing here reads
+        speech."""
         if source != DM:
             raise MemoryRuleError("Only the DM can record a deed.")
         try:
@@ -1329,6 +1333,8 @@ class MemoryStore:
             ) from None
         if effect not in standing.DEED_SCORE:
             raise MemoryRuleError("Pick how it landed.")
+        if kind and kind not in DEED_KINDS:
+            raise MemoryRuleError("Pick what kind of deed it was, or none.")
         wanted = list(dict.fromkeys(viewer_ids))
         if not wanted or len(wanted) > DEED_VIEWERS_MAX:
             raise MemoryRuleError(f"Pick one to {DEED_VIEWERS_MAX} it mattered to.")
@@ -1376,7 +1382,7 @@ class MemoryStore:
             # Both connections are secret (the DM's alone), on top of the deed being hidden.
             await self.add_relation_in(
                 w, doer_id, DID, row["id"], confidence=1.0, status=CONFIRMED, secret=True,
-                from_session_at=from_session_at,
+                from_session_at=from_session_at, detail=kind,
             )  # fmt: skip
             for viewer_id in wanted:
                 await self.add_relation_in(

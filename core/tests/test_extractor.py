@@ -659,7 +659,7 @@ class DeedPass(unittest.IsolatedAsyncioTestCase):
 
     def test_the_deed_prompt_version_is_pinned_with_the_prompt(self) -> None:
         # a change to deed_reading.DEED_SYSTEM bumps this (it is stored with each proposal)
-        self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-1")
+        self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-2")
 
     async def test_the_proposals_are_handed_to_the_store_with_the_people_who_said_them(
         self,
