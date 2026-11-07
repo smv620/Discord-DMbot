@@ -2126,6 +2126,9 @@ export interface QuestionCampaign {
   total: number;
   kinds: QuestionKind[];
   countedAt: number | null;
+  /** How many of DMbot's own matches wait for the DM (#3701): a count, from the same door as the Names page's
+   * list. Missing from an API older than that. */
+  guesses?: number;
 }
 export interface CampaignNameChecks {
   recaps: { ref: string; at: number; count: number }[];

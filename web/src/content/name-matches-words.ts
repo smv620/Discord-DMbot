@@ -19,5 +19,7 @@ export const matchWords = {
   gone: "Someone already answered that guess. The list is up to date now.",
   other: "That didn't go through. The guess is still waiting. Press the button again.",
   signedOut: "You were signed out. Sign in again, then press the button.",
+  // On the Questions page (#3701): the count of the same list, and where to answer it.
+  checkThem: "Check DMbot's guesses",
   countOf: (n: number): string => (n === 1 ? "1 guess waits for you." : `${n} guesses wait for you.`),
 } as const;
