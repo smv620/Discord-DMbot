@@ -1538,6 +1538,20 @@ class MemoryStore:
             )  # fmt: skip
         return [_opinion(r, attitude) for r in rows]
 
+    async def dm_line_scores(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> dict[tuple[str, str], int]:
+        """The DM's open impressions that touch one entry, (viewer, subject) to score, for the
+        `knows` lines on its card (#3642, `standing.dm_line_word`). Only the DM's own: a standing
+        from the story never replaces a line's word. For a DM's screen only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                IMPRESSIONS,
+                " AND closed_at IS NULL AND source = %s AND %s IN (viewer_id, subject_id)",
+                [DM, entity_id],
+            )  # fmt: skip
+        return {(str(r["viewer_id"]), str(r["subject_id"])): int(r["score"]) for r in rows}
+
     async def find_or_add_people(
         self, guild_id: int, campaign_id: str, name: str, *, source: str
     ) -> Entity:
