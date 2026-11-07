@@ -71,6 +71,30 @@ export interface Campaign {
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+/** One call DMbot made to the AI inside a lore read or an import, as the DM's windows show it (#3710): the first
+ * 500 characters of what was asked and of what came back, each ending "[...]" when there was more. */
+export interface AiFeedEntry {
+  /** The lore upload's id, or the id of the session the import made. */
+  job: string;
+  /** The call's number within its job. */
+  n: number;
+  /** Unix seconds. */
+  at: number;
+  service: string;
+  model: string;
+  step: string;
+  prompt: string;
+  reply: string | null;
+  state: "waiting" | "done" | "failed";
+  reason: string | null;
+}
+
+export interface AiFeedRead {
+  entries: AiFeedEntry[];
+  /** How many calls were not written (and so are not shown). */
+  lost: number;
+}
+
 export interface CampaignPage {
   ref: string;
   name: string;
@@ -2623,6 +2647,9 @@ export interface AccountApi {
   /** Back to DMbot's own list of must-haves (#3329). Followed with `recapStyleAction`. */
   recapMustsDefaults?(campaignRef: string): Promise<{ id: string }>;
   /** One upload's progress, or with no id the newest of the last day; null when there is none. */
+  /** The calls DMbot made to the AI in one lore upload or import since `after` (Unix seconds; the calls still
+   * waiting are always included), for a campaign's game masters only (#3710). Missing from an older API. */
+  aiFeed?(ref: string, kind: "lore" | "import", job: string, after: number): Promise<AiFeedRead>;
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
@@ -3107,7 +3134,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {

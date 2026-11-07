@@ -93,6 +93,7 @@ from dmbot.web.accounts import (
     user_of_dmbot_id,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
+from dmbot.web.ai_feed_read import read_feed
 from dmbot.web.campaign_page import read_campaign
 from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
@@ -2296,6 +2297,21 @@ def create_app(
             body = None
         try:
             return {"answer": await all_names.queue_confirm(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/ai-feed/{kind}/{job}")
+    async def me_campaign_ai_feed(
+        ref: str, kind: str, job: str, signed: Signed, after: int = 0
+    ) -> dict[str, Any]:
+        """What DMbot asked the AI in one lore upload or import, and what came back, cut to 500
+        characters (#3710): a campaign's DM or game master only, 404 while the switch is off."""
+        if not settings.ai_feed_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        session, _token = signed
+        try:
+            return await read_feed(db, session, ref, kind, job, after)
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

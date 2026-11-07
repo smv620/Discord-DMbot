@@ -66,7 +66,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -793,6 +793,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let matchesNow: MatchRow[] =
     scenario === "table"
@@ -2400,6 +2401,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       houseFileLooks = 0;
       houseFileNow = { id: "0".repeat(31) + "2", action: input.action, state: "waiting", stage: "waiting", error: "", toAdd: 0, toChange: 0, toRemove: 0, rulesRead: 0, createdAt: at, updatedAt: at };
       return { linked: houseFileSite !== "", site: houseFileSite, request: houseFileNow, serverNow: at };
+    },
+    // What DMbot asked the AI (#3710): a few calls that arrive one by one as the pretend job runs.
+    async aiFeed(ref, kind, job, after): Promise<AiFeedRead> {
+      calls.push(`aiFeed:${ref}:${kind}:${job.slice(0, 4)}:${after}`);
+      await reachable();
+      signedIn();
+      aiFeedLooks += 1;
+      const base = 1_790_000_000;
+      const asked = [
+        "Read this passage of the lore and list the names in it.\n\nThe ferry crossed the Brynwater at dusk. Old Tam took the coin.",
+        "Read the next passage and list the names and how they connect.\n\nMira Voss, the smith, owed Garrick a debt from the winter.",
+        "Which of these names are the same person?\n\nThe Ferry Lady; Old Tam's wife; Mira",
+      ];
+      const back = ["Names: Brynwater (place), Old Tam (person).", "Names: Mira Voss (person), Garrick (person). Mira owes Garrick.", "The Ferry Lady may be Old Tam's wife."];
+      const shown = Math.min(asked.length, aiFeedLooks);
+      return {
+        lost: 0,
+        entries: asked.slice(0, shown).map((prompt, i) => {
+          const done = i + 1 < shown || aiFeedLooks > asked.length;
+          return {
+            job,
+            n: i + 1,
+            at: base + i * 20,
+            service: "Anthropic",
+            model: "smaller model",
+            step: `reading part ${i + 1} of 3`,
+            prompt,
+            reply: done ? back[i]! : null,
+            state: done ? ("done" as const) : ("waiting" as const),
+            reason: null,
+          };
+        }),
+      };
     },
     async loreRead(ref, id): Promise<LoreUpload | null> {
       calls.push(`loreRead:${ref}:${id ?? "-"}`);
