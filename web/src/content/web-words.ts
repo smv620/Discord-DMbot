@@ -59,8 +59,9 @@ export const webPage = {
   openItsPage: "📖 Open its page",
   openItsPageFor: (name: string): string => ` for ${name}`,
   groupHere: "shown now",
+  // Just above the map: how much of the story is drawn right now (a line on the map is one connection).
   howMany: (names: number, lines: number): string =>
-    `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,
+    `Showing ${names} ${names === 1 ? "name" : "names"} and ${lines} ${lines === 1 ? "connection" : "connections"}`,
   mapLabel: (names: number, centre: string): string =>
     `A map of ${names} ${names === 1 ? "name" : "names"} around ${centre}. The same names and connections are listed below it.`,
   zoomIn: "Zoom in",
