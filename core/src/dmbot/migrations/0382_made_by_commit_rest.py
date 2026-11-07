@@ -8,9 +8,10 @@ from __future__ import annotations
 # Part 4 of #3739 (see `dmbot.lineage` and 0378, which made the trigger function). Nothing here
 # changes a row: the column is NULL for everything made before this. Stamped: the AI feed, the
 # words a map was put into, PlotBot's checks, issues and talk, the offers to set an import's clock,
-# the character sheet snapshots DMbot reads from D&D Beyond and the spelling rules (a reader may
-# write them). Not stamped (see `lineage.NOT_STAMPED`): posted pictures (a person's), the picture
-# queue, the DM's "not a problem" notes and the suggestions a DM sends to a pack or a set.
+# the character sheet snapshots DMbot reads from D&D Beyond, the spelling rules (a reader may write
+# them) and the kept pictures (their description is DMbot's own AI read of the image; the file is a
+# person's). Not stamped (see `lineage.NOT_STAMPED`): the picture queue, the DM's "not a problem"
+# notes and the suggestions a DM sends to a pack or a set.
 TABLES = (
     "ai_feed",
     "map_notes",
@@ -20,6 +21,7 @@ TABLES = (
     "import_clock_offers",
     "character_sheets",
     "memory_corrections",
+    "campaign_pictures",
 )
 
 SQL = (

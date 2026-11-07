@@ -79,7 +79,7 @@ STAMPED_TRANSCRIPTS = (
 # Part 4: the rest (migration 0382). `memory_corrections` is stamped too: a reader may write it.
 STAMPED_REST = (
     "ai_feed", "map_notes", "plot_checks", "plot_issues", "plot_chat", "import_clock_offers",
-    "character_sheets", "memory_corrections",
+    "character_sheets", "memory_corrections", "campaign_pictures",
 )  # fmt: skip
 STAMPED = (
     frozenset(STAMPED_MEMORY)
@@ -95,7 +95,6 @@ STAMPED = (
 _DM = "what the DM wrote or chose"
 _QUEUE = "a queue of the DM's website choices, waiting for the bot"
 _PLUMBING = "bookkeeping, not something DMbot generated"
-_POSTED = "a picture a person posted: DMbot only keeps the file"
 # Campaign tables that are never stamped, each with why. A new campaign table must be stamped or
 # be added here with its reason (the catalog test, `tests/test_lineage_catalog.py`).
 NOT_STAMPED: dict[str, str] = {
@@ -193,7 +192,6 @@ NOT_STAMPED: dict[str, str] = {
         ),
         _PLUMBING,
     ),
-    "campaign_pictures": _POSTED,
 }
 
 
