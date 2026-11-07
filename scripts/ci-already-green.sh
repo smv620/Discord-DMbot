@@ -4,8 +4,9 @@
 #
 # Prints "done=true" and the run it relied on, or "done=false". It only ever skips when an earlier
 # run of this commit finished green AND each job this run needs (the jobs ci-changes.sh says to run,
-# plus scripts, which always runs, and docker images unless NEED_DOCKER is "false") succeeded there: a run that skipped core because the
-# push touched only the website must not stand in for a push that needs core. A new commit has no
+# plus scripts, which always runs, and docker images unless NEED_DOCKER is "false") succeeded there:
+# a run that skipped core because the push touched only the website must not stand in for a push
+# that needs core. A new commit has no
 # earlier run, so it is never skipped; any failure to ask GitHub means "done=false".
 #
 # Usage: scripts/ci-already-green.sh   (reads GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID,

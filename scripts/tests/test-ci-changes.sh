@@ -71,10 +71,14 @@ check "main runs everything" "docs/DEPLOY.md" "true true true true" refs/heads/m
 check "mixed website and core" "web/a.tsx core/a.py" "true false true false"
 
 # The docker images job builds from these files, so a change to them (and only to them) builds it (#3715).
-check "a web-only diff gives docker=false" "web/a.tsx" "false false true false"
 check "a core/pyproject.toml diff gives docker=true (and core=true)" "core/pyproject.toml" "true false false true"
-check "a Dockerfile diff gives docker=true" "core/Dockerfile" "true false false true"
+check "a core/Dockerfile diff gives docker=true" "core/Dockerfile" "true false false true"
+check "a core/.dockerignore diff gives docker=true" "core/.dockerignore" "true false false true"
+check "an ears/Dockerfile diff gives docker=true (and ears=true)" "ears/Dockerfile" "false true false true"
+check "an ears/.dockerignore diff gives docker=true" "ears/.dockerignore" "false true false true"
 check "an ears/package.json diff gives docker=true (and ears=true)" "ears/package.json" "false true false true"
+check "an ears/package-lock.json diff gives docker=true" "ears/package-lock.json" "false true false true"
+check "an ears/tsconfig.build.json diff gives docker=true" "ears/tsconfig.build.json" "false true false true"
 check "a core source diff does not build the images" "core/src/dmbot/ui/b.py" "true false true false"
 check "batch branches run everything" "web/a.tsx" "true true true true" refs/heads/batch/2026-11-07-1
 

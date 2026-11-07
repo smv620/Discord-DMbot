@@ -36,10 +36,12 @@ web=false
 docker=false
 while IFS= read -r f; do
   case "$f" in
-    # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
-    # the images' own dependency files and build recipes: the docker job builds from these (#3715)
+    # the images' own dependency files and build recipes: the docker job builds from these (#3715);
+    # ears/Dockerfile copies tsconfig*.json before its build, so they count too
     core/Dockerfile | core/.dockerignore | core/pyproject.toml) core=true docker=true ;;
-    ears/Dockerfile | ears/.dockerignore | ears/package.json | ears/package-lock.json) ears=true docker=true ;;
+    ears/Dockerfile | ears/.dockerignore | ears/package*.json | ears/tsconfig*.json)
+      ears=true docker=true ;;
+    # the website's button check reads the bot's labels from core's Python (web/test/button-labels.test.ts)
     core/src/dmbot/*.py) core=true web=true ;;
     # the Credits page and its tests read the rules data and its ATTRIBUTION.md files (#1923, #1932)
     core/src/dmbot/rules/data/*) core=true web=true ;;

@@ -43,6 +43,7 @@ check "core was skipped before and is not needed now" "done=true" NEED_EARS=fals
 jobs_file 5 success success skipped
 check "a run that skipped docker does not stand in for a push that needs docker" "done=false" NEED_EARS=false
 check "a run that skipped docker stands in when docker is not needed" "done=true" NEED_EARS=false NEED_DOCKER=false
+check "no docker answer runs docker" "done=false" NEED_EARS=false NEED_DOCKER=
 
 echo '{"workflow_runs":[{"id":5,"head_sha":"other"}]}' >"$tmp/runs.json"
 jobs_file 5 success success
