@@ -61,22 +61,6 @@ _STAGES = {
 }
 
 
-# The step the AI feed shows for each stage (#3710): the lore page's own words for it
-# (web/src/content/lore-words.ts, `stages`), so the live window and the wait panel agree.
-_STEP_WORDS = {
-    q.READING: "Reading it.",
-    q.FINDING_NAMES: "Finding names.",
-    q.FINDING_LINKS: "Finding how they connect.",
-}
-
-
-def step_words(stage: str, done: int, total: int) -> str:
-    """The feed's step for a stage the page shows, with how far along when that is known: words
-    and counts only, never a word of the document."""
-    words = _STEP_WORDS.get(stage, _STEP_WORDS[q.READING])
-    return f"{words} (part {done} of {total})" if total > 0 else words
-
-
 class _Reporter:
     """Writes the read's stage and counts for the page, without waiting on the read: the read tells
     it where it is (a plain call), and one task writes the latest at most every few seconds. Every
@@ -95,9 +79,11 @@ class _Reporter:
             self._counts = (done, total)
             return
         self._latest = (_STAGES.get(stage, q.READING), done, total)
-        # (the read calls this from its own task, inside the feed's job: the next AI calls belong
-        # to this step; outside a job it does nothing)
-        ai_feed.step(step_words(*self._latest))
+        # The next AI calls the read makes in its own task belong to this step (the part being
+        # worked on, so one after the last finished). Its shaping and second-look tasks name their
+        # own step (`lore_read._in_step`): a step set here does not reach a task already made, and a
+        # call from a task's done-callback changes nothing. Outside a feed job this does nothing.
+        ai_feed.step(lore_read.step_words(stage, min(done + 1, total), total))
 
     async def __aenter__(self) -> _Reporter:
         self._reader = asyncio.current_task()
@@ -250,7 +236,7 @@ async def _read(
             # Every AI call of this read belongs to this upload, for the DM's live window (#3710):
             # the upload's id is the one the lore page polls. With the feed off, nothing is kept.
             with ai_feed.job(
-                guild_id, campaign.id, "lore", claim.id, step=step_words(q.READING, 0, 0)
+                guild_id, campaign.id, "lore", claim.id, step=lore_read.step_words("reading", 0, 0)
             ):
                 async with report:
                     done = await read_background(
