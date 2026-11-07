@@ -6003,6 +6003,14 @@ dozen screens, and gets the same list, words and context in both places.
   "beggar woman", "a hooded figure") never becomes an other name that matches on its own. A merge or reader that
   would add one keeps it as a description of that entry, shown on the entry and in its evidence, never used to place
   a new line. Readers file such people as unnamed (#2790) when the text gives no proper name.
+- **Unnamed people and groups still have a name** (owner, 2026-11-07, #3736): an entry the story never named is
+  written `unnamed - <its most distinguishing description>` ("unnamed - barmaid at Three Flags Sailing with red
+  hair", "unnamed - loud sailors sitting in the corner"). The name comes from what the story says, never an invented
+  personal name, and is unique in the campaign. It is kept, with a connection saved, when it interacts with a named
+  entry, a player character included, even in a small way. An unnamed entry connected only to other unnamed ones, or
+  to nothing yet, is **not** dropped, in the session or after it: a later session may link the chain to the story
+  (the bald man hands the eye-patch drunk a pouch). What to do with isolated entries is decided later, and nothing
+  deletes them meanwhile.
 - **The sample run's answer keys follow the documents** (owner, 2026-11-07, #3714): when a deployed run finds a
   clear improvement over the keys (something the sample documents plainly say that the key lacks), GraphEngineer
   adds it to the keys in its own PR. The PR names the document line and records it in the README's "Changes to the
