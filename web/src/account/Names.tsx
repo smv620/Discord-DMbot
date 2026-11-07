@@ -106,7 +106,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const [editing, setEditing] = useState<string | null>(null);
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
   // A name just given (#2803) can be taken back until the next change; `undoing` is the wait for the bot.
-  const [undo, setUndo] = useState<{ answer: string; rowId: string; join: boolean } | null>(null);
+  const [undo, setUndo] = useState<{ answer: string; rowId: string; join: boolean; what: string } | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [undoLooks, setUndoLooks] = useState(0);
   const undoFlight = useRef(false);
@@ -265,7 +265,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   /** A person was given a name (#2803): say so, offer Undo, close the editor and read the list again. */
   async function named(row: NameRow, info: NamedInfo): Promise<void> {
     setNews({ ok: true, text: info.text, n: ++sayings.current });
-    setUndo(info.undo ? { answer: info.undo, rowId: row.id, join: info.join } : null);
+    setUndo(info.undo ? { answer: info.undo, rowId: row.id, join: info.join, what: info.text } : null);
     setEditing(null);
     setTimeout(() => newsBox.current?.focus(), 0);
     await reload();
@@ -508,12 +508,16 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       </p>
 
       {undo && !undoing && (
-        <p class="row">
-          <button type="button" class="button secondary" onClick={() => void undoNamed()}>
-            {undo.join ? notNamed.undoJoin : notNamed.undo}
-          </button>
-          <span class="small muted">{notNamed.undoHint}</span>
-        </p>
+        <div class="stack">
+          {/* What the button undoes, in words: the name just given or the two just joined (the news line is read out, not shown). */}
+          <p>{notNamed.undoWhat(undo.what)}</p>
+          <p class="row">
+            <button type="button" class="button secondary" onClick={() => void undoNamed()}>
+              {undo.join ? notNamed.undoJoin : notNamed.undo}
+            </button>
+            <span class="small muted">{notNamed.undoHint}</span>
+          </p>
+        </div>
       )}
       {undoing && (
         <WorkProgress
@@ -755,7 +759,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
         </span>
       </div>
       {canEdit && open && row.unnamed && (
-        <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
+        <NameThem id={panel} row={row} api={api} refId={refId} act={(change, ok) => act(row, change, ok)} onDone={onNamed} onSignedOut={onSignedOut} />
       )}
       {canEdit && open && !row.unnamed && (
         // The graph opens with this name in the middle and its details beside it (the address's #centre= is read there).

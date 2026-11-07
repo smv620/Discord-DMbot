@@ -2755,6 +2755,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "remove" && unnamedPeople.some((u) => u.id === id)) {
+        // A person the story never named, not worth keeping (owner request): removed like any name.
+        unnamedPeople.splice(unnamedPeople.findIndex((u) => u.id === id), 1);
+        return { removed: true };
+      }
       const row = memory.find((n) => n.id === id);
       if (!row) throw new ApiError("not-found");
       if (change.action === "told-add" || change.action === "told-remove") {
