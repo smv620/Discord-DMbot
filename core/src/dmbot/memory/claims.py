@@ -1993,7 +1993,9 @@ class ClaimStore:
             if described is not None:
                 person_id = await self._same_session_person(w, claim, described)
                 if person_id is None:
-                    added = await self._store._add_unnamed_in(w, described, None, "", None)
+                    added = await self._store._add_unnamed_in(
+                        w, described, None, "", None, seen_at=claim.session_started_at
+                    )
                     person_id = added.entity.id
                 person = await w.update(ENTITIES, person_id, {"status": CONFIRMED})
                 who = (str(person["id"]), "character") if who[0] == NEW_PERSON else who

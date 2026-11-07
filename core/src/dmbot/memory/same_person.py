@@ -41,7 +41,7 @@ MAX_WORD_POINTS = 20
 _PLAIN = frozenset(
     {
         "the", "a", "an", "of", "at", "in", "on", "to", "and", "with", "who", "that", "name",
-        "unknown", "his", "her", "their", "its", "this", "these", "those", "for", "from",
+        "unknown", "unnamed", "his", "her", "their", "its", "this", "these", "those", "for", "from",
         "was", "were", "had", "has", "have", "been", "being", "are", "not", "there", "here",
         "she", "him", "they", "them", "one", "some", "any", "but", "when", "where", "which",
         "into", "over", "about", "than", "then", "very", "also", "would", "could", "will",
@@ -93,8 +93,13 @@ def _fold(word: str) -> str:
 
 def meaningful(text: str) -> frozenset[str]:
     """The words that can tell two descriptions apart: three letters or more, no article or
-    filler ("the", "was", "name unknown"), plurals folded."""
-    words = (w for w in _WORD.findall(name_key(text)) if len(w) >= 3 and w not in _PLAIN)
+    filler ("the", "was", "unnamed", the old "name unknown"), plurals folded, and never the
+    "(first seen …)" that only keeps a name unique (#3736)."""
+    words = (
+        w
+        for w in _WORD.findall(name_key(unnamed_mod.without_tag(text)))
+        if len(w) >= 3 and w not in _PLAIN
+    )
     return frozenset(_fold(w) for w in words)
 
 

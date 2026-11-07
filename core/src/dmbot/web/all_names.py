@@ -150,7 +150,7 @@ async def read_page(
 
 def _label_unnamed(row: dict[str, Any]) -> None:
     """A person the story never named: their name is the label built from the parts with the
-    anchor's name as it is now ("Ken's sister (name unknown)"), as Discord builds it; the anchor
+    anchor's name as it is now ("unnamed - Ken's sister"), as Discord builds it; the anchor
     goes to the page as a plain name, and the raw parts stay out of the row. An anchor that is
     itself unnamed is built the same way ("the king's sister")."""
     anchor = row.pop("unnamedAnchor", None)

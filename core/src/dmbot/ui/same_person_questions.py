@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import discord
 
-from dmbot.memory import tags
+from dmbot.memory import tags, unnamed
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.same_person import STATED, Offer
 from dmbot.mentions import NO_PINGS
@@ -26,7 +26,9 @@ KEEPS = "Joining them keeps what each player knew. Nothing new is shown to playe
 
 
 def _with_the(label: str) -> str:
-    """ "the guard at the north gate": the label is made without its article."""
+    """ "the guard at the north gate": the label is made without its article, and in a question
+    the description reads on its own, without the name's "unnamed - " (#3736)."""
+    label = unnamed.description(label)
     return label if label.lower().startswith(("the ", "a ", "an ")) else f"the {label}"
 
 
@@ -87,7 +89,7 @@ class SamePersonQuestions(_Menu):
             tag = tags.tag_for(
                 entities[entity_id], ties.get(entity_id, ()), shown_name=what, dm=True
             )
-            # (with nothing to tell them apart, the plain label: "name unknown" at least says why)
+            # (with nothing to tell them apart, the plain label: "unnamed" at least says why)
             return labels[entity_id] if tag == what else tag
 
         asked: list[Asked] = []
