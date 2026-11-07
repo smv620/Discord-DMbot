@@ -46,6 +46,7 @@ from dmbot.web import (
     email_change,
     email_signin,
     entitlements_writer,
+    features_view,
     feedback,
     game_masters,
     handover_accept,
@@ -100,6 +101,7 @@ from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
 from dmbot.web.improvement import read_choice as read_improvement
 from dmbot.web.improvement import save_choice as save_improvement
+from dmbot.web.kind_offers import read_kind_offers
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
@@ -1112,6 +1114,17 @@ def create_app(
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    # The words DMbot stopped asking about, for the DM to lift (#3577): the words, Never or Not
+    # now.
+    @app.get("/me/campaigns/{ref}/kind-offers")
+    async def me_campaign_kind_offers(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_kind_offers(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     # The new spellings of a place waiting for the DM's yes or no (#3533): ids, the place, the
     # spelling.
     @app.get("/me/campaigns/{ref}/place-spellings")
@@ -1908,7 +1921,13 @@ def create_app(
         campaign's server, and a campaign that isn't there, get the same 404."""
         session, _token = signed
         try:
-            return await read_campaign(db, session, ref, imports_for=settings.imports_enabled_for)
+            return await read_campaign(
+                db,
+                session,
+                ref,
+                imports_for=settings.imports_enabled_for,
+                features=lambda: features_view.read_features(settings.status_dir),
+            )
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 

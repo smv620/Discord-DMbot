@@ -70,6 +70,14 @@ export interface Campaign {
   canDelete?: boolean;
 }
 
+/** What the bot has switched on, as it wrote it when it last started (#3693): names and sentences only. */
+export interface FeaturesList {
+  /** Unix seconds. */
+  writtenAt: number;
+  on: { name: string; words: string }[];
+  off: string[];
+}
+
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
 export interface CampaignPage {
   ref: string;
@@ -80,6 +88,8 @@ export interface CampaignPage {
   importsOn?: boolean;
   /** The campaign's current choices, for its game masters only (#2461). */
   settings?: CampaignSettings;
+  /** What DMbot has switched on, for its game masters only; missing until the bot has written it (#3693). */
+  features?: FeaturesList;
 }
 
 /** One of the three choices a game master can change on the Settings tab (#2484). */
@@ -1028,6 +1038,24 @@ export interface PlotMessage {
   at: number;
 }
 
+/** One name to check, opened on its own page (#3604): everything the Discord card shows, without a press, and DMbot's
+ * top answers. `scene` (#3596) and `answers` (#3602) are missing from an API older than their doors. */
+export interface ClarifyName {
+  id: string;
+  name: string;
+  /** What the recap says about it, in the story's words. */
+  note: string;
+  /** A short who, where and what from the story; null when DMbot has none yet. */
+  scene?: string | null;
+  places: NamePlace[];
+  morePlaces: number;
+  /** DMbot's top answers, best first, with the Discord labels ("a.k.a. Ilse", "new NPC"). Each is a ready answer. */
+  answers?: { label: string; answer: NameCheckAnswer }[];
+  /** The kinds a new entry can be made as. */
+  kinds: { key: string; label: string }[];
+  answering: boolean;
+}
+
 export interface NameCheckList {
   names: NameCheck[];
   /** The known names an answer can say a name is the same as. */
@@ -1787,6 +1815,11 @@ export type WebLinkChange =
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true };
 
+/** Words DMbot stopped asking about (#3577, core 0360): the table's own words and the DM's answer, "never" or "later" (Not now). */
+export interface KindOffer {
+  words: string;
+  state: "never" | "later";
+}
 /** A new spelling of a place the campaign already has, waiting for the game master's yes or no (#3533, core #3532). */
 export interface PlaceSpelling {
   /** The proposed other name's id. */
@@ -2647,6 +2680,10 @@ export interface AccountApi {
   /** Delete all of my notes in a campaign; how many there were. */
   deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** The words DMbot stopped asking about (DM only; #3577). */
+  campaignKindOffers?(ref: string): Promise<KindOffer[]>;
+  /** Lift a Never or Not now: the words may be offered again after the next session. The bot applies it, so this waits for its answer. */
+  liftKindOffer?(ref: string, words: string): Promise<void>;
   /** The spellings of places waiting for a yes or no (DM only; #3533, core migration 0354). */
   placeSpellings?(ref: string): Promise<PlaceSpelling[]>;
   /** Yes: the spelling becomes another name of the place. No: it is turned down and not offered again. The
@@ -2840,6 +2877,8 @@ export interface AccountApi {
   decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
+  /** One name to check on its own page (#3604). Missing from an API older than its door. */
+  clarifyName?(ref: string, id: string): Promise<ClarifyName>;
   /** The bot's word on the last answer to this name: its note in plain words, the batch to Undo, the refusal word (#3406). */
   nameAnswerResult?(ref: string, id: string): Promise<NameAnswerResult>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -3123,7 +3162,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "setPcIcon"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "setPcIcon", "clarifyName", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

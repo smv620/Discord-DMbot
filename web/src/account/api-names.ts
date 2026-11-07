@@ -8,8 +8,10 @@ import type {
   NameAnswer,
   NameAnswerResult,
   IconChoice,
+  ClarifyName,
   NameCheckList,
   NamesFixed,
+  KindOffer,
   MatchRow,
   NamesPage,
   PlaceSpelling,
@@ -83,6 +85,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    // One name on its own page (#3604): the same address as its answer, read with GET; the core door comes with #3596/#3602.
+    clarifyName: async (ref, id) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`)) as ClarifyName,
     answerNameCheck: async (ref, id, answer) => {
       await call(
         "POST",
@@ -183,6 +188,26 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         let got: NameAnswer | null = null;
         try {
           got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
+    campaignKindOffers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/kind-offers`)) as { offers: KindOffer[] }).offers,
+    // Queued like any name change (the bot lifts the answer), then waited for.
+    liftKindOffer: async (ref, words) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/all-names-confirm`, { action: "offer-clear", words })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/all-names/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
         } catch (error) {
           if (error instanceof ApiError && error.kind === "signed-out") throw error;
         }

@@ -1703,9 +1703,14 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims, readings and scenes went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
+        went."""
+
+        from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
+
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
+            readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
