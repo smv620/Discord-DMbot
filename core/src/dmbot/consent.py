@@ -194,6 +194,10 @@ class ConsentStore:
                     " DO UPDATE SET kind = EXCLUDED.kind, refused_at = EXCLUDED.refused_at",
                     (guild_id, user_id, "stopped" if removed else "declined", int(self._wall())),
                 )
+                # A prompt kept for the DM's live window (#3710) may hold this person's lines, and a
+                # cut text cannot be cleaned line by line, so the server's whole AI feed goes, in
+                # this same step.
+                await conn.execute("DELETE FROM ai_feed WHERE guild_id = %s", (guild_id,))
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)

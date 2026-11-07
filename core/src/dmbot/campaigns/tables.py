@@ -113,6 +113,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",
+    "ai_feed": "the first 500 characters of each AI prompt and reply of a lore read or an import, "
+    "for the DM's live windows (DM-only): kept 24 hours at most, deleted by Stop recording me, "
+    "and a short-lived view of a job that is gone when a backup is restored (#3710)",
     "rel_ties": "the relationship reader's ties for a session (DM-only, read only by the "
     "comparison against the old reader): made by an AI from the script and made again on request, "
     "never carries content of its own (#3244)",
