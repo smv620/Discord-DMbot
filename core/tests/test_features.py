@@ -6,6 +6,7 @@ import dataclasses
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -242,7 +243,16 @@ class TheSnapshotTest(unittest.TestCase):
             self.assertTrue(features.write_snapshot(settings(recaps_on=True), folder, 2.0))
             self.assertEqual(sorted(p.name for p in folder.iterdir()), ["features.json"])
             body = json.loads((folder / "features.json").read_text(encoding="utf-8"))
-        self.assertEqual(body["writtenAt"], 2)
+            self.assertEqual(body["writtenAt"], 2)
+            # A failure at the rename leaves the old file whole and no temporary file behind.
+            with (
+                unittest.mock.patch("os.replace", side_effect=OSError("x")),
+                self.assertLogs(features.log, level="WARNING"),
+            ):
+                self.assertFalse(features.write_snapshot(settings(), folder, 3.0))
+            self.assertEqual(sorted(p.name for p in folder.iterdir()), ["features.json"])
+            again = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+        self.assertEqual(again["writtenAt"], 2)
 
 
 if __name__ == "__main__":

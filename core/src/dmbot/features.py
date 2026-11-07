@@ -330,15 +330,19 @@ def whats_on_list(settings: Settings) -> dict[str, Any]:
 
 def write_snapshot(settings: Settings, directory: str | Path, now: float) -> bool:
     """Write the DM-visible list to `<directory>/features.json` for the web (#3693). Written to a
-    temporary file and then renamed, so a reader never sees half of it. Never raises: a failure
-    logs one line with the exception's class name only (never a path or message) and returns
-    False, so start-up goes on."""
+    temporary file, flushed to disk, then renamed, so a reader never sees half of it. Never raises:
+    a failure logs one line with the exception's class name only (never a path or message) and
+    returns False, so start-up goes on. On failure an earlier features.json is left in place
+    (its writtenAt shows when it was written), so the web can tell it is old."""
     folder = Path(directory)
     tmp = folder / (SNAPSHOT_FILE + ".tmp")
     try:
         folder.mkdir(parents=True, exist_ok=True)
         body = {"version": 1, "writtenAt": int(now), **whats_on_list(settings)}
-        tmp.write_text(json.dumps(body), encoding="utf-8")
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(body))
+            handle.flush()
+            os.fsync(handle.fileno())  # a crash right after the rename must not leave it empty
         os.replace(tmp, folder / SNAPSHOT_FILE)
     except Exception as exc:
         with contextlib.suppress(OSError):
