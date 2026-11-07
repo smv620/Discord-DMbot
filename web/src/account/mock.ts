@@ -21,6 +21,7 @@ import type {
   NameKind,
   NameRow,
   NamesPage,
+  MatchRow,
   NamesQuery,
   SmartNamesAnswer,
   Offer,
@@ -792,6 +793,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
+  let matchesNow: MatchRow[] =
+    scenario === "table"
+      ? [
+          { batch: "9001", keepId: "e".repeat(32), keepName: "Old Tam", spelling: "The Ferry Lady", at: 1_790_000_000 },
+          { batch: "9002", keepId: "f".repeat(32), keepName: "Mira Voss", spelling: "the smith", at: 1_790_000_100 },
+        ]
+      : [];
   // "Add all" answers under a finished upload (#3222): each press is an answer the page polls; Undo takes it back.
   const confirmAnswers = new Map<string, { action: "add" | "undo"; counts: Record<string, number>; looks: number; createdAt: number; at: number }>();
   // The pretend recap style (#2985): a change takes effect after two looks, as the bot's would.
@@ -853,7 +862,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
-    { id: "u1", name: "Ken's sister", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" },
+    { id: "u1", name: "Ken's sister", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken", scene: "Ken met her at the harbour <b>market</b> while the party waited for the ferry." },
     { id: "u2", name: "the ferryman's cousin", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "cousin", unnamedAnchor: "The Ferryman" },
   ];
   const nameSteps = new Map<string, { unnamed: NameRow; named?: NameRow; joined?: { into: NameRow; others: string[] } }>();
@@ -2418,6 +2427,25 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       confirmAnswers.set(id, { action: "add", counts, looks: 0, createdAt: at, at });
       return { answer: id };
     },
+    // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
+    async nameMatches(ref): Promise<MatchRow[]> {
+      calls.push(`nameMatches:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return matchesNow.map((m) => ({ ...m }));
+    },
+    async answerMatch(ref, batch, answer, onLook) {
+      calls.push(`answerMatch:${ref}:${batch}:${answer}`);
+      await reachable();
+      signedIn();
+      const found = matchesNow.find((m) => m.batch === batch);
+      if (!found) throw new ApiError("gone");
+      onLook?.({ waits: null });
+      await new Promise((ok) => setTimeout(ok, 300));
+      // Yes keeps the match; Undo takes it back. Either way it is answered and leaves the list.
+      matchesNow = matchesNow.filter((m) => m.batch !== batch);
+    },
     async confirmUndo(ref, answer) {
       calls.push(`confirmUndo:${ref}:${answer}`);
       await reachable();
@@ -3222,7 +3250,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       const names = [
-        { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch." },
+        { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
         { id: "c".repeat(32), name: "Garrick", note: "" },
         // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.

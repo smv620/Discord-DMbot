@@ -22,6 +22,7 @@ EVERY_ACTION = (
     "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
     "players-line",  # the line for the players (#3568)
     "told-add", "told-remove",  # "Tell a character" (#3542)
+    "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
 )  # fmt: skip
 
 

@@ -6,6 +6,7 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot import ai_feed
 from dmbot.ai import Reply
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import TERMS_VERSION, ConsentStore
@@ -75,6 +76,27 @@ class TheJob(DatabaseTest):
             return await ConsentStore(self.db).consenting(guild_id)
 
         return ImportJob(self.store, get, ai, consenting or now)
+
+    async def test_every_ai_call_of_the_cleaning_belongs_to_this_sessions_import(self) -> None:
+        """#3710: the AI feed files each call under the import and the session, with the page's
+        step word; the job is gone once the cleaning ends."""
+        seen: list[Any] = []
+
+        class Watching(FakeAI):
+            async def complete(self, system: str, text: str, **kw: Any) -> Reply:
+                seen.append(ai_feed._current.get())
+                return await super().complete(system, text, **kw)
+
+        await self.job(Watching("1. game\n2. other")).run_round(GUILD)
+        self.assertTrue(seen)
+        ctx = seen[0]
+        assert ctx is not None
+        self.assertEqual(
+            (ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id),
+            (GUILD, self.campaign.id, "import", self.session),
+        )
+        self.assertEqual(ctx.step, "Tidying the transcript (part 1 of 1)")
+        self.assertIsNone(ai_feed._current.get())
 
     async def test_a_waiting_session_is_cleaned_labelled_and_marked_done(self) -> None:
         ai = FakeAI("1. game\n2. other")
