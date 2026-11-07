@@ -10,9 +10,9 @@ from __future__ import annotations
 # changes a row: the column is NULL for everything made before this. Stamped: the transcript's
 # sessions and lines (what was heard and cleaned), the import records, the "say it this way"
 # offers and the session notes (the beat sheet). Not stamped (see `lineage.NOT_STAMPED`): a
-# player's suggested fix, the respell positions of a DM's fix, the DM's choices of who plays whom
-# and who a label was (`transcript_suggestions`, `transcript_respells`, `import_plays`,
-# `import_speakers`).
+# player's suggested fix, the positions kept so one Undo can put a spelling fix back, the DM's
+# choices of who plays whom and who a label was (`transcript_suggestions`,
+# `transcript_respells`, `import_plays`, `import_speakers`).
 TABLES = (
     "transcript_sessions",
     "transcript_lines",

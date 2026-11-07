@@ -241,7 +241,7 @@ class TheTrigger(DatabaseTest):
 
         self.assertEqual(await stamps(), ({OLD}, {OLD}))
         with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
-            await store.set_topics(GUILD, sid, USER, [start * 1000], "table_talk")
+            await store.set_topic(GUILD, sid, USER, start * 1000, "table_talk")
         self.assertEqual(
             await stamps(), ({OLD}, {NEW})
         )  # the line was labelled again; the session was not
@@ -251,7 +251,7 @@ class TheTrigger(DatabaseTest):
     ) -> None:
         from dmbot.recaps.notes import keep_from_job
 
-        store = await self._audio_job()  # a finished recap job with beats
+        await self._audio_job()  # a finished recap job with beats
         async with self.db.guild(GUILD) as conn:
             await conn.execute('UPDATE recap_jobs SET beats = \'[{"who": "x"}]\'::jsonb')
         with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
@@ -266,7 +266,6 @@ class TheTrigger(DatabaseTest):
                 notes = [r["c"] for r in await cur.fetchall()]
         self.assertEqual(notes, [NEW])
         self.assertIn(setting, (None, ""))
-        del store
 
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`

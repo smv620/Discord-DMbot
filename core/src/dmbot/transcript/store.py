@@ -452,7 +452,7 @@ class TranscriptStore:
     ) -> int:
         """Several of one person's saved lines get a topic, in one statement (#677: Put
         it back). What was heard never changes. How many lines changed."""
-        async with self._db.guild(guild_id, by_dmbot=True) as conn:
+        async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"

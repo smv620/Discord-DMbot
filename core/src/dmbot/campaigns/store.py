@@ -1901,6 +1901,8 @@ class CampaignStore:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
                     await tell(progress, done, len(order))
+                # (the stamps end with the loads, as after the sections: what runs next is DMbot's)
+                await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(

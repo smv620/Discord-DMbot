@@ -29,10 +29,15 @@ is stamped for the build that kept the text, which copies DMbot's own title and 
 music plan is covered by the text's stamp (`made_by_commit`), and the music and voiceover files by
 the audio's (`audio_made_by_commit`).
 
-**Known limit (transcripts):** a line carries the stamp of the build that last cleaned or labelled
-it (those writes opt in); a line not yet cleaned carries the recording build's. The session notes'
-backup section (`session_notes`) does not carry `made_by` yet (#3751); the transcript parts do, as
-they carry every column.
+**A restored stamp is as trusted as the file** (a backup is the DM's upload; the stamp is never
+shown to players, so a forged one shows nothing to anyone).
+
+**Known limits (transcripts):** a line carries the stamp of the build that last cleaned or labelled
+it (those writes opt in); a line not yet cleaned carries the recording build's. A DM's spelling fix
+is carried out by DMbot (`respell_names`), and a person's answer to a speaker question goes through
+`set_entity` beside DMbot's own guess, so both restamp the line. The import record's stamp is the
+build that wrote the last cleaning chunk. The session notes' backup section (`session_notes`) does
+not carry `made_by` yet (#3751); the transcript parts do, as they carry every column.
 
 **Part 1's backup** carries `made_by` for the memory section's own tables only (`memory/backup.py`,
 `_TAGS`). The other stamped tables are restored by their own sections, which do not carry it yet, so
@@ -134,7 +139,6 @@ NOT_STAMPED: dict[str, str] = {
             "secret_exposures",
             "recap_holds",
             "transcript_suggestions",
-            "transcript_respells",
             "import_plays",
             "import_speakers",
             "recap_name_checks",
@@ -175,6 +179,7 @@ NOT_STAMPED: dict[str, str] = {
             "question_counts",
             "question_notices",
             "rule_set_suggestions_sent",
+            "transcript_respells",  # positions kept so one Undo can put a spelling fix back
             "session_usage",
         ),
         _PLUMBING,
