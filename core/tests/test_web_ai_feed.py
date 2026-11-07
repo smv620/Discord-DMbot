@@ -114,3 +114,35 @@ class Feed(Web):
     async def test_a_job_with_no_rows_is_an_empty_list_not_an_error(self) -> None:
         got = await self.read()
         self.assertEqual((got["entries"], got["lost"]), ([], 0))
+
+    async def test_a_call_that_finishes_later_is_read_again_from_the_oldest_waiting_time(
+        self,
+    ) -> None:
+        await self.put("lore", LORE, 1, 100, state="waiting", reply=None)
+        await self.put("lore", LORE, 2, 110)
+        first = await self.read(after=0)
+        self.assertEqual([e["state"] for e in first["entries"]], ["waiting", "done"])
+        # The call finishes; the writer does not move its time. The page asks from the oldest waiting
+        # call's time (100), not from the newest (110), so the finished call comes back once.
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE ai_feed SET state = 'done', reply = 'Found it late.' WHERE n = 1"
+            )
+        again = await self.read(after=100)
+        self.assertEqual(
+            [(e["n"], e["state"], e["reply"]) for e in again["entries"]],
+            [(1, "done", "Found it late."), (2, "done", "Found a ferry.")],
+        )
+
+    async def test_another_campaigns_import_with_the_same_id_reads_nothing_here(self) -> None:
+        transcripts = TranscriptStore(self.db)
+        theirs = await transcripts.open_session(self.g, self.two.id, 1_700_000_000)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'a.txt', 1, 1)",
+                (self.g, self.two.id, theirs, IMPORT),
+            )
+        await self.put("import", theirs, 1, 100, campaign=self.two.id)
+        got = await self.read("import", IMPORT)
+        self.assertEqual(got["entries"], [])

@@ -38,7 +38,8 @@ describe("AiFeed", () => {
     const back = screen.getByRole("region", { name: w.windowLabel(w.repliesHeading) });
     expect(asked.textContent).toMatch(/Read part 1\.[\s\S]*Read part 2\./);
     expect(back.textContent).toMatch(/Found 1\.[\s\S]*Found 2\./);
-    expect(asked.textContent).toContain("Anthropic, smaller model, part 1");
+    expect(asked.textContent).toContain("Question 1");
+    expect(back.textContent).toContain("Answer 1");
     expect(screen.queryAllByRole("button")).toEqual([]);
   });
 
@@ -52,6 +53,27 @@ describe("AiFeed", () => {
     expect(await screen.findByText(new RegExp(w.waitingReply))).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("region", { name: w.windowLabel(w.repliesHeading) }).textContent).toContain("Found 1."));
     expect(screen.getByRole("region", { name: w.windowLabel(w.repliesHeading) }).textContent).not.toContain(w.waitingReply);
+  });
+
+  it("asks again from the oldest call still waiting, so one that finishes later is read again", async () => {
+    const afters: number[] = [];
+    let looks = 0;
+    const api = apiWith(async (_r, _k, _j, after) => {
+      afters.push(after);
+      looks += 1;
+      if (looks === 1) return { lost: 0, entries: [entry(1, { state: "waiting", reply: null }), entry(2, { at: 1_790_000_050 })] };
+      return { lost: 0, entries: [entry(1, { state: "done", reply: "Found it late." })] };
+    });
+    render(<AiFeed api={api} running {...props} />);
+    await waitFor(() => expect(screen.getByRole("region", { name: w.windowLabel(w.repliesHeading) }).textContent).toContain("Found it late."));
+    expect(afters[0]).toBe(0);
+    expect(afters[1]).toBe(1_790_000_001); // the waiting call's time, not the newest (…050)
+  });
+
+  it("says no answer came back for a call still waiting once the job has ended", async () => {
+    const api = apiWith(async () => ({ lost: 0, entries: [entry(1, { state: "waiting", reply: null })] }));
+    render(<AiFeed api={api} running={false} {...props} />);
+    await screen.findByText(new RegExp(w.noReply));
   });
 
   it("asks again from the time it reached, and shows each call once", async () => {
@@ -79,7 +101,7 @@ describe("AiFeed", () => {
     expect(aiFeed.mock.calls.length).toBe(settled);
   });
 
-  it("says how many calls are not shown, and that the look stopped after repeated failures", async () => {
+  it("says how many calls are not shown, and that the look may be out of date after repeated failures", async () => {
     render(<AiFeed api={apiWith(async () => ({ lost: 2, entries: [] }))} running={false} {...props} />);
     expect(await screen.findByText(w.lost(2))).toBeTruthy();
     cleanup();
@@ -92,15 +114,15 @@ describe("AiFeed", () => {
         {...props}
       />,
     );
-    expect(await screen.findByText(w.stopped)).toBeTruthy();
+    expect(await screen.findByText(w.stalled)).toBeTruthy();
   });
 
   it("shows nothing at all on an API that has no feed, and 'Nothing asked yet' while empty", async () => {
-    const { container } = render(<AiFeed api={{ ...mockApi("table"), aiFeed: undefined } as AccountApi} running {...props} />);
+    const { container } = render(<AiFeed api={{ ...mockApi("table"), aiFeed: undefined } as unknown as AccountApi} running {...props} />);
     expect(container.textContent).toBe("");
     cleanup();
     render(<AiFeed api={apiWith(async () => ({ lost: 0, entries: [] }))} running={false} {...props} />);
-    expect((await screen.findAllByText(w.none)).length).toBe(2);
+    expect((await screen.findAllByText(w.nonePrompts)).length).toBe(1);
   });
 
   it("offers to jump to the newest when the reader has scrolled up", async () => {
