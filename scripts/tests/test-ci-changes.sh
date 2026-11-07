@@ -66,6 +66,8 @@ check "a scripts change runs everything" "scripts/x.sh" "true true true true"
 check "an unknown file runs everything" "something-new/file" "true true true true"
 check "README is read by core" "README.md" "true true true true"
 check "development runs everything" "web/a.tsx" "true true true true" refs/heads/development
+check "a batch branch runs everything (#3708)" "web/a.tsx" "true true true true" refs/heads/batch/2026-11-07-1
+check "a normal branch with the same diff is unchanged" "web/a.tsx" "false false true false" refs/heads/feature
 check "beta runs everything" "docs/DEPLOY.md" "true true true true" refs/heads/beta
 check "main runs everything" "docs/DEPLOY.md" "true true true true" refs/heads/main
 check "mixed website and core" "web/a.tsx core/a.py" "true false true true"
@@ -82,7 +84,6 @@ check "an ears/package.json diff gives docker=true (and ears=true)" "ears/packag
 check "an ears/package-lock.json diff gives docker=true" "ears/package-lock.json" "false true false true"
 check "an ears/tsconfig.build.json diff gives docker=true" "ears/tsconfig.build.json" "false true false true"
 check "a core source diff builds the images" "core/src/dmbot/ui/b.py" "true false true true"
-check "batch branches run everything" "web/a.tsx" "true true true true" refs/heads/batch/2026-11-07-1
 
 # Not a git repository, or no base: everything runs.
 (cd / && GITHUB_REF=refs/heads/x bash "$script" | tr '\n' ' ' | grep -q "core=true ears=true web=true") ||

@@ -6,7 +6,7 @@
 #
 # A job is skipped only when nothing it reads can have changed. Anything this script does not
 # know by name runs everything, so a new folder can never slip past CI. Pushes to development,
-# beta and main always run everything, and so does any failure to work out the changes.
+# beta, main and batch/* always run everything, and so does any failure to work out the changes.
 #
 # Usage: scripts/ci-changes.sh [base-ref]   (default origin/development; GITHUB_REF is read)
 set -u
@@ -21,6 +21,9 @@ everything() {
   exit 0
 }
 
+# A batch branch (CLAUDE.md, "Merging a batch") runs everything too (#3703, #3708): the merges that
+# follow it onto development end with the batch's tree, and development needs every job, so the
+# same-tree reuse in ci-already-green.sh can only use the batch's run if that run did them all.
 case "${GITHUB_REF:-}" in
   refs/heads/development | refs/heads/beta | refs/heads/main | refs/heads/batch/*) everything ;;
 esac

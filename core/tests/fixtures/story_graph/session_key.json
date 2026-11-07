@@ -136,6 +136,7 @@
   {
    "name": "Yeti",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "Named as a danger and as near the shelter at the end."
   },
