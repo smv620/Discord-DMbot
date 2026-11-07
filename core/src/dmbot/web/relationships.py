@@ -464,6 +464,14 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         }
         for n in got["nodes"]
     ]
+    for node in nodes:
+        # every door node carries `unnamed` (true only for a DM's person the story never named,
+        # #3732); a node worked out by the gate has none and is left as the gate named it. An
+        # unnamed one is labelled from the anchor's present name, as the All names page and Discord
+        if "unnamed" in node:
+            all_names._label_unnamed(node)
+    waiting = got.get("waitingUnnamed")
+    extra = {} if waiting is None else {"waitingUnnamed": int(waiting)}  # (a DM's only, #3732)
     return {
         "center": got["center"],
         "nodes": nodes,
@@ -481,6 +489,7 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         "view": got["view"],
         "visibility": got["visibility"],
         "canPeek": bool(got["canPeek"]),
+        **extra,
     }
 
 
