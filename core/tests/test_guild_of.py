@@ -42,7 +42,7 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
         campaign = SimpleNamespace(name="The *Test* Table", dm_user_ids=dms)
         sent: list[tuple[int, str]] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append((user_id, text))
             outcome = results[user_id]
             if isinstance(outcome, Exception):
@@ -52,6 +52,7 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
         me = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             sidebar_send_dm=send_dm,
+            settings=SimpleNamespace(site_url=""),
             sent=sent,
         )
         return me
@@ -85,6 +86,84 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
         me.campaigns.get = AsyncMock(return_value=None)
         self.assertFalse(await self.ask(me))
         self.assertEqual(me.sent, [])
+
+
+class AskPrivatelyLinksTest(unittest.IsolatedAsyncioTestCase):
+    """Every private question ends with the website button when the site has an address (#3663)."""
+
+    async def test_the_question_carries_the_website_link_once_for_every_dm(self) -> None:
+        from unittest.mock import AsyncMock
+
+        import discord
+
+        from dmbot.bot import DMBot
+
+        seen: list[Any] = []
+
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
+            seen.append(view)
+            return "sent"
+
+        me = SimpleNamespace(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(name="T", dm_user_ids={7, 8}))
+            ),
+            sidebar_send_dm=send_dm,
+            settings=SimpleNamespace(site_url="https://dmbot.example.com"),
+        )
+        view = discord.ui.View()
+        self.assertTrue(await DMBot.ask_privately(cast(Any, me), 1, "ab", "Q?", view))
+        self.assertIs(seen[0], seen[1])
+        labels = [getattr(c, "label", "") for c in view.children]
+        self.assertEqual(labels, ["Open on the website"])  # added once, not once for each DM
+        self.assertEqual(view.children[0].url, "https://dmbot.example.com/account/questions")  # type: ignore[attr-defined]
+
+
+class LiveLinksTest(unittest.IsolatedAsyncioTestCase):
+    """The live question and the plain line carry the website button too (#3663)."""
+
+    def me(self, sent: list[Any]) -> Any:
+        from unittest.mock import AsyncMock
+
+        async def dm_message(user_id: int, text: str, view: Any) -> Any:
+            sent.append(view)
+            return SimpleNamespace(id=1)
+
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
+            sent.append(view)
+            return "sent"
+
+        campaign = SimpleNamespace(
+            name="T", dm_user_ids={7}, owner_user_id=7, guild_id=1, id="ab12"
+        )
+        return SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            settings=SimpleNamespace(site_url="https://dmbot.example.com"),
+            _dm_message=dm_message,
+            sidebar_send_dm=send_dm,
+            post_message=AsyncMock(),
+        )
+
+    def table(self) -> Any:
+        return SimpleNamespace(guild_id=1, campaign_id="ab12", screen_channel_id=5)
+
+    async def test_ask_live_gives_each_copy_the_website_button(self) -> None:
+        import discord
+
+        from dmbot.bot import DMBot
+
+        sent: list[Any] = []
+        await DMBot.ask_live(cast(Any, self.me(sent)), self.table(), "Q?", discord.ui.View)
+        [view] = sent
+        self.assertEqual([c.label for c in view.children], ["Open on the website"])
+
+    async def test_tell_dms_sends_a_view_with_the_website_button(self) -> None:
+        from dmbot.bot import DMBot
+
+        sent: list[Any] = []
+        await DMBot.tell_dms(cast(Any, self.me(sent)), self.table(), "Heads up.")
+        [view] = sent
+        self.assertEqual([c.label for c in view.children], ["Open on the website"])
 
 
 if __name__ == "__main__":

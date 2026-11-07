@@ -31,6 +31,7 @@ from dmbot.memory import (
     place_words,
     reputation_words,
     unique_item,
+    who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
@@ -72,7 +73,13 @@ from dmbot.memory.ontology import (
     decide_term,
     resolve_kind,
 )
-from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.memory.store import (
+    TRAVELS_WITH,
+    MemoryStore,
+    _companion_problem,
+    _load_ontology,
+    _new_alias,
+)
 from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -124,6 +131,7 @@ NEW_NAME_LIMIT = 20  # new names one session sends to the DM; the rest wait for 
 # could mean two entries, it is kept for the DM's answer, with its lines, instead of being dropped.
 UNPLACED_REASON = "kept for your answer: a name in it could be two different entries"
 NEW_PERSON = "new-person"  # stands for the unnamed person a Keep is about to make (#3431)
+TRAVELS_REASON = "a companion travels with a player character or the party, in that order"  # #3176
 DESCRIBED_REASON = "kept for your answer: a person the story never names"  # #3431
 UNPLACED_LIMIT = 20  # such claims one session keeps; the rest are counted and not stored
 SESSION_CLAIMS = 3000  # claims one session may hand to `propose` at once
@@ -490,6 +498,8 @@ class Names:
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
     # Each character's (role, its player) by entry id, for who speaks for it (#2562)
     roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
+    # Each entry's source by id: only the party entry is told apart by it (#3176)
+    sources: Mapping[str, str] = field(default_factory=dict)
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -533,7 +543,8 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         for e in entities
         if str(e["type"]) == "character"
     }
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
+    sources = {str(e["id"]): str(e.get("source") or "") for e in entities}
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources)
 
 
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
@@ -658,6 +669,21 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
         onto, claim.relationship, who[1], other[1], tally, claim.details or ""
     )
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
+    if term.key == TRAVELS_WITH:
+        # The store refuses a companion link whose ends are wrong (#3176), so the DM is never
+        # asked a question whose "yes" it would turn down. The reader is a session reader.
+        first, second = (other, who) if said_from_object else (who, other)
+        problem = _companion_problem(
+            {"type": first[1], "role": names.roles.get(first[0], (None, None))[0]},
+            {
+                "type": second[1],
+                "role": names.roles.get(second[0], (None, None))[0],
+                "source": names.sources.get(second[0], ""),
+            },
+            EXTRACTOR,
+        )
+        if problem is not None:
+            return TRAVELS_REASON
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
         return f"{term.label} doesn't fit those two"
     if term.object_types and not onto.is_any(o_kind, term.object_types):
@@ -1658,6 +1684,7 @@ class ClaimStore:
         words produced goes with what it made. Returns how many claims went."""
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
+            answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",
@@ -1667,7 +1694,7 @@ class ClaimStore:
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-            return len(gone) + readings
+            return len(gone) + readings + answers  # (claims, readings and Who-is-this answers)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import WaitingBulk from "./WaitingBulk";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
@@ -64,6 +65,7 @@ export default function WebWaiting({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
   const counter = useRef(0);
@@ -138,7 +140,7 @@ export default function WebWaiting({
     );
   if (!list) return null;
 
-  const busy = sending !== null;
+  const busy = sending !== null || bulkOn;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
   // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
@@ -370,6 +372,22 @@ export default function WebWaiting({
         <div class="stack">
           <h4>{w.claimsHeading}</h4>
           <p class="small">{w.claimsNote}</p>
+        </div>
+      )}
+      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
+      <WaitingBulk
+        api={api}
+        campaignRef={campaignRef}
+        claims={list.claims.filter((c) => !c.choices?.length)}
+        locked={sending !== null}
+        onRunning={setBulkOn}
+        onChanged={async () => {
+          await read();
+          onChanged?.();
+        }}
+      />
+      {list.claims.some((c) => !c.choices?.length) && (
+        <div class="stack">
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel">
               <p id={`wc-${c.id}`}>{c.statement}</p>
@@ -387,7 +405,7 @@ export default function WebWaiting({
                 {c.canSecret && (
                   <button
                     type="button"
-                    class="button secondary"
+                    class="button secret"
                     disabled={busy}
                     aria-describedby={`wc-${c.id}`}
                     onClick={() =>

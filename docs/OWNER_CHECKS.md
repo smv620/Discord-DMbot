@@ -64,11 +64,11 @@ Add one made-up person on the Names list first (type `/dmbot names`, press ➕ A
 For Check 6 you also need a player character: press 🧑 Add a player's character on the Names list if you
 have none.
 
-### 5. How an NPC feels about the party (Standing)
-**You'll do:** open Captain Rook's name card and press 🤝 Standing. Then press **Toward a character…** and set
+### 5. How an NPC feels about the party (Reputation)
+**You'll do:** open Captain Rook's name card and press 🤝 Reputation. Then press **Toward a character…** and set
 a feeling.
 
-**It worked if:** Standing shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
+**It worked if:** Reputation shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
 can see it.
 
 Unlocks: #1655
@@ -77,7 +77,7 @@ Unlocks: #1655
 **You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick the person (Captain
 Rook) and **Helped them**, and press ✅ Record it.
 
-**It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
+**It worked if:** Reputation now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
 
 Unlocks: #1732

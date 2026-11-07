@@ -98,6 +98,15 @@ class Settings:
     # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
     # extractor does, inside the same call limits.
     story_readings_on: bool = False
+    # A third question of each batch (#3175 slice 4): deeds the party did, proposed for the DM to
+    # record. Off until the extractor is; it only runs when the extractor does, inside the same
+    # call limits. Nothing is stored yet while storing is not built.
+    story_deeds_on: bool = False
+    # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
+    # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
+    # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
+    story_who_on: bool = False
+    story_who_apply_on: bool = False  # DMbot joins a name itself when sure (#3602, slice 4)
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -369,6 +378,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
         )
+    who_raw = (get("DMBOT_STORY_WHO") or "0").lower()
+    if who_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_WHO must be 1 (on) or 0 (off), got "' + who_raw + '".')
+    who_apply_raw = (get("DMBOT_STORY_WHO_APPLY") or "0").lower()
+    if who_apply_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_WHO_APPLY must be 1 (on) or 0 (off), got "' + who_apply_raw + '".'
+        )
+    deeds_raw = (get("DMBOT_STORY_DEEDS") or "0").lower()
+    if deeds_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_STORY_DEEDS must be 1 (on) or 0 (off), got "' + deeds_raw + '".')
     contradictions_raw = (get("DMBOT_STORY_CONTRADICTIONS") or "0").lower()
     if contradictions_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -545,6 +565,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
+        story_deeds_on=deeds_raw in ("1", "true", "on"),
+        story_who_on=who_raw in ("1", "true", "on"),
+        # (applying needs the ranking: on alone does nothing)
+        story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
