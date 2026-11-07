@@ -1890,6 +1890,8 @@ class CampaignStore:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
                 await tell(progress, 0, len(order))
+                # (the transcript parts carry every column, the stamp included: keep it as it is)
+                await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
                 for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])

@@ -218,6 +218,56 @@ class TheTrigger(DatabaseTest):
             await store.reset_audio(GUILD, self.campaign.id, 1000)
         self.assertEqual(await self._stamps_of_job(), (OLD, None))
 
+    async def test_a_recorded_session_and_line_carry_the_recording_build(self) -> None:
+        """Part 3: the line keeps the recording build until DMbot labels it again (opt-in)."""
+        from dmbot.transcript.models import Line
+        from dmbot.transcript.store import TranscriptStore
+
+        store = TranscriptStore(self.db)
+        start = 1_700_000_000
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            sid = await store.open_session(GUILD, self.campaign.id, start)
+            await store.add_lines(GUILD, sid, [Line(start * 1000, USER, "hi", "hi")])
+
+        async def stamps() -> tuple[set[str | None], set[str | None]]:
+            async with self.db.guild(GUILD) as conn:
+                a = await (
+                    await conn.execute("SELECT made_by_commit c FROM transcript_sessions")
+                ).fetchall()
+                b = await (
+                    await conn.execute("SELECT made_by_commit c FROM transcript_lines")
+                ).fetchall()
+            return {r["c"] for r in a}, {r["c"] for r in b}
+
+        self.assertEqual(await stamps(), ({OLD}, {OLD}))
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.set_topics(GUILD, sid, USER, [start * 1000], "table_talk")
+        self.assertEqual(
+            await stamps(), ({OLD}, {NEW})
+        )  # the line was labelled again; the session was not
+
+    async def test_session_notes_rewritten_by_dmbot_restamp_and_the_setting_is_put_back(
+        self,
+    ) -> None:
+        from dmbot.recaps.notes import keep_from_job
+
+        store = await self._audio_job()  # a finished recap job with beats
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute('UPDATE recap_jobs SET beats = \'[{"who": "x"}]\'::jsonb')
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            async with self.db.guild(GUILD) as conn:
+                await keep_from_job(conn, GUILD, self.campaign.id, 1000)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            async with self.db.guild(GUILD) as conn:
+                await keep_from_job(conn, GUILD, self.campaign.id, 1000)
+                cur = await conn.execute("SELECT current_setting('dmbot.rewrites', true) AS v")
+                setting = (await cur.fetchone())["v"]  # type: ignore[index]
+                cur = await conn.execute("SELECT made_by_commit AS c FROM session_notes")
+                notes = [r["c"] for r in await cur.fetchall()]
+        self.assertEqual(notes, [NEW])
+        self.assertIn(setting, (None, ""))
+        del store
+
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`
         (`as_person` for the campaign store, `user` for account doors), so a row a website door

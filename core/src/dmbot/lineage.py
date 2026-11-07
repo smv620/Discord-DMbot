@@ -25,7 +25,14 @@ hide a DM's row included; the stamp is the build that last wrote the row, not wh
 
 **Known limit (recaps):** "Keep the earlier version" puts a recap's previous text back as the DM's
 act, so it keeps the stamp of the replacement draft's build, not the older text's. `recap_accepted`
-is stamped for the build that kept the text, which copies DMbot's own title and summary.
+is stamped for the build that kept the text, which copies DMbot's own title and summary. A recap's
+music plan is covered by the text's stamp (`made_by_commit`), and the music and voiceover files by
+the audio's (`audio_made_by_commit`).
+
+**Known limit (transcripts):** a line carries the stamp of the build that last cleaned or labelled
+it (those writes opt in); a line not yet cleaned carries the recording build's. The session notes'
+backup section (`session_notes`) does not carry `made_by` yet (#3751); the transcript parts do, as
+they carry every column.
 
 **Part 1's backup** carries `made_by` for the memory section's own tables only (`memory/backup.py`,
 `_TAGS`). The other stamped tables are restored by their own sections, which do not carry it yet, so
@@ -55,19 +62,21 @@ STAMPED_MEMORY = (
     "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
     "rel_ties", "lore_uploads",
 )  # fmt: skip
-# Part 2: recaps, name checks and the theatre script (migration 0380).
+# Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
     "recap_jobs", "recap_dictionaries", "recap_requests", "recap_accepted", "theatre_lines",
 )  # fmt: skip
-STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS)
+# Part 3: transcripts, imports and the session notes (migration 0381).
+STAMPED_TRANSCRIPTS = (
+    "transcript_sessions", "transcript_lines", "session_imports", "said_as_suggestions",
+    "session_notes",
+)  # fmt: skip
+STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS) | frozenset(STAMPED_TRANSCRIPTS)
 
 # Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
 # (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
 # moves its tables to `STAMPED`; the list ends empty.
 NOT_YET: tuple[str, ...] = (
-    # part 3: transcripts and imports
-    "transcript_lines", "transcript_respells", "transcript_sessions", "transcript_suggestions",
-    "session_imports", "import_plays", "import_speakers", "said_as_suggestions", "session_notes",
     # part 4: the rest
     "ai_feed", "map_notes", "campaign_pictures", "picture_actions", "plot_chat", "plot_checks",
     "plot_fine", "plot_issues", "pack_suggestions", "rule_set_suggestions", "import_clock_offers",
@@ -124,6 +133,10 @@ NOT_STAMPED: dict[str, str] = {
             "report_answers",
             "secret_exposures",
             "recap_holds",
+            "transcript_suggestions",
+            "transcript_respells",
+            "import_plays",
+            "import_speakers",
             "recap_name_checks",
             "theatre_runs",
         ),

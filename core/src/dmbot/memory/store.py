@@ -3297,7 +3297,7 @@ class MemoryStore:
         if not rows:
             return 0
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for entity_id, heard, times in rows:
                 cur = await conn.execute(
                     "INSERT INTO said_as_suggestions"

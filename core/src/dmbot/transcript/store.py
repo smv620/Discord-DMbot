@@ -417,7 +417,7 @@ class TranscriptStore:
         """A saved line's topic, from the off-topic filter (#52). What was heard never
         changes. How many lines changed (0: it wasn't saved). `typed`: typed chat and speech
         of one person can share a millisecond, so the kind is part of the match (#2447)."""
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
@@ -431,7 +431,7 @@ class TranscriptStore:
     ) -> int:
         """A saved line's entity: who it was said as (#53). What was heard never changes.
         How many lines changed (0: it wasn't saved)."""
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET entity = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
@@ -452,7 +452,7 @@ class TranscriptStore:
     ) -> int:
         """Several of one person's saved lines get a topic, in one statement (#677: Put
         it back). What was heard never changes. How many lines changed."""
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"
@@ -469,7 +469,7 @@ class TranscriptStore:
         become game talk again (`topics.lean_to_keeping`). Marked `leaned`, so a count and an Undo
         can tell them apart, and never a line a DM decided. Speech only; what was heard never
         changes. Safe to run twice."""
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "SELECT id, user_id, started_ms, duration_ms, topic, leaned,"
                 " topic_by IS NOT NULL AS decided"
@@ -857,7 +857,7 @@ class TranscriptStore:
             *([list(speakers)] if use_speakers and speakers is not None else []),
             *([GAME] if use_game else []),
         )
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             # Two presses of Finish at once take turns, so no two runs share a number.
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{campaign_id}:{batch}",)
