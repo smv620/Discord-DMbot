@@ -35,6 +35,7 @@ from typing import Any
 
 from dmbot.memory import gate, importance, importance_rank, node_summary
 from dmbot.memory.node_summary import DM, PLAYER, Fact, Focus, Neighbour
+from dmbot.memory.standing import DEED_VERB
 from dmbot.web import graph_view
 
 MAX_SECOND_HOP = 6  # connections read for each neighbour's own neighbours (the text names one)
@@ -97,6 +98,43 @@ def _edges(graph: graph_view.Graph) -> list[dict[str, Any]]:
     return [e for e in graph.edges if str(e["id"]) not in graph.split]
 
 
+def deed_facts(
+    edges: list[dict[str, Any]], nodes: Mapping[str, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """A deed the DM recorded is `doer —did→ deed —affected→ viewer` (#1732). The summary reads it
+    as what it means, one fact between the doer and each viewer ("rescued by the party"), and
+    never names the deed entry itself as a neighbour (#3236 slice 3). The kind (attack, rescue…)
+    is the `did` connection's detail and the effect ("helped", "hurt") is the `affected` one's.
+    Both connections are the DM's alone, so a player's graph holds neither and this changes
+    nothing for them."""
+    deeds = {i for i, n in nodes.items() if n.get("kind") == "deed"}
+    if not deeds:
+        return edges
+    doers: dict[str, list[dict[str, Any]]] = {}  # a deed may have several doers (the party)
+    for e in edges:
+        if e["predicate"] == "did" and str(e["b"]) in deeds:
+            doers.setdefault(str(e["b"]), []).append(e)
+    out = [e for e in edges if str(e["a"]) not in deeds and str(e["b"]) not in deeds]
+    for e in edges:
+        if e["predicate"] != "affected":
+            continue
+        for doing in doers.get(str(e["a"]), []):
+            out.append(
+                {
+                    **e,
+                    "id": f"{doing['id']}:{e['id']}",
+                    "a": doing["a"],
+                    "b": e["b"],
+                    "predicate": "did",
+                    "detail": str(doing["detail"] or ""),  # the deed's kind
+                    # (read only by `_facts`: how it landed, as the one word the summary uses)
+                    "effect": DEED_VERB.get(str(e["detail"] or ""), ""),
+                    "at": doing["at"] if doing.get("at") is not None else e.get("at"),
+                }
+            )
+    return out
+
+
 def _facts(
     edges: list[dict[str, Any]],
     nodes: Mapping[str, Mapping[str, Any]],
@@ -116,7 +154,7 @@ def _facts(
             Fact(
                 kind=kind,
                 outward=a == here,
-                detail=str(e["detail"] or ""),
+                detail=str(e.get("effect") or e["detail"] or ""),
                 deed=str(e["detail"] or "") if kind == "did" else "",
                 session=_when(e.get("at")),
                 subject_kind=str(nodes[a]["kind"]),
@@ -151,13 +189,13 @@ def summary_for(
         graph = graph_view.build(src, kn, gate.Viewer.player(kn["playerCharacters"]))
         clicker_knows = None
     node = graph.nodes.get(node_id)
-    if node is None:
-        return None
+    if node is None or (audience == PLAYER and node["kind"] == "deed"):
+        return None  # (a deed is the DM's: a player's click on one finds nothing)
     if audience == PLAYER:
         # (a connection split onto an other name in the clicker's graph but plain in the union
         # counts as unknown to them: the gate may close for it, the safe direction)
         clicker_knows = {str(e["id"]) for e in _edges(graph_view.build(src, kn, clicker))}
-    edges = _edges(graph)
+    edges = deed_facts(_edges(graph), graph.nodes)
     scores = importance.scores((str(e["a"]), str(e["b"])) for e in edges)
     near: dict[str, set[str]] = {}
     for e in edges:
