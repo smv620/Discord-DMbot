@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import unittest
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock, patch
 
 import psycopg
@@ -76,9 +78,6 @@ class WithFeed(DatabaseTest):
 class TheFeed(WithFeed):
     async def test_a_feed_row_carries_the_build_that_wrote_it(self) -> None:
         """Lineage (#3739, part 4): the row says which build asked, for debugging old rows."""
-        import os
-        from unittest import mock
-
         commit = "d" * 40
         with mock.patch.dict(os.environ, {"GIT_COMMIT": commit}), self.job():
             entry = ai_feed.begin("a question", "careful")

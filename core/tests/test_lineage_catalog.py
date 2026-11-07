@@ -2,8 +2,8 @@
 
 The same catalog idea as `test_campaign_tables`: a table that is on none of the lists is a table
 whose rows nobody decided about, so a fault in them could not be pinned to a build. The lists are
-in `dmbot.lineage`: `STAMPED` (has the column and the trigger), `NOT_YET` (a later part of #3739
-adds it; each part shortens this list) and `NOT_STAMPED` (the DM's own or plumbing, with why).
+in `dmbot.lineage`: `STAMPED` (has the column and the trigger) and `NOT_STAMPED` (the DM's own or
+plumbing, with why).
 """
 
 from __future__ import annotations
@@ -40,8 +40,7 @@ class Catalog(DatabaseTest):
 
     async def test_every_campaign_table_is_stamped_or_on_a_written_list(self) -> None:
         belonging = await self._names(BELONGING)
-        listed = set(lineage.STAMPED) | set(lineage.NOT_YET) | set(lineage.NOT_STAMPED)
+        listed = set(lineage.STAMPED) | set(lineage.NOT_STAMPED)
         self.assertEqual(sorted(belonging - listed), [], "decide these: stamp or write why not")
         self.assertEqual(sorted(listed - belonging - set(lineage.STAMPED)), [], "stale entries")
-        self.assertFalse(set(lineage.NOT_YET) & set(lineage.NOT_STAMPED))
-        self.assertFalse(set(lineage.STAMPED) & (set(lineage.NOT_YET) | set(lineage.NOT_STAMPED)))
+        self.assertFalse(set(lineage.STAMPED) & set(lineage.NOT_STAMPED))
