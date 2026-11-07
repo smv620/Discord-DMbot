@@ -160,6 +160,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    WaitingJoin,
     Written,
     check_status_change,
     clean_text,
@@ -5634,6 +5635,46 @@ class MemoryStore:
             assert final is not None
             return Written(_entity(final), w.batch)
 
+    async def waiting_joins(self, guild_id: int, campaign_id: str) -> list[WaitingJoin]:
+        """The joins DMbot made by itself (`join_by_ai`) that the DM has neither confirmed nor
+        undone, oldest first: what the after-session card lists ("DMbot answered N names itself;
+        check them"). Read from the change log, so nothing else is stored. A join is waiting while
+        its batch is not undone and a name it moved is still waiting on the entry."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await _moved_by_join(scope.conn, scope.ids)
+            found: dict[int, WaitingJoin] = {}
+            for r in rows:
+                batch = int(r["batch"])
+                if batch in found:
+                    continue
+                gone = (await scope.select(ENTITIES, " AND id = %s", [r["gone_id"]]))[:1]
+                keep = (await scope.select(ENTITIES, " AND id = %s", [r["keep_id"]]))[:1]
+                if gone and keep:
+                    found[batch] = WaitingJoin(
+                        batch, str(r["keep_id"]), str(r["gone_id"]),
+                        str(gone[0]["name"]), str(keep[0]["name"]), int(r["made_at"]),
+                    )  # fmt: skip
+            return sorted(found.values(), key=lambda j: j.batch)
+
+    async def confirm_join(self, guild_id: int, campaign_id: str, batch: int) -> int:
+        """The DM says DMbot's own join was right (✅ / All fine): the names it moved onto the
+        entry are confirmed, in one change by the DM. Only a name that join moved from the joined
+        entry onto the kept one is touched (the same rows `waiting_joins` lists, read again inside
+        the write). Raises "not found" when that batch is not one of DMbot's joins still waiting
+        (undone, already confirmed, or not a join). Returns how many names were confirmed."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            ids = sorted({str(r["alias_id"]) for r in await _moved_by_join(w.conn, w.ids, batch)})
+            confirmed = 0
+            for alias_id in ids:
+                current = await w.get(ALIASES, alias_id)
+                if current is None or current["status"] != PROPOSED or current["secret"]:
+                    continue
+                await self._change_alias(w, alias_id, DM, CONFIRMED, None)
+                confirmed += 1
+            if not confirmed:
+                raise MemoryRuleError(NOT_FOUND)
+            return confirmed
+
     async def undo(
         self,
         guild_id: int,
@@ -6591,6 +6632,37 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
 AI_JOIN_REFUSED = "DMbot doesn't join those two by itself; the DM decides."
 
 
+async def _moved_by_join(
+    conn: Any, ids: tuple[int, str], batch: int | None = None
+) -> list[dict[str, Any]]:
+    """The names DMbot's own joins moved that are still waiting: one row for each name that a
+    `who` merge moved from the joined entry onto the kept one, where the batch is not undone, the
+    kept entry is still confirmed and the name is still proposed and not secret. The one place both
+    the DM's list and ✅ read, so they can never differ. Other alias rows in a merge's batch (a
+    `used_by` pointer, a twin's upgrade) are not moves and never match."""
+    cur = await conn.execute(
+        "SELECT c.batch, c.row_id AS gone_id, c.after->>'merged_into' AS keep_id, c.made_at,"
+        " m.row_id AS alias_id"
+        " FROM memory_changes c"
+        " JOIN memory_changes m ON m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id"
+        " AND m.batch = c.batch AND m.table_name = 'memory_aliases' AND m.op = 'update'"
+        " AND m.before->>'entity_id' = c.row_id AND m.after->>'entity_id' = c.after->>'merged_into'"
+        " JOIN memory_aliases a ON a.guild_id = m.guild_id AND a.campaign_id = m.campaign_id"
+        " AND a.id = m.row_id AND a.entity_id = c.after->>'merged_into'"
+        " AND a.status = 'proposed' AND NOT a.secret"
+        " JOIN memory_entities k ON k.guild_id = c.guild_id AND k.campaign_id = c.campaign_id"
+        " AND k.id = c.after->>'merged_into' AND k.status = 'confirmed'"
+        " WHERE c.guild_id = %s AND c.campaign_id = %s AND c.source = %s"
+        " AND c.table_name = 'memory_entities' AND c.op = 'update' AND c.undoes IS NULL"
+        " AND c.after->>'status' = 'merged' AND (%s::bigint IS NULL OR c.batch = %s::bigint)"
+        " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+        " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+        " ORDER BY c.batch, m.row_id",
+        (*ids, WHO_SOURCE, batch, batch),
+    )
+    return list(await cur.fetchall())
+
+
 async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
     """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
     else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
@@ -6616,6 +6688,17 @@ async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any])
         return AI_JOIN_REFUSED
     ids = [keep["id"], gone["id"]]
     if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):
+        return AI_JOIN_REFUSED
+    # a name the DM turned down on the confirmed entry must not come back through a join
+    rejected = {
+        a["key"]
+        for a in await w.select(
+            ALIASES, " AND entity_id = %s AND status = 'rejected'", [keep["id"]]
+        )
+    }
+    if rejected and any(
+        a["key"] in rejected for a in await w.select(ALIASES, " AND entity_id = %s", [gone["id"]])
+    ):
         return AI_JOIN_REFUSED
     if await w.select(ENTITIES, " AND unnamed_anchor = ANY(%s)", [ids]):
         return AI_JOIN_REFUSED  # others hang off one of them

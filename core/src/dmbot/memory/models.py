@@ -522,6 +522,19 @@ class GroupJoined:
 
 
 @dataclass(frozen=True, slots=True)
+class WaitingJoin:
+    """One of DMbot's own joins (#3602, slice 4) the DM has not confirmed or undone: the batch (its
+    Undo), the entry it joined to and the name that was joined (the waiting entry it came from)."""
+
+    batch: int
+    keep_id: str
+    gone_id: str
+    spelling: str
+    keep_name: str
+    made_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class Written[T]:
     """A write's result, with the change-log batch to pass to `undo` (None: nothing
     changed, for example the fact was already known)."""
