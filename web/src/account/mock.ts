@@ -2034,6 +2034,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             ref: "100.cmp1",
             name: "The Ashen Road",
             total: 17,
+            guesses: matchesNow.length,
             countedAt: now - 30,
             kinds: [
               { kind: "names", count: 3, oldest: now - 86_400 },

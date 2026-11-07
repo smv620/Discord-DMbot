@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.memory.models import DM
-from dmbot.web import all_names
+from dmbot.web import all_names, question_counts
 from dmbot.web.recaps import RecapError
 from tests.test_web_relationships import Web
 
@@ -196,3 +196,35 @@ class TheDoorIsStrict(Matches):
             (await self.door(str(int(row["b"]) + 1), "match-confirm"))["status"], "not_found"
         )
         self.assertEqual((await self.door(str(made.batch), "match-confirm"))["status"], "ok")
+
+
+class OnTheQuestionsPage(Matches):
+    """The Questions page's count of the same list (#3701): one door, so the two cannot differ."""
+
+    async def mine(self, who: Any = None, **kw: Any) -> dict[str, Any]:
+        got = await question_counts.read_questions(self.web, who or self.session, now=1, **kw)
+        (found,) = [c for c in got["campaigns"] if c["ref"] == self.cref]
+        return dict(found)
+
+    async def test_the_count_equals_the_length_of_the_list(self) -> None:
+        self.assertEqual((await self.mine())["guesses"], 0)
+        await self.make_match()
+        await self.make_match("Mira Voss", "the smith")
+        self.assertEqual((await self.mine())["guesses"], len(await self.listed()))
+        self.assertEqual((await self.mine())["guesses"], 2)
+
+    async def test_an_answered_guess_leaves_the_count(self) -> None:
+        made = await self.make_match()
+        await self.memory.undo(self.g, self.one.id, made.batch)
+        self.assertEqual((await self.mine())["guesses"], 0)
+
+    async def test_the_count_holds_no_name(self) -> None:
+        await self.make_match()
+        self.assertNotIn("Ferry", str(await self.mine()))
+
+    async def test_the_badge_total_reads_no_guesses(self) -> None:
+        await self.make_match()
+        self.assertNotIn("guesses", await self.mine(guesses=False))
+        self.assertEqual(
+            await question_counts.read_total(self.web, self.session, now=1), {"total": 0}
+        )

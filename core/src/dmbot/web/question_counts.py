@@ -40,9 +40,14 @@ def shape(guild_id: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-async def read_questions(db: Database, session: Session, *, now: float) -> dict[str, Any]:
+async def read_questions(
+    db: Database, session: Session, *, now: float, guesses: bool = True
+) -> dict[str, Any]:
     """Every campaign the signed-in person is a game master of, in the servers of this session's
-    list, with its waiting questions by kind. A player has none."""
+    list, with its waiting questions by kind. A player has none. `guesses` adds, for each campaign,
+    how many of DMbot's own matches wait for the DM (#3701): read from the very door that lists
+    them (`dmbot_web_waiting_matches`, 0372), so the count and the list cannot differ. A count
+    only, never a name; it is not part of the total, which is the bot's own count of questions."""
     campaigns: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         for guild in session.guilds[:MAX_GUILDS]:
@@ -52,12 +57,21 @@ async def read_questions(db: Database, session: Session, *, now: float) -> dict[
             )
             found = await cur.fetchone()
             if found and found["found"]:
-                campaigns += shape(int(guild.id), found["found"])
+                shaped = shape(int(guild.id), found["found"])
+                if guesses:
+                    for row, made in zip(found["found"], shaped, strict=True):
+                        cur = await conn.execute(
+                            "SELECT dmbot_web_waiting_matches(%s, %s) AS m",
+                            (int(guild.id), str(row["id"])),
+                        )
+                        got = (await cur.fetchone() or {}).get("m")
+                        made["guesses"] = len(got["matches"]) if got else 0
+                campaigns += shaped
     campaigns.sort(key=lambda c: (-c["total"], c["name"].lower(), c["ref"]))
     return {"campaigns": campaigns, "serverNow": int(now)}
 
 
 async def read_total(db: Database, session: Session, *, now: float) -> dict[str, int]:
     """Just the total, for the badge on the account page."""
-    got = await read_questions(db, session, now=now)
+    got = await read_questions(db, session, now=now, guesses=False)  # (a badge needs no guesses)
     return {"total": sum(int(c["total"]) for c in got["campaigns"])}
