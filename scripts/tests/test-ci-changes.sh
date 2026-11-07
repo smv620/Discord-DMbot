@@ -51,12 +51,12 @@ check "the plan is read by core" "docs/PLAN.md" "true false false false"
 check "the go-live map is read by the website check" "docs/GO_LIVE.md" "true false true false"
 check "CLAUDE.md is read by core" "CLAUDE.md" "true false false false"
 check "the workflow template is checked by core" "docs/ci/supervisor-review.yml" "true false false false"
-check "a deleted core file counts" "DELETE:core/a.py" "true false false false"
-check "core only" "core/a.py" "true false false false"
-check "core code is read by the website's button check" "core/src/dmbot/ui/b.py" "true false true false"
-check "the rules data is read by the Credits page" "core/src/dmbot/rules/data/srd52/spells.json" "true false true false"
+check "a deleted core file counts" "DELETE:core/a.py" "true false false true"
+check "core only" "core/a.py" "true false false true"
+check "core code is read by the website's button check" "core/src/dmbot/ui/b.py" "true false true true"
+check "the rules data is read by the Credits page" "core/src/dmbot/rules/data/srd52/spells.json" "true false true true"
 check "owner checks doc is read by the website tests" "docs/OWNER_CHECKS.md" "false false true false"
-check "ears only" "ears/a.ts" "false true false false"
+check "ears only" "ears/a.ts" "false true false true"
 check "plans.json is read by core" "web/src/content/plans.json" "true false true false"
 check "the consent promises are read by core" "web/src/content/consent-promises.ts" "true false true false"
 check "protocol is read by both" "protocol/fixtures.json" "true true false false"
@@ -68,9 +68,11 @@ check "README is read by core" "README.md" "true true true true"
 check "development runs everything" "web/a.tsx" "true true true true" refs/heads/development
 check "beta runs everything" "docs/DEPLOY.md" "true true true true" refs/heads/beta
 check "main runs everything" "docs/DEPLOY.md" "true true true true" refs/heads/main
-check "mixed website and core" "web/a.tsx core/a.py" "true false true false"
+check "mixed website and core" "web/a.tsx core/a.py" "true false true true"
 
 # The docker images job builds from these files, so a change to them (and only to them) builds it (#3715).
+check "a docs-only diff gives docker=false" "docs/DEPLOY.md" "false false false false"
+check "a protocol-only diff gives docker=false" "protocol/fixtures.json" "true true false false"
 check "a core/pyproject.toml diff gives docker=true (and core=true)" "core/pyproject.toml" "true false false true"
 check "a core/Dockerfile diff gives docker=true" "core/Dockerfile" "true false false true"
 check "a core/.dockerignore diff gives docker=true" "core/.dockerignore" "true false false true"
@@ -79,7 +81,7 @@ check "an ears/.dockerignore diff gives docker=true" "ears/.dockerignore" "false
 check "an ears/package.json diff gives docker=true (and ears=true)" "ears/package.json" "false true false true"
 check "an ears/package-lock.json diff gives docker=true" "ears/package-lock.json" "false true false true"
 check "an ears/tsconfig.build.json diff gives docker=true" "ears/tsconfig.build.json" "false true false true"
-check "a core source diff does not build the images" "core/src/dmbot/ui/b.py" "true false true false"
+check "a core source diff builds the images" "core/src/dmbot/ui/b.py" "true false true true"
 check "batch branches run everything" "web/a.tsx" "true true true true" refs/heads/batch/2026-11-07-1
 
 # Not a git repository, or no base: everything runs.
