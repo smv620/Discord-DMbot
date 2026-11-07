@@ -1,6 +1,7 @@
 """Where a connection came from, for the graph's line panel (#2946). The shape is the one posted on
 #2934: `{type: "session", n}`, `{type: "upload", label}`, `{type: "dm"}` or `{type: "unknown"}`.
 
+The DM also gets `quote` on the connection (the reader's own words for it, an upload's only).
 The DM gets the full value. A player gets the session number, which they were at the table for,
 and `unknown` for everything else: an upload's label is the DM's own name for it and can name a
 private backstory, and "added by hand" tells a player how the DM works. Never a word of a transcript
@@ -41,7 +42,13 @@ def attach(page: dict[str, Any], rows: Mapping[str, Mapping[str, Any]], full: bo
     """Adds `source` to every connection of a graph page, in place."""
     for edge in page.get("edges", []):
         for link in edge["links"]:
-            link["source"] = source_value(rows.get(str(link["id"])), full)
+            row = rows.get(str(link["id"]))
+            link["source"] = source_value(row, full)
+            # the words an upload connection was read from: the DM's alone, and only when stored
+            # (the door sends none to anyone else; this is the second lock, #3606)
+            quote = str((row or {}).get("quote") or "")
+            if full and quote:
+                link["quote"] = quote
 
 
 async def with_link_sources(

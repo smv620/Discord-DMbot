@@ -109,9 +109,13 @@ NOT_IN_BACKUP: dict[str, str] = {
     "pressing the button again makes it (#3244)",
     "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
     "lines by an AI and made again on request, never carries content of its own (#3244)",
+    "import_clock_offers": "the game minute an imported session ended at and what became of the "
+    "offer to set the clock there: a minute and a state code, made again by the next import; a "
+    "pending offer means nothing after a restore (#3199)",
     "memory_link_sources": "the upload label a kept connection came from, for the line panel: "
-    "provenance of working data, never a word of the upload; a restored campaign's connections "
-    "read as added by hand (#2946)",
+    "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
+    "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
+    "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",

@@ -68,6 +68,10 @@ LOOKUP_FAILED = "lookup_failed"  # Discord could not be asked: nothing is linked
 BAD_PLAYER = "bad_player"  # not an ID the rules take
 BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
+# A feeling picked on the website rides the `link-words` action (the door's text rules are
+# unchanged) as `feeling:<word>`; applying it is the same change as typing "knows (<word>)" but only
+# on a `knows` connection (#3606), so the picker can never turn another kind of connection into one.
+FEELING_TEXT = "feeling:"
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -100,6 +104,9 @@ UNNAMED_ACTIONS = ("name", "name-join", "name-undo")
 SPELLING_ACTIONS = ("spelling-yes", "spelling-no")
 # "Add all" for the names an upload found (#3207): say yes to them by kind, or take that press back.
 CONFIRM_ACTIONS = ("confirm-kinds", "confirm-undo")
+# The import clock offer on the website (#3199): set the clock where an imported session ended, or
+# not now. The target is the imported session; the result is written to its offer row.
+CLOCK_ACTIONS = ("clock-set", "clock-skip")
 # "Tell a character" (#3542, #3089): the DM tells one player character that a secret other name is
 # this entry, or takes the telling back.
 TOLD_ACTIONS = ("told-add", "told-remove")
@@ -414,11 +421,19 @@ async def apply(
     named_batch: Callable[[str, int, str], Awaitable[int | None]] | None = None,
     look_up: PlayerLookupFn | None = None,
     actions: ActionStore | None = None,
+    clock: ClockChoiceFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
+    if action.action in CLOCK_ACTIONS:
+        if clock is None:
+            return _failed(FAILED)
+        # The offer's row says how it ended (set, dismissed, moved on, split); the action is done
+        # whichever it was. The sender is a DM (checked above) and is checked again by `clock`.
+        await clock(cid, action.target_id, action.action == "clock-set", action.user_id)
+        return Outcome()
     if (
         action.action == "offer-clear"
     ):  # lift a Never or Not now on words (#3577); filed under no name
@@ -729,6 +744,11 @@ class PlayerLookup:
     in_server: bool
 
 
+# Answers an import clock offer: (campaign, session, set it?, who) -> nothing. The bot's own
+# function (it needs the Discord client to move and redraw the clock); the offer row carries the
+# outcome.
+ClockChoiceFn = Callable[[str, str, bool, int], Awaitable[None]]
+
 # Asks Discord about one ID: None when Discord does not know it. A failed lookup raises, so it is
 # never read as "unknown" (and nothing is linked without the name having been shown).
 PlayerLookupFn = Callable[[int], Awaitable[PlayerLookup | None]]
@@ -956,7 +976,10 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 return _failed(BAD_TARGET)
             await link_edits.remove(memory, guild_id, cid, link)
         elif a.action == "link-words":
-            predicate, detail, swapped = predicate_for_either(a.text)
+            picked = a.text.startswith(FEELING_TEXT)
+            if picked and link.predicate != "knows":
+                return _failed(BAD_TARGET)  # the picker is for a knows line only (#3606)
+            predicate, detail, swapped = predicate_for_either(_words_of(a.text))
             other_end = link.object_id if entity_id == link.subject_id else link.subject_id
             await link_edits.change_words(
                 memory,
@@ -1235,6 +1258,11 @@ async def _answer_reading(
     )
 
 
+def _words_of(text: str) -> str:
+    """The connection words a queued `link-words` text means: a picked feeling is "knows (word)"."""
+    return f"knows ({text[len(FEELING_TEXT) :]})" if text.startswith(FEELING_TEXT) else text
+
+
 async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:
     """Whether an ended connection is the work of this very action: a removal (it is ended), or
     new words (a live connection with those words stands between the same two names)."""
@@ -1242,7 +1270,7 @@ async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation,
         return a.flag
     if a.action != "link-words":
         return False
-    predicate, detail, _ = predicate_for_either(a.text)
+    predicate, detail, _ = predicate_for_either(_words_of(a.text))
     return any(
         r.status == CONFIRMED
         and r.predicate == predicate

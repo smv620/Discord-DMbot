@@ -213,6 +213,72 @@ class Answering(Base):
             await self.deeds.dismiss(GUILD_A, self.c, pid, source="dm")
 
 
+def rescue() -> DeedProposal:
+    return DeedProposal("Cerric", "Saved Brindle", ("Brindle",), "Helped them", ("1",), "rescue")
+
+
+class TheKind(Base):
+    async def kinds(self) -> list[str]:
+        out = []
+        for r in await self.memory.relations(GUILD_A, self.c, include_secret=True):
+            if r.predicate == "did":
+                out.append(r.detail)
+        return out
+
+    async def test_record_keeps_the_kind_in_did_and_undo_takes_it_away(self) -> None:
+        await self.put(
+            (
+                DeedProposal(
+                    "Cerric", "Saved Brindle", ("Brindle",), "Helped them", ("1",), "rescue"
+                ),
+                (DM_ID,),
+            )
+        )
+        (w,) = await self.waiting()
+        self.assertEqual(w.kind, "rescue")
+        batch = await self.deeds.record(GUILD_A, self.c, w.id, opted_in=RECORDED, source="dm")
+        assert batch is not None
+        self.assertEqual(await self.kinds(), ["rescue"])
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        self.assertEqual(await self.kinds(), [])
+
+    async def test_no_kind_is_allowed_and_reads_as_empty(self) -> None:
+        await self.put((deed(), (DM_ID,)))
+        (w,) = await self.waiting()
+        self.assertEqual(w.kind, "")
+        await self.deeds.record(GUILD_A, self.c, w.id, opted_in=RECORDED, source="dm")
+        self.assertEqual(await self.kinds(), [""])
+
+    async def test_add_deed_refuses_a_kind_outside_the_list(self) -> None:
+        with self.assertRaisesRegex(MemoryRuleError, "kind of deed"):
+            await self.memory.add_deed(
+                GUILD_A, self.c, self.cerric, "Saved it", [self.brindle], "Helped them",
+                source="dm", kind="murder",
+            )  # fmt: skip
+
+    async def test_a_backup_keeps_it_and_an_older_row_without_it_loads_as_empty(self) -> None:
+        await self.put(
+            (
+                DeedProposal(
+                    "Cerric", "Saved Brindle", ("Brindle",), "Helped them", ("1",), "rescue"
+                ),
+                (DM_ID,),
+            )
+        )
+        section = DeedProposalsSection()
+        async with self.db.guild(GUILD_A) as conn:
+            (row,) = await section.dump(conn, GUILD_A, self.c)
+            await section.clear(conn, GUILD_A, self.c)
+        self.assertEqual(row["kind"], "rescue")
+        old = {k: v for k, v in row.items() if k != "kind"}  # (a file from before #3236)
+        async with self.db.guild(GUILD_A) as conn:
+            await section.load(conn, GUILD_A, self.c, section.check([old]))
+        (w,) = await self.waiting()
+        self.assertEqual(w.kind, "")
+        with self.assertRaises(CampaignError):
+            section.check([{**row, "kind": "murder"}])
+
+
 class Backup(Base):
     async def test_a_backup_round_trips_the_proposals(self) -> None:
         await self.put((deed(), (DM_ID,)))

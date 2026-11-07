@@ -39,7 +39,7 @@ from dmbot.transcript import import_plan as ip
 from dmbot.transcript import uploader_words as uw
 from dmbot.transcript.import_job import MAX_WINDOWS
 from dmbot.transcript.topics import WINDOW_LINES
-from dmbot.web import recap_choices
+from dmbot.web import import_clock, recap_choices
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
@@ -1029,6 +1029,10 @@ async def progress(
             "SELECT dmbot_import_progress(%s, %s, %s) AS r", (c.guild_id, c.campaign_id, import_id)
         )
         found = (await cur.fetchone() or {}).get("r")
+        clocks = {
+            r["file"]: r
+            for r in await import_clock.read_rows(conn, c.guild_id, c.campaign_id, import_id)
+        }
     if not found:
         raise RecapError("not_found")
     now = int(time.time())
@@ -1052,6 +1056,8 @@ async def progress(
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
                 "progress": part,
+                # The offer to set the game clock where this session ended (#3199), or None.
+                "clock": import_clock.shown(clocks.get(s["file"])),
                 # The story read (the connections found in what was said) in the same shape, or
                 # None when it has not started (#3307).
                 "story": _story_shape(s.get("story"), now),
