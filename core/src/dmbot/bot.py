@@ -684,6 +684,10 @@ SUMMARY_PARTIAL = (
 )
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
+# The AI feed's steps for an import's name scan and its story read (#3710): the import page's own
+# words (web/src/content/import-words.ts, `stage.finding_names` and `story.reading_connections`).
+IMPORT_NAMES = "Looking for names"
+IMPORT_READING = "Reading connections"
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -11276,6 +11280,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self._import_left_told.pop(cid, None)
 
     async def _extract_import(self, gid: int, ready: Ready) -> str:
+        """`_read_import_story`, its AI calls filed under this session's import for the DM's live
+        window on the import page (#3710), with the page's word for the step."""
+        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING):
+            return await DMBot._read_import_story(self, gid, ready)
+
+    async def _read_import_story(self, gid: int, ready: Ready) -> str:
         """The story extractor on one imported session (#3301), after its name scan and with the
         same gates as a live session (switch, plan, call limits, consent: `_extract_session`).
         It is given the session's own date, never today's. While it runs the scan's claim is
@@ -11562,6 +11572,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(channel, f"📜 {missed}")
 
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
+        """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live
+        window on the import page (#3710), with the page's word for the step."""
+        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES):
+            return await DMBot._scan_import_lines(self, gid, ready)
+
+    async def _scan_import_lines(self, gid: int, ready: Ready) -> list[str]:
         """The name scan of one imported session: the lines of people who still agree (asked after
         the lines are read, since a person can stop at any moment) and nobody else's. Returns the
         names proposed."""
