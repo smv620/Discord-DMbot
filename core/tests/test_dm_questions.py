@@ -138,6 +138,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            settings=SimpleNamespace(site_url=""),
             _dm_message=dm_message,
             post_message=AsyncMock(return_value=SimpleNamespace(id=1, edit=AsyncMock())),
             order=order,
@@ -294,7 +295,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me = self.bot({7: True, 8: True})
         sent: list[tuple[int, str]] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append((user_id, text))
             return "forbidden" if user_id == 7 else "sent"
 
