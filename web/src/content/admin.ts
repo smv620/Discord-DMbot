@@ -294,3 +294,32 @@ export function who(name: string | null, discordId: string): string {
   if (name) return name;
   return discordId.length > 10 ? `${discordId.slice(0, 4)}…${discordId.slice(-4)}` : discordId;
 }
+
+/** The Costs page (#3671): what each paid service has charged DMbot in a month. */
+export const costsText = {
+  heading: "Costs",
+  lead: "What each paid service has charged in the month you pick. Each line says where its figure comes from.",
+  month: "Month",
+  reading: (seconds: number): string => `Reading each service… ${seconds}s so far.`,
+  readingRow: "Reading…",
+  down: "Couldn't read the costs. Try again, or use the cost pages.",
+  tryAgain: "Try again",
+  refresh: "Read again",
+  openPage: "Cost page",
+  spent: (dollars: string, n: number, total: number): string =>
+    `${dollars} from ${n} of ${total} services. The rest aren't counted here.`,
+  noneRead: "No service has given a figure yet. Use each cost page below.",
+  readAt: (time: string): string => `Read at ${time}`,
+  incomeHeading: "Income and costs by plan",
+  incomeLead:
+    "Not counted per plan yet, so nothing is guessed. For total income, open the Stripe cost page above.",
+  plan: "Plan",
+  income: "Income",
+  costs: "Costs",
+  notAvailable: "Not counted yet",
+};
+
+/** Cents as dollars, "$42.30". */
+export function dollars(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}

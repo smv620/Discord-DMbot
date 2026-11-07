@@ -868,6 +868,7 @@ WAITING_QUEUE = {
     ("claim", "reject"): "claim-reject",
     ("claim", "pick"): "claim-pick",
     ("claim", "unpick"): "claim-unpick",
+    ("claim", "undo"): "claim-undo",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
@@ -913,6 +914,12 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if not ID_PATTERN.match(picked):
             raise RecapError("not_found")
         text = picked
+    if action == "claim-undo":
+        # `batch`: the change number the answer gave back (#3645); the door checks it is theirs
+        batch = body.get("batch")
+        if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
+            raise RecapError("not_found")
+        text = str(batch)
     if action == "claim-pick":
         side, entry = body.get("side"), str(body.get("entity") or "")
         if side not in ("subject", "object") or not ID_PATTERN.match(entry):
@@ -993,6 +1000,12 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "edge": None,
             "removed": False,
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
+            # the change a kept fact made, for the Undo of an All true press (#3645)
+            "batch": int(got["resultOther"])
+            if got["action"] == "claim-confirm"
+            and got["state"] == "done"
+            and str(got["resultOther"] or "").isdigit()
+            else None,
             "waits": _reading_answer(got)["waits"],
             "progress": {"done": int(got.get("progressDone") or 0), "total": total}
             if keeping and total > 0
