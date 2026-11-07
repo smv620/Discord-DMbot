@@ -197,6 +197,7 @@ class TheSender(unittest.IsolatedAsyncioTestCase):
         user = MagicMock(dm_channel=channel)
         bot = MagicMock()
         bot.get_user = MagicMock(return_value=user)
+        bot.settings = SimpleNamespace(site_url="")
         return DiscordSender(bot), channel
 
     def campaign(self) -> Any:
@@ -315,3 +316,30 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         counts = SimpleNamespace(read=AsyncMock(return_value=found(names=2, family=3)))
         it = self.interaction(7, SimpleNamespace(counts=counts))
         self.assertEqual(await board.total_for(it, CAMPAIGN), 5)
+
+
+class TheLinks(unittest.IsolatedAsyncioTestCase):
+    """The Questions list message carries both link buttons (#3663)."""
+
+    async def test_an_existing_list_gets_its_own_address_and_the_questions_page_in_the_same_edit(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from dmbot.questions.discord import DiscordSender
+
+        kept = MagicMock(jump_url="https://discord.com/channels/@me/2/3", edit=AsyncMock())
+        channel = MagicMock()
+        channel.get_partial_message = MagicMock(return_value=kept)
+        bot = MagicMock()
+        bot.get_user = MagicMock(return_value=MagicMock(dm_channel=channel))
+        bot.settings = SimpleNamespace(site_url="https://dmbot.example.com")
+        campaign = SimpleNamespace(name="T", guild_id=1, id="a" * 32)
+        await DiscordSender(bot).board(7, campaign, {}, 5, create=False)  # type: ignore[arg-type]
+        view = kept.edit.await_args.kwargs["view"]
+        urls = [getattr(c, "url", None) for c in view.children if getattr(c, "url", None)]
+        self.assertEqual(
+            urls,
+            ["https://discord.com/channels/@me/2/3", "https://dmbot.example.com/account/questions"],
+        )

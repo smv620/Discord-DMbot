@@ -10,7 +10,9 @@ import type {
   IconChoice,
   NameCheckList,
   NamesFixed,
+  MatchRow,
   NamesPage,
+  PlaceSpelling,
   ToldName,
   NpcPage,
   CampaignNameChecks,
@@ -122,6 +124,17 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    nameMatches: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/all-names-matches`)) as { matches: MatchRow[] }).matches,
+    // Queued for the bot like every name action (202 {answer}); the answer is read where every all-names answer is.
+    answerMatch: async (ref, batch, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/all-names-matches/${encodeURIComponent(batch)}/${answer}`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
+      );
+    },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
@@ -152,6 +165,31 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       // The bot may still apply it later: the page says so and reads the list again, never "nothing
       // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
+    },
+    placeSpellings: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/place-spellings`)) as {
+        spellings: PlaceSpelling[];
+      }).spellings,
+    // Queued like any name change (the bot confirms or turns down the proposed name), then waited for.
+    answerPlaceSpelling: async (ref, spelling, yes) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(spelling.placeId)}`, {
+        action: yes ? "spelling-yes" : "spelling-no",
+        alias: spelling.id,
+      })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
       throw new ApiError("still-waiting");
     },
     toldPanel: async (ref) =>

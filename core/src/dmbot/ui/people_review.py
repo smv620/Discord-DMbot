@@ -122,7 +122,7 @@ class PeopleReview(_Menu):
 
     def _name_of(self, interaction: discord.Interaction, s: PeopleSuggestion) -> str:
         shown = _bot(interaction).name_of(self.guild_id, s.user_id)
-        return s.shown if shown.startswith("<@") else shown
+        return s.shown if shown.startswith("<@") or s.user_id < 0 else shown
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """The next waiting question with its buttons set, or None when none is left."""
