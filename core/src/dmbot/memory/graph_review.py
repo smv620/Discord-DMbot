@@ -33,7 +33,9 @@ TRIES = 3  # then the batch is let go: the fixes are kept in the graph, only the
 MAX_FIXES = 200  # one batch; the column holds no more (the DM would have to fix 200 in a visit)
 PER_CALL = 20  # fixes per careful call: more go in parts (#2596)
 LINES_PER_ENTRY = 4  # mentions read around each entry, each with the line before and after
-QUOTE_WORDS = 25
+QUOTE_WORDS = 25  # a target in the instructions, never a check (#2597)
+REPORT_MAX = 55_000  # characters: the column holds 60,000
+LABEL_MAX = 100
 PROMPT_VERSION = "graph-review-1"
 TOKENS = 3000  # an estimate: background calls get the tier's floor (`ai.answer_room`, #2596)
 
@@ -56,35 +58,47 @@ def fixes_from(
 ) -> list[dict[str, str]]:
     """The DM's fixes in one write that touch an entry no chain linked to the party just before it
     (owner: "anytime the DM corrects an isolated node"): a connection added or changed (its words,
-    its ends, or kept), "Same as…" (a merge), or a name given to someone the story never named. A
-    removal is not a fix to check: there is nothing the story could have shown. Ids and kinds
-    only."""
+    its ends), "Same as…" (a merge, whichever side was isolated), or a name given to someone the
+    story never named. Not a fix to check: a removal (there is nothing the story could have shown),
+    the DM keeping DMbot's own waiting suggestion (DMbot caught it), or a link a merge moved onto
+    the kept entry (DMbot had it already). Ids and kinds only."""
     found: dict[tuple[str, str], dict[str, str]] = {}
+    merged = {
+        str(before["id"]): str(after["merged_into"])
+        for before, after in entity_changes
+        if before is not None and after is not None
+        and before.get("merged_into") is None and after.get("merged_into") is not None
+    }  # fmt: skip
     for op, before, after in relation_changes:
         if after is None or str(after.get("status")) not in LIVE:
             continue
         a, b = str(after["subject_id"]), str(after["object_id"])
         if a not in isolated_before and b not in isolated_before:
             continue
-        if (
-            op != "insert"
-            and before is not None
-            and not any(
-                before.get(k) != after.get(k)
-                for k in ("subject_id", "object_id", "predicate", "detail", "status")
-            )
-        ):
-            continue  # (a pin, a secret flag or a reveal is no fix to the story)
+        if before is not None and op != "insert":
+            changed = {
+                k for k in ("subject_id", "object_id", "predicate", "detail", "status")
+                if before.get(k) != after.get(k)
+            }  # fmt: skip
+            if not changed:
+                continue  # (a pin, a secret flag or a reveal is no fix to the story)
+            if changed == {"status"} and before.get("status") == "proposed":
+                continue  # (the DM kept DMbot's own suggestion: DMbot caught it)
+            if changed <= {"subject_id", "object_id"} and (
+                str(before.get("subject_id")) in merged or str(before.get("object_id")) in merged
+            ):
+                continue  # (a merge moved a link DMbot already had; the merge is the fix)
         rid = str(after["id"])
         found[(LINK, rid)] = {"kind": LINK, "relation": rid, "a": a, "b": b}
     for before, after in entity_changes:
-        if before is None or after is None or str(before["id"]) not in isolated_before:
+        if before is None or after is None:
             continue
         eid = str(before["id"])
-        if before.get("merged_into") is None and after.get("merged_into") is not None:
-            into = str(after["merged_into"])
-            found[(SAME_AS, eid)] = {"kind": SAME_AS, "entity": eid, "into": into}
-        elif before.get("unnamed") and not after.get("unnamed"):
+        into = merged.get(eid)
+        if into is not None:
+            if eid in isolated_before or into in isolated_before:  # (either side, #2790)
+                found[(SAME_AS, eid)] = {"kind": SAME_AS, "entity": eid, "into": into}
+        elif before.get("unnamed") and not after.get("unnamed") and eid in isolated_before:
             found[(NAMED, eid)] = {"kind": NAMED, "entity": eid}
     return list(found.values())
 
@@ -106,6 +120,9 @@ async def note_fixes(
         " ON CONFLICT (guild_id, campaign_id) DO UPDATE SET"
         " fixes = jsonb_path_query_array(p.fixes || EXCLUDED.fixes, %s::jsonpath),"
         " entity_ids = ARRAY(SELECT DISTINCT unnest(p.entity_ids || EXCLUDED.entity_ids)),"
+        # (a row left from an earlier check, with no fixes waiting, starts a new batch)
+        " first_fix_at = CASE WHEN p.fixes = '[]'::jsonb THEN EXCLUDED.first_fix_at"
+        "  ELSE p.first_fix_at END,"
         " last_fix_at = GREATEST(p.last_fix_at, EXCLUDED.last_fix_at)",
         (
             guild_id, campaign_id, Jsonb(list(fixes)[:MAX_FIXES]), sorted(entity_ids(fixes)),
@@ -232,9 +249,10 @@ def _quotable(fix: Fix) -> list[tuple[str, int | None]]:
 
 
 def parse(raw: str, fixes: Sequence[Fix]) -> list[Verdict] | None:
-    """The answer, held to the text: an "in the story" whose quote is not in that fix's own lines,
-    lore or description (or is longer than allowed) becomes "not in the story". A fix it did not
-    answer is not in the story. None when the answer is not the JSON asked for."""
+    """The answer, held to the text: an "in the story" whose quote is not, word for word, in that
+    fix's own lines, lore or description becomes "not in the story". The quote's length is a target
+    in the instructions, never a check (#2597). None when the answer is not the JSON asked for or
+    leaves a fix out: that is an unreadable answer to ask again, never "nothing found" (#2596)."""
     try:
         got = json.loads(raw.strip().removeprefix("```json").removesuffix("```"))
     except ValueError:
@@ -245,16 +263,19 @@ def parse(raw: str, fixes: Sequence[Fix]) -> list[Verdict] | None:
     for item in got["fixes"]:
         if isinstance(item, dict) and isinstance(item.get("fix"), int):
             answers.setdefault(item["fix"], item)
+    if any(fix.number not in answers for fix in fixes):
+        return None
     out: list[Verdict] = []
     for fix in fixes:
-        item = answers.get(fix.number, {})
+        item = answers[fix.number]
         quote = item.get("quote") if isinstance(item.get("quote"), str) else ""
         verdict = Verdict(fix.number, False)
-        if item.get("in_story") is True and quote and len(quote.split()) <= QUOTE_WORDS:
-            wanted = _norm(quote)
-            hits = [who for text, who in _quotable(fix) if wanted and wanted in _norm(text)]
+        wanted = f" {_norm(quote or '')} "
+        if item.get("in_story") is True and wanted.strip():
+            # (padded, so a quote matches whole words only: "ran" is not found in "Fran")
+            hits = [who for text, who in _quotable(fix) if wanted in f" {_norm(text)} "]
             if hits:
-                verdict = Verdict(fix.number, True, " ".join(quote.split()))
+                verdict = Verdict(fix.number, True, " ".join(str(quote).split()))
                 verdict.speaker_ids = {who for who in hits if who is not None}
         out.append(verdict)
     return out
@@ -283,22 +304,27 @@ def report(
         "# DMbot graph improvements",
         "",
         f"- Campaign: `{campaign_id}`",
-        f"- Made: {when}, when the DM edited the graph on the clean-up page",
+        f"- Made: {when}, when the DM fixed the story graph",
         f"- Checked by build: {review_commit or 'unknown'}",
         f"- Fixes checked: {len(verdicts)}; DMbot missed: {len(missed)}",
         "",
     ]
+    left = len(missed)
     for v in missed:
         fix = by_number[v.number]
-        lines.append(f"## Fix {v.number}: {fix.words}")
-        lines.append("")
+        section = [f"## Fix {v.number}: {fix.words[: 3 * LABEL_MAX]}", ""]
         if fix.relation_id:
-            lines.append(f"- Connection: `{fix.relation_id}`")
+            section.append(f"- Connection: `{fix.relation_id}`")
         for side in fix.sides:
-            lines.append(
-                f"- Entry `{side.id}` ({side.kind}): {side.label}, made by build "
+            section.append(
+                f"- Entry `{side.id}` ({side.kind}): {side.label[:LABEL_MAX]}, made by build "
                 f"{side.made_by or OLD_BUILD}"
             )
-        lines.append(f'- In the story: "{v.quote}"')
-        lines.append("")
+        section += [f'- In the story: "{v.quote}"', ""]
+        if sum(len(x) + 1 for x in lines + section) > REPORT_MAX:
+            # (the column's own limit: the rest are counted, so the report still fits and is kept)
+            lines.append(f"{left} more not shown: the report reached its size limit.")
+            break
+        lines += section
+        left -= 1
     return "\n".join(lines).rstrip() + "\n"

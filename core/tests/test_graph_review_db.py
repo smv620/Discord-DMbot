@@ -67,16 +67,29 @@ class Base(Web):
             )
             return list(await cur.fetchall())
 
-    def runner(self, ai: FakeAI, *, at: float) -> GraphReviews:
-        async def consenting(_guild: int) -> set[int]:
-            return {7}
+    async def ended(self, checked: int, missed: int, *, stopped: bool = False) -> None:
+        """The batch is done, and the row holds how the check ended, for the page."""
+        got = await self.pending()
+        assert got is not None
+        self.assertEqual(got["fixes"], [])
+        self.assertIsNone(got["claimed_at"])
+        self.assertIsNotNone(got["checked_at"])
+        self.assertEqual(
+            (got["checked"], got["missed"], got["stopped"]), (checked, missed, stopped)
+        )
 
-        async def allowed(ids: Any) -> set[int]:
+    def runner(
+        self, ai: FakeAI, *, at: float, transcripts: Any = None, allowed: Any = None
+    ) -> GraphReviews:
+        async def consenting(_guild: int) -> set[int]:
+            return {7, 8}  # (9 never agreed to be recorded)
+
+        async def everyone(ids: Any) -> set[int]:
             return set(ids)
 
         return GraphReviews(
-            self.memory, NoLines(), ai,  # type: ignore[arg-type]  # (no transcript is read)
-            consenting=consenting, improvement_allowed=allowed, clock=lambda: at,
+            self.memory, transcripts or NoLines(), ai,  # type: ignore[arg-type]  # (a stand-in)
+            consenting=consenting, improvement_allowed=allowed or everyone, clock=lambda: at,
         )  # fmt: skip
 
 
@@ -129,7 +142,7 @@ class TheCheck(Base):
         self.assertIn(f"`{self.one.id}`", report["report"])
         self.assertNotIn(self.one.name, report["report"])
         self.assertIn('"owes Rook a debt"', report["report"])
-        self.assertIsNone(await self.pending())
+        await self.ended(1, 1)
         self.assertEqual(await self.runner(ai, at=later).round(self.g), 0)
         self.assertEqual(len(ai.calls), 1)
 
@@ -138,7 +151,7 @@ class TheCheck(Base):
         ai = FakeAI({"fixes": [{"fix": 1, "in_story": False}]})
         self.assertEqual(await self.runner(ai, at=time.time() + gr.WAIT_S + 5).round(self.g), 0)
         self.assertEqual(await self.reports(), [])
-        self.assertIsNone(await self.pending())
+        await self.ended(1, 0)  # (the page can say "Checked: DMbot missed 0")
 
     async def test_before_15_minutes_nothing_runs_and_a_lease_is_not_taken_twice(self) -> None:
         await self.fix()
@@ -159,7 +172,7 @@ class TheCheck(Base):
         ai = FakeAI({"fixes": []})
         self.assertEqual(await self.runner(ai, at=time.time() + gr.WAIT_S + 5).round(self.g), 0)
         self.assertEqual(ai.calls, [])
-        self.assertIsNone(await self.pending())
+        await self.ended(0, 0)
 
     async def test_a_fixed_entry_keeps_its_scene_until_the_check_has_read_it(self) -> None:
         scenes = Scenes(self.memory)
@@ -207,4 +220,144 @@ class TheStatusDoor(Base):
         await self.link("knows", self.rook, self.drunk, "rook-drunk")
         got = await self.status(self.session)
         self.assertEqual((got["on"], got["waiting"]["fixes"], got["last"]), (True, 1, None))
+        self.assertIsNone(got["waiting"]["checkingSince"])
         self.assertIsNone(await self.status(self.player))
+
+
+class Around(SimpleNamespace):
+    pass
+
+
+class ThreeSpeakers:
+    """Every mention's line with its neighbours from three people: 7 agrees, 8 agrees but opted
+    out of improving DMbot, 9 never agreed. The real `around` is given who may be read; this
+    stand-in ignores that, to prove the check leaves the others out itself as well."""
+
+    async def around(self, guild_id: int, session: str, ms: int, user: int, agreed: Any) -> Any:
+        return Around(
+            before=(8, "Fenn told me he owes Rook a debt."),
+            line=(7, "Old Fenn waved at Rook from the Gull."),
+            after=(9, "Fenn and Rook are cousins, everyone knows."),
+        )
+
+
+class Consent(Base):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.memory.add_mention(
+            self.g, self.one.id, self.drunk, line_ref="s1:1000:7", span=(0, 4), confidence=0.9,
+            method="exact", source="cleaner", session_started_at=1,
+        )  # fmt: skip
+        await self.share()
+        await self.link("knows", self.rook, self.drunk, "rook-drunk")
+
+    @staticmethod
+    async def not_8(ids: Any) -> set[int]:
+        return set(ids) - {8}
+
+    async def test_only_the_words_of_people_who_agree_and_did_not_opt_out_reach_the_call(
+        self,
+    ) -> None:
+        ai = FakeAI({"fixes": [{"fix": 1, "in_story": False}]})
+        runner = self.runner(
+            ai, at=time.time() + gr.WAIT_S + 5, transcripts=ThreeSpeakers(), allowed=self.not_8
+        )
+        await runner.round(self.g)
+        (sent,) = ai.calls
+        self.assertIn("waved at Rook", sent)
+        self.assertNotIn("told me he owes", sent)  # (8 opted out of improving DMbot)
+        self.assertNotIn("cousins", sent)  # (9 never agreed)
+
+    async def test_someone_who_stops_during_the_call_is_not_quoted(self) -> None:
+        asked = 0
+
+        async def stops_after_the_first_ask(ids: Any) -> set[int]:
+            nonlocal asked
+            asked += 1
+            return set(ids) if asked == 1 else set(ids) - {7}
+
+        ai = FakeAI({"fixes": [{"fix": 1, "in_story": True, "quote": "waved at Rook"}]})
+        runner = self.runner(
+            ai, at=time.time() + gr.WAIT_S + 5, transcripts=ThreeSpeakers(),
+            allowed=stops_after_the_first_ask,
+        )  # fmt: skip
+        self.assertEqual(await runner.round(self.g), 0)
+        self.assertEqual(await self.reports(), [])
+        await self.ended(1, 0)
+
+
+class TheLease(Base):
+    async def fix(self) -> str:
+        await self.share()
+        return await self.link("knows", self.rook, self.drunk, "rook-drunk")
+
+    async def test_a_fix_made_during_the_check_stays_for_the_next(self) -> None:
+        await self.fix()
+        later = time.time() + gr.WAIT_S + 5
+        runner = self.runner(FakeAI({"fixes": [{"fix": 1, "in_story": False}]}), at=later)
+        taken = await runner._claim(self.g)
+        assert taken is not None
+        keeper = await self.add("Gull Keeper", "character", role="npc")
+        await self.link("knows", self.rook, keeper, "rook-keeper")  # (while it checks)
+        await runner._check(self.g, self.one.id, taken[1], taken[2])
+        got = await self.pending()
+        assert got is not None
+        self.assertEqual([f["b"] for f in got["fixes"]], [keeper])
+        self.assertEqual(got["checked"], 1)
+
+    async def test_a_check_that_lost_its_lease_or_its_switch_writes_nothing(self) -> None:
+        await self.fix()
+        later = time.time() + gr.WAIT_S + 5
+        ai = FakeAI({"fixes": [{"fix": 1, "in_story": True, "quote": "owes Rook a debt"}]})
+        runner = self.runner(ai, at=later)
+        taken = await runner._claim(self.g)
+        assert taken is not None
+        self.assertEqual(await runner._check(self.g, self.one.id, taken[1], taken[2] + 1), 0)
+        self.assertEqual(await self.reports(), [])
+        await self.share(False)  # (off: the batch goes, and nothing is written)
+        self.assertEqual(await runner._check(self.g, self.one.id, taken[1], taken[2]), 0)
+        self.assertEqual(await self.reports(), [])
+        self.assertIsNone(await self.pending())
+
+    async def test_a_dead_check_is_taken_again_and_after_its_tries_recorded_as_stopped(
+        self,
+    ) -> None:
+        await self.fix()
+        at = time.time() + gr.WAIT_S + 5
+        for _ in range(gr.TRIES):
+            self.assertIsNotNone(await self.runner(FakeAI({}), at=at)._claim(self.g))
+            at += gr.RETAKE_AFTER_S + 1  # (its bot died: the lease runs out)
+        self.assertEqual(await self.runner(FakeAI({}), at=at).round(self.g), 0)
+        await self.ended(0, 0, stopped=True)
+
+    async def test_a_cut_answer_is_asked_again_in_halves(self) -> None:
+        await self.fix()
+        keeper = await self.add("Gull Keeper", "character", role="npc")
+        await self.link("knows", self.rook, keeper, "rook-keeper")
+        replies = [
+            SimpleNamespace(text="", cut=True, refused=False),
+            SimpleNamespace(text=json.dumps({"fixes": [{"fix": 1, "in_story": False}]}),
+                            cut=False, refused=False),
+            SimpleNamespace(text=json.dumps({"fixes": [{"fix": 2, "in_story": False}]}),
+                            cut=False, refused=False),
+        ]  # fmt: skip
+
+        class Cuts(FakeAI):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Any:
+                self.calls.append(text)
+                return replies[len(self.calls) - 1]
+
+        ai = Cuts({})
+        await self.runner(ai, at=time.time() + gr.WAIT_S + 5).round(self.g)
+        self.assertEqual(len(ai.calls), 3)
+        await self.ended(2, 0)
+
+    async def test_same_as_goes_through_the_store_s_own_write(self) -> None:
+        await self.share()
+        await self.memory.merge(
+            self.g, self.one.id, self.mira, self.drunk, source="dm", dm_said_same=True
+        )
+        got = await self.pending()
+        assert got is not None
+        self.assertIn({"kind": "same_as", "entity": self.drunk, "into": self.mira}, got["fixes"])
+        self.assertFalse([f for f in got["fixes"] if f["kind"] == "link"])  # (moved links)

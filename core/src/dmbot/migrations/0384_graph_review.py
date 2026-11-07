@@ -16,12 +16,14 @@ from dmbot.migrations._shared import _isolate
 #
 # - `campaigns.share_improve`: the switch. The website queues it like every other setting
 #   ('share_improve', value 'on' or 'off'), and the bot applies it (`dm_screen/web_settings.py`).
-# - `graph_review_pending`: one row per campaign while fixes wait. Each fix pushes `last_fix_at`
-#   on, so the check runs 15 minutes after the last one (the owner's "nothing touched for 15
-#   minutes"). It lives in the database so a restart or a closed browser loses nothing, and
-#   `claimed_at` is the bot's lease, so two bot processes never check one batch twice. It holds
-#   ids and kinds only, never words. `entity_ids` keeps those entries' scenes from the sweep until
-#   the check has read them.
+# - `graph_review_pending`: one row per campaign once the DM has fixed something. Each fix pushes
+#   `last_fix_at` on, so the check runs 15 minutes after the last one (the owner's "nothing touched
+#   for 15 minutes"). It lives in the database so a restart or a closed browser loses nothing, and
+#   `claimed_at` is the bot's lease (milliseconds), so two bot processes never check one batch
+#   twice. It holds ids and kinds only, never words. `entity_ids` keeps those entries' scenes from
+#   the sweep until the check has read them. After a check the row stays, with no fixes and the
+#   outcome (`checked_at`, `checked`, `missed`, `stopped`), so the page can say "Checked: DMbot
+#   missed 0" or that a check stopped early (CLAUDE.md: every wait says how it ended).
 # - `graph_reviews`: the reports. About DMbot, not the campaign's story, so not in a backup
 #   (`campaigns/tables.py`). `speaker_ids` is everyone whose words a report quotes: "Stop recording
 #   me" deletes every report quoting that person. `posted_at` is for #3742 (posting to the private
@@ -51,6 +53,10 @@ GRAPH_REVIEW = r"""
         last_fix_at  BIGINT NOT NULL CHECK (last_fix_at >= first_fix_at),
         claimed_at   BIGINT,
         tries        INTEGER NOT NULL DEFAULT 0 CHECK (tries >= 0),
+        checked_at   BIGINT,
+        checked      INTEGER NOT NULL DEFAULT 0 CHECK (checked >= 0),
+        missed       INTEGER NOT NULL DEFAULT 0 CHECK (missed >= 0 AND missed <= checked),
+        stopped      BOOLEAN NOT NULL DEFAULT false,
         PRIMARY KEY (guild_id, campaign_id)
     );
 
@@ -135,8 +141,10 @@ GRAPH_REVIEW = r"""
     REVOKE ALL ON FUNCTION dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 
     -- The clean-up page's status line (Supervisor, #3741 ruling 2): counts and times only, for a
-    -- DM of the campaign; NULL for anyone else. `waitingSince`/`lastFixAt` while fixes wait, and
-    -- the last report's time and counts. Never a word of a report.
+    -- DM of the campaign; NULL for anyone else. `waiting` while fixes wait (how many, the last
+    -- fix's time, and `checkingSince` once the bot is checking them), and `last`: when the last
+    -- check ended, how many it checked and missed, and whether it stopped early. Never a word of
+    -- a report.
     CREATE FUNCTION dmbot_web_graph_review_status(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
@@ -152,14 +160,16 @@ GRAPH_REVIEW = r"""
             'on', COALESCE((SELECT k.share_improve FROM campaigns k
                             WHERE k.guild_id = g AND k.id = c), false),
             'waiting', (SELECT jsonb_build_object(
-                            'fixes', jsonb_array_length(p.fixes), 'lastFixAt', p.last_fix_at)
+                            'fixes', jsonb_array_length(p.fixes), 'lastFixAt', p.last_fix_at,
+                            'checkingSince', p.claimed_at / 1000, 'tries', p.tries)
                         FROM graph_review_pending p
-                        WHERE p.guild_id = g AND p.campaign_id = c),
+                        WHERE p.guild_id = g AND p.campaign_id = c
+                          AND jsonb_array_length(p.fixes) > 0),
             'last', (SELECT jsonb_build_object(
-                         'at', r.created_at, 'checked', r.checked, 'missed', r.missed)
-                     FROM graph_reviews r
-                     WHERE r.guild_id = g AND r.campaign_id = c
-                     ORDER BY r.created_at DESC, r.id LIMIT 1));
+                         'at', p.checked_at, 'checked', p.checked, 'missed', p.missed,
+                         'stopped', p.stopped)
+                     FROM graph_review_pending p
+                     WHERE p.guild_id = g AND p.campaign_id = c AND p.checked_at IS NOT NULL));
     END
     $fn$;
     DO $do$

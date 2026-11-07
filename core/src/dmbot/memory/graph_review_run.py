@@ -66,7 +66,7 @@ class GraphReviews:
         while (taken := await self._claim(guild_id)) is not None:
             campaign_id, fixes, token, tries = taken
             if tries > gr.TRIES:
-                await self._let_go(guild_id, campaign_id, token)
+                await self._finish(guild_id, campaign_id, len(fixes), [], [], token, stopped=True)
                 log.warning("A graph check was let go after %d tries", gr.TRIES)
                 continue
             try:
@@ -82,7 +82,8 @@ class GraphReviews:
             cur = await conn.execute(
                 "UPDATE graph_review_pending p SET claimed_at = %s, tries = p.tries + 1"
                 " WHERE (p.guild_id, p.campaign_id) = (SELECT q.guild_id, q.campaign_id"
-                "  FROM graph_review_pending q WHERE q.guild_id = %s AND q.last_fix_at <= %s"
+                "  FROM graph_review_pending q WHERE q.guild_id = %s"
+                "  AND jsonb_array_length(q.fixes) > 0 AND q.last_fix_at <= %s"
                 "  AND (q.claimed_at IS NULL OR q.claimed_at < %s)"
                 "  ORDER BY q.last_fix_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING p.campaign_id, p.fixes, p.tries",
@@ -93,13 +94,18 @@ class GraphReviews:
             return None
         return str(row["campaign_id"]), list(row["fixes"]), token, int(row["tries"])
 
-    async def _let_go(self, guild_id: int, campaign_id: str, token: int) -> None:
+    async def _renew(self, guild_id: int, campaign_id: str, token: int) -> int | None:
+        """Push the lease on between the parts of a long batch, so no other bot takes it while
+        this one is still asking (each part may wait up to `CALL_TIMEOUT_S`). The new token, or
+        None when the lease was lost."""
+        fresh = int(self._clock() * 1000)
         async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "DELETE FROM graph_review_pending WHERE guild_id = %s AND campaign_id = %s"
-                " AND claimed_at = %s",
-                (guild_id, campaign_id, token),
+            cur = await conn.execute(
+                "UPDATE graph_review_pending SET claimed_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND claimed_at = %s",
+                (fresh, guild_id, campaign_id, token),
             )
+            return fresh if cur.rowcount else None
 
     async def _switch_on(self, conn: Any, guild_id: int, campaign_id: str) -> bool:
         cur = await conn.execute(
@@ -123,23 +129,31 @@ class GraphReviews:
         fixes = await self._fixes(guild_id, campaign_id, raw, agreed)
         verdicts: list[gr.Verdict] = []
         for start in range(0, len(fixes), gr.PER_CALL):  # (#2596: a long batch goes in parts)
-            part = fixes[start : start + gr.PER_CALL]
-            reply = await asyncio.wait_for(
-                self._ai.complete(gr.system(), gr.message(part), max_tokens=gr.TOKENS),
-                gr.CALL_TIMEOUT_S,
-            )
-            if getattr(reply, "refused", False) or getattr(reply, "cut", False):
-                raise RuntimeError("the careful check stopped early")  # (taken again later)
-            parsed = gr.parse(str(reply.text), part)
-            if parsed is None:
-                raise ValueError("the careful check's answer was not the JSON asked for")
-            verdicts += parsed
-        # (someone may have stopped recording during the call: their quotes no longer count)
-        still = await self._people(guild_id)
-        for v in verdicts:
-            if v.in_story and not v.speaker_ids <= still:
-                v.in_story, v.quote, v.speaker_ids = False, "", set()
+            if start:
+                renewed = await self._renew(guild_id, campaign_id, token)
+                if renewed is None:
+                    return 0  # (another bot has it now)
+                token = renewed
+            verdicts += await self._ask(fixes[start : start + gr.PER_CALL])
         return await self._finish(guild_id, campaign_id, len(raw), fixes, verdicts, token)
+
+    async def _ask(self, part: Sequence[gr.Fix]) -> list[gr.Verdict]:
+        """One careful call for these fixes. An answer cut at the length limit is asked again in
+        two halves, down to one fix (#2596); a refusal, or one fix's answer still cut, raises, so
+        the batch is taken again later and, after `TRIES`, recorded as stopped early."""
+        reply = await asyncio.wait_for(
+            self._ai.complete(gr.system(), gr.message(part), max_tokens=gr.TOKENS),
+            gr.CALL_TIMEOUT_S,
+        )
+        if getattr(reply, "cut", False) and len(part) > 1:
+            half = len(part) // 2
+            return await self._ask(part[:half]) + await self._ask(part[half:])
+        if getattr(reply, "refused", False) or getattr(reply, "cut", False):
+            raise RuntimeError("the careful check stopped early")
+        parsed = gr.parse(str(reply.text), part)
+        if parsed is None:
+            raise ValueError("the careful check's answer was not the JSON asked for")
+        return parsed
 
     async def _people(self, guild_id: int) -> set[int]:
         """Who may be quoted now: agrees to be recorded, and has not opted out of improving
@@ -149,8 +163,9 @@ class GraphReviews:
     async def _fixes(
         self, guild_id: int, campaign_id: str, raw: Sequence[dict[str, Any]], agreed: set[int]
     ) -> list[gr.Fix]:
-        """The batch as the call reads it. A fix the DM undid before the check (its connection is
-        gone or no longer live, its merge or name taken back) is dropped."""
+        """The batch as the call reads it, each fix once (a link added then reworded is one fix).
+        A fix the DM undid before the check (its connection gone or no longer live, its merge or
+        name taken back) is dropped."""
         ids = sorted(gr.entity_ids(raw))
         rel_ids = sorted({str(f["relation"]) for f in raw if f.get("kind") == gr.LINK})
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
@@ -162,22 +177,21 @@ class GraphReviews:
             )
             entities = {str(r["id"]): r for r in await cur.fetchall()}
             cur = await scope.conn.execute(
-                "SELECT r.id, r.subject_id, r.object_id, r.predicate, r.detail, r.status,"
-                " s.quote FROM memory_relations r LEFT JOIN memory_link_sources s"
-                " ON s.guild_id = r.guild_id AND s.campaign_id = r.campaign_id"
-                " AND s.relation_id = r.id"
-                " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.id = ANY(%s::text[])",
+                "SELECT id, subject_id, object_id, predicate, detail, status FROM memory_relations"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s::text[])",
                 (*scope.ids, rel_ids),
             )
             relations = {str(r["id"]): r for r in await cur.fetchall()}
-            # (the lore quotes kept for the other connections of these entries: the only lore
-            # words DMbot keeps, since an upload's text is blanked once it is read)
+            # (the lore quotes kept for these entries' connections: the only lore words DMbot
+            # keeps, since an upload's text is blanked once it is read; oldest first, so the same
+            # six reach the prompt each time)
             cur = await scope.conn.execute(
                 "SELECT r.subject_id, r.object_id, s.quote FROM memory_link_sources s"
                 " JOIN memory_relations r ON r.guild_id = s.guild_id"
                 " AND r.campaign_id = s.campaign_id AND r.id = s.relation_id"
-                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.quote IS NOT NULL"
-                " AND (r.subject_id = ANY(%s::text[]) OR r.object_id = ANY(%s::text[]))",
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.quote <> ''"
+                " AND (r.subject_id = ANY(%s::text[]) OR r.object_id = ANY(%s::text[]))"
+                " ORDER BY s.created_at, s.relation_id",
                 (*scope.ids, ids, ids),
             )
             lore: dict[str, list[str]] = {}
@@ -199,7 +213,12 @@ class GraphReviews:
                 tuple(dict.fromkeys(lore.get(eid, [])))[:6], e["made_by_commit"],
             )  # fmt: skip
         out: list[gr.Fix] = []
+        seen: set[tuple[str, str]] = set()
         for f in raw:
+            key = (str(f.get("kind")), str(f.get("relation") or f.get("entity")))
+            if key in seen:
+                continue
+            seen.add(key)
             fix = self._fix(len(out) + 1, f, entities, relations, sides)
             if fix is not None:
                 out.append(fix)
@@ -271,26 +290,42 @@ class GraphReviews:
         fixes: Sequence[gr.Fix],
         verdicts: Sequence[gr.Verdict],
         token: int,
+        *,
+        stopped: bool = False,
     ) -> int:
-        """Keep the report (only when DMbot missed something) and take the fixes it read off the
-        batch, in one transaction, and only while this check still holds the lease and the switch
-        is still on. Fixes the DM made during the check stay for the next one."""
+        """Take the fixes it read off the batch, record how the check ended (for the page's status
+        line), and keep a report when DMbot missed something: one transaction, and only while this
+        check still holds the lease. Fixes the DM made during the check stay for the next one.
+        `drop_all` (the switch going off) waits on the row this updates first, then deletes the
+        report with the rest."""
+        verdicts = list(verdicts)
+        still = await self._people(guild_id) if any(v.in_story for v in verdicts) else set()
+        for v in verdicts:  # (someone may have stopped during the call: their quotes go)
+            if v.in_story and not v.speaker_ids <= still:
+                v.in_story, v.quote, v.speaker_ids = False, "", set()
         missed = [v for v in verdicts if v.in_story]
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE graph_review_pending SET claimed_at = NULL, tries = 0,"
-                " fixes = jsonb_path_query_array(fixes, %s::jsonpath)"
-                " WHERE guild_id = %s AND campaign_id = %s AND claimed_at = %s",
-                (f"$[{read} to last]", guild_id, campaign_id, token),
-            )
-            if cur.rowcount == 0:
+                " fixes = jsonb_path_query_array(fixes, %s::jsonpath),"
+                " checked_at = %s, checked = %s, missed = %s, stopped = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND claimed_at = %s"
+                " RETURNING jsonb_array_length(fixes) AS left_n",
+                (
+                    f"$[{read} to last]", now, len(verdicts), len(missed), stopped,
+                    guild_id, campaign_id, token,
+                ),
+            )  # fmt: skip
+            row = await cur.fetchone()
+            if row is None:
                 return 0  # (the lease was lost, or the switch went off and took the batch)
-            await conn.execute(
-                "DELETE FROM graph_review_pending WHERE guild_id = %s AND campaign_id = %s"
-                " AND fixes = '[]'::jsonb",
-                (guild_id, campaign_id),
-            )
+            if not row["left_n"]:  # (nothing waits: its entries' scenes may go now)
+                await conn.execute(
+                    "UPDATE graph_review_pending SET entity_ids = '{}'"
+                    " WHERE guild_id = %s AND campaign_id = %s",
+                    (guild_id, campaign_id),
+                )
             if not missed or not await self._switch_on(conn, guild_id, campaign_id):
                 return 0
             await conn.execute(

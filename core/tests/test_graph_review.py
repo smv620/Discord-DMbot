@@ -47,6 +47,22 @@ class WhichFixesCount(unittest.TestCase):
         ]
         self.assertEqual(gr.fixes_from({"fenn"}, changes, []), [])
 
+    def test_keeping_dmbot_s_own_suggestion_is_no_miss(self) -> None:
+        before = rel("r1", "rook", "fenn", status="proposed")
+        kept = gr.fixes_from({"fenn"}, [("update", before, {**before, "status": "confirmed"})], [])
+        self.assertEqual(kept, [])
+
+    def test_a_merge_is_one_same_as_whichever_side_was_isolated_not_its_moved_links(
+        self,
+    ) -> None:
+        moved = rel("r9", "ghost", "sailors")
+        got = gr.fixes_from(
+            {"bram"},  # (the kept one was the isolated one)
+            [("update", moved, {**moved, "subject_id": "bram"})],
+            [(ent("ghost"), ent("ghost", merged_into="bram"))],
+        )
+        self.assertEqual(got, [{"kind": gr.SAME_AS, "entity": "ghost", "into": "bram"}])
+
     def test_same_as_and_a_name_for_someone_never_named_count(self) -> None:
         got = gr.fixes_from(
             {"fenn", "drunk"},
@@ -93,15 +109,26 @@ class TheAnswerIsHeldToTheText(unittest.TestCase):
         (v,) = gr.parse(raw, [FIX]) or []
         self.assertEqual((v.in_story, v.speaker_ids), (True, set()))
 
-    def test_a_quote_not_in_the_text_or_too_long_or_missing_is_not_in_the_story(self) -> None:
+    def test_a_quote_not_in_the_text_or_missing_or_only_part_of_a_word_is_not_in_the_story(
+        self,
+    ) -> None:
         for item in (
             {"fix": 1, "in_story": True, "quote": "Fenn is Rook's brother"},
-            {"fix": 1, "in_story": True, "quote": " ".join(["Rook"] * (gr.QUOTE_WORDS + 1))},
             {"fix": 1, "in_story": True},
-            {"fix": 2, "in_story": True, "quote": "drank with Rook"},  # (another fix's number)
+            {"fix": 1, "in_story": True, "quote": "ld Fenn dra"},  # (whole words only)
         ):
             (v,) = gr.parse(answer(item), [FIX]) or []
             self.assertFalse(v.in_story, item)
+
+    def test_a_long_quote_found_word_for_word_counts_whatever_its_length(self) -> None:
+        long_line = " ".join(f"word{i}" for i in range(gr.QUOTE_WORDS + 10))
+        fix = gr.Fix(1, gr.LINK, "w", (side("fenn", (7, long_line)),))
+        (v,) = gr.parse(answer({"fix": 1, "in_story": True, "quote": long_line}), [fix]) or []
+        self.assertTrue(v.in_story)  # (a length is a target, never a check, #2597)
+
+    def test_an_answer_that_leaves_a_fix_out_is_unreadable_never_nothing_found(self) -> None:
+        raw = answer({"fix": 2, "in_story": True, "quote": "drank with Rook"})
+        self.assertIsNone(gr.parse(raw, [FIX]))
 
     def test_a_scene_is_never_evidence(self) -> None:
         with_scene = gr.Fix(1, gr.LINK, "w", (side("fenn", scene="Fenn and Rook are cousins."),))
@@ -131,3 +158,10 @@ class ThePromptAndTheReport(unittest.TestCase):
         self.assertIn(gr.OLD_BUILD, text)  # (an entry made before builds were recorded)
         self.assertNotIn("Pell", text)
         self.assertIn("Fixes checked: 2; DMbot missed: 1", text)
+
+    def test_a_report_past_its_size_counts_the_rest_and_still_fits(self) -> None:
+        many = [gr.Fix(n, gr.LINK, "x" * 250, (FENN, ROOK), f"r{n}") for n in range(1, 400)]
+        verdicts = [gr.Verdict(n, True, "drank with Rook " * 20) for n in range(1, 400)]
+        text = gr.report("c" * 32, many, verdicts, now=1, review_commit=None)
+        self.assertLessEqual(len(text), 60000)
+        self.assertIn("more not shown", text)

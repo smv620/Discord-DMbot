@@ -207,3 +207,9 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
 - Discord server roles and permissions, and inviting the bot.
 - A player's own consent button in their private messages. The website has its own consent screens,
   and the consent rules stay as they are.
+
+## Website-only for now
+
+- "Share this campaign's story to improve DMbot" (#3741): the DM's switch, off by default, in the
+  website's campaign settings (Supervisor's ruling on #3741). Discord shows it read-only in what is
+  switched on (#3693).

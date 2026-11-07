@@ -490,7 +490,9 @@ class MemoryStore:
             # The DM's own fix to a name no chain linked to the party is checked later, 15 minutes
             # after the last one, when the campaign shares its story to improve DMbot (#3741). Who
             # was isolated is read before the write, in its transaction; with the switch off this
-            # costs nothing.
+            # costs nothing, and with it on it is one read of the characters, groups and links per
+            # DM write (the campaigns that asked for it). The note goes in the same transaction,
+            # so a failed write records nothing; it is one upsert within the table's own limits.
             review = bool(row["share_improve"]) and source == DM and undoes is None
             isolated_before = (
                 isolated_mod.isolated_ids(*await isolated_rows_in(changes)) if review else set()
