@@ -359,10 +359,6 @@ class Scoring(unittest.TestCase):
             gkc.check({"sections": {}}, KEY)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ThePlayerCharacters(unittest.TestCase):
     """#3553: the check says how many of the key's player characters the campaign has as such."""
 
@@ -425,3 +421,34 @@ class ThePlaceholders(unittest.TestCase):
         report = gkc.check(data, self.key(), "lore")
         self.assertEqual(report.placeholders, 0)
         self.assertEqual(sum(report.extra_entries.values()), 2)
+
+
+class ByDesign(unittest.TestCase):
+    """#3545: a kind of creature the rules hold is left out on purpose, so it is not a miss."""
+
+    def key(self) -> dict[str, Any]:
+        return load("lore_key.json")
+
+    def test_the_three_kinds_are_marked(self) -> None:
+        marked = {n["name"] for n in self.key()["nodes"] if n.get("by_design")}
+        self.assertEqual(marked, {"Yeti", "Ice troll", "Mind flayer"})
+
+    def test_absent_they_are_listed_apart_and_never_missed(self) -> None:
+        report = gkc.check(backup([], []), self.key(), "lore")
+        by_design = {e.id for e in report.entries if e.status == gkc.BY_DESIGN}
+        self.assertEqual(by_design, {"Yeti", "Ice troll", "Mind flayer"})
+        self.assertFalse(any(e.must for e in report.entries if e.status == gkc.BY_DESIGN))
+        creatures = gkc.summarize(report)["entries"]["creature"]
+        self.assertEqual(creatures[gkc.BY_DESIGN], 3)
+        self.assertEqual(creatures["must_missed"], creatures["total"] - 3)  # (the rest are misses)
+        text = gkc.render(report, counts_only=True)
+        self.assertIn("Entries left out by design (kinds the rules hold, not misses): 3", text)
+
+    def test_found_they_count_as_found(self) -> None:
+        report = gkc.check(backup([("e1", "Yeti", "character")], []), self.key(), "lore")
+        row = next(e for e in report.entries if e.id == "Yeti")
+        self.assertEqual(row.status, gkc.FOUND)
+
+
+if __name__ == "__main__":
+    unittest.main()

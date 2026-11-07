@@ -1147,7 +1147,7 @@
 .account .web-edge-text {
   fill: var(--text, currentColor);
   stroke: none;
-  font-size: 14px;
+  font-size: var(--web-text, 14px); /* (the viewer's text size from Graph settings, #3620) */
   paint-order: stroke;
 }
 
@@ -1184,4 +1184,65 @@
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
+}
+
+/* A slider is a thumb's target too: 44 px tall, whatever the browser draws inside it (#3657). */
+.account input[type="range"] {
+  height: var(--tap);
+}
+
+/* The tick boxes of the graph settings: the whole row is the target, 44 px tall (#3657). */
+.account #graph-settings label:has(> input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
+
+/* The secret answers (🤫 All secret and a claim's own "True, but keep it secret"), purple like Discord's, so they stand apart
+   from the green Yes and the plain Not right (#3645, owner on #3624). The words carry the meaning, not the colour. Every pair
+   here is at least 7:1 (AA needs 4.5:1) in the light and the dark theme: text on its fill, and the border on the page. */
+.account {
+  --secret-fill: #efeaff;
+  --secret-text: #4b2fa0;
+  --secret-edge: #5b3fc4;
+  --secret-fill-hover: #5b3fc4;
+  --secret-text-hover: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .account {
+    --secret-fill: #2d2550;
+    --secret-text: #d9d0ff;
+    --secret-edge: #a99cf0;
+    --secret-fill-hover: #a99cf0;
+    --secret-text-hover: #1b1535;
+  }
+}
+
+:root[data-theme="dark"] .account {
+  --secret-fill: #2d2550;
+  --secret-text: #d9d0ff;
+  --secret-edge: #a99cf0;
+  --secret-fill-hover: #a99cf0;
+  --secret-text-hover: #1b1535;
+}
+
+.account .button.secret {
+  background: var(--secret-fill);
+  color: var(--secret-text);
+  border-color: var(--secret-edge);
+}
+
+@media (hover: hover) {
+  .account .button.secret:hover:not(:disabled) {
+    background: var(--secret-fill-hover);
+    color: var(--secret-text-hover);
+  }
+}
+
+/* DMbot's summary of the scene (#3644): long text wraps at any width, never past the box. */
+.account .scene-line {
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }

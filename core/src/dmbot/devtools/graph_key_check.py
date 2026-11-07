@@ -97,6 +97,11 @@ PLACE_SLOTS = {
 # The stand-in the "who plays" step makes for a player (`store._placeholder_name`, #1559).
 PLACEHOLDER = re.compile(r"Player \d{4}")
 FOUND, WRONG, WAITING, MISSING = "found", "wrong_type", "waiting_only", "missing"
+# A kind of creature the rules already hold is left out of story memory on purpose
+# (`in_the_rules`, 2026-11-06 ruling on #3545): marked `"by_design": true` in the key, it is not a
+# miss when absent and is listed on its own line, so a change in that rule shows up. A particular
+# creature the lore names or sets apart is an entry and stays must-find (no flag).
+BY_DESIGN = "by_design"
 HEADS = ("total", "found", "waiting", "wrong", "missing", "must-miss")
 WIDTHS = (6, 7, 9, 7, 9, 11)
 
@@ -326,12 +331,14 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         ids = graph.ids(names[n["name"]])
         matched_ids |= ids
         if not ids:
-            status = MISSING
+            status = BY_DESIGN if n.get("by_design") else MISSING
         elif any(kinds[i] in ENTRY_TYPES.get(n["kind"], frozenset()) for i in ids):
             status = FOUND
         else:
             status = WRONG
-        report.entries.append(Row(n["name"], n["name"], status, n["kind"], True))
+        report.entries.append(
+            Row(n["name"], n["name"], status, n["kind"], not n.get("by_design", False))
+        )
     for t in key["pairs"]:
         if not wanted & set(t.get("in", ["lore", "session"])):
             continue
@@ -469,7 +476,11 @@ def render(report: Report, counts_only: bool = False) -> str:
     lines.append(f"Must-find ties found only as a waiting suggestion: {len(waiting)}")
     for t in waiting:
         lines.append(f"  {t.id}" + ("" if counts_only else f"  {t.text}"))
-    left = [e for e in report.entries if e.status != FOUND]
+    design = [e for e in report.entries if e.status == BY_DESIGN]
+    lines.append(f"Entries left out by design (kinds the rules hold, not misses): {len(design)}")
+    for e in design:
+        lines.append("  " + ("" if counts_only else e.text))
+    left = [e for e in report.entries if e.status not in (FOUND, BY_DESIGN)]
     lines.append(f"Entries missing or of the wrong kind: {len(left)}")
     for e in left:
         lines.append(f"  {e.status:<11}" + ("" if counts_only else e.text))

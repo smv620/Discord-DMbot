@@ -53,7 +53,9 @@ class TheSampleRunKeepsUpWithTheDoors(DatabaseTest):
         return str(row["d"])
 
     async def test_each_insert_writes_the_columns_its_door_writes(self) -> None:
-        mine = columns(STEPS_SOURCE)
+        # (`web_sessions` is the throwaway website session the off-Discord import signs in with,
+        # #3690: no door writes it for the import, so it is not one of the mimicked tables)
+        mine = {t: c for t, c in columns(STEPS_SOURCE).items() if t != "web_sessions"}
         self.assertEqual(set(mine), set(DOORS))  # (a table added or dropped here is looked at)
         for table, door in DOORS.items():
             theirs = columns(await self.door(door))

@@ -30,6 +30,7 @@ const SCRIPTED = new Set([
   "account/lore.html", // Upload lore (#3022)
   "account/recap-style.html", // Recap style (#2985)
   "account/names.html", // the Names page (#2295)
+  "account/clarify.html", // one name to check, with its best guesses (#3604)
   "account/questions.html", // the Questions page (#3438)
   "account/web.html", // the relationship web (#2324)
   "account/campaigns.html", // a campaign's own page (#2416)
