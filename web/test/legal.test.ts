@@ -12,7 +12,7 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, storyStatesLine } from "../src/content/privacy-channels";
+import { initiativeLine, pcIconsLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -127,6 +127,7 @@ describe("the facts #433 asks for", () => {
     // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
+    expect(privacy().includes(pcIconsLine.lead)).toBe(pcIconsLine.live); // (player pictures: only while the icons are live, #3622)
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });

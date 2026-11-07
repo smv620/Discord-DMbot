@@ -21,6 +21,7 @@ import type {
   NameKind,
   NameRow,
   NamesPage,
+  NameSource,
   MatchRow,
   NamesQuery,
   SmartNamesAnswer,
@@ -42,6 +43,7 @@ import type {
   WebGroup,
   WebLink,
   WebLinkSource,
+  KindOffer,
   ToldName,
   WebLinkChange,
   WebNode,
@@ -66,7 +68,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ImportClock, NameAnswerResult, NameGroupHint } from "./api";
-import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
@@ -420,9 +422,9 @@ export function mockRecaps(): Recap[] {
       sessionSeconds: 2 * 3600 + 35 * 60,
       status: "draft",
       title: "The ferry at dusk",
-      text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+      text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked Ka'zeth for a story, not coin.",
       summary:
-        "[music: calm] The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
+        "[music: calm] The party crossed the Brynwater at dusk.\n\nThe ferryman asked Ka'zeth for a story, not coin.",
       housekeeping: [
         "Mira is down to 4 hit points.",
         "The party owes the ferryman a story.",
@@ -776,6 +778,20 @@ function pronounWaiting(): Waiting {
 }
 /** The pretend "Fix this line" answers' modes, by answer (#2858). */
 const fixes = new Map<string, FixMode>();
+/** The sessions and lore the pretend campaign's names are found in (#3675). */
+const MOCK_NAME_SOURCES: NameSource[] = [
+  { id: "s1", kind: "session", label: "Session 1" },
+  { id: "s2", kind: "session", label: "Session 2" },
+  { id: "s3", kind: "session", label: "Session 3" },
+  { id: "l1", kind: "lore", label: "The Brynwater handout" },
+];
+
+/** Which of those a pretend name is found in: spread by its id so every choice shows something different. */
+function mockSourcesOf(id: string): string[] {
+  const n = [...id].reduce((sum, c) => sum + c.charCodeAt(0), 0);
+  return MOCK_NAME_SOURCES.filter((_, i) => (n + i) % 3 !== 0).map((s) => s.id);
+}
+
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
@@ -850,6 +866,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   }
   const restores = new Map<string, PretendRestore>();
   let restoreCount = 0;
+  // Words DMbot stopped asking about (#3577): the table's own words and the DM's answer.
+  const kindOfferRows: KindOffer[] = [
+    { words: "sworn on the ashes of", state: "never" },
+    { words: "carries the lantern for", state: "later" },
+  ];
   // Spellings of a place waiting for a yes or no (#3533): the pretend places "Saltmarsh" and "Greywatch" each have a new spelling.
   const spellingQuestions: { id: string; placeId: string; place: string; spelling: string }[] = [
     { id: "sp1", placeId: "n24", place: "Saltmarsh", spelling: "Salt Marsh" },
@@ -887,6 +908,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (!found) {
       webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
       // A "knows (wary)" connection with its lore line, for the feeling picker (#3607).
+      // An unnamed person (#3732): in a campaign reference ending ".unnamed" the DM's map holds Ken's sister, with a line to the first name.
+      if (/\.unnamed$/.test(ref)) {
+        found.nodes.push({ id: "u1", name: "Ken's sister (name unknown)", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
+        found.links.push({ id: "lu1", a: found.nodes[0]!.id, b: "u1", words: "sister of", secret: false, direction: "a-b" });
+      }
       if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
     }
     return found;
@@ -944,6 +970,25 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
+  // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
+  // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
+  const pcChoice = new Map<string, IconChoice>();
+  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2" });
+  const pretendIcons = (ref: string, n: WebNode, dm: boolean): WebNode => {
+    if (!["n1", "n2", "n3"].includes(n.id)) return n;
+    const choice = pcChoice.get(`${ref}:${n.id}`) ?? "default";
+    const has = pcHas(n.id);
+    const picture = (who: string): string => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#7a5c9e"/><text x="32" y="44" font-size="34" text-anchor="middle" fill="#fff">${who}</text></svg>`)}`;
+    const shown: WebNode["icon"] =
+      choice === "hidden"
+        ? { kind: "hidden", url: null }
+        : (choice === "discord" || (choice === "default" && has.discord)) && has.discord
+          ? { kind: "discord", url: picture("D") }
+          : (choice === "dndbeyond" || choice === "default") && has.dndbeyond
+            ? { kind: "dndbeyond", url: picture("B") }
+            : null;
+    return { ...n, kind: "player_character", icon: shown, iconChoice: choice, canSetIcon: dm, ...(dm ? { iconHas: has } : {}) };
+  };
   const webGraphOf = (ref: string, query: WebQuery): WebGraph => {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
@@ -954,8 +999,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
     const all = dm ? query.view !== "players" : query.view === "full";
     const state = web(ref);
+    // An unnamed person is the DM's alone, in the Full View: never a player's, a peek's or the players' view (#3732).
     const visible = new Set(
-      state.nodes.filter((n) => all || (!n.secret && n.revealed !== false)).map((n) => n.id),
+      state.nodes.filter((n) => (all || (!n.secret && n.revealed !== false)) && (!n.unnamed || (dm && all))).map((n) => n.id),
     );
     const usable = state.links.filter(
       (l) => visible.has(l.a) && visible.has(l.b) && (all || (!l.secret && l.revealed !== false)),
@@ -978,7 +1024,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     // A name changed on the Names routes (rename, kind) shows here too: they are the same names.
     const current = (n: WebNode): WebNode => {
       const live = memory.find((m) => m.id === n.id);
-      return { ...n, name: live?.name ?? n.name, kind: live?.kind ?? n.kind };
+      const now = { ...n, name: live?.name ?? n.name, kind: live?.kind ?? n.kind };
+      return /\.icons/.test(ref) ? pretendIcons(ref, now, view === "dm") : now;
     };
     const nodes = state.nodes
       .filter((n) => near.has(n.id))
@@ -1056,6 +1103,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       maxHops: 8,
       canEdit: dm && all,
       view: all ? "full" : "players",
+      ...(dm && all && /\.unnamed$/.test(ref) ? { waitingUnnamed: 2 } : {}),
       ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),
     };
   };
@@ -1289,6 +1337,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   // works takes the answer back, so the name has none left and the page reads it as done.
 
   const nameAnswers = new Map<string, { looks: number; result: NameAnswerResult }>();
+  const clarified = new Set<string>(); // names answered on the page of one name (#3604)
   // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
   const plotText = new Map<string, string>();
   const plotLooks = new Map<string, number>();
@@ -2195,6 +2244,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!found) throw new ApiError("not-found");
       found.revealed = true;
     },
+    async setPcIcon(ref, entityId, choice) {
+      calls.push(`setPcIcon:${ref}:${entityId}:${choice}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
+      if (!["n1", "n2", "n3"].includes(entityId)) throw new ApiError("not-found");
+      const has = pcHas(entityId);
+      if ((choice === "discord" && !has.discord) || (choice === "dndbeyond" && !has.dndbeyond)) throw new ApiError("unavailable");
+      const previous = pcChoice.get(`${ref}:${entityId}`) ?? "default";
+      pcChoice.set(`${ref}:${entityId}`, choice);
+      return { previous, now: choice };
+    },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
       await reachable();
@@ -2403,38 +2464,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       houseFileNow = { id: "0".repeat(31) + "2", action: input.action, state: "waiting", stage: "waiting", error: "", toAdd: 0, toChange: 0, toRemove: 0, rulesRead: 0, createdAt: at, updatedAt: at };
       return { linked: houseFileSite !== "", site: houseFileSite, request: houseFileNow, serverNow: at };
     },
-    // What DMbot asked the AI (#3710): a few calls that arrive one by one as the pretend job runs.
+    // What DMbot asked the AI (#3710): a few calls that arrive one by one as the pretend job runs. The words are in
+    // their own file, loaded only when a pretend feed is asked for, so the pages stay within their weight budget.
     async aiFeed(ref, kind, job, after): Promise<AiFeedRead> {
       calls.push(`aiFeed:${ref}:${kind}:${job.slice(0, 4)}:${after}`);
       await reachable();
       signedIn();
       aiFeedLooks += 1;
-      const base = 1_790_000_000;
-      const asked = [
-        "Read this passage of the lore and list the names in it.\n\nThe ferry crossed the Brynwater at dusk. Old Tam took the coin.",
-        "Read the next passage and list the names and how they connect.\n\nMira Voss, the smith, owed Garrick a debt from the winter.",
-        "Which of these names are the same person?\n\nThe Ferry Lady; Old Tam's wife; Mira",
-      ];
-      const back = ["Names: Brynwater (place), Old Tam (person).", "Names: Mira Voss (person), Garrick (person). Mira owes Garrick.", "The Ferry Lady may be Old Tam's wife."];
-      const shown = Math.min(asked.length, aiFeedLooks);
-      return {
-        lost: 0,
-        entries: asked.slice(0, shown).map((prompt, i) => {
-          const done = i + 1 < shown || aiFeedLooks > asked.length;
-          return {
-            job,
-            n: i + 1,
-            at: base + i * 20,
-            service: "Anthropic",
-            model: "smaller model",
-            step: `reading part ${i + 1} of 3`,
-            prompt,
-            reply: done ? back[i]! : null,
-            state: done ? ("done" as const) : ("waiting" as const),
-            reason: null,
-          };
-        }),
-      };
+      return (await import("./mock-ai-feed")).pretendFeed(job, aiFeedLooks);
     },
     async loreRead(ref, id): Promise<LoreUpload | null> {
       calls.push(`loreRead:${ref}:${id ?? "-"}`);
@@ -2530,6 +2567,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           ? {}
           : {
               settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              // What the bot has switched on (#3693): a DM's page only, like the settings.
+              features: {
+                writtenAt: 1_790_000_000,
+                on: [
+                  { name: "Written recaps", words: "DMbot writes a recap of each session for you to read first." },
+                  { name: "Clock suggestions", words: "DMbot offers to move the game clock when time passes. You choose." },
+                ],
+                off: ["Spoken recaps"],
+              },
             }),
       };
     },
@@ -2721,10 +2767,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       npcNotes.clear();
       return n;
     },
+    async nameSources(ref): Promise<NameSource[]> {
+      calls.push(`nameSources:${ref}`);
+      await reachable();
+      signedIn();
+      return MOCK_NAME_SOURCES;
+    },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
       calls.push(
         `allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}` +
-          (query.size === undefined ? "" : `:size=${query.size}`),
+          (query.size === undefined ? "" : `:size=${query.size}`) +
+          (query.sources?.length ? `:sources=${query.sources.join(",")}` : ""),
       );
       await reachable();
       signedIn();
@@ -2736,6 +2789,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const needle = query.q.trim().toLowerCase();
       const found = visible
         .filter((n) => query.kind === "" || query.kind.split(",").includes(n.kind))
+        .filter((n) => !query.sources?.length || mockSourcesOf(n.id).some((s) => query.sources!.includes(s)))
         .filter((n) => needle === "" || [n.name, ...n.others].some((x) => x.toLowerCase().includes(needle)));
       const sorted = [...found].sort((a, b) => (query.sort === "name" ? a.name.localeCompare(b.name) : Number(b.id.slice(1)) - Number(a.id.slice(1))));
       const pageSize = query.size ?? 50;
@@ -2780,6 +2834,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "remove" && unnamedPeople.some((u) => u.id === id)) {
+        // A person the story never named, not worth keeping (owner request): removed like any name.
+        unnamedPeople.splice(unnamedPeople.findIndex((u) => u.id === id), 1);
+        return { removed: true };
+      }
       const row = memory.find((n) => n.id === id);
       if (!row) throw new ApiError("not-found");
       if (change.action === "told-add" || change.action === "told-remove") {
@@ -2863,6 +2922,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async campaignKindOffers(ref) {
+      calls.push(`campaignKindOffers:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed"); // a player is never sent the words
+      return kindOfferRows.map((x) => ({ ...x }));
+    },
+    async liftKindOffer(ref, words) {
+      calls.push(`liftKindOffer:${ref}:${words}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.lift-fails$/.test(ref)) throw new ApiError("server");
+      const at = kindOfferRows.findIndex((x) => x.words === words);
+      if (at < 0) throw new ApiError("not-found");
+      kindOfferRows.splice(at, 1);
     },
     async placeSpellings(ref) {
       calls.push(`placeSpellings:${ref}`);
@@ -3476,10 +3552,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       if (id === "c".repeat(32)) nameFailed.add(`${ref}:${id}`);
       nameLooks.set(`${ref}:${id}`, 0);
+      // The page of one name (#3604) follows its own answer: a plain answer is "done" with a batch to Undo.
+      if (answer.action === "same" || answer.action === "confirm" || answer.action === "not_a_name") {
+        clarified.add(`${ref}:${id}`);
+        nameAnswers.set(`${ref}:${id}`, { looks: 0, result: { state: "done", note: "Done.", error: null, batch: 11 } });
+      }
       if (answer.action === "split" || answer.action === "join_group" || answer.action === "make_group" || answer.action === "undo") {
         const key = `${ref}:${id}`;
         if (answer.action === "undo") {
           // A batch that cannot be taken back (99 here) is refused; any other works and leaves no answer behind.
+          if (answer.batch === 11) clarified.delete(key);
           if (answer.batch === 99) nameAnswers.set(key, { looks: 0, result: { state: "failed", note: "", error: "answered", batch: null } });
           else nameAnswers.delete(key);
           return;
@@ -3499,6 +3581,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
                 : { state: "done", note: `Made the group ${answer.name}.`, error: null, batch: 9 };
         nameAnswers.set(key, { looks: 0, result });
       }
+    },
+    async clarifyName(ref, id) {
+      calls.push(`clarifyName:${ref}:${id.slice(0, 1)}`);
+      await reachable();
+      signedIn();
+      if (ref.endsWith(".player")) throw new ApiError("not-allowed");
+      if (clarified.has(`${ref}:${id}`)) throw new ApiError("not-found"); // already answered
+      if (id !== "a".repeat(32)) throw new ApiError("not-found");
+      return {
+        id,
+        name: "Brannoch",
+        note: "A smith in Eastmarch.",
+        scene: ref.includes(".no-scene") ? null : "Brannoch the smith mends Mira's sword in Eastmarch while the party waits out the storm.",
+        places: [{ session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }] }],
+        morePlaces: 2,
+        answers: ref.includes(".no-answers")
+          ? []
+          : [
+              { label: "a.k.a. Veshla", answer: { action: "same" as const, known: "k".repeat(32) } },
+              { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
+            ],
+        kinds: [{ key: "npc", label: "NPC" }, { key: "place", label: "Place" }],
+        answering: false,
+      };
     },
     async nameAnswerResult(ref, id) {
       calls.push(`nameAnswerResult:${ref}:${id.slice(0, 1)}`);

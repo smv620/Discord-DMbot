@@ -19,6 +19,7 @@ import dataclasses
 import itertools
 import logging
 import time
+import unicodedata
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -107,6 +108,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
+    DEED_KINDS,
     DEED_NAME_MAX,
     DEED_TEXT_MAX,
     DEED_VIEWERS_MAX,
@@ -191,6 +193,7 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.memory.voice import split_effect_note
 from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
@@ -284,8 +287,13 @@ def _alias(r: dict[str, Any]) -> Alias:
 
 
 def _relation(r: dict[str, Any]) -> Relation:
+    # (a connection kept before #3628 may still carry the claim's "happened to them" note if an
+    # Undo of an old change put it back: it is not part of the detail, #3650. This covers what reads
+    # through here, Discord's cards and checks; the readers with their own SQL rely on migration
+    # 0375, and a restored backup is cleaned as it loads)
+    detail = split_effect_note(r["detail"])[0] if r["detail"] else r["detail"]
     return Relation(
-        r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
+        r["id"], r["subject_id"], r["predicate"], r["object_id"], detail,
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
@@ -1313,12 +1321,15 @@ class MemoryStore:
         *,
         source: str,
         from_session_at: int | None = None,
+        kind: str = "",
     ) -> Written[Entity]:
         """The DM records a deed (#1732): something a player character or the party did that
         mattered to up to five NPCs, groups or places, and how it landed (`DEED_EFFECTS`). One
         change, so one Undo takes all of it back. The deed is an entry of its own (the words are
         its description), joined to the doer by `did` and to each one it mattered to by `affected`
-        with the effect as the detail. Only the DM, and nothing here reads speech."""
+        with the effect as the detail. `kind` (#3236): one of `DEED_KINDS` or empty, kept in the
+        doer's connection for the story graph's summary. Only the DM, and nothing here reads
+        speech."""
         if source != DM:
             raise MemoryRuleError("Only the DM can record a deed.")
         try:
@@ -1329,6 +1340,8 @@ class MemoryStore:
             ) from None
         if effect not in standing.DEED_SCORE:
             raise MemoryRuleError("Pick how it landed.")
+        if kind and kind not in DEED_KINDS:
+            raise MemoryRuleError("Pick what kind of deed it was, or none.")
         wanted = list(dict.fromkeys(viewer_ids))
         if not wanted or len(wanted) > DEED_VIEWERS_MAX:
             raise MemoryRuleError(f"Pick one to {DEED_VIEWERS_MAX} it mattered to.")
@@ -1376,7 +1389,7 @@ class MemoryStore:
             # Both connections are secret (the DM's alone), on top of the deed being hidden.
             await self.add_relation_in(
                 w, doer_id, DID, row["id"], confidence=1.0, status=CONFIRMED, secret=True,
-                from_session_at=from_session_at,
+                from_session_at=from_session_at, detail=kind,
             )  # fmt: skip
             for viewer_id in wanted:
                 await self.add_relation_in(
@@ -1530,6 +1543,20 @@ class MemoryStore:
                 [holder_id, target_id],
             )  # fmt: skip
         return [_opinion(r, attitude) for r in rows]
+
+    async def dm_line_scores(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> dict[tuple[str, str], int]:
+        """The DM's open impressions that touch one entry, (viewer, subject) to score, for the
+        `knows` lines on its card (#3642, `standing.dm_line_word`). Only the DM's own: a standing
+        from the story never replaces a line's word. For a DM's screen only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                IMPRESSIONS,
+                " AND closed_at IS NULL AND source = %s AND %s IN (viewer_id, subject_id)",
+                [DM, entity_id],
+            )  # fmt: skip
+        return {(str(r["viewer_id"]), str(r["subject_id"])): int(r["score"]) for r in rows}
 
     async def find_or_add_people(
         self, guild_id: int, campaign_id: str, name: str, *, source: str
@@ -2115,7 +2142,7 @@ class MemoryStore:
                         "source": entity_source or source,
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
-                        "unique_item": None,
+                        "unique_item": True if n.unique and onto.is_a(kind, "item") else None,
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
@@ -2628,24 +2655,34 @@ class MemoryStore:
             return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
-        self, guild_id: int, campaign_id: str, relation_id: str, label: str
+        self, guild_id: int, campaign_id: str, relation_id: str, label: str, quote: str = ""
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
-        a connection that has one keeps the first. Nothing else about the upload is stored."""
+        a connection that has one keeps the first. `quote`: the reader's own quote for the line
+        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
+        else about the upload is stored."""
         label = clean_text(label)[:120]
+        # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
+        quote = " ".join(
+            "".join(
+                c for c in unicodedata.normalize("NFC", quote) if unicodedata.category(c) != "Cf"
+            ).split()
+        )
+        quote = "".join(c for c in quote if c.isprintable())[:240]
         if not label:
             return
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " created_at) SELECT %s, %s, id, %s, %s FROM memory_relations"
+                " quote, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
                     campaign_id,
                     label,
+                    quote,
                     int(time.time()),
                     guild_id,
                     campaign_id,

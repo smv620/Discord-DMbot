@@ -944,6 +944,38 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           }}
         />
       )}
+      {/* Edit and Try again sit above the approve choices, so they are the first thing a reader can do to the text (owner, 2026-11-06). */}
+      {!editing &&
+        !recap.working &&
+        (recap.canEdit || recap.canTryAgain || !decided) && (
+          <div class="row">
+            {recap.canEdit && (
+              <button
+                type="button"
+                class="button secondary"
+                onClick={startEdit}
+                disabled={busy !== null}
+              >
+                <span aria-hidden="true">✍️ </span>
+                {text.edit}
+              </button>
+            )}
+            {!decided && (
+              <button
+                type="button"
+                class="button secondary"
+                onClick={() => decide("again")}
+                disabled={busy !== null || !recap.canTryAgain}
+              >
+                <span aria-hidden="true">🔂 </span>
+                {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
+              </button>
+            )}
+          </div>
+        )}
+      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && recap.state !== "failed" && (
+        <p class="small">{text.noTriesLeft}</p>
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
@@ -965,7 +997,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
-      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this campaign" props={{ api, recapRef: recap.ref }} />}
+      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this recap" props={{ api, recapRef: recap.ref, recapText: recap.text }} />}
       {PRESENT_PER_SCENE_LIVE && !editing && (
         <LazyPanel
           key={`present-${recap.ref}`}
@@ -989,35 +1021,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           what="the after-session report"
           props={{ api, campaignRef: recap.campaign, sessionAt: recap.sessionAt }}
         />
-      )}
-      {!editing &&
-        !recap.working &&
-        (recap.canEdit || recap.canTryAgain || !decided) && (
-          <div class="row">
-            {recap.canEdit && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={startEdit}
-                disabled={busy !== null}
-              >
-                {text.edit}
-              </button>
-            )}
-            {!decided && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={() => decide("again")}
-                disabled={busy !== null || !recap.canTryAgain}
-              >
-                {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
-              </button>
-            )}
-          </div>
-        )}
-      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && recap.state !== "failed" && (
-        <p class="small">{text.noTriesLeft}</p>
       )}
         </>
       )}

@@ -117,3 +117,15 @@ describe("mockLeaks (a real build must not ship the pretend API)", () => {
     }
   });
 });
+
+describe("the image sources (#3622)", () => {
+  it("allow exactly core's three picture hosts and no wildcard, and nothing else is widened", async () => {
+    const { readFileSync } = await import("node:fs");
+    const csp = readFileSync("public/_headers", "utf8").match(/^\s*Content-Security-Policy:.*$/m)?.[0] ?? "";
+    const img = csp.match(/img-src ([^;]*);/)?.[1]?.split(" ");
+    expect(img).toEqual(["'self'", "data:", "https://cdn.discordapp.com", "https://www.dndbeyond.com", "https://media-waterdeep.cursecdn.com"]);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("*");
+  });
+});

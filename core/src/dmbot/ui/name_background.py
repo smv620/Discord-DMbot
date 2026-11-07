@@ -853,7 +853,8 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
+            if k
+            not in ("quote_widened", "quote_reach", "feeling_demoted")  # (kept lines: log only)
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
@@ -1101,6 +1102,8 @@ async def store(
                 # DM confirms it, at the hook's 1.0: only a connection's certainty is lowered for
                 # a smart guess, #2959)
                 shown=known,
+                # only an item the unique-item judge kept reaches this point (#3618)
+                unique=True if item.kind == "item" else None,
             )
         )
         items.append(item)

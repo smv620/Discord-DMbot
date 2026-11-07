@@ -467,3 +467,23 @@ body:has(.account-wide) .wrap {
   stroke: var(--text, currentColor);
   stroke-width: 1.5;
 }
+
+/* A player character's icon (#3622): the picture sits inside the circle with a plain border; 👤 stands in for none. */
+.account .web-pc-icon-border {
+  fill: none;
+  stroke: var(--bg, #fff);
+  stroke-width: 2;
+}
+
+.account .web-pc-person {
+  fill: var(--bg, #fff);
+  stroke: none;
+  user-select: none;
+}
+
+/* A person the story never named (#3732): a dashed outline and a pale fill, so it reads as "not settled" by shape and not by colour alone. */
+.account .web-node.web-unnamed :where(circle, rect, polygon) {
+  fill-opacity: 0.35;
+  stroke-dasharray: 4 3;
+  stroke-width: 2.5;
+}

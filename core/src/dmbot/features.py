@@ -10,10 +10,18 @@ table nor the named list of settings that are not switches.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from dmbot.config import Settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +151,7 @@ FEATURES: tuple[Feature, ...] = (
         (
             "story_extractor_on",
             "story_readings_on",
+            "story_scenes_on",
             "story_deeds_on",
             "story_who_on",
             "story_who_apply_on",
@@ -316,3 +325,40 @@ def whats_on_text(settings: Settings) -> str:
         lines += [f"⬜ {f.dm_name}" for f in off]
         lines += ["", FOOTER]
     return "\n".join(lines)
+
+
+SNAPSHOT_FILE = "features.json"  # read by the web API (#3693): the DM-visible list, nothing else
+
+
+def whats_on_list(settings: Settings) -> dict[str, Any]:
+    """The same split as `whats_on_text`, as data for the web: what is on, with its sentence, and
+    what is off, by name. Names and sentences only, never a value, key or address."""
+    shown = [f for f in FEATURES if f.for_dms]
+    return {
+        "on": [{"name": f.dm_name, "words": f.dm_words} for f in shown if f.is_on(settings)],
+        "off": [f.dm_name for f in shown if not f.is_on(settings)],
+    }
+
+
+def write_snapshot(settings: Settings, directory: str | Path, now: float) -> bool:
+    """Write the DM-visible list to `<directory>/features.json` for the web (#3693). Written to a
+    temporary file, flushed to disk, then renamed, so a reader never sees half of it. Never raises:
+    a failure logs one line with the exception's class name only (never a path or message) and
+    returns False, so start-up goes on. On failure an earlier features.json is left in place
+    (its writtenAt shows when it was written), so the web can tell it is old."""
+    folder = Path(directory)
+    tmp = folder / (SNAPSHOT_FILE + ".tmp")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        body = {"version": 1, "writtenAt": int(now), **whats_on_list(settings)}
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(body))
+            handle.flush()
+            os.fsync(handle.fileno())  # a crash right after the rename must not leave it empty
+        os.replace(tmp, folder / SNAPSHOT_FILE)
+    except Exception as exc:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        log.warning("Feature list: not written (%s)", type(exc).__name__)
+        return False
+    return True

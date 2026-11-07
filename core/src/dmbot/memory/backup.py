@@ -88,6 +88,7 @@ from dmbot.memory.ontology import (
     god_is_an_npc,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.memory.voice import split_effect_note
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
@@ -597,6 +598,10 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
                 "definition_version": version,
             }
+            if isinstance(raw.get("detail"), str):
+                # from before #3628: a kept connection carried the claim's "happened to them" note
+                # on its detail; it is not a detail, and a feeling word with it was no word (#3650)
+                raw["detail"] = split_effect_note(raw["detail"])[0]
         out.append(raw)
     return out
 
