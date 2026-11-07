@@ -29,11 +29,12 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot import ai_feed
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory import descriptions, place_words
@@ -255,7 +256,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "friends, allies and enemies: write the feeling in brackets, one of "
         f"{', '.join(feeling_words.WORDS)}, as in 'knows (friendly)', for how the FIRST name feels "
         "about the second; when the text says they feel it about each other, write the line "
-        "twice, once each way), "
+        "twice, once each way. Write the feeling the text shows: friendly, trusts or close for "
+        "friendship, trust or closeness; wary or distrusts for an argument, a debate, a rivalry "
+        "or a grudge; hostile and sworn enemy only for open enmity the text states (fighting, "
+        "hatred, a vow against); devoted only for love or loyalty. When the text says nothing "
+        "of how they feel, write neutral), "
         "is disguised as (a second character posing as another), "
         "travels with (a companion that goes along with a player character: a familiar, a "
         "hired guide; the second name is the player character, never 'the party'), "
@@ -347,7 +352,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         'place: say "is kept in" or "was kept in"; owns = a owns b; '
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
-        f"{', '.join(feeling_words.WORDS)}, else empty); "
+        f"{', '.join(feeling_words.WORDS)}, else empty; the feeling the text shows: an argument, a "
+        "debate or a grudge is wary or distrusts, and hostile, sworn enemy and devoted need open "
+        "enmity, a vow, love or loyalty in the text); "
         "sworn to = a is sworn to b (an oath, a vow, a pact or fealty); "
         "mentor = a mentors b; apprentice = a is an apprentice of b; rival = a is a rival of b "
         "(competes with, does not want b harmed); founded = a founded b; parent = a is a parent "
@@ -761,7 +768,10 @@ async def _second_look(
     if look is not None:
         look(0, len(gaps))
     tasks = [
-        asyncio.ensure_future(_ask_paragraph(ai, own, gate, para, names)) for para, names, _ in gaps
+        asyncio.ensure_future(
+            _in_step("looking", part, len(gaps), _ask_paragraph(ai, own, gate, para, names))
+        )
+        for part, (para, names, _) in enumerate(gaps, 1)
     ]
 
     def _one_back(task: asyncio.Future[Any]) -> None:
@@ -968,6 +978,32 @@ def line_ends(line: str) -> tuple[str, str] | None:
     return parts[0].strip(), parts[2].strip()
 
 
+# The step the AI feed shows for each stage of the read (#3710): the lore page's own words for it
+# (web/src/content/lore-words.ts, `stages`), so the DM's live window and the wait panel agree.
+STEP_WORDS = {
+    "reading": "Reading it.",
+    "looking": "Reading it.",
+    "shaping": "Finding names.",
+    "who": "Finding how they connect.",
+    "sorting": "Finding how they connect.",
+}
+
+
+def step_words(stage: str, part: int, total: int) -> str:
+    """The feed's step: the page's words for `stage`, and the part being worked on when that is
+    known ("Finding names. (part 2 of 5)"). Words and counts only, never a word of the document."""
+    words = STEP_WORDS.get(stage, STEP_WORDS["reading"])
+    return f"{words} (part {part} of {total})" if total > 0 and part > 0 else words
+
+
+async def _in_step[T](stage: str, part: int, total: int, work: Awaitable[T]) -> T:
+    """Run one of the read's own tasks under its own feed step. A task copies the context when it
+    is made, before the read reports the stage it belongs to, so each names its step itself: the
+    calls it makes are then filed under the right one (and outside a feed job this does nothing)."""
+    ai_feed.step(step_words(stage, part, total))
+    return await work
+
+
 async def read_lore(
     read_ai: Any,
     shape_ai: Any,
@@ -1051,8 +1087,15 @@ async def read_lore(
     # the caller, so what is done is not thrown away with what is not.
     replies: list[str] = []  # the connections are checked below, once every name is known
     tasks = [
-        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats, 0, aliases, replies))
-        for a, b in slices
+        asyncio.ensure_future(
+            _in_step(
+                "shaping",
+                part,
+                len(slices),
+                _shape(shape_ai, text, a, b, own, gate, stats, 0, aliases, replies),
+            )
+        )
+        for part, (a, b) in enumerate(slices, 1)
     ]
     if progress is not None:
         progress("shaping", 0, len(tasks))

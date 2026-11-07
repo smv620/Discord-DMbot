@@ -138,6 +138,7 @@ from dmbot.memory.models import (
     ROLES,
     SOURCES,
     SPECIES,
+    WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
     Belief,
@@ -160,6 +161,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    WaitingJoin,
     Written,
     check_status_change,
     clean_text,
@@ -246,7 +248,8 @@ THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise
 STANDING_VIEWERS = ("character", "faction", "place")
 STANDING_SUBJECTS = ("character", "faction", "people")
 STANDING_BETWEEN = (
-    "Standing is between a character, a group or a place and a character, a group or a people."
+    "Reputation is how a character, group or place feels about a character, group or people."
+    " Pick one of those."
 )
 ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole people."
 
@@ -1933,9 +1936,8 @@ class MemoryStore:
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
-        if played_by is not None and not 0 < played_by <= INT64_MAX:
-            raise ValueError("Bad Discord user ID")
         async with self._write(guild_id, campaign_id, source) as w:
+            await _check_player(w, played_by)
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
@@ -2507,13 +2509,12 @@ class MemoryStore:
         role), confirmed with all its names, in one change (one undo, one reload)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
-        if played_by is not None and not 0 < played_by <= INT64_MAX:
-            raise ValueError("Bad Discord user ID")
         asked = type
         type, role = resolve_kind(type, role)
         if type == PERSON:
             raise MemoryRuleError(PERSON_NOT_LISTED)
         async with self._write(guild_id, campaign_id, source) as w:
+            await _check_player(w, played_by)
             onto = await _load_ontology(w)
             onto.active_type(type)
             _check_role(onto, type, role, played_by)
@@ -3715,8 +3716,12 @@ class MemoryStore:
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
         join_alias: str | None = None,
+        keep_own_flags: bool = False,
     ) -> str:
-        """One merge inside an open write (see `merge`). `join_alias`: the merge joins an unnamed
+        """One merge inside an open write (see `merge`). `keep_own_flags`: the kept entry's
+        "hidden from players" and "limited to some" stay as they are (DMbot's own join, #3602: a
+        name read from a session starts hidden, and joining it must never hide the confirmed
+        entry). `join_alias`: the merge joins an unnamed
         person to the named one it turned out to be (#3037), and this is the secret other name made
         from the description; who knew the unnamed person now know that name and nothing more.
         Returns the id that was kept: a named entry is always the one kept when the other has no
@@ -3760,7 +3765,7 @@ class MemoryStore:
                 # And so does an entry the players don't know yet (#2321).
                 "hidden_from_players": (kept["hidden_from_players"] or gone["hidden_from_players"]),
             }
-            if join_alias is not None:
+            if join_alias is not None or keep_own_flags:
                 # A join keeps the named entry's own flags: the unnamed person's would close the
                 # named entry to every character who knew it (#3037).
                 merged["audience_limited"] = kept["audience_limited"]
@@ -5608,6 +5613,72 @@ class MemoryStore:
 
     # ---- undo -------------------------------------------------------------------------
 
+    async def join_by_ai(
+        self, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
+    ) -> Written[Entity]:
+        """DMbot's own answer to "Who is this?" (#3602): a waiting name is another name of a
+        confirmed entry of the same kind. The DM never said it, so this is the one narrow case
+        `merge` refuses to anyone but the DM, and it is its own method so that rule stays put.
+
+        What it will not do (the owner's rule): nothing secret, hidden from players, limited to
+        some characters, in disguise, a player or a player's character, unnamed, or of two
+        different kinds; never a split, a merge of two confirmed entries or a removal. All of it
+        is read again inside the write, at the moment of use. The moved names stay *waiting* (no
+        `confirm_keys`), so players, the recap and table answers do not use the spelling until the
+        DM confirms it; it is one change, so one Undo takes it all back."""
+        async with self._write(guild_id, campaign_id, WHO_SOURCE) as w:
+            keep = await _entity_row(w, keep_id)
+            gone = await _entity_row(w, gone_id)
+            why = await _ai_join_refusal(w, keep, gone)
+            if why:
+                raise MemoryRuleError(why)
+            kept = await self._merge_in(
+                w, keep_id, gone_id, source=WHO_SOURCE, dm_said_same=True, keep_own_flags=True
+            )
+            final = await w.get(ENTITIES, kept)
+            assert final is not None
+            return Written(_entity(final), w.batch)
+
+    async def waiting_joins(self, guild_id: int, campaign_id: str) -> list[WaitingJoin]:
+        """The joins DMbot made by itself (`join_by_ai`) that the DM has neither confirmed nor
+        undone, oldest first: what the after-session card lists ("DMbot answered N names itself;
+        check them"). Read from the change log, so nothing else is stored. A join is waiting while
+        its batch is not undone and a name it moved is still waiting on the entry."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await _moved_by_join(scope.conn, scope.ids)
+            found: dict[int, WaitingJoin] = {}
+            for r in rows:
+                batch = int(r["batch"])
+                if batch in found:
+                    continue
+                gone = (await scope.select(ENTITIES, " AND id = %s", [r["gone_id"]]))[:1]
+                keep = (await scope.select(ENTITIES, " AND id = %s", [r["keep_id"]]))[:1]
+                if gone and keep:
+                    found[batch] = WaitingJoin(
+                        batch, str(r["keep_id"]), str(r["gone_id"]),
+                        str(gone[0]["name"]), str(keep[0]["name"]), int(r["made_at"]),
+                    )  # fmt: skip
+            return sorted(found.values(), key=lambda j: j.batch)
+
+    async def confirm_join(self, guild_id: int, campaign_id: str, batch: int) -> int:
+        """The DM says DMbot's own join was right (✅ / All fine): the names it moved onto the
+        entry are confirmed, in one change by the DM. Only a name that join moved from the joined
+        entry onto the kept one is touched (the same rows `waiting_joins` lists, read again inside
+        the write). Raises "not found" when that batch is not one of DMbot's joins still waiting
+        (undone, already confirmed, or not a join). Returns how many names were confirmed."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            ids = sorted({str(r["alias_id"]) for r in await _moved_by_join(w.conn, w.ids, batch)})
+            confirmed = 0
+            for alias_id in ids:
+                current = await w.get(ALIASES, alias_id)
+                if current is None or current["status"] != PROPOSED or current["secret"]:
+                    continue
+                await self._change_alias(w, alias_id, DM, CONFIRMED, None)
+                confirmed += 1
+            if not confirmed:
+                raise MemoryRuleError(NOT_FOUND)
+            return confirmed
+
     async def undo(
         self,
         guild_id: int,
@@ -5825,7 +5896,30 @@ def _is_character(row: dict[str, Any]) -> bool:
     return bool(row["type"] == "character")
 
 
+async def _check_player(w: Changes, played_by: int | None) -> None:
+    """Who may play a character (#3690): a Discord user (a positive id), or a speaker of THIS
+    campaign who has no Discord, the negative number the import gave them (#3305). The row is read
+    here, in the write's own transaction and scope, so an id from another campaign or server is
+    refused like any bad id. A player without Discord is never messaged or mentioned."""
+    if played_by is None:
+        return
+    if 0 < played_by <= INT64_MAX:
+        return
+    if -INT64_MAX <= played_by < 0:
+        cur = await w.conn.execute(
+            "SELECT 1 FROM campaign_speakers WHERE guild_id = %s AND campaign_id = %s"
+            " AND user_id = %s",
+            (*w.ids, played_by),
+        )
+        if await cur.fetchone() is not None:
+            return
+    raise ValueError("Bad Discord user ID")
+
+
 async def _ensure_person(w: Changes, user_id: int) -> str:
+    # (Callers pass a transcript speaker or an existing `played_by`; the rule that a negative
+    # number must be this campaign's own speaker is `_check_player`, in `add_entity` and
+    # `confirm_entity` where a player is set.)
     """The campaign's entry for this Discord user, made if there is none. A person made
     here is named `Player 1234` (the last four digits of their ID, never their Discord
     name: that is read only in the live session) until a better name is known (#1188)."""
@@ -5859,6 +5953,8 @@ async def _ensure_person(w: Changes, user_id: int) -> str:
 
 
 def _placeholder_name(user_id: int) -> str:
+    if user_id < 0:  # a player without Discord (#3690): never a made-up piece of a Discord id
+        return f"Player {-user_id} (no Discord)"
     return f"Player {str(user_id)[-4:]}"
 
 
@@ -6560,6 +6656,89 @@ async def _delete_relation(w: Changes, relation_id: str) -> None:
     ):
         await w.delete(FLAGS, flag["id"])
     await w.delete(RELATIONS, relation_id)
+
+
+AI_JOIN_REFUSED = "DMbot doesn't join those two by itself; the DM decides."
+
+
+async def _moved_by_join(
+    conn: Any, ids: tuple[int, str], batch: int | None = None
+) -> list[dict[str, Any]]:
+    """The names DMbot's own joins moved that are still waiting: one row for each name that a
+    `who` merge moved from the joined entry onto the kept one, where the batch is not undone, the
+    kept entry is still confirmed and the name is still proposed and not secret. The one place both
+    the DM's list and ✅ read, so they can never differ. Other alias rows in a merge's batch (a
+    `used_by` pointer, a twin's upgrade) are not moves and never match."""
+    cur = await conn.execute(
+        "SELECT c.batch, c.row_id AS gone_id, c.after->>'merged_into' AS keep_id, c.made_at,"
+        " m.row_id AS alias_id"
+        " FROM memory_changes c"
+        " JOIN memory_changes m ON m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id"
+        " AND m.batch = c.batch AND m.table_name = 'memory_aliases' AND m.op = 'update'"
+        " AND m.before->>'entity_id' = c.row_id AND m.after->>'entity_id' = c.after->>'merged_into'"
+        " JOIN memory_aliases a ON a.guild_id = m.guild_id AND a.campaign_id = m.campaign_id"
+        " AND a.id = m.row_id AND a.entity_id = c.after->>'merged_into'"
+        " AND a.status = 'proposed' AND NOT a.secret"
+        " JOIN memory_entities k ON k.guild_id = c.guild_id AND k.campaign_id = c.campaign_id"
+        " AND k.id = c.after->>'merged_into' AND k.status = 'confirmed'"
+        " WHERE c.guild_id = %s AND c.campaign_id = %s AND c.source = %s"
+        " AND c.table_name = 'memory_entities' AND c.op = 'update' AND c.undoes IS NULL"
+        " AND c.after->>'status' = 'merged' AND (%s::bigint IS NULL OR c.batch = %s::bigint)"
+        " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+        " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+        " ORDER BY c.batch, m.row_id",
+        (*ids, WHO_SOURCE, batch, batch),
+    )
+    return list(await cur.fetchall())
+
+
+async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
+    """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
+    else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
+    A waiting name read from a session is normally still hidden from the players, so that flag is
+    refused on the confirmed entry only; the join leaves the confirmed entry's flags alone."""
+    if keep["status"] != CONFIRMED or gone["status"] != PROPOSED or keep["id"] == gone["id"]:
+        return AI_JOIN_REFUSED
+    for row in (keep, gone):
+        if (
+            row["type"] == PERSON
+            or row["played_by"] is not None
+            or row["role"] == PLAYER_CHARACTER
+            or row["party"]  # the party is a point of view with its own rules
+            or row["unique_item"] is not None  # one of a kind: whose it is, is the DM's word
+            or row["manipulated_by"] is not None
+            or row["unnamed"]
+            or row["audience_limited"]
+        ):
+            return AI_JOIN_REFUSED
+    if keep["hidden_from_players"]:
+        return AI_JOIN_REFUSED
+    if keep["type"] != gone["type"] or keep["role"] != gone["role"]:
+        return AI_JOIN_REFUSED
+    ids = [keep["id"], gone["id"]]
+    if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):
+        return AI_JOIN_REFUSED
+    # a name the DM turned down on the confirmed entry must not come back through a join
+    rejected = {
+        a["key"]
+        for a in await w.select(
+            ALIASES, " AND entity_id = %s AND status = 'rejected'", [keep["id"]]
+        )
+    }
+    if rejected and any(
+        a["key"] in rejected for a in await w.select(ALIASES, " AND entity_id = %s", [gone["id"]])
+    ):
+        return AI_JOIN_REFUSED
+    if await w.select(ENTITIES, " AND unnamed_anchor = ANY(%s)", [ids]):
+        return AI_JOIN_REFUSED  # others hang off one of them
+    if await w.select(
+        RELATIONS,
+        " AND status <> 'rejected' AND (secret OR unrevealed OR predicate = %s)"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [DISGUISED_AS, ids, ids],
+    ):
+        return AI_JOIN_REFUSED  # a disguise, or a link held back from the players
+    return ""
 
 
 async def _move_aliases(

@@ -54,7 +54,7 @@ from dmbot.transcript.topics import OFF_TOPIC
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "extractor-1"  # bump when SYSTEM changes (it is recorded with every claim)
+PROMPT_VERSION = "extractor-2"  # bump when SYSTEM changes (it is recorded with every claim)
 DEED_PROMPT_VERSION = "deeds-2"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
@@ -133,6 +133,12 @@ Rules for what counts as a claim:
    ("four miles per hour", "five days ago"), weather or scenery ("snow", "a blizzard"), a form of
    address or a title said alone ("Friend", "Captain"), or a plain word for a crowd or a kind
    ("the dogs", "people"). If a line only says one of those, it is no claim.
+
+10. Someone who goes along with a player character or with the whole group for a stretch (a
+   familiar, a hired guide, a rescued prisoner) is the relationship "travels with": the
+   companion first, then the player character's name, or "the party" when the line means the
+   whole group. Only when a line says they are travelling together, not for a visit or a chat.
+   "Glyph goes everywhere with Cerric" and "Old Marn is travelling with us" are claims.
 
 For each claim say how it was said:
 - "dm_said": the DM narrating, or the DM speaking as a character.
