@@ -88,3 +88,46 @@ def sign_of(detail: str) -> int:
     word = word_of(detail)
     score = score_of(word) if word is not None else None
     return 0 if not score else (score > 0) - (score < 0)
+
+
+EXACT, ONE_STEP, OVER_READ, UNDER_READ, WRONG_SIDE = (
+    "exact", "one_step_off", "over_read", "under_read", "wrong_side",
+)  # fmt: skip
+
+
+def _position(word: str) -> int:
+    """Where a word sits on the nine-word scale, negative for a bad feeling and positive for a good
+    one, neutral 0 (the order of `WORDS`)."""
+    return WORDS.index(word) - WORDS.index(NEUTRAL)
+
+
+def _strength(word: str) -> int:
+    """How far from "no opinion" a word is. "wary" is a real opinion of 0 on the DM's scale, so it
+    counts as 0 here, like neutral: it is the mildest feeling, not a bad one."""
+    return 0 if word in (WARY, NEUTRAL) else abs(_position(word))
+
+
+def compare(wanted: str, got: str) -> str:
+    """How a stored feeling word sits against the one a key expects (#3606's score): `exact`, one
+    step off on the nine-word scale, `wrong_side` (a good word where the key says bad or the other
+    way round), `over_read` (stronger than the key says) or `under_read` (milder). The key may give
+    a sign ("+", "-", "0") instead of a word: then only the side is scored. Both words go through
+    `word_of`; a stored word off the list is `under_read` (nothing was kept)."""
+    key = wanted.strip()
+    sign = {"+": 1, "-": -1, "0": 0}.get(key)
+    want = word_of(key)
+    have = word_of(got)
+    if have is None or (want is None and sign is None):
+        return UNDER_READ
+    if want is None:
+        if sign_of(have) == sign:
+            return EXACT
+        return WRONG_SIDE if sign and sign_of(have) else (UNDER_READ if sign else OVER_READ)
+    gap = _position(have) - _position(want)
+    if gap == 0:
+        return EXACT
+    if abs(gap) == 1:
+        return ONE_STEP
+    if sign_of(have) * sign_of(want) < 0:
+        return WRONG_SIDE
+    return OVER_READ if _strength(have) > _strength(want) else UNDER_READ
