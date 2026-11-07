@@ -159,6 +159,7 @@ from dmbot.web.support_mail import (
     verify_signature,
 )
 from dmbot.web.told_panel import read_told_panel
+from dmbot.web.who_names import read_one as read_one_name_check
 
 log = logging.getLogger(__name__)
 
@@ -1151,6 +1152,17 @@ def create_app(
         session, _token = signed
         try:
             return await read_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # One name to check on its own page (#3602, slice 3, #3604): its card and DMbot's ranked
+    # answers, each a ready answer for the POST below. The DM's alone, like the list.
+    @app.get("/me/recaps/{ref}/names-to-check/{entity_id}")
+    async def me_recap_name_check(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_one_name_check(db, session, ref, entity_id)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

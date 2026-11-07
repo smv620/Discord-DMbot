@@ -18,6 +18,7 @@ EVERY_ACTION = (
     "link-who", "alias-who",  # "Who knows this?" (#2999)
     "confirm-kinds", "confirm-undo",  # "Add all" for an upload's names (#3207)
     "claim-pick", "claim-unpick",  # "Which one?" for a kept fact (#3463)
+    "claim-undo",  # takes back an All true / All secret press (#3645)
     "spelling-yes", "spelling-no",  # "Is this the same place?" (#3533)
     "players-line",  # the line for the players (#3568)
     "offer-clear",  # lift a Never on words (#3577)
