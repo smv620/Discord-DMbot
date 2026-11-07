@@ -135,7 +135,7 @@ class TheStoryGraph(WithASister):
         self.assertIn(self.links["mira-sister"], lines)
         sister = next(n for n in page["nodes"] if n["id"] == self.sister)
         self.assertTrue(sister["unnamed"])
-        self.assertEqual(sister["name"], "Mira Voss' sister (name unknown)")
+        self.assertEqual(sister["name"], "unnamed - Mira Voss' sister")
         self.assertEqual(sister["unnamedAnchor"], "Mira Voss")
         self.assertEqual(sister["unnamedWhat"], "sister")  # (as the All names page has it)
         mira = next(n for n in page["nodes"] if n["id"] == self.mira)
@@ -145,7 +145,7 @@ class TheStoryGraph(WithASister):
         await self.sql("UPDATE memory_entities SET name = 'stale' WHERE id = %s", self.sister)
         again = await self.graph(center=self.mira, hops=1)
         sister = next(n for n in again["nodes"] if n["id"] == self.sister)
-        self.assertEqual(sister["name"], "Mira Voss' sister (name unknown)")
+        self.assertEqual(sister["name"], "unnamed - Mira Voss' sister")
 
     async def test_a_player_s_peek_gets_none_of_them(self) -> None:
         page = await self.graph(self.player, view="full", center=self.mira, hops=1)
@@ -209,7 +209,7 @@ class TheStoryGraph(WithASister):
             )
         own = await self.graph(self.player, center=self.mira, hops=1)
         sister = next(n for n in own["nodes"] if n["id"] == self.sister)
-        self.assertEqual(sister["name"], "Mira Voss' sister (name unknown)")
+        self.assertEqual(sister["name"], "unnamed - Mira Voss' sister")
         self.assertNotIn("unnamed", sister)  # (the door's fields are the DM's)
         party = await see_as.read_see_as(
             self.web, self.session, self.cref, see_as.PARTY, center=self.mira, hops=1
@@ -237,7 +237,7 @@ class ThePageShape(unittest.TestCase):
         gated = {"id": "g", "name": "Rook", "kind": "player_character"}
         page = relationships.page_of(self.got([sister, mira, gated]))
         shown = {n["id"]: n for n in page["nodes"]}
-        self.assertEqual(shown["s"]["name"], "Mira Voss' sister (name unknown)")
+        self.assertEqual(shown["s"]["name"], "unnamed - Mira Voss' sister")
         self.assertEqual(shown["s"]["unnamedAnchor"], "Mira Voss")
         self.assertEqual((shown["m"]["unnamed"], "unnamedAnchor" in shown["m"]), (False, False))
         self.assertNotIn("unnamed", shown["g"])  # (a node the gate worked out is left alone)
