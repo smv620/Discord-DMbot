@@ -66,7 +66,9 @@ def _parent_of(link: Stated) -> tuple[str, str] | None:
 def derive(stated: Sequence[Stated]) -> list[Derived]:
     """The links that follow from the stated ones, each with the two stated links it came from,
     sorted by (a_id, role, b_id). The same input in any order gives the same output."""
-    links = sorted(stated, key=lambda s: s.link_id)  # a fixed order: the first source wins
+    # A fixed order whatever the input order: the first source wins, and a tie on link_id
+    # breaks on the rest of the link
+    links = sorted(stated, key=lambda s: (s.link_id, s.a_id, s.role, s.b_id))
     known: set[tuple[str, str, str]] = set()
     parents: dict[str, list[tuple[str, str]]] = {}  # child -> [(parent, link_id)]
     children: dict[str, list[tuple[str, str]]] = {}  # parent -> [(child, link_id)]
