@@ -10,7 +10,7 @@ describe("the pretend graph clean-up (#3762)", () => {
     const view = await api.graphCleanup!("100.cmp1.cleanup");
     expect(view.groups.map((g) => g.entries.length)).toEqual([3, 2, 1]);
     expect(view.total).toBe(6);
-    expect(view.shown).toBe(6);
+    expect(view.truncated).toBe(false);
     expect(view.noPlayerCharacter).toBe(false);
     expect(view.review).toEqual({ state: "waiting", minutesLeft: 12, fixes: 2 });
   });
@@ -32,25 +32,25 @@ describe("the pretend graph clean-up (#3762)", () => {
     const view = await api.graphCleanup!("100.cmp1.cleanup");
     const all = view.groups.flatMap((g) => g.entries);
     const child = all.find((e) => e.id === "e2");
-    expect(child).toMatchObject({ unnamed: true, unnamedWhat: "child", unnamedAnchor: "Okthandom", status: "waiting" });
+    expect(child).toMatchObject({ unnamed: true, unnamedWhat: "child", unnamedAnchor: "Okthandom", waiting: true });
     const cousin = all.find((e) => e.id === "e6");
-    expect(cousin).toMatchObject({ unnamed: true, unnamedWhat: "cousin", unnamedAnchor: "The Ferryman", status: "confirmed" });
+    expect(cousin).toMatchObject({ unnamed: true, unnamedWhat: "cousin", unnamedAnchor: "The Ferryman", waiting: false });
   });
 
   it("answers an empty campaign with no groups and an idle review", async () => {
     const view = await mockApi("table").graphCleanup!("100.cmp1.cleanup-empty");
-    expect(view).toMatchObject({ groups: [], total: 0, shown: 0, noPlayerCharacter: false, review: { state: "idle" } });
+    expect(view).toMatchObject({ groups: [], total: 0, truncated: false, noPlayerCharacter: false, review: { state: "idle" } });
   });
 
   it("says a campaign with no player character has no groups", async () => {
     const view = await mockApi("table").graphCleanup!("100.cmp1.cleanup-nopc");
-    expect(view).toMatchObject({ groups: [], total: 0, shown: 0, noPlayerCharacter: true });
+    expect(view).toMatchObject({ groups: [], total: 0, truncated: false, noPlayerCharacter: true });
   });
 
-  it("lists 300 entries of 450 in a big campaign", async () => {
+  it("lists 300 entries of 450 in a big campaign, and says it is cut", async () => {
     const view = await mockApi("table").graphCleanup!("100.cmp1.cleanup-big");
     expect(view.total).toBe(450);
-    expect(view.shown).toBe(300);
+    expect(view.truncated).toBe(true);
     expect(view.groups.reduce((n, g) => n + g.entries.length, 0)).toBe(300);
   });
 

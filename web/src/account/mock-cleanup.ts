@@ -1,41 +1,40 @@
 // The pretend graph clean-up data (#3762, under #3740): what the clean-up page is shown in a pretend campaign. Kept out of
 // mock.ts and loaded on demand, the same way mock-ai-feed.ts is, because every page that carries the pretend API counts
 // toward the page weight.
-import type { CleanupEntry, CleanupGroup, CleanupLink, CleanupView } from "./api";
+import type { CleanupEntry, CleanupGroup, CleanupView, WebEdge } from "./api";
+
+/** One edge between two entries of a group, with one connection in it (the map's own shape). */
+function edge(id: string, a: string, b: string, words: string): WebEdge {
+  return { a, b, label: words, more: 0, links: [{ id, words, secret: false, direction: "a-b" }] };
+}
 
 /** The 3 groups of the default pretend campaign, largest first. */
 function defaultGroups(): CleanupGroup[] {
   const g1: CleanupGroup = {
-    id: "g1",
     entries: [
-      { id: "e1", name: "Okthandom", kind: "npc", status: "confirmed", scene: "Okthandom led the party over the pass at dusk." },
-      { id: "e2", name: "unnamed - Okthandom's child", kind: "npc", unnamed: true, unnamedWhat: "child", unnamedAnchor: "Okthandom", status: "waiting" },
-      { id: "e3", name: "The Tide Wardens", kind: "group", status: "confirmed", scene: null },
+      { id: "e1", name: "Okthandom", kind: "npc", waiting: false, scene: "Okthandom led the party over the pass at dusk." },
+      { id: "e2", name: "unnamed - Okthandom's child", kind: "npc", waiting: true, unnamed: true, unnamedWhat: "child", unnamedAnchor: "Okthandom" },
+      { id: "e3", name: "The Tide Wardens", kind: "group", waiting: false },
     ],
-    links: [
-      { id: "l1", a: "e1", b: "e2", words: "parent of", status: "confirmed" },
-      { id: "l2", a: "e1", b: "e3", words: "leads", status: "confirmed" },
-    ],
+    links: [edge("l1", "e1", "e2", "parent of"), edge("l2", "e1", "e3", "leads")],
   };
   const g2: CleanupGroup = {
-    id: "g2",
     entries: [
-      { id: "e4", name: "Old Pell", kind: "npc", status: "confirmed", scene: "Pell sold the party rope in the harbour market." },
-      { id: "e5", name: "Brewner", kind: "npc", status: "confirmed", scene: null },
+      { id: "e4", name: "Old Pell", kind: "npc", waiting: false, scene: "Pell sold the party rope in the harbour market." },
+      { id: "e5", name: "Brewner", kind: "npc", waiting: false },
     ],
-    links: [{ id: "l3", a: "e4", b: "e5", words: "drinks with", status: "waiting", ended: true }],
+    links: [edge("l3", "e4", "e5", "drinks with")],
   };
   const g3: CleanupGroup = {
-    id: "g3",
     entries: [
       {
         id: "e6",
         name: "unnamed - the ferryman's cousin",
         kind: "npc",
+        waiting: false,
         unnamed: true,
         unnamedWhat: "cousin",
         unnamedAnchor: "The Ferryman",
-        status: "confirmed",
         scene: "The ferryman mentioned a cousin who sells maps.",
       },
     ],
@@ -48,12 +47,9 @@ function defaultGroups(): CleanupGroup[] {
 function bigGroups(): CleanupGroup[] {
   const groups: CleanupGroup[] = [];
   for (let i = 0; i < 150; i += 1) {
-    const entries: CleanupEntry[] = [0, 1, 2].map((j) => ({ id: `b${i}e${j}`, name: `Person ${i}-${j}`, kind: "npc", status: "confirmed" }));
-    const links: CleanupLink[] = [
-      { id: `b${i}l0`, a: `b${i}e0`, b: `b${i}e1`, words: "knows", status: "confirmed" },
-      { id: `b${i}l1`, a: `b${i}e1`, b: `b${i}e2`, words: "knows", status: "confirmed" },
-    ];
-    groups.push({ id: `b${i}`, entries, links });
+    const entries: CleanupEntry[] = [0, 1, 2].map((j) => ({ id: `b${i}e${j}`, name: `Person ${i}-${j}`, kind: "npc", waiting: false }));
+    const links: WebEdge[] = [edge(`b${i}l0`, `b${i}e0`, `b${i}e1`, "knows"), edge(`b${i}l1`, `b${i}e1`, `b${i}e2`, "knows")];
+    groups.push({ entries, links });
   }
   return groups.slice(0, 100);
 }
@@ -62,16 +58,16 @@ function bigGroups(): CleanupGroup[] {
 export function pretendCleanup(kind: string): CleanupView {
   switch (kind) {
     case "cleanup-empty":
-      return { groups: [], total: 0, shown: 0, noPlayerCharacter: false, review: { state: "idle" } };
+      return { groups: [], total: 0, truncated: false, noPlayerCharacter: false, review: { state: "idle" } };
     case "cleanup-nopc":
-      return { groups: [], total: 0, shown: 0, noPlayerCharacter: true };
+      return { groups: [], total: 0, truncated: false, noPlayerCharacter: true };
     case "cleanup-big":
-      return { groups: bigGroups(), total: 450, shown: 300, noPlayerCharacter: false };
+      return { groups: bigGroups(), total: 450, truncated: true, noPlayerCharacter: false };
     case "cleanup-done":
-      return { groups: defaultGroups(), total: 6, shown: 6, noPlayerCharacter: false, review: { state: "done", missed: 2 } };
+      return { groups: defaultGroups(), total: 6, truncated: false, noPlayerCharacter: false, review: { state: "done", missed: 2 } };
     case "cleanup-off":
-      return { groups: defaultGroups(), total: 6, shown: 6, noPlayerCharacter: false, review: { state: "off" } };
+      return { groups: defaultGroups(), total: 6, truncated: false, noPlayerCharacter: false, review: { state: "off" } };
     default:
-      return { groups: defaultGroups(), total: 6, shown: 6, noPlayerCharacter: false, review: { state: "waiting", minutesLeft: 12, fixes: 2 } };
+      return { groups: defaultGroups(), total: 6, truncated: false, noPlayerCharacter: false, review: { state: "waiting", minutesLeft: 12, fixes: 2 } };
   }
 }
