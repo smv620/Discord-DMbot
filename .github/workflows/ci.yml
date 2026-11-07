@@ -52,7 +52,10 @@ jobs:
           NEED_DOCKER: ${{ steps.decide.outputs.docker }}
         run: |
           scripts/ci-already-green.sh | tee -a "$GITHUB_OUTPUT" | tee /tmp/reuse.txt
-          if grep -q '^done=true' /tmp/reuse.txt; then
+          if grep -q '^superseded_by=' /tmp/reuse.txt; then
+            sha=$(sed -n 's/^superseded_by=//p' /tmp/reuse.txt)
+            echo "::notice title=CI skipped::Superseded by ${sha}; not run."
+          elif grep -q '^done=true' /tmp/reuse.txt; then
             run=$(sed -n 's/^run=//p' /tmp/reuse.txt)
             echo "::notice title=CI skipped::This commit already passed CI in run ${run}; nothing changed, so nothing is run again."
           elif ! grep -q '^done=false' /tmp/reuse.txt; then
