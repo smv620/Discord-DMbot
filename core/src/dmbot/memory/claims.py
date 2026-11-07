@@ -81,7 +81,15 @@ from dmbot.memory.store import (
     _load_ontology,
     _new_alias,
 )
-from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
+from dmbot.memory.voice import (
+    EFFECT,
+    EFFECT_NOTE,
+    OWN,
+    PARTY,
+    PARTY_REASON,
+    split_effect_note,
+    voice,
+)
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
@@ -199,15 +207,19 @@ class Claim:
     # The entries the DM picked for a name that could mean two (#3238), ahead of the words.
     subject_picked: str | None = None
     object_picked: str | None = None
+    # Why a player character's line is "something that happened to them" (#2562), apart from the
+    # details: the note is stored run on to them and taken off here (#3624).
+    note: str = ""
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
     """A stored claim from its row."""
+    details, note = split_effect_note(str(r["details"] or ""))
     return Claim(
-        r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
+        r["id"], r["subject"], r["relationship"], r["object"], details, r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"),
+        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"), note,
     )  # fmt: skip
 
 
@@ -1309,7 +1321,10 @@ class ClaimStore:
                         "description": f"Heard {sum(times[k] for k in group)} times",
                         "status": PROPOSED, "merged_into": None, "source": EXTRACTOR,
                         "created_at": w.now, "played_by": None,
-                        "needs_look": False, "unique_item": None,
+                        "needs_look": False,
+                        # an item reaches here only when `_generic_items` judged it one particular
+                        # thing (#3618), so a second owner is flagged like a named item's
+                        "unique_item": True if onto.is_a(kind, "item") else None,
                     },
                 )  # fmt: skip
                 alias = await w.insert(
@@ -1703,9 +1718,14 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims, readings and scenes went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
+        went."""
+
+        from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
+
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
+            readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(

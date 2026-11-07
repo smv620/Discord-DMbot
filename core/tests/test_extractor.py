@@ -617,10 +617,33 @@ class DeedPass(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Kept(), dm_session(10), deeds=True)
         self.assertEqual((report.deeds, report.deeds_cut, report.deeds_refused), (1, 1, 0))
 
-    async def test_an_ai_out_of_funds_on_the_deed_call_stops_the_run(self) -> None:
+    async def test_an_ai_out_of_funds_on_the_deed_call_stops_the_deeds_and_keeps_the_claims(
+        self,
+    ) -> None:
         report = await go(Deeding(fail=AIOutOfFunds()), Kept(), dm_session(25), deeds=True)
         self.assertEqual((report.stopped, report.deeds), ("out of funds", 0))
-        self.assertGreater(report.unsent, 0)  # (the batches after it were never sent)
+        self.assertEqual(report.calls, 3 + 1)  # (all three claims calls, then the one deed call)
+
+    async def test_readings_come_first_and_the_last_call_goes_to_them(self) -> None:
+        class Both(Deeding):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                if system is readings.READING_SYSTEM:
+                    self.systems.append(system)
+                    first = text.split("\n")[1].split(" ")[0]
+                    theory = {"rule": "theory", "who": "Mira", "shared": False, "strength": "",
+                              "subject": "Bram", "relationship": "carries",
+                              "object": "Heartseeker", "lines": [int(first)]}  # fmt: skip
+                    return Reply(json.dumps({"readings": [theory]}), False, 10, 5, "m-fast")
+                return await super().complete(system, text, max_tokens=max_tokens)
+
+        ai = Both()
+        report = await go(
+            ai, Kept(), dm_session(10), readings=True, deeds=True, max_calls=2
+        )  # one batch: claims, then readings; the limit leaves nothing for the deed
+        self.assertEqual((report.readings, report.deeds, report.calls), (1, 0, 2))
+        self.assertEqual(ai.systems, [extractor.SYSTEM, readings.READING_SYSTEM])
+        again = await go(Both(), Kept(), dm_session(10), readings=True, deeds=True, max_calls=3)
+        self.assertEqual((again.readings, again.deeds, again.calls), (1, 1, 3))
 
     async def test_someone_who_stops_during_the_deed_call_loses_their_deed(self) -> None:
         asked: list[int] = []
@@ -637,6 +660,48 @@ class DeedPass(unittest.IsolatedAsyncioTestCase):
     def test_the_deed_prompt_version_is_pinned_with_the_prompt(self) -> None:
         # a change to deed_reading.DEED_SYSTEM bumps this (it is stored with each proposal)
         self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-1")
+
+    async def test_the_proposals_are_handed_to_the_store_with_the_people_who_said_them(
+        self,
+    ) -> None:
+        class Store:
+            def __init__(self) -> None:
+                self.calls: list[Any] = []
+
+            async def store(
+                self, guild_id: int, campaign_id: str, proposals: Any, **kw: Any
+            ) -> Any:
+                from dmbot.memory.deed_proposals import Stored
+
+                self.calls.append((proposals, kw))
+                return Stored(stored=len(proposals))
+
+        deed_store = Store()
+        report = await go(
+            Deeding(),
+            Kept(),
+            dm_session(10),
+            deeds=True,
+            deed_store=deed_store,
+        )
+        ((proposals, kw),) = deed_store.calls
+        self.assertEqual([speakers for _deed, speakers in proposals], [(DM,)])
+        self.assertEqual(kw["prompt_version"], extractor.DEED_PROMPT_VERSION)
+        self.assertEqual((kw["opted_in"], report.deeds_stored), ({DM, ALICE, BOB}, 1))
+
+    async def test_a_store_that_fails_is_counted_and_never_fatal(self) -> None:
+        class Broken:
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                raise RuntimeError("down")
+
+        report = await go(
+            Deeding(),
+            Kept(),
+            dm_session(10),
+            deeds=True,
+            deed_store=Broken(),
+        )
+        self.assertEqual((report.failed, report.deeds_stored), (1, 0))
 
     async def test_family_only_asks_no_deeds(self) -> None:
         ai = Deeding()

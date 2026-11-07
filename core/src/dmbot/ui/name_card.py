@@ -50,6 +50,7 @@ from dmbot.memory.models import (
     MERGED,
     PLAYERS_TEXT_MAX,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
     Alias,
     Entity,
@@ -94,6 +95,8 @@ from dmbot.ui.names import (
     already_known,
     changed,
     known_as,
+    scene_line,
+    scene_of,
     sees_secrets,
     split_names,
 )
@@ -649,6 +652,12 @@ async def show_card(
             "(they read this in recaps and answers)"
         )
         if len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets and (entity.status == PROPOSED or entity.unnamed):
+        # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
+        # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
+        line = scene_line(await scene_of(interaction, campaign, entity))
+        if line and len(text) + len(line) <= CARD_MAX:
             text += line
     # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
     # narrator's dictionary goes to the voice company; the store refuses it too).
