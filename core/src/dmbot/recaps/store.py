@@ -222,6 +222,9 @@ _AUDIO_CLOCK_OFF = (
 LOG_KEPT_S = 2 * 86400  # how long a call's date is kept (the daily tally needs only the last day)
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
+# The columns that hold what DMbot wrote for the recap: a write of any of them is DMbot generating
+# its own work, so the row takes the running build's stamp (#3739, `dmbot.lineage`).
+_CONTENT = frozenset({"title", "summary", "original", "housekeeping", "music", "beats", "critics"})
 _WRITABLE = frozenset(
     {
         "state",
@@ -459,7 +462,9 @@ class RecapStore:
                 values.append(None if value is None else Jsonb(value))
             else:
                 values.append(value)
-        async with self._db.guild(guild_id, by_dmbot=True) as conn:
+        # Lineage (#3739): restamp only when a stage writes the recap's own content; bookkeeping
+        # (a wait, an email time, the spend) must not make an older text look made by this build.
+        async with self._db.guild(guild_id, by_dmbot=bool(set(fields) & _CONTENT)) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
@@ -764,7 +769,7 @@ class RecapStore:
         # apostrophe or dash, which a prefilter on a whole word would miss.
         word = max(re.findall(r"\w+", old), key=len, default="")
         like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "SELECT session_at, status, title, summary, original, to_confirm, approved_hash,"
                 " audio, audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
@@ -862,7 +867,7 @@ class RecapStore:
     async def save_dictionary(
         self, guild_id: int, campaign_id: str, dictionary_id: str, version_id: str, rules_hash: str
     ) -> None:
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             await conn.execute(
                 "INSERT INTO recap_dictionaries (guild_id, campaign_id, dictionary_id, version_id,"
                 " rules_hash, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
@@ -1041,7 +1046,7 @@ class RecapStore:
         from dmbot.recaps import critics as cr  # (the loop's own JSON, for the page's notes)
 
         notes = (note,) if note else ()
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET to_confirm = %s, checked_at = %s, critics = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"

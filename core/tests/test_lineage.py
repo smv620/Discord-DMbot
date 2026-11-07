@@ -155,6 +155,29 @@ class TheTrigger(DatabaseTest):
             cur = await conn.execute("SELECT made_by_commit AS c FROM recap_jobs")
             self.assertEqual([r["c"] for r in await cur.fetchall()], [NEW])
 
+    async def test_recap_bookkeeping_does_not_restamp_but_content_does(self) -> None:
+        from dmbot.recaps.store import RecapStore
+
+        store = RecapStore(self.db)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": OLD}):
+            await store.add_finished(
+                GUILD, self.campaign.id, 1000, dm_user_id=USER, title="T", summary="S",
+                original="o", housekeeping=[], music=[], game_day=None, speakers=[], grade={},
+                beats=[],
+            )  # fmt: skip
+
+        async def stamp() -> str | None:
+            async with self.db.guild(GUILD) as conn:
+                cur = await conn.execute("SELECT made_by_commit AS c FROM recap_jobs")
+                return (await cur.fetchone())["c"]  # type: ignore[index,no-any-return]
+
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.update(GUILD, self.campaign.id, 1000, calls=3)  # a counter, not content
+        self.assertEqual(await stamp(), OLD)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
+            await store.update(GUILD, self.campaign.id, 1000, title="T2")
+        self.assertEqual(await stamp(), NEW)
+
     async def test_the_websites_transactions_name_the_build_too(self) -> None:
         """The web API is the same image and opens its transactions through the same `Database`
         (`as_person` for the campaign store, `user` for account doors), so a row a website door

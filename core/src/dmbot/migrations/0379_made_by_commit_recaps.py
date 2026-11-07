@@ -8,18 +8,17 @@ from __future__ import annotations
 
 # Part 2 of #3739 (see `dmbot.lineage` and 0378, which made the trigger function). Nothing here
 # changes a row: the column is NULL for everything made before this. The tables are the ones DMbot
-# generates in the recap area: the job (its draft, title, summary and audio state), the name checks
-# and dictionaries the writer and the narration use, a DM's instructions request (it holds DMbot's
+# generates in the recap area: the job (its draft, title, summary and audio state), the dictionaries
+# the narration uses, a DM's instructions request (it holds DMbot's
 # answer), the accepted versions (the build that kept the text, as the DM pressed accept), and the
-# theatre script and its runs. `recap_holds` is bookkeeping and stays off (`lineage.NOT_STAMPED`).
+# theatre script. `recap_holds`, `recap_name_checks` (ids only) and `theatre_runs` (counts)
+# are bookkeeping and stay off (`lineage.NOT_STAMPED`).
 TABLES = (
     "recap_jobs",
-    "recap_name_checks",
     "recap_dictionaries",
     "recap_requests",
     "recap_accepted",
     "theatre_lines",
-    "theatre_runs",
 )
 
 SQL = (
