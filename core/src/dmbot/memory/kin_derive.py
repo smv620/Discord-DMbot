@@ -66,9 +66,31 @@ def _parent_of(link: Stated) -> tuple[str, str] | None:
     return None
 
 
+def _cyclic_people(children: dict[str, list[tuple[str, str]]]) -> set[str]:
+    """The people who are their own ancestor through stated parent links (a cycle). Small inputs
+    only: a family's links are a few hundred at most, so a walk from each person is enough."""
+    cyclic: set[str] = set()
+    for start in children:
+        stack = [child for child, _ in children.get(start, [])]
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == start:
+                cyclic.add(start)
+                break
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(child for child, _ in children.get(node, []))
+    return cyclic
+
+
 def derive(stated: Sequence[Stated]) -> list[Derived]:
     """The links that follow from the stated ones, each with the two stated links it came from,
-    sorted by (a_id, role, b_id). The same input in any order gives the same output."""
+    sorted by (a_id, role, b_id). The same input in any order gives the same output.
+
+    A parent cycle (A parent B, B parent C, C parent A) derives nothing through any of its people:
+    no link is raised for them, and their stated links are left for the DM to correct."""
     # A fixed order whatever the input order: the first source wins, and a tie on link_id
     # breaks on the rest of the link
     links = sorted(stated, key=lambda s: (s.link_id, s.a_id, s.role, s.b_id))
@@ -93,11 +115,18 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
         elif link.role == _GRANDCHILD:
             known.add((link.b_id, _GRANDPARENT, link.a_id))
 
+    cyclic = _cyclic_people(children)
     found: dict[tuple[str, str, str], Derived] = {}
 
-    def offer(a_id: str, role: str, b_id: str, sources: tuple[str, str]) -> None:
-        # Never a self-link, never a link already stated, never the same link twice
+    def offer(a_id: str, role: str, b_id: str, through: str, sources: tuple[str, str]) -> None:
+        # Never a self-link, never a link already stated, never the same link twice. Never the
+        # reverse of a parent or grandparent link already stated (the DM said it the other way
+        # round). Nothing through a parent cycle: those links stay for the DM to state.
         if a_id == b_id or (a_id, role, b_id) in known or (a_id, role, b_id) in found:
+            return
+        if role in (_PARENT, _GRANDPARENT) and (b_id, role, a_id) in known:
+            return
+        if any(name in cyclic for name in (a_id, through, b_id)):
             return
         found[(a_id, role, b_id)] = Derived(a_id, role, b_id, sources)
 
@@ -105,12 +134,12 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
     for x, a_links in sorted(children.items()):
         for a, parent_link in a_links:
             for b, sibling_link in sorted(siblings.get(a, [])):
-                offer(x, _PARENT, b, (parent_link, sibling_link))
+                offer(x, _PARENT, b, a, (parent_link, sibling_link))
 
     # Rule 2: G parent P and P parent A give G grandparent A
     for p, p_children in sorted(children.items()):
         for g, g_link in sorted(parents.get(p, [])):
             for a, a_link in sorted(p_children):
-                offer(g, _GRANDPARENT, a, (g_link, a_link))
+                offer(g, _GRANDPARENT, a, p, (g_link, a_link))
 
     return [found[key] for key in sorted(found, key=lambda k: (k[0], k[1], k[2]))]

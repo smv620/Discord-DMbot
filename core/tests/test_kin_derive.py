@@ -134,6 +134,34 @@ class TheSources(unittest.TestCase):
         self.assertEqual(out[1].source_ids, ("7", "6"))
 
 
+class TheReverseAndCycles(unittest.TestCase):
+    def test_a_reversed_pair_derives_nothing(self) -> None:
+        # X parent A, A sibling B would give X parent B, but B parent X is already stated
+        out = derive(
+            [
+                link("1", "X", "parent", "A"),
+                link("2", "A", "sibling", "B"),
+                link("3", "B", "parent", "X"),
+            ],
+        )
+        self.assertNotIn(("X", "parent", "B"), [(d.a_id, d.role, d.b_id) for d in out])
+
+    def test_a_cycle_of_three_derives_nothing_through_it_and_keeps_the_rest(self) -> None:
+        out = derive(
+            [
+                link("1", "A", "parent", "B"),
+                link("2", "B", "parent", "C"),
+                link("3", "C", "parent", "A"),
+                link("4", "G", "parent", "P"),  # an unrelated chain still derives
+                link("5", "P", "parent", "Q"),
+            ],
+        )
+        self.assertEqual(
+            [(d.a_id, d.role, d.b_id) for d in out],
+            [("G", "grandparent", "Q")],
+        )
+
+
 class TheStableOrder(unittest.TestCase):
     def test_the_same_links_in_any_order_give_the_same_result(self) -> None:
         links = [
