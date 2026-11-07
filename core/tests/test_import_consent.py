@@ -212,6 +212,20 @@ class Confirming(WithImports):
             got = [int(r["user_id"]) for r in await cur.fetchall()]
         self.assertEqual(got, sorted([TOMAS, self.session.user_id]))
 
+    async def test_the_websites_stop_also_empties_the_servers_ai_feed(self) -> None:
+        # (#3710) the signed-in person's role has no right on `ai_feed`: the delete is a function
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO ai_feed (guild_id, campaign_id, kind, job_id, n, at, prompt, state)"
+                " VALUES (%s, %s, 'lore', 'u', 1, 1900000000, 'p', 'done')",
+                (THURSDAY.id, self.one.id),
+            )
+        scoped = self.web.as_person(self.session.user_id, self.session.id_hash)
+        await ConsentStore(scoped).revoke(THURSDAY.id, self.session.user_id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM ai_feed")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
     async def test_the_same_name_in_the_next_file_is_the_same_speaker(self) -> None:
         mapping: dict[str, Any] = {GHOST: {"confirmed": True}}
         for _file in range(2):
