@@ -1,0 +1,111 @@
+"""Free access for a whole server (#3788): a campaign in a listed server passes every plan gate
+whoever its DM is. Made-up ids only; the real ones are never in the repository."""
+
+from __future__ import annotations
+
+import logging
+import unittest
+
+from dmbot import entitlements, usage
+from dmbot.campaigns import CampaignStore
+from dmbot.config import ConfigError, load_settings
+from dmbot.entitlements import FREE_ACCESS, access_for, parse_free_guilds
+from dmbot.web.settings import load_web_settings
+from tests.pg import DatabaseTest
+
+LISTED, OTHER, DM, FRIEND = 4040404040404, 5050505050505, 41, 42
+NOW = 1_700_000_000
+
+
+class TheList(unittest.TestCase):
+    def tearDown(self) -> None:
+        entitlements.configure_free_guilds(())
+
+    def test_it_is_parsed_like_the_free_users(self) -> None:
+        self.assertEqual(parse_free_guilds(" 11, 22 ,,"), frozenset({11, 22}))
+        self.assertEqual(parse_free_guilds(""), frozenset())
+        for bad in ("zzz", "1,zzz", "-5", "0", "1.5", str(2**63), "١٢٣"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError) as caught:
+                parse_free_guilds(bad)
+            self.assertNotIn(bad, str(caught.exception))  # the setting is never shown
+
+    def test_both_loaders_read_it_and_a_bad_value_refuses_to_start(self) -> None:
+        bot_env = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgres://x"}
+        loaded = load_settings({**bot_env, "DMBOT_FREE_GUILDS": f"{LISTED},{OTHER}"})
+        self.assertEqual(loaded.free_guilds, {LISTED, OTHER})
+        self.assertNotIn(str(LISTED), repr(loaded))  # never shown with the settings
+        with self.assertRaises(ConfigError) as caught:
+            load_settings({**bot_env, "DMBOT_FREE_GUILDS": "table"})
+        self.assertIn("Fix it in .env", str(caught.exception))
+        web_env = {
+            "DATABASE_URL": "postgresql://x",
+            "DISCORD_CLIENT_ID": "1",
+            "DISCORD_CLIENT_SECRET": "s",
+            "WEB_SECRET_KEY": "k" * 40,
+            "WEB_SITE_URL": "https://dmbot.example/",
+            "WEB_API_URL": "https://api.dmbot.example",
+        }
+        loaded_web = load_web_settings({**web_env, "DMBOT_FREE_GUILDS": str(LISTED)})
+        self.assertEqual(loaded_web.free_guilds, {LISTED})
+        self.assertNotIn(str(LISTED), repr(loaded_web))
+        with self.assertRaises(ConfigError):
+            load_web_settings({**web_env, "DMBOT_FREE_GUILDS": "x"})
+
+    def test_the_ids_never_appear_in_a_log_line(self) -> None:
+        with self.assertLogs("dmbot.entitlements", level=logging.INFO) as logged:
+            entitlements.configure_free_guilds({LISTED, OTHER})
+        text = " ".join(logged.output)
+        self.assertIn("2 ids", text)
+        self.assertNotIn(str(LISTED), text)
+        self.assertNotIn(str(OTHER), text)
+
+    def test_the_plain_rule_gives_free_access_for_a_listed_server_only(self) -> None:
+        entitlements.configure_free_guilds({LISTED})
+        here = access_for(DM, None, None, NOW, guild_id=LISTED)
+        self.assertEqual((here.kind, here.plan_name, here.hours_cap), ("free", FREE_ACCESS, None))
+        self.assertTrue(here.works)
+        self.assertEqual(access_for(DM, None, None, NOW, guild_id=OTHER).kind, "none")
+        self.assertEqual(access_for(DM, None, None, NOW).kind, "none")  # no server named
+
+
+class TheGates(DatabaseTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.addCleanup(entitlements.configure_free_guilds, ())
+        entitlements.configure_free_guilds({LISTED})
+        self.campaigns = CampaignStore(self.db)
+
+    async def test_a_dm_with_no_plan_passes_every_gate_in_a_listed_server(self) -> None:
+        access = await usage.access_of(self.db, LISTED, DM, NOW)
+        self.assertEqual(access.kind, "free")
+        start = await usage.check_start(self.db, LISTED, DM, NOW)
+        self.assertEqual(start.verdict, "ok")
+        room = await usage.campaign_room(self.db, LISTED, DM, NOW)
+        self.assertEqual((room.works, room.cap), (True, None))
+        standing = await usage.retention_standing(self.db, LISTED, DM, NOW)
+        self.assertTrue(standing.backups)
+
+    async def test_an_unlisted_server_is_unchanged(self) -> None:
+        access = await usage.access_of(self.db, OTHER, DM, NOW)
+        self.assertEqual(access.kind, "none")
+        self.assertEqual((await usage.check_start(self.db, OTHER, DM, NOW)).verdict, "no_plan")
+
+    async def test_the_account_page_read_knows_the_server_when_it_is_named(self) -> None:
+        _plan, access = await entitlements.plan_and_access(self.db, FRIEND, NOW, guild_id=LISTED)
+        self.assertEqual(access.kind, "free")
+        _plan, plain = await entitlements.plan_and_access(self.db, FRIEND, NOW)
+        self.assertEqual(plain.kind, "none")
+
+    async def test_the_sample_runs_paid_check_accepts_a_listed_server(self) -> None:
+        from dmbot.devtools.sample_run import steps
+        from dmbot.devtools.sample_run.plan import SampleError
+
+        await steps.require_paid(self.db, DM, NOW, guild_id=LISTED)
+        with self.assertRaises(SampleError):
+            await steps.require_paid(self.db, DM, NOW, guild_id=OTHER)
+        with self.assertRaises(SampleError):
+            await steps.require_paid(self.db, DM, NOW)
+
+
+if __name__ == "__main__":
+    unittest.main()

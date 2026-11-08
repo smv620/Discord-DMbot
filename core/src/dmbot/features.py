@@ -275,6 +275,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
+    "free_guilds": "the owner's own test server: never listed",
     "elevenlabs_speech_model": "which voice model, a choice",
     "voyage_embed_model": "which meaning-search model, a choice",
     "voyage_rerank_model": "which meaning-search ranking model, a choice",

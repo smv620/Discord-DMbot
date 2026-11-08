@@ -161,6 +161,7 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     entitlements.configure_free_users(settings.free_users)  # #771
+    entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     # Account emails (sign-in links, #1231); nothing is sent until SMTP is set up in .env.
     mailer = (
         mail.Mailer(
