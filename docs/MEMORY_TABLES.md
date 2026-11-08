@@ -32,6 +32,8 @@ Count: 24 tables. The migrations create 24 distinct `memory_*` tables (`grep -ho
 - `memory_perspectives`
 - `memory_predicates`
 - `memory_report_runs`
+- `memory_role_codes`
+- `memory_roles`
 - `memory_rule_links`
 - `memory_types`
 - `memory_vectors`
@@ -509,7 +511,7 @@ These are for the lead to decide. The page does not pick a side.
 | `seq` | bigint | no | generated | Order of the assessments; the highest for an entry is current. |
 | `entity_id` | text | no |  | The character assessed (a live, non-merged character; a merged name counts for the one that stayed). |
 | `rank` | smallint | no |  | 0 background, 1 minor, 2 recurring, 3 significant, 4 major, 5 player character (importance_rank.py). Never read below the floor. |
-| `basis` | text | no |  | A reason code from a fixed list (importance_rank.py `BASES`); never a word of the story. |
+| `reason` | text | no |  | Why the rank changed: `reading`, `dm_corrected`, `revealed`, `demoted` or `rule` (importance_rank.py `REASONS`; migration 0388 read the old `basis` codes as `reading`, and `corrected` as `dm_corrected`). What the entry IS in the story is its roles (`memory_roles`). |
 | `source` | text | no |  | `plotbot` (its reading of a session) or `rule`. |
 | `session_started_at` | bigint | yes |  | The session the assessment came from. |
 | `lines` | integer[] | no | `{}` | At most 20 line numbers of that session. Numbers only, no words. |
@@ -521,6 +523,55 @@ Internal: never shown to a player, a card or a recap (#3172).
 
 - `campaign_id, guild_id` references `campaigns`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
 - `guild_id, campaign_id, entity_id` references `memory_entities`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+
+## `memory_role_codes`
+
+**Key** (after `guild_id`, `campaign_id`): `code`.
+
+**Logged for Undo:** no. Carried in the `memory_roles` backup section (`memory/role_backup.py`): seeded codes by code and label, added ones in full.
+
+| column | type | null? | default | meaning |
+|---|---|---|---|---|
+| `code` | text | no |  | The role, lowercase words joined by underscores, at most four and 32 characters. |
+| `label` | text | no |  | The role in plain words, at most 60 characters. |
+| `description` | text | no | `''` | An added role's description (what the embedding match reads). Empty for a seeded role: its words live in code (`memory/roles.py` `SEEDED_ROLES`). |
+| `examples` | text[] | no | `{}` | An added role's examples, three to six. |
+| `not_this` | text | no | `''` | The role it is easily confused with. Never embedded. |
+| `source` | text | no |  | `seeded` (the owner's list, written for a campaign before its first role) or `reading` (added by PlotBot's reading; at most 40 per campaign). |
+| `created_at` | bigint | no |  | When it was written. |
+| `made_by_commit` | text | yes |  | The build that wrote it (#3739). |
+
+Per campaign, so a role a campaign's reading adds never crosses campaigns (#3172). DM only.
+
+**Foreign keys:**
+
+- `campaign_id, guild_id` references `campaigns`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+
+## `memory_roles`
+
+**Key** (after `guild_id`, `campaign_id`): `id`. One open row per entry and role (`memory_roles_open`).
+
+**Logged for Undo:** no (append-only: ending a role sets `ended_at`). Carried in the `memory_roles` backup section, without line numbers.
+
+| column | type | null? | default | meaning |
+|---|---|---|---|---|
+| `id` | text | no |  | 32 hex characters. |
+| `entity_id` | text | no |  | The entry that holds the role (any kind but the table's people). |
+| `role` | text | no |  | A code of the campaign's `memory_role_codes`. Never `commoner`: an entry with no role reads as one. |
+| `reason` | text | no |  | `reading`, `dm_corrected`, `revealed` or `rule`. |
+| `session_started_at` | bigint | yes |  | The session that showed it. |
+| `lines` | integer[] | no | `{}` | At most 20 line numbers of that session. Numbers only, no words. |
+| `recorded_at` | bigint | no |  | When it was written. |
+| `ended_at` | bigint | yes |  | When the story showed it no longer holds; the row stays as history. |
+| `made_by_commit` | text | yes |  | The build that wrote it (#3739). |
+
+Only the roles no connection shows (a hidden villain, a god, a plot artifact); a role a connection shows (a mentor of a player character) is worked out on read and never stored. DM only, like the rank, and never adds to it (#3172).
+
+**Foreign keys:**
+
+- `campaign_id, guild_id` references `campaigns`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+- `guild_id, campaign_id, entity_id` references `memory_entities`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
+- `guild_id, campaign_id, role` references `memory_role_codes`; ON DELETE CASCADE: yes; ON UPDATE CASCADE: yes.
 
 ## `memory_knowers`
 

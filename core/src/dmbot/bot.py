@@ -147,6 +147,7 @@ from dmbot.dm_screen import (
     peek_view,
     private_note,
     rules_cards,
+    said_as_hears,
     secret_posts,
     set_suggestion,
     set_update,
@@ -343,6 +344,7 @@ from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
+from dmbot.memory.role_backup import RolesSection
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -1016,6 +1018,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.speaker_removals = (
             speaker_removal.SpeakerRemovals(recaps.db) if recaps is not None else None
         )
+        # 🔊 Hear it on the website's Names page (#3807): a name said in the narrator's voice.
+        self.said_as_hears = said_as_hears.HearStore(recaps.db) if recaps is not None else None
+        self._hear_cache = said_as_hears.HearCache()
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -11921,6 +11926,45 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception as exc:
                 log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
 
+    def narrator(self) -> ElevenLabs | None:
+        """A voice client for the website's Hear it, with the recaps' voice and speech model; None
+        when narration is not set up here. It shares the recap audio's one connection."""
+        settings = self.settings
+        if not settings.recap_audio_on:
+            return None
+        if self._eleven_http is None:
+            self._eleven_http = HttpTransport(settings.elevenlabs_key)
+        return ElevenLabs(
+            self._eleven_http,
+            voice_id=settings.elevenlabs_voice_id,
+            speech_model=settings.elevenlabs_speech_model,
+        )
+
+    async def plan_allows_narration(self, guild_id: int, campaign: Campaign) -> bool:
+        return await self.plan_allows("recap_audio", guild_id, campaign, fail_open=False)
+
+    async def run_said_as_hears(self) -> None:
+        """Answer the presses of 🔊 Hear it from the website (#3807), a few a round per server.
+        The words are never logged."""
+        store = self.said_as_hears
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            try:  # one server's trouble must not starve the others
+                for _ in range(said_as_hears.PER_ROUND):
+                    if self._closing:
+                        return
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                        if not await said_as_hears.run_one(
+                            self, store, self._hear_cache, guild.id, item
+                        ):
+                            break
+            except Exception as exc:
+                log.warning("The Hear it presses of a server failed: %s", type(exc).__name__)
+
     async def run_speaker_removals(self) -> None:
         """Carry out the removals a DM asked for on the website (#3305): one speaker's lines from
         one campaign, nobody else's and no other campaign's. Only servers the bot is in now.
@@ -14128,6 +14172,7 @@ def register_backup_sections(
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
+    campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)

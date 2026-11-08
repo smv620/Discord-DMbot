@@ -192,3 +192,92 @@ class ThroughTheReader(unittest.TestCase):
         (got,) = bg.read_connections(reply, piece, dropped=lost)
         self.assertEqual((got.how, got.words), ("knows", "hostile"))
         self.assertEqual(lost["kind_contract_against"], 1)
+
+
+# The sample lore's sentences for carrying, owning and finding (#3619): lines 42, 21, 90 and 85.
+FIGURINE = (
+    "He carries a unique wolf figurine inlaid with black gemstones, etched with Sylvan runes of "
+    "conjuration."
+)
+TOME = "He grabbed his master's locked azure tome and escaped via an emergency teleportation rune"
+SOLD = "Claude sold a wolf figurine etched with conjuration runes to Belleros for 75 gold"
+VESSEL = "they bypassed the first ship and boarded Fizzlebomb's vessel, the Aurora's Wind"
+CARRIES = "Claude Ambere carries a unique wolf figurine"  # (the reader needs both names said)
+FINDS = "Claude finds the heart of chardalyn hidden under the bucket lift"
+
+
+class CarryingIsNotOwning(unittest.TestCase):
+    def test_line_42_carries_with_no_belonging_word_is_carries(self) -> None:
+        got, lost = run(Connection("Claude Ambere", "owns", "wolf figurine", FIGURINE))
+        assert got is not None
+        self.assertEqual((got.a, got.how, got.b), ("Claude Ambere", "carries", "wolf figurine"))
+        self.assertEqual(lost["kind_carried"], 1)
+
+    def test_line_21_a_possessive_beside_the_carry_word_leaves_the_ai_s_reading(self) -> None:
+        made = Connection("Cerric Vanya'elen", "owns", "azure tome", TOME)
+        self.assertEqual(run(made), (made, Counter()))  # ("his", "master's": belonging words; the
+        # check cannot tell whose thing a possessive names, so it leaves the line alone)
+
+    def test_his_figurine_which_he_carries_stays_owns(self) -> None:
+        made = Connection("Claude", "owns", "wolf figurine", "his wolf figurine, which he carries")
+        self.assertEqual(run(made)[0], made)
+
+    def test_line_90_no_carry_word_stays_owns(self) -> None:
+        for made in (
+            Connection("Belleros Stormgrace", "owns", "wolf figurine", SOLD),
+            Connection("Fizzlebomb", "owns", "Aurora's Wind", VESSEL),
+        ):
+            self.assertEqual(run(made)[0], made, made.quote)
+
+    def test_every_belonging_word_keeps_owns(self) -> None:
+        for quote in (
+            "Mara carries the lantern that belongs to her",
+            "Mara bought the lantern and carries it",
+            "Mara owns and carries the lantern",
+            "Mara wears their lantern",
+            "Mara carries the brothers' lantern",
+        ):
+            made = Connection("Mara", "owns", "lantern", quote)
+            self.assertEqual(run(made)[0], made, quote)
+
+    def test_worn_wore_and_carried_out_are_no_carrying(self) -> None:
+        for quote in (
+            "Mara keeps a well-worn map",
+            "the years wore on and Mara kept the map",
+            "Mara carried out the theft of the map",
+        ):
+            made = Connection("Mara", "owns", "map", quote)
+            self.assertEqual(run(made)[0], made, quote)
+        got, _ = run(Connection("Mara", "owns", "spear", "Mara wields a chardalyn spear"))
+        assert got is not None
+        self.assertEqual(got.how, "carries")
+
+    def test_only_owns_is_turned(self) -> None:
+        made = Connection("Mara", "knows", "Pell", "Mara carries Pell across the river")
+        self.assertEqual(run(made)[0], made)
+
+
+class TheReaderOffersCarryingAndFinding(unittest.TestCase):
+    def test_carries_and_found_are_offered_and_read(self) -> None:
+        self.assertIn("carries", bg.OFFERED_WORDS)
+        self.assertIn("found", bg.OFFERED_WORDS)
+        reply = json.dumps({"connections": [
+            {"a": "Claude Ambere", "how": "carries", "b": "wolf figurine", "quote": CARRIES},
+            {"a": "Claude", "how": "found", "b": "heart of chardalyn", "quote": FINDS},
+        ]})  # fmt: skip
+        carried, found = bg.read_connections(reply, CARRIES + ". " + FINDS + ".")
+        self.assertEqual(carried.how, "carries")
+        self.assertEqual((found.how, found.words), (FALLBACK_PREDICATE, "found"))  # (a past fact)
+
+    def test_both_lore_passes_name_them(self) -> None:
+        from dmbot.memory import lore_read
+
+        first, second = lore_read.read_instructions(), lore_read.shape_instructions()
+        for text in (first, second):
+            self.assertIn("carries", text)
+            self.assertIn("found = " if text is second else "found (", text)
+        # (one line is the default: both only when the text says both)
+        self.assertIn("write owns and carries for one pair only when the text says both", first)
+        self.assertIn(
+            "write two lines, one owns and one carries, only when the text says both", second
+        )

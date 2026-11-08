@@ -74,6 +74,8 @@ CONNECTIONS = {
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
+    # (who has an item with them now, as the story graph keeps it apart from owning, #3619)
+    "carries": "carries",
     "works for": "serves",
     "knows": "knows",
     "sworn to": "sworn_to",  # an oath, vow, pact or fealty
@@ -104,6 +106,8 @@ LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
 LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
 LORE_WORDS = {
     "worships": "worships",
+    # (a past fact, "a found b": never a holding, so it is no `owns` or `carries`, #3619)
+    "found": "found",
 }
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
