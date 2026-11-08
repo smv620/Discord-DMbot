@@ -20,9 +20,12 @@ in the quote changes nothing:
   Blue Clam" is `owns` (when no word for leading is there).
 - **Carrying is not owning** (#3619). An `owns` whose quote has a carry word ("He carries a unique
   wolf figurine") and no word of belonging (his, her, their, belongs, bought, owns, a possessive
-  such as "his master's") is `carries`, who has the item with them now. With any belonging word
+  such as "Fizzlebomb's") is `carries`, who has the item with them now. With any belonging word
   it stays `owns`: "his wolf figurine, which he carries" says both, and the reader writes both
-  lines itself when the text says both.
+  lines itself when the text says both. The check leans to `owns` on purpose: any "'s" counts
+  ("Aurora's Wind", "he's carrying"), and it can't tell whose thing a possessive names ("his
+  master's tome" stays as the AI read it). A `carries` whose ends can't carry (a group, a pet) is
+  stored as `owns` (`name_background.fitted`).
 - **Knowing a fact is not knowing a person.** "The Brotherhood knows who you are" is no `knows`
   between the Brotherhood and Danneth, the other name in that note. Dropped only when every "know"
   in the quote is followed by a fact word and what is known holds neither name nor a pronoun that
@@ -62,8 +65,11 @@ SERVES_LABEL = re.compile(
 )
 OWNER_OF = r"\b(?:owner|proprietor)\s+(?:and\s+\w+\s+)?of\s+(?:the\s+)?"
 LEADER = re.compile(r"\b(?:lead\w*|captain|chief|head|commander|boss|rules?|ruler)\b", re.I)
+# (not "wore" or "worn", which are past or "well-worn", nor "carried out", which is doing a deed)
 CARRY = re.compile(
-    r"\b(?:carr(?:y|ies|ied|ying)|wears?|wearing|wore|worn|grab(?:s|bed|bing)?)\b", re.I
+    r"\b(?:carr(?:y|ies|ied|ying)(?!\s+out\b)|wears?|wearing|wields?|wielding|wielded|"
+    r"grab(?:s|bed|bing)?)\b",
+    re.I,
 )
 BELONGING = re.compile(
     r"\b(?:his|her|hers|their|theirs|its|my|your|our|belong\w*|bought|buys?|buying|purchas\w*|"

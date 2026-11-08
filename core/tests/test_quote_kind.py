@@ -213,15 +213,16 @@ class CarryingIsNotOwning(unittest.TestCase):
         self.assertEqual((got.a, got.how, got.b), ("Claude Ambere", "carries", "wolf figurine"))
         self.assertEqual(lost["kind_carried"], 1)
 
-    def test_line_21_grabbed_his_master_s_tome_stays_owns(self) -> None:
+    def test_line_21_a_possessive_beside_the_carry_word_leaves_the_ai_s_reading(self) -> None:
         made = Connection("Cerric Vanya'elen", "owns", "azure tome", TOME)
-        self.assertEqual(run(made), (made, Counter()))  # ("his", "master's": a belonging word)
+        self.assertEqual(run(made), (made, Counter()))  # ("his", "master's": belonging words; the
+        # check cannot tell whose thing a possessive names, so it leaves the line alone)
 
     def test_his_figurine_which_he_carries_stays_owns(self) -> None:
         made = Connection("Claude", "owns", "wolf figurine", "his wolf figurine, which he carries")
         self.assertEqual(run(made)[0], made)
 
-    def test_line_90_a_sale_or_a_possessive_with_no_carry_word_stays_owns(self) -> None:
+    def test_line_90_no_carry_word_stays_owns(self) -> None:
         for made in (
             Connection("Belleros Stormgrace", "owns", "wolf figurine", SOLD),
             Connection("Fizzlebomb", "owns", "Aurora's Wind", VESSEL),
@@ -238,6 +239,18 @@ class CarryingIsNotOwning(unittest.TestCase):
         ):
             made = Connection("Mara", "owns", "lantern", quote)
             self.assertEqual(run(made)[0], made, quote)
+
+    def test_worn_wore_and_carried_out_are_no_carrying(self) -> None:
+        for quote in (
+            "Mara keeps a well-worn map",
+            "the years wore on and Mara kept the map",
+            "Mara carried out the theft of the map",
+        ):
+            made = Connection("Mara", "owns", "map", quote)
+            self.assertEqual(run(made)[0], made, quote)
+        got, _ = run(Connection("Mara", "owns", "spear", "Mara wields a chardalyn spear"))
+        assert got is not None
+        self.assertEqual(got.how, "carries")
 
     def test_only_owns_is_turned(self) -> None:
         made = Connection("Mara", "knows", "Pell", "Mara carries Pell across the river")
@@ -265,4 +278,6 @@ class TheReaderOffersCarryingAndFinding(unittest.TestCase):
             self.assertIn("found = " if text is second else "found (", text)
         # (one line is the default: both only when the text says both)
         self.assertIn("write owns and carries for one pair only when the text says both", first)
-        self.assertIn("one of the two, unless the text says both", second)
+        self.assertIn(
+            "write two lines, one owns and one carries, only when the text says both", second
+        )

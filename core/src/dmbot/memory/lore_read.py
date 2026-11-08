@@ -378,8 +378,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; an item is only ever kept in a "
         'place: say "is kept in" or "was kept in"; owns = a owns b (b is a\'s: his or her, '
         "bought, belongs to, a's vessel); carries = a has the item b with them now (carries, "
-        "wears, keeps in a pack, grabbed and fled with); one of the two, unless the text says "
-        "both; found = a found b (discovered, came upon, dug up: a past event, not owning); "
+        "wears, keeps in a pack, grabbed and fled with); write two lines, one owns and one "
+        "carries, only when the text says both; found = a found b (discovered, came upon, dug "
+        "up: a past event, not owning); "
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty; the feeling the text shows: an argument, a "

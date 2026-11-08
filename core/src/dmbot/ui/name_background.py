@@ -1558,6 +1558,14 @@ async def queue_links(
             return c.how
         if c.how == "member_of" and a_type == "place" and b_type == "place":
             return "located_in"
+        owns = onto.predicates.get("owns")
+        if (
+            c.how == "carries"
+            and owns is not None
+            and onto.is_any(a_type, owns.subject_types)
+            and onto.is_any(b_type, owns.object_types)
+        ):
+            return "owns"  # (only a character carries an item: a group's or a pet is owned, #3619)
         return None
 
     # (a kept connection may name an end by another spelling than the one the read listed: both

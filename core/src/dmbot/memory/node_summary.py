@@ -161,6 +161,7 @@ _PHRASES: dict[str, tuple[str, str]] = {
     "sworn_to": ("sworn to them", "sworn to them"),
     "member_of": ("in their group", "their group"),
     "owns": ("owned by them", "owns it"),
+    "carries": ("carried by them", "carries it"),  # (the readers offer it since #3619)
     "ally_of": ("allied with them", "allied with them"),
     "enemy_of": ("an enemy of theirs", "an enemy of theirs"),
 }
