@@ -37,6 +37,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Share a recap; remake a recap | recap page | built, switched off | `RECAP_SHARE_LIVE`, `RECAP_REMAKE_LIVE` |
 | Fix a name's words in a recap; the narrator's way to say a name (type it, suggest it, say it) | recap page | built, switched off | `RECAP_NAMES_LIVE`, `RECAP_FIX_LIVE`, `RECAP_VOICE_LIVE` (🎤 waits for the bot, #3828; server `SAID_AS_VOICE`) |
 | Hear a name in the recap narrator's voice (🔊 Hear it beside the "said as" box; the bot makes the clip, the browser's voice reads it when narration is off) | Names page, names to check | built, switched off | `HEAR_NARRATOR_LIVE` (#3807; core #3817) |
+| "Players know:" on a suggested name before the DM confirms it (the line a shared lore upload filled in), with a way to change it | recap page, names to check | built, switched off | `PLAYERS_LINE_LIVE` (#3833; Discord's card is #3838) |
 | After-session report, session notes, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `SESSION_NOTES_LIVE`, `PRESENT_PER_SCENE_LIVE` |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
