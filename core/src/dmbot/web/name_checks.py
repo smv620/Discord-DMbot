@@ -20,7 +20,7 @@ from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.recaps.notify import job_ref
-from dmbot.web import name_groups, recaps, scenes
+from dmbot.web import name_groups, players_lines, recaps, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -102,6 +102,8 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
             await _with_groups(conn, gid, cid, card)
         # The scene kept for each waiting name (#3644): the DM's alone, through the DM-only door.
         await scenes.attach(conn, gid, cid, waiting)
+        # The players' line a shared lore upload filled in (#3833): the DM's alone, as above.
+        await players_lines.attach(conn, gid, cid, waiting)
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
 
 

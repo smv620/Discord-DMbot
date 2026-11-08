@@ -51,6 +51,19 @@ async def dmbot_id(db: Database, user_id: int) -> str | None:
     return None if row is None else str(row["dmbot_id"])
 
 
+async def account_of(db: Database, discord_id: int) -> int | None:
+    """The DMbot account a Discord ID belongs to, as the account's number, or None (#2533).
+
+    One Discord ID is its own account's number while it is the account's first ID and still in
+    use; an added Discord ID gives the account it was added to; a first ID the account took off
+    itself, and an ID nobody has used, give None. This is the only place that maps a Discord ID
+    to an account: no other code decides whose Discord ID is whose."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute("SELECT dmbot_account_of(%s) AS a", (int(discord_id),))
+        row = await cur.fetchone()
+    return None if row is None or row["a"] is None else int(row["a"])
+
+
 async def user_of_dmbot_id(db: Database, dmbot_id: str) -> int | None:
     """The Discord ID that holds this DMbot ID now (it changes when the account moves)."""
     async with db.unscoped() as conn:
