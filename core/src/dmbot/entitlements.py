@@ -283,9 +283,14 @@ def access_for(
     """The rule, pure: free list (the person, or the server the campaign is in, #3788), then an
     active grant, then the paid plan; a grant and a paid plan together give the larger of each
     cap."""
-    if user_id in _free_users or (guild_id is not None and guild_id in _free_guilds):
+    if _is_free(user_id, guild_id):
         return free_access(plan, now)
     return access_without_free_list(plan, grant, now)
+
+
+def _is_free(user_id: int, guild_id: int | None) -> bool:
+    """On the free list: the person, or the server the campaign is in (#771, #3788)."""
+    return user_id in _free_users or (guild_id is not None and guild_id in _free_guilds)
 
 
 def free_access(plan: Entitlement | None, now: int) -> Access:
@@ -354,7 +359,7 @@ async def plan_grant_access(
 ) -> tuple[Entitlement | None, Grant | None, Access]:
     """The paid plan, the grant and what the person may do, from one read (the account page;
     the grant's start decides which month its hours are counted in)."""
-    free = user_id in _free_users or (guild_id is not None and guild_id in _free_guilds)
+    free = _is_free(user_id, guild_id)
     async with db.user(user_id) as conn:
         plan = await _read_plan(conn, user_id)
         grant = None if free else await _read_grant(conn, user_id)

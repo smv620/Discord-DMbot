@@ -90,6 +90,18 @@ class TheGates(DatabaseTest):
         self.assertEqual(access.kind, "none")
         self.assertEqual((await usage.check_start(self.db, OTHER, DM, NOW)).verdict, "no_plan")
 
+    async def test_a_connection_with_no_server_or_another_one_never_gets_it(self) -> None:
+        """Free access follows the transaction's own server and nothing else (#3788)."""
+        entitlements.configure_free_guilds({LISTED})
+        async with self.db.user(DM) as conn:  # no server set at all
+            self.assertEqual((await entitlements.effective(conn, DM, NOW)).kind, "none")
+        async with self.db.meter(OTHER, DM) as conn:  # another server, while only LISTED is
+            self.assertEqual((await entitlements.effective(conn, DM, NOW)).kind, "none")
+        async with self.db.meter(LISTED, DM) as conn:
+            self.assertEqual((await entitlements.effective(conn, DM, NOW)).kind, "free")
+            await conn.execute("SELECT set_config('dmbot.guild_id', '', true)")  # unset again
+            self.assertEqual((await entitlements.effective(conn, DM, NOW)).kind, "none")
+
     async def test_the_account_page_read_knows_the_server_when_it_is_named(self) -> None:
         _plan, access = await entitlements.plan_and_access(self.db, FRIEND, NOW, guild_id=LISTED)
         self.assertEqual(access.kind, "free")
