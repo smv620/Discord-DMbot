@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
@@ -203,15 +203,27 @@ class RoleStore:
                 written += cur.rowcount
         return written
 
-    async def end(self, guild_id: int, campaign_id: str, entity_id: str, role: str) -> bool:
+    async def end(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        role: str,
+        *,
+        also: Collection[str] = (),
+        keep_dm: bool = False,
+    ) -> bool:
         """Close the entry's open row for this role (the story showed it is no longer one: the
-        "king" with no ship). False when it held none. The row stays, as history."""
+        "king" with no ship), and any held by `also` (the names merged into it). False when none
+        was held. The row stays, as history. `keep_dm`: a role the DM set or corrected is left
+        open (a reading never ends one, Supervisor's ruling on #3172), checked in the same
+        statement, so a DM's change made while the reading ran is kept too."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE memory_roles SET ended_at = GREATEST(%s, recorded_at)"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND role = %s"
-                " AND ended_at IS NULL",
-                (int(self._now()), guild_id, campaign_id, entity_id, role),
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s) AND role = %s"
+                " AND ended_at IS NULL AND NOT (%s AND reason = 'dm_corrected')",
+                (int(self._now()), guild_id, campaign_id, [entity_id, *also], role, keep_dm),
             )
             return bool(cur.rowcount)
 

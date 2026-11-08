@@ -77,6 +77,15 @@ class TheAnswer(unittest.TestCase):
                     entry_left_out=1),
         )  # fmt: skip
 
+    def test_a_rank_the_dm_corrected_is_kept_and_its_roles_still_read(self) -> None:
+        got = ir.parse(
+            answer({"entry": 1, "rank": 1, "roles": ["god"]}, {"entry": True, "rank": 2}),
+            [item(1, "a", dm_rank=True)], CODES, cut=False,
+        )  # fmt: skip
+        assert got is not None
+        self.assertEqual([(v.rank, v.roles) for v in got.verdicts], [(None, ("god",))])
+        self.assertEqual((got.lost["rank_kept_by_dm"], got.lost["unknown_entry"]), (1, 1))
+
     def test_a_rank_of_five_or_a_bad_reason_is_refused_never_coerced(self) -> None:
         items = [item(1, "a"), item(2, "b")]
         got = ir.parse(
@@ -142,12 +151,18 @@ class TheStep(DatabaseTest):
         async def count() -> None:
             calls.append(1)
 
+        renewed: list[int] = []
+
+        async def renew() -> None:
+            renewed.append(1)
+
         report = await step.run(
-            ai, self.db, items, CODES, guild_id=self.g, campaign_id=self.c,
+            ai, self.db, items, CODES, {}, guild_id=self.g, campaign_id=self.c,
             session_started_at=100, consenting=self.consenting, max_calls=max_calls,
-            count_call=count,
+            count_call=count, renew=renew,
         )  # fmt: skip
         self.assertEqual(len(calls), report.calls)  # (every call counted before it is made)
+        self.assertEqual(len(renewed), report.calls)  # (and the claim renewed before each)
         return report
 
     async def test_ranks_and_roles_are_written_and_the_dm_s_role_is_never_ended(self) -> None:
@@ -198,6 +213,55 @@ class TheStep(DatabaseTest):
                               [item(1, self.vex, speaker_ids=(5,))])  # fmt: skip
         self.assertEqual((again.ranked, again.dropped_for_consent), (0, 1))
 
+    async def test_the_dm_s_role_stays_even_when_the_reading_was_not_told(self) -> None:
+        roles = RoleStore(self.db)
+        await roles.add(self.g, self.c, [NewRole(self.hara, "spy", "dm_corrected")], Counter())
+        items = [item(1, self.hara, roles=("spy",))]  # (dm_roles not passed: the store holds it)
+        report = await self.go(FakeAI(Reply(answer({"entry": 1, "ended_roles": ["spy"]}), False)),
+                               items)  # fmt: skip
+        self.assertEqual(report.roles_ended, 0)
+        self.assertEqual([r.role for r in await roles.held(self.g, self.c)], ["spy"])
+
+    async def test_an_uncounted_call_is_never_made(self) -> None:
+        ai = FakeAI(Reply(answer({"entry": 1, "rank": 3}), False))
+
+        async def broken() -> None:
+            raise RuntimeError("no budget")
+
+        report = await step.run(
+            ai, self.db, [item(1, self.vex)], CODES, {}, guild_id=self.g, campaign_id=self.c,
+            session_started_at=100, consenting=self.consenting, max_calls=5, count_call=broken,
+        )  # fmt: skip
+        self.assertEqual((report.calls, report.failed, ai.sent), (0, 1, []))
+
+    async def test_gather_reads_the_dm_s_rank_and_roles_across_a_merge(self) -> None:
+        twin = await self.entry("Hara the Old")
+        await RoleStore(self.db).add(
+            self.g, self.c, [NewRole(twin, "mentor", "dm_corrected")], Counter()
+        )
+        from dmbot.memory.importance_rank import Assessment
+
+        await ImportanceStore(self.db).add(self.g, self.c, [Assessment(twin, 4, "dm_corrected")])
+        await self.memory.merge(self.g, self.c, self.hara, twin, source=DM, dm_said_same=True)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
+                " speaker_id, times) VALUES (%s, %s, %s, 100, 5, 1)",
+                (self.g, self.c, self.hara),
+            )
+
+        async def no_mentions(_: str) -> list[tuple[str, int | None]]:
+            return []
+
+        from dmbot.transcript.store import TranscriptStore
+
+        items, _codes, _labels = await step.gather(
+            self.db, TranscriptStore(self.db), guild_id=self.g, campaign_id=self.c,
+            session_id="s", session_started_at=100, agreed={5}, mentions=no_mentions,
+        )  # fmt: skip
+        (hara,) = items
+        self.assertEqual((hara.dm_rank, hara.dm_roles, hara.group), (True, ("mentor",), (twin,)))
+
     async def test_gather_takes_what_the_session_touched_busiest_first(self) -> None:
         quiet = await self.entry("Quiet")
         pc = await self.memory.add_entity(
@@ -221,7 +285,7 @@ class TheStep(DatabaseTest):
 
         from dmbot.transcript.store import TranscriptStore
 
-        items, codes = await step.gather(
+        items, codes, _labels = await step.gather(
             self.db, TranscriptStore(self.db), guild_id=self.g, campaign_id=self.c,
             session_id="s", session_started_at=100, agreed={5}, mentions=no_mentions,
         )  # fmt: skip

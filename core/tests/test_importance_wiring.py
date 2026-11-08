@@ -46,7 +46,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
     async def test_it_asks_inside_the_extractor_s_limit_with_who_is_recorded(self) -> None:
         me = self.fake()
         items = [ir.Item(1, "e" * 32, "Vex", "character", 1)]
-        with patch.object(importance_step, "gather", AsyncMock(return_value=(items, {}))) as g, \
+        canned = AsyncMock(return_value=(items, {}, {}))
+        with patch.object(importance_step, "gather", canned) as g, \
                 patch.object(importance_step, "run", AsyncMock(
                     return_value=importance_step.Report())) as run:  # fmt: skip
             await DMBot._read_importance(me, 1, "c", "s")
@@ -54,6 +55,24 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g.await_args.kwargs["agreed"], frozenset({8}))
         self.assertEqual(g.await_args.kwargs["session_started_at"], 9)
         self.assertEqual(run.await_args.kwargs["max_calls"], 10)
+
+    async def test_no_calls_left_reads_nothing(self) -> None:
+        me = self.fake()
+        me.transcripts.extraction = AsyncMock(return_value=(0, 480))
+        with patch.object(importance_step, "gather", AsyncMock()) as gather:
+            await DMBot._read_importance(me, 1, "c", "s")
+        self.assertFalse(gather.await_count)
+
+    async def test_an_import_s_claim_is_renewed_through_the_step(self) -> None:
+        me = self.fake()
+        renew = AsyncMock()
+        items = [ir.Item(1, "e" * 32, "Vex", "character", 1)]
+        with patch.object(importance_step, "gather", AsyncMock(return_value=(items, {}, {}))), \
+                patch.object(importance_step, "run", AsyncMock(
+                    return_value=importance_step.Report())) as run:  # fmt: skip
+            await DMBot._read_importance(me, 1, "c", "s", renew=renew)
+        assert run.await_args is not None
+        self.assertIs(run.await_args.kwargs["renew"], renew)
 
     async def test_a_failure_never_escapes(self) -> None:
         me = self.fake()

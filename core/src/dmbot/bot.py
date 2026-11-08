@@ -3151,9 +3151,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The scene of each waiting question, from the lines it came from (#3596): after the
             # extractor, so the questions it made are there, and inside the same call limit.
             ("scenes", lambda: self.write_scenes(table)),
-            # How much each entry the session touched matters, and its roles (#3172): after the
-            # extractor, inside the same call limit; live wherever the extractor runs (ruled).
-            ("importance", lambda: self.write_importance(table)),
             # Who each name to check could be (#3602): after the extractor made them, inside the
             # same call limit; off unless its switch is on.
             ("who is this", lambda: self.write_who(table)),
@@ -3177,6 +3174,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("kind offer", lambda: self.offer_kind(table)),
             # Deeds the party did, noticed in the session, for the DM to record (#3175).
             ("deeds to record", lambda: self.offer_deeds(table)),
+            # How much each entry the session touched matters, and its roles (#3172): after the
+            # extractor, inside the same call limit, live wherever it runs (ruled); after the
+            # posts the DM waits for, since nothing above reads a rank.
+            ("importance", lambda: self.write_importance(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -8977,7 +8978,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         await self._read_importance(table.guild_id, table.campaign_id, table.transcript_session_id)
 
-    async def _read_importance(self, gid: int, cid: str, sid: str) -> None:
+    async def _read_importance(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        renew: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
         """PlotBot's reading of importance for one stored session (`memory.importance_step`):
         ranks and story roles for the entries it touched. Only where the story extractor runs (no
         switch of its own on collecting: the owner's ruling) and the plan allows the story;
@@ -9009,8 +9016,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     self.settings.story_extractor_max_calls_day,
                     await transcripts.extractor_calls_since(gid, cid, now - 86400),
                 )
+                if allowed <= 0:
+                    log.info("Importance: no calls left in the extractor's limit")
+                    return
                 agreed = await self.consent.consenting(gid)
-                items, codes = await importance_step.gather(
+                items, codes, labels = await importance_step.gather(
                     memory._db,
                     transcripts,
                     guild_id=gid,
@@ -9033,12 +9043,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     memory._db,
                     items,
                     codes,
+                    labels,
                     guild_id=gid,
                     campaign_id=cid,
                     session_started_at=session.started_at,
                     consenting=lambda: self.consent.consenting(gid),
                     max_calls=allowed,
                     count_call=count_call,
+                    renew=renew,
                 )
                 log.info(report.line())
             except Exception as exc:  # the type only: never fatal, never a word of the story
@@ -11564,7 +11576,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await store.set_story(gid, ready.session_id, "read", int(time.time()))
                 await self._mark_import_read(gid, ready.session_id)
                 # (an imported session is a session too: its importance, in the same limit #3172)
-                await self._read_importance(gid, ready.campaign_id, ready.session_id)
+                await self._read_importance(
+                    gid,
+                    ready.campaign_id,
+                    ready.session_id,
+                    renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
+                )
             elif outcome == "limit":
                 await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome

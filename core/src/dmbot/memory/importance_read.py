@@ -69,10 +69,12 @@ class Item:
     dm_roles: tuple[str, ...] = ()  # set or corrected by the DM: a reading never ends these
     connections: int = 0
     links: tuple[str, ...] = ()  # this session's connections, in plain words
-    notes: str = ""  # the DM's own notes about it
+    notes: str = ""  # its description: the DM's side (written by the DM, a lore read or a reader)
     quotes: tuple[str, ...] = ()
     speaker_ids: tuple[int, ...] = ()
     player: bool = False
+    dm_rank: bool = False  # the DM corrected its rank last: a reading never overwrites that
+    group: tuple[str, ...] = ()  # the names merged into it (their stored roles are its own)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +107,7 @@ def _tag(text: str) -> str:
     return text.replace("<", "‹").replace(">", "›")
 
 
-def system(added: Mapping[str, str]) -> str:
+def system(added: Mapping[str, str]) -> str:  # (added: code -> its stored label)
     """The instructions: the levels, the roles (seeded, and the campaign's own as code: label),
     the rules and the answer's shape. `added`: the campaign's own codes and their labels."""
     seeded = "\n".join(
@@ -113,7 +115,7 @@ def system(added: Mapping[str, str]) -> str:
         for r in roles.SEEDED_ROLES
         if r.code != roles.COMMONER
     )
-    own = "\n".join(f"- {code}: {label}" for code, label in sorted(added.items()))
+    own = "\n".join(f"- {code}: {_tag(label)}" for code, label in sorted(added.items()))
     return (
         "You help a Dungeon Master's tool decide how much each entry of their campaign matters to "
         "the story, so a recap picks the right details. Nobody but the DM ever sees it.\n\n"
@@ -157,7 +159,7 @@ def message(items: Sequence[Item]) -> str:
         ]
         lines += [f"this session: {_tag(link)}" for link in i.links[:LINKS_MAX]]
         if i.notes:
-            lines.append(f"DM's notes: {_tag(i.notes[:NOTES_CHARS])}")
+            lines.append(f"notes (the DM's side): {_tag(i.notes[:NOTES_CHARS])}")
         lines += [f"said: {_tag(q[:QUOTE_CHARS])}" for q in i.quotes[:QUOTES_MAX]]
         lines.append("</entry>")
         parts.append("\n".join(lines))
@@ -212,7 +214,7 @@ def parse(
     seen: set[int] = set()
     for raw in data["entries"]:
         number = raw.get("entry") if isinstance(raw, dict) else None
-        item = by_number.get(number) if isinstance(number, int) else None
+        item = by_number.get(number) if type(number) is int else None  # (a JSON true is no 1)
         if item is None or item.number in seen:
             out.lost["unknown_entry"] += 1
             continue
@@ -233,6 +235,9 @@ def parse(
         if held is None or ended is None:
             out.lost["bad_roles"] += 1
             continue
+        if rank is not None and item.dm_rank:
+            out.lost["rank_kept_by_dm"] += 1  # (its roles are still read)
+            rank = None
         good = tuple(c for c in held if c in known and c != roles.COMMONER)
         out.lost["unknown_role"] += len(held) - len(good)
         stop = tuple(c for c in ended if c in known and c not in item.dm_roles and c not in good)

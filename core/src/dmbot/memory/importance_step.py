@@ -4,7 +4,12 @@ and roles it gives.
 
 Held here, not trusted:
 - **Inside the extractor's call limit.** Each call is counted before it is made and the step
-  stops at `max_calls`; what is left is counted as left for next time, never dropped silently.
+  stops at `max_calls`; what is left is counted as not read, never dropped silently (a later
+  session's reading sees those entries again when it touches them). `renew` is awaited before
+  each call, so an import's claim stays fresh while it runs (as the extractor's does).
+- **The DM's word stays.** A rank the DM corrected last is never overwritten by a reading, and a
+  role the DM set or corrected is never ended by one (Supervisor's ruling on #3172), checked again
+  in the statement that ends a role.
 - **Consent after every wait.** Quotes come only from people recorded now (`TranscriptStore.around`
   skips the DM sidebar and table questions, and reads only them); who is recorded is asked again
   right before each call and after the answer, and an item whose quoted speaker stopped meanwhile
@@ -12,8 +17,7 @@ Held here, not trusted:
 - **Never fatal.** A failed call is counted and the other parts go on; out of funds stops the
   step; a cut or unreadable answer is asked again in two halves (down to one entry), never read as
   "nothing found" (#2596).
-- **The DM's roles stay.** A reading never ends a role the DM set or corrected (Supervisor's
-  ruling); a role a connection already shows is not stored a second time.
+- A role a connection already shows is not stored a second time.
 Counts only leave this module.
 """
 
@@ -56,7 +60,7 @@ class Report:
     roles_ended: int = 0
     codes_added: int = 0
     dropped_for_consent: int = 0
-    unsent: int = 0  # entries left for next time: the call limit, or the run stopped
+    unsent: int = 0  # entries not read this time: the call limit, or the run stopped
     stopped: str = ""
     lost: Counter[str] = field(default_factory=Counter)
 
@@ -66,7 +70,7 @@ class Report:
             f"Importance: {self.entries} entr(ies), {self.ranked} ranked, {self.roles_added} "
             f"role(s) added, {self.roles_ended} ended, {self.codes_added} new code(s), "
             f"{self.calls} call(s), {self.failed} failed, {self.split} split, "
-            f"{self.dropped_for_consent} dropped for consent, {self.unsent} left for next time"
+            f"{self.dropped_for_consent} dropped for consent, {self.unsent} not read"
             + (f", stopped: {self.stopped}" if self.stopped else "")
             + (f"; refused: {lost}" if lost else "")
         )
@@ -82,9 +86,10 @@ async def gather(
     session_started_at: int,
     agreed: Collection[int],
     mentions: Callable[[str], Awaitable[list[tuple[str, int | None]]]],
-) -> tuple[list[ir.Item], dict[str, str]]:
+) -> tuple[list[ir.Item], dict[str, str], dict[str, str]]:
     """The items for the entries this session touched (heard in it, or in a connection it
-    confirmed), busiest first, and the campaign's role codes (code -> source)."""
+    confirmed), busiest first, the campaign's role codes (code -> source) and the labels of its
+    own (code -> label)."""
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
             "SELECT id, type, name, description, role, status, merged_into FROM memory_entities"
@@ -113,10 +118,19 @@ async def gather(
         )
         stored = await cur.fetchall()
         cur = await conn.execute(
-            "SELECT code, source FROM memory_role_codes WHERE guild_id = %s AND campaign_id = %s",
+            "SELECT code, source, label FROM memory_role_codes"
+            " WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
-        codes = {str(r["code"]): str(r["source"]) for r in await cur.fetchall()}
+        code_rows = await cur.fetchall()
+        codes = {str(r["code"]): str(r["source"]) for r in code_rows}
+        labels = {str(r["code"]): str(r["label"]) for r in code_rows if r["source"] == "reading"}
+        cur = await conn.execute(
+            "SELECT DISTINCT ON (entity_id) entity_id, seq, reason FROM memory_importance"
+            " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id, seq DESC",
+            (guild_id, campaign_id),
+        )
+        newest = await cur.fetchall()
     if not codes:
         codes = {c: "seeded" for c in roles.STORED_SEEDED}  # (seeded before its first role)
     ended = roots(entities)
@@ -142,6 +156,15 @@ async def gather(
         held.setdefault(root, set()).add(str(row["role"]))
         if row["reason"] == DM_CORRECTED:
             by_dm.setdefault(root, set()).add(str(row["role"]))
+    last: dict[str, tuple[int, str]] = {}  # (each merged group's newest assessment)
+    for row in newest:
+        root = ended.get(str(row["entity_id"]))
+        if root is not None and int(row["seq"]) > last.get(root, (0, ""))[0]:
+            last[root] = (int(row["seq"]), str(row["reason"]))
+    groups: dict[str, list[str]] = {}
+    for eid, root in ended.items():
+        if root is not None and root != eid:
+            groups.setdefault(root, []).append(eid)
     touched = {ended.get(e) for e in heard} | set(session_links)
     live = [e for e in touched if e is not None and entities[e]["status"] != "merged"]
     live.sort(key=lambda e: (-len(partners.get(e, ())), entities[e]["name"], e))
@@ -169,9 +192,11 @@ async def gather(
                 len(partners.get(eid, ())), tuple(session_links.get(eid, ())),
                 str(row["description"] or ""), tuple(quotes), tuple(sorted(speakers)),
                 player=row["type"] == "character" and row["role"] == "player_character",
+                dm_rank=last.get(eid, (0, ""))[1] == DM_CORRECTED,
+                group=tuple(sorted(groups.get(eid, ()))),
             )
         )  # fmt: skip
-    return items, codes
+    return items, codes, labels
 
 
 async def run(
@@ -179,6 +204,7 @@ async def run(
     db: Database,
     items: Sequence[ir.Item],
     codes: Mapping[str, str],
+    labels: Mapping[str, str],
     *,
     guild_id: int,
     campaign_id: str,
@@ -186,13 +212,14 @@ async def run(
     consenting: Consenting,
     max_calls: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
+    renew: Callable[[], Awaitable[object]] | None = None,
     report: Report | None = None,
 ) -> Report:
     """Ask about `items` in parts and write what comes back."""
     report = report if report is not None else Report()
     report.entries += len(items)
     ranks, role_store = ImportanceStore(db), RoleStore(db)
-    added = {c: c.replace("_", " ") for c, src in codes.items() if src == "reading"}
+    added = {c: labels.get(c, c.replace("_", " ")) for c, src in codes.items() if src == "reading"}
     known = dict(codes)
     queue = [
         list(items[i : i + ir.ITEMS_PER_CALL]) for i in range(0, len(items), ir.ITEMS_PER_CALL)
@@ -222,6 +249,15 @@ async def run(
                 report.failed += 1
                 report.unsent += len(sendable)
                 continue
+        if renew is not None:
+            try:
+                await renew()
+            except Exception as exc:  # a claim that can't be kept: stop, another round goes on
+                log.warning("Importance: couldn't renew the claim (%s)", type(exc).__name__)
+                report.failed += 1
+                report.stopped = "claim lost"
+                report.unsent += len(sendable) + sum(len(p) for p in queue)
+                break
         report.calls += 1
         try:
             reply = await asyncio.wait_for(
@@ -312,9 +348,13 @@ async def _write(
             if code not in holding[v.entity_id] and code in known
         ]
         report.roles_added += await role_store.add(guild_id, campaign_id, new, report.lost)
+        groups = {i.entity_id: i.group for i in items}
         for v in verdicts:
             for code in v.ended:
-                report.roles_ended += await role_store.end(guild_id, campaign_id, v.entity_id, code)
+                report.roles_ended += await role_store.end(
+                    guild_id, campaign_id, v.entity_id, code, also=groups[v.entity_id],
+                    keep_dm=True,
+                )  # fmt: skip
     except Exception as exc:  # only the type: never a word of the answer
         log.warning("Importance: storing failed (%s)", type(exc).__name__)
         report.failed += 1
