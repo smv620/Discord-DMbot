@@ -246,7 +246,14 @@ services:
       # DMbot's public words, and only those (#3856): the site's pages, the Help page and What's
       # new. The list is fixed in code (core/src/dmbot/site_ask/sources.py, with a test) and
       # these mounts are exactly it. Never the plan, CLAUDE.md or the logs.
-      - ./web/src/pages:/app/knowledge/web/src/pages:ro
+      - ./web/src/pages/index.astro:/app/knowledge/web/src/pages/index.astro:ro
+      - ./web/src/pages/how-it-works.astro:/app/knowledge/web/src/pages/how-it-works.astro:ro
+      - ./web/src/pages/players.astro:/app/knowledge/web/src/pages/players.astro:ro
+      - ./web/src/pages/install.astro:/app/knowledge/web/src/pages/install.astro:ro
+      - ./web/src/pages/credits.astro:/app/knowledge/web/src/pages/credits.astro:ro
+      - ./web/src/pages/legal/privacy.astro:/app/knowledge/web/src/pages/legal/privacy.astro:ro
+      - ./web/src/pages/legal/terms.astro:/app/knowledge/web/src/pages/legal/terms.astro:ro
+      - ./web/src/pages/legal/refunds.astro:/app/knowledge/web/src/pages/legal/refunds.astro:ro
       - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
       - ./web/src/content/pricing.ts:/app/knowledge/web/src/content/pricing.ts:ro
       - ./web/src/content/whats-new:/app/knowledge/web/src/content/whats-new:ro

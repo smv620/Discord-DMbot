@@ -363,6 +363,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         # Behind the proxy every visitor has the proxy's address: without the header, one
         # message would use up the whole site's turn for 10 minutes.
         raise ConfigError("WEB_CLIENT_IP_HEADER must be set when GITHUB_FEEDBACK_TOKEN is.")
+    if (
+        (get("DMBOT_SITE_ASK") or "0").lower() in ("1", "true", "on")
+        and not client_ip_header
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Behind the proxy every visitor has the proxy's address: without the header, one person
+        # asking 100 questions would lock out the whole site (#3856).
+        raise ConfigError("WEB_CLIENT_IP_HEADER must be set when DMBOT_SITE_ASK is on.")
     admin_emails = tuple(
         sorted({e.strip().lower() for e in get("ADMIN_EMAILS").split(",") if e.strip()})
     )

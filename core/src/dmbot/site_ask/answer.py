@@ -22,6 +22,7 @@ from dmbot.site_ask.sources import Passage
 log = logging.getLogger(__name__)
 
 QUESTION_MAX = 300
+_NO_TAGS = str.maketrans("<>`", "   ")
 PASSAGES = 4
 FLOOR = 0.4  # a passage far weaker than the best one is noise next to it
 
@@ -76,7 +77,8 @@ def read_question(raw: object) -> str | None:
     not text or too long."""
     if not isinstance(raw, str):
         return None
-    text = " ".join(raw.split())
+    # (angle brackets and backticks go: the question is put between tags, and must not close them)
+    text = " ".join(raw.translate(_NO_TAGS).split())
     return text if 0 < len(text) <= QUESTION_MAX else None
 
 
@@ -86,6 +88,17 @@ def pick(ranker: Ranker, question: str) -> list[Chunk]:
         return []
     floor = ranked[0][0] * FLOOR
     return [chunk for score, chunk in ranked[:PASSAGES] if score >= floor]
+
+
+def without_model(ranker: Ranker, question: str) -> Answer | None:
+    """The answer when the model need not be asked (a question about someone's own data, or one
+    that shares no word with any passage); None when it must be. Such an answer costs nothing, so
+    it does not use the site's allowance."""
+    if _OWN.search(question):
+        return Answer(OWN_DATA, OWN_DATA_LINK)
+    if not pick(ranker, question):
+        return Answer(UNKNOWN, UNKNOWN_LINK)
+    return None
 
 
 async def answer(workers: Workers, ranker: Ranker, question: str) -> Answer:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
@@ -29,8 +30,8 @@ VISITOR_DAY = 200
 SITE_HOUR = 300
 HOUR = 3600
 DAY = 86400
-# A flood of made-up addresses must not fill the memory: past this many visitors in a day, a new
-# one is turned away as "day" (they have none of today's turns left to take).
+# A flood of made-up addresses must not fill the memory: past this many visitors held at once the
+# oldest is forgotten.
 MOST_VISITORS = 50_000
 CACHE_MOST = 2000  # answers kept for a day; the oldest goes first
 CACHE_SECONDS = DAY
@@ -38,8 +39,20 @@ CACHE_SECONDS = DAY
 Limit = Literal["hour", "day"]
 
 
+def whole_network(address: str) -> str:
+    """An IPv6 address as its /64 (one customer's whole range), so one person cannot be many
+    visitors by changing the end of their address; an IPv4 or unknown address as it is."""
+    if ":" not in address:
+        return address
+    try:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    except ValueError:
+        return address
+
+
 def visitor_key(secret: bytes, address: str, now: float) -> str:
     """A day's hash of the address; the same address gives another hash tomorrow."""
+    address = whole_network(address)
     day = int(now // DAY)
     key = hmac.new(secret, f"site-ask:{day}".encode(), hashlib.sha256).digest()
     return hmac.new(key, address.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -93,7 +106,10 @@ class Limits:
         count = self._visitors.get(visitor)
         if count is None:
             if len(self._visitors) >= MOST_VISITORS:
-                return "day"
+                # The oldest visitor is forgotten (their counts start again), so a flood of made-up
+                # addresses can push real ones out of memory but never locks anyone out; the
+                # site's own hour and day limits are what hold a flood back.
+                del self._visitors[next(iter(self._visitors))]
             count = self._visitors[visitor] = _Count(deque(), 0)
         while count.hour and count.hour[0] <= now - HOUR:
             count.hour.popleft()

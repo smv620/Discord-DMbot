@@ -81,7 +81,7 @@ def astro_text(source: str) -> str:
     """The words a page shows: its markup without the code, the styles, the tags and the
     `{expressions}` (which are looked up elsewhere, so what they say is read from the content
     module instead)."""
-    body = _FRONT.sub("", source, count=1)
+    body = re.sub(r"<!--.*?-->", " ", _FRONT.sub("", source, count=1), flags=re.S)
     body = _BLOCKS.sub(" ", body)
     for _ in range(4):  # nested braces: peel from the inside
         body = _BRACES.sub(" ", body)
@@ -160,6 +160,57 @@ def module_text(source: str) -> str:
     return " ".join(found)
 
 
+_FLAG = re.compile(r"^export const ([A-Z0-9_]+_LIVE)\s*=\s*(true|false)\s*;", re.M)
+_SPREAD = re.compile(r"\.\.\.\(\s*([A-Z0-9_]+_LIVE)\s*\?\s*(\w+)\s*:\s*(\[\]|\w+)\s*\)")
+
+
+def _statement_end(src: str, i: int) -> int:
+    """The index after the statement that starts at `i`: up to the `;` outside any bracket or
+    string."""
+    depth = 0
+    while i < len(src):
+        c = src[i]
+        if c in "\"'":
+            i = _skip_string(src, i)
+            continue
+        if c == "`":
+            i = _template(src, i, [])
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == ";" and depth <= 0:
+            return i + 1
+        i += 1
+    return i
+
+
+def live_only(source: str) -> str:
+    """The Help page's source without the steps of a feature that is not live. The page adds a
+    list of steps with `...(SOME_LIVE ? steps : [])`; a feature whose flag is `false` here, or is
+    not defined here (so cannot be known, and is taken as off), has its list of steps removed, so
+    the answer never describes what the page does not show."""
+    flags = {m[1]: m[2] == "true" for m in _FLAG.finditer(source)}
+    off: set[str] = set()
+    for m in _SPREAD.finditer(source):
+        flag, yes, no = m[1], m[2], m[3]
+        if flags.get(flag, False):
+            off.add(no)
+        else:
+            off.add(yes)
+    # a name used where the page shows it for sure (the other side of another spread) stays
+    for m in _SPREAD.finditer(source):
+        flag, yes, no = m[1], m[2], m[3]
+        shown = yes if flags.get(flag, False) else no
+        off.discard(shown)
+    off.discard("[]")
+    for name in off:
+        for m in list(re.finditer(rf"^(?:export )?const {name}\b", source, re.M))[::-1]:
+            source = source[: m.start()] + source[_statement_end(source, m.start()) :]
+    return source
+
+
 def split(path: str, title: str, text: str) -> list[Passage]:
     """The text in passages of at most PASSAGE_MAX characters, cut at a sentence end."""
     sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -212,7 +263,7 @@ def plans_passages(source: str) -> list[Passage]:
 
 
 def _held(source: str) -> bool:
-    return re.search(r"\bheld\s*:", source) is not None
+    return re.search(r"^\s*held\s*:", source, re.M) is not None
 
 
 def collect(root: Path) -> list[Passage]:
@@ -236,6 +287,8 @@ def collect(root: Path) -> list[Passage]:
     for relative, page, title in CONTENT_FILES:
         source = read(relative)
         if source is not None:
+            if relative.endswith("/help.ts"):
+                source = live_only(source)
             passages += split(page, title, module_text(source))
     try:
         passages += plans_passages(PLANS_FILE.read_text(encoding="utf-8"))

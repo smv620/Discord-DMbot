@@ -55,6 +55,9 @@ class SiteAsk:
         if kept is not None:
             log.info("Site ask answered from the cache")
             return Answer(*kept)
+        free = answers.without_model(self._ranker, question)
+        if free is not None:
+            return free
         over = self.limits.take_site()
         if over is not None:
             log.info("Site ask refused: site %s", over)
