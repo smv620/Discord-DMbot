@@ -95,6 +95,18 @@ describe("See as…", () => {
     expect(screen.getByText(w.playersViewNote)).toBeTruthy();
   });
 
+  it("draws every line solid while seeing as someone, and in the Players View, though the DM's Full View shows who knows each (#3809)", async () => {
+    await open();
+    const styles = () => [...document.querySelectorAll(".web-edge")].map((e) => [...e.classList].find((c) => c.startsWith("web-know-")));
+    await waitFor(() => expect(new Set(styles()).size).toBeGreaterThan(1)); // the DM's Full View: not every line is solid
+    fireEvent.click(screen.getByLabelText(w.playersView));
+    await screen.findByLabelText(w.seeAsLabel);
+    await waitFor(() => expect([...new Set(styles())]).toEqual(["web-know-all"]));
+    fireEvent.click(await screen.findByRole("button", { name: "Cerric" }));
+    await screen.findByText(w.seeAsNow("Cerric"));
+    await waitFor(() => expect([...new Set(styles())]).toEqual(["web-know-all"]));
+  });
+
   it("marks the character being seen as the current choice", async () => {
     await openPlayersView();
     fireEvent.click(await screen.findByRole("button", { name: "Cerric" }));
