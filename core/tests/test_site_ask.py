@@ -173,13 +173,25 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         for question in (
             "what happened in my campaign last session",
             "show my recaps",
-            "who is Strahd",
-            "is my plan paid",
+            "what happened in our session",
+            "my npcs",
         ):
             reply = await service(fake, Clock()).ask("a", question)
             self.assertEqual(reply.answer, OWN_DATA, question)
             self.assertEqual(reply.link, "/account")
         self.assertEqual(fake.calls, [])
+
+    async def test_the_model_can_refuse_a_question_about_someones_data_in_the_fixed_words(
+        self,
+    ) -> None:
+        reply = await service(Fake("OWNDATA"), Clock()).ask("a", "how much is the table plan")
+        self.assertEqual((reply.answer, reply.link), (OWN_DATA, "/account"))
+
+    async def test_ordinary_product_questions_are_not_taken_for_questions_about_data(self) -> None:
+        for question in ("can my players be recorded", "how much is my plan"):
+            fake = Fake()
+            await service(fake, Clock()).ask("a", question)
+            self.assertNotEqual(fake.calls, [], question)
 
     async def test_the_question_is_data_inside_tags(self) -> None:
         fake = Fake()
