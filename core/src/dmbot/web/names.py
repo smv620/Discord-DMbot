@@ -20,9 +20,9 @@ from typing import Any
 from dmbot import plan_rules
 from dmbot.ai import TierClient
 from dmbot.db import Database
-from dmbot.entitlements import plan_grant_access
 from dmbot.memory.link_words import quoted
 from dmbot.recaps.notify import parse_ref
+from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
@@ -124,18 +124,7 @@ async def suggest_said_as(
     if ai is None:
         return ""
     if enforce_plans:
-        # The owner comes from the import page's DM-only door, which answers the campaign's facts
-        # for a DM and nothing for anyone else (we already know the caller is a DM).
-        async with db.user(session.user_id, session=session.id_hash) as conn:
-            await _scoped(conn, guild_id)
-            cur = await conn.execute(
-                "SELECT dmbot_import_agreed(%s, %s, 0, NULL) AS r", (guild_id, campaign_id)
-            )
-            row = await cur.fetchone()
-        owner = ((row or {}).get("r") or {}).get("owner")
-        access = None
-        if isinstance(owner, str) and owner.isdecimal():
-            _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+        access = await owner_access(db, session, guild_id, campaign_id, now)
         if not plan_rules.can_use_ai(access):
             return ""
     name = " ".join(str(found["text"]).split())  # one line, so a name can't forge the next

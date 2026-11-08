@@ -420,8 +420,8 @@ class TheRoutes(Names):
             settings(),
             self.web,
             FakeDiscord(),
-            said_as_ai=FakeAI(cut=True),
-            clock=lambda: NOW,  # type: ignore[arg-type]
+            said_as_ai=FakeAI(cut=True),  # type: ignore[arg-type]
+            clock=lambda: NOW,
         )
         cutter = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=cut), base_url="https://web-api.internal.test"
