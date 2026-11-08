@@ -145,8 +145,11 @@ async def suggest_said_as(
     except Exception as err:
         # The type only: a provider's message may echo the request, which holds the name.
         log.warning("said-as suggestion failed: %s", type(err).__name__)
-        return ""
+        raise RecapError("server") from None  # not "no suggestion": the AI did not answer
+    if reply.cut:  # a cut answer is never read as "no suggestion" (the AI-limits rule)
+        log.warning("said-as suggestion was cut off")
+        raise RecapError("server")
     answer = unicodedata.normalize("NFC", " ".join(reply.text.split()))
-    if reply.cut or reply.refused or len(answer) > SAID_AS_MAX or not _SPELLING.fullmatch(answer):
+    if reply.refused or len(answer) > SAID_AS_MAX or not _SPELLING.fullmatch(answer):
         return ""
     return answer

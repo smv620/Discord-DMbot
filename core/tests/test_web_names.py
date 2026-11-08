@@ -288,10 +288,14 @@ class Names(Base):
         ):
             with self.subTest(bad=bad[:12]):
                 self.assertEqual(await self.suggest(FakeAI(bad)), "")
-        self.assertEqual(await self.suggest(FakeAI("Kah-zeth", cut=True)), "")
         self.assertEqual(await self.suggest(FakeAI("Kah-zeth", refused=True)), "")
-        self.assertEqual(await self.suggest(FakeAI(boom=True)), "")
         self.assertEqual(await self.suggest(FakeAI("  Ka'zeth \n")), "Ka'zeth")
+
+    async def test_a_cut_or_failed_answer_is_a_server_refusal_not_no_suggestion(self) -> None:
+        for ai in (FakeAI("Kah-zeth", cut=True), FakeAI(boom=True)):
+            with self.subTest(cut=ai.cut), self.assertRaises(RecapError) as caught:
+                await self.suggest(ai)
+            self.assertEqual(caught.exception.code, "server")
 
     async def test_no_ai_or_no_plan_calls_nothing(self) -> None:
         self.assertEqual(await self.suggest(None), "")
