@@ -149,7 +149,7 @@ match. "In Discord" says where the DM finds it today.
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |
 | Session notes; after-session report | notes and report cards | `SESSION_NOTES_LIVE` (#3027), `AFTER_SESSION_REPORT_LIVE` |
-| Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the decided pairs with Undo, and "Which wins?" after a website save; the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
+| Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the core half is built (the decided pairs, change one, clear one, own rules only; a pair with a followed set's rule is read-only there), the page is WebDev's; "Which wins?" after a save waits for the website rule editor (#3775); the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
 | Plot check (ask, answer an issue, decide a proposal) | plot cards | Plot check (`PLOT_CHECK_LIVE`) |
 | Continuity and contradictions | continuity card | missing ⚠ |
 | Threads (open plot threads) | threads card | missing ⚠ |
@@ -190,7 +190,7 @@ Written by WebDev-lead on 2026-11-07, after checking each ⚠ row of Section 2 a
 | Guide me (what to do next) | 🧭 button | no website page |
 | Continuity and contradictions | continuity card | the website has no page for them |
 | Open plot threads | threads card | the website has no page for them |
-| Rule clash (a house rule against a rule being checked) | clash card | on the way: #3697 (decided pairs now; "Which wins?" at website save) |
+| Rule clash (a house rule against a rule being checked) | clash card | on the way: #3697 (decided pairs now; "Which wins?" at website save, after the editor #3775) |
 | Rules lookup | `/dmbot rule` | also live help at the table: the owner may rule it Discord-only |
 
 ### Switched off and waiting (counted as "on the way", already filed)
