@@ -58,6 +58,14 @@ describe("the clean-up", () => {
     expect(await screen.findByText(w.showing(300, 450))).toBeTruthy();
   });
 
+  it("says plainly when DMbot gave up checking the fixes", async () => {
+    const api = mockApi("table");
+    const real = api.graphCleanup!.bind(api);
+    api.graphCleanup = async (ref) => ({ ...(await real(ref)), review: { state: "stopped" } });
+    await open("cleanup", api);
+    expect(await screen.findByText(w.reviewStopped)).toBeTruthy();
+  });
+
   it("shows the review line in counts", async () => {
     await open("cleanup");
     expect(await screen.findByText(w.reviewWaiting(12, 2))).toBeTruthy();

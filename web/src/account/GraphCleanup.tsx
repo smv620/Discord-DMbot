@@ -223,6 +223,7 @@ export default function GraphCleanup({ api, refId, onSignedOut }: { api: Account
         <>
           {view.review && view.review.state === "waiting" && <p class="small" role="status">{w.reviewWaiting(view.review.minutesLeft ?? 15, view.review.fixes ?? 0)}</p>}
           {view.review && view.review.state === "running" && <p class="small" role="status">{w.reviewRunning}</p>}
+          {view.review && view.review.state === "stopped" && <p class="small" role="status">{w.reviewStopped}</p>}
           {view.review && view.review.state === "done" && <p class="small" role="status">{w.reviewDone(view.review.missed ?? 0)}</p>}
           {view.groups.length === 0 ? (
             <p role="status">{view.noPlayerCharacter === true ? w.noPlayerCharacter : view.noPlayerCharacter === false ? w.nothing : w.nothingListed}</p>

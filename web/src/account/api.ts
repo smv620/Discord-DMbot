@@ -1724,7 +1724,8 @@ export interface CleanupGroup {
 /** The 15-minute check of the DM's fixes (#3741): counts only, and only when the campaign shares its story to improve DMbot.
  * Not sent by the door yet (core's #3741 PR); missing means "show nothing". */
 export interface CleanupReview {
-  state: "off" | "idle" | "waiting" | "running" | "done";
+  /** "stopped": the last check gave up after three tries (#3789). */
+  state: "off" | "idle" | "waiting" | "running" | "done" | "stopped";
   /** While `waiting`: whole minutes until DMbot looks, and how many fixes it will look at. */
   minutesLeft?: number;
   fixes?: number;
