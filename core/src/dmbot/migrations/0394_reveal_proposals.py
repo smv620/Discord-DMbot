@@ -47,10 +47,17 @@ SQL = r"""
         -- (a check names its check and no teller; a tell names its teller and no check)
         CHECK ((how = 'check') = (check_name <> '' AND teller_id IS NULL)),
         CHECK ((how = 'tell') = (teller_id IS NOT NULL AND check_name = '')),
-        CHECK (teller_id IS NULL OR teller_id <> character_id)
+        CHECK (teller_id IS NULL OR teller_id <> character_id),
+        -- (a waiting row cites someone, so the consent check can always reach it)
+        CHECK (status = 'kept' OR cardinality(speaker_ids) >= 1)
     );
     CREATE INDEX memory_reveal_proposals_by_status
         ON memory_reveal_proposals (guild_id, campaign_id, status);
+    -- One proposal for a (character, statement) in a session, even if two runs overlap; also the
+    -- index the store's "already proposed?" read uses. (Sessions with no start share one scope.)
+    CREATE UNIQUE INDEX memory_reveal_proposals_once
+        ON memory_reveal_proposals (guild_id, campaign_id, session_started_at, character_id,
+                                    statement_kind, statement_id) NULLS NOT DISTINCT;
     CREATE TRIGGER memory_reveal_proposals_stamp_commit
         BEFORE INSERT OR UPDATE ON memory_reveal_proposals
         FOR EACH ROW EXECUTE FUNCTION dmbot_stamp_commit();

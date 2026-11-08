@@ -28,12 +28,14 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from dmbot.db import Conn
 from dmbot.memory import gate
-from dmbot.memory.models import CONFIRMED, new_id
+from dmbot.memory.link_words import reads_both_ways
+from dmbot.memory.models import CONFIRMED, name_key, new_id
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.reveal_reading import TELL, RevealProposal
 
 if TYPE_CHECKING:
@@ -67,7 +69,8 @@ def place(
 ) -> Placed | None:
     """The stored statement the reader's words mean, or None (counted by why). Pure: the names,
     the campaign's confirmed connections and its ontology are given."""
-    from dmbot.memory.claims import resolve_relationship  # (claims imports this module's kin)
+    # (imported here: claims imports the store, which this module's callers already hold)
+    from dmbot.memory.claims import _phrase, feeling_of, resolve_relationship
 
     who = names.one(reveal.who)
     if isinstance(who, str) or who[1] != "character":
@@ -81,7 +84,10 @@ def place(
             return None
         teller_id = teller[0]
     subject = names.one(reveal.subject)
-    if isinstance(subject, str):
+    secret = {name_key(reveal.subject), name_key(reveal.object)} & names.secret
+    if isinstance(subject, str) or secret:
+        # (a secret other name is a statement of its own, not the entry: until learning one by a
+        # reveal is built, it is counted, never placed as "learned that the entry exists")
         counts["reveal_unplaced"] += 1
         return None
     if not reveal.relationship:
@@ -97,19 +103,32 @@ def place(
             if {r["subject_id"], r["object_id"]} == {subject[0], obj[0]}
             and r["status"] == CONFIRMED
         ]
-        term = resolve_relationship(onto, reveal.relationship)
-        if term is not None:
-            key, backwards = term[0].key, term[1]
-            start = obj[0] if backwards else subject[0]
-            fits = [
-                r
-                for r in between
-                if r["predicate"] == key
-                and (r["subject_id"] == start or not r.get("directional", False))
-            ]
-        else:  # (words DMbot has no term for: a catch-all connection carrying those words)
-            said = reveal.relationship.casefold()
-            fits = [r for r in between if str(r.get("detail") or "").casefold() == said]
+        # Which connection the words mean, and from which end they read. A feeling between two
+        # characters is `knows` with its word (#3175); a relationship DMbot has a term for is that
+        # term (said from the object's side for an inverse wording); anything else can only be a
+        # catch-all connection carrying those same words.
+        feeling = feeling_of(onto, reveal.relationship, "", (subject[1], obj[1]))
+        term = None if feeling is not None else resolve_relationship(onto, reveal.relationship)
+        if feeling is not None:
+            key, backwards, words = feeling[0].key, False, _phrase(feeling[1])
+        elif term is not None:
+            key, backwards, words = term[0].key, term[1], ""
+        else:
+            key, backwards, words = FALLBACK_PREDICATE, False, _phrase(reveal.relationship)
+        start = obj[0] if backwards else subject[0]
+        fits = [
+            r
+            for r in between
+            if r["predicate"] == key
+            and (not words or _phrase(str(r.get("detail") or "")) == words)
+            # (a one-way connection said from the wrong end is a different statement)
+            and (
+                r["subject_id"] == start
+                or reads_both_ways(
+                    str(r["predicate"]), str(r.get("detail") or ""), bool(r.get("directional"))
+                )
+            )
+        ]
         if len(fits) != 1:
             counts["reveal_unplaced"] += 1
             return None
@@ -127,7 +146,7 @@ class Stored:
     """What a storing came to, counts only."""
 
     stored: int = 0
-    counts: Counter[str] | None = None  # why the others were dropped
+    counts: Counter[str] = field(default_factory=Counter)  # why the others were dropped
 
 
 class RevealProposals:
@@ -154,6 +173,8 @@ class RevealProposals:
             return Stored(0, counts)
         from dmbot.memory._changes import ALIASES, ENTITIES, RELATIONS
         from dmbot.memory.claims import names_of
+
+        # (the store's own ontology reader; claims uses it the same way)
         from dmbot.memory.store import _load_ontology
 
         recorded = set(opted_in)
@@ -197,12 +218,12 @@ class RevealProposals:
                     counts["reveal_teller_ignorant"] += 1
                     continue
                 have.add(key)
-                await scope.conn.execute(
+                cur = await scope.conn.execute(
                     "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id,"
                     " character_id, statement_kind, statement_id, how, check_name, teller_id,"
                     " lines, speaker_ids, session_started_at, prompt_version, model, status,"
                     " created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, 'proposed', %s)",
+                    " %s, 'proposed', %s) ON CONFLICT DO NOTHING",
                     (
                         *scope.ids, new_id(), placed.character_id, placed.kind,
                         placed.statement_id, placed.how, placed.check_name, placed.teller_id,
@@ -210,7 +231,10 @@ class RevealProposals:
                         prompt_version[:40], model[:80], int(self._store._clock()),
                     ),
                 )  # fmt: skip
-                stored += 1
+                if cur.rowcount:
+                    stored += 1
+                else:  # (another run of the same session stored it meanwhile)
+                    counts["reveal_repeated"] += 1
         return Stored(stored, counts)
 
     async def purge_stopped(

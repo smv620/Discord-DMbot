@@ -73,10 +73,65 @@ class Placing(Base):
         words = {"Tran", "Bruno", "Shela", "knows"}
         self.assertFalse(words & {str(v) for v in row.values()})  # (no words in the row)
 
-    async def test_the_relationship_said_from_the_other_end_places_too(self) -> None:
-        self.assertEqual(
-            (await self.put((check(subject="Shela", obj="Bruno"), (DM_ID,)))).stored, 1
+    async def test_a_one_way_connection_said_from_the_other_end_is_another_statement(
+        self,
+    ) -> None:
+        got = await self.put((check(subject="Shela", obj="Bruno"), (DM_ID,)))  # (Bruno knows Shela)
+        self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 1))
+
+    async def test_the_inverse_words_place_on_the_connection(self) -> None:
+        guild = await self.add("The Irendi", type="faction", status=CONFIRMED)
+        await self.relate(self.ids["bruno"], "member_of", guild, status=CONFIRMED, secret=True)
+        got = await self.put((check(subject="The Irendi", rel="has as a member", obj="Bruno"),
+                              (DM_ID,)))  # fmt: skip
+        self.assertEqual(got.stored, 1)
+
+    async def test_a_both_ways_connection_places_from_either_end(self) -> None:
+        made = await self.relate(
+            self.ids["shela"], "rival_of", self.tran, status=CONFIRMED, secret=True
         )
+        assert made.value
+        got = await self.put((check(who="Clyde", subject="Tran", rel="rival of", obj="Shela"),
+                              (DM_ID,)))  # fmt: skip
+        self.assertEqual(got.stored, 1)
+
+    async def test_two_connections_that_fit_are_ambiguous_and_dropped(self) -> None:
+        guild = await self.add("The Irendi", type="faction", status=CONFIRMED)
+        for detail in ("first", "second"):  # (two catch-alls with the same words would both fit)
+            await self.relate(
+                self.tran, "associated_with", guild, status=CONFIRMED, detail="works beside",
+                secret=True, from_session_at=1 if detail == "first" else 2,
+            )  # fmt: skip
+        relations = await self.memory.relations(
+            GUILD_A, self.c, entity_id=self.tran, include_secret=True
+        )
+        fitting = [r for r in relations if r.predicate == "associated_with"]
+        got = await self.put(
+            (check(who="Clyde", subject="Tran", rel="works beside", obj="The Irendi"), (DM_ID,))
+        )
+        if len(fitting) > 1:
+            self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 1))
+        else:  # (the store joined them into one: then it places)
+            self.assertEqual(got.stored, 1)
+
+    async def test_a_catch_all_connection_places_on_its_own_words(self) -> None:
+        await self.relate(
+            self.tran, "associated_with", self.ids["sword"], status=CONFIRMED,
+            detail="once guarded", secret=True,
+        )  # fmt: skip
+        got = await self.put(
+            (check(who="Clyde", subject="Tran", rel="Once  guarded", obj="The Sword"), (DM_ID,)),
+            (check(who="Clyde", subject="Tran", rel="once stole", obj="The Sword"), (DM_ID,)),
+        )
+        self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (1, 1))
+
+    async def test_a_secret_name_is_never_placed_as_the_entry(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.ids["bruno"], "The Masked One", kind="nickname", source="dm",
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        got = await self.put((check(subject="The Masked One", rel="", obj=""), (DM_ID,)))
+        self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 1))
 
     async def test_an_entry_alone_is_learning_it_exists(self) -> None:
         got = await self.put((check(subject="The Sword", rel="", obj=""), (DM_ID,)))
@@ -91,7 +146,7 @@ class Placing(Base):
             check(subject="Bruno", obj="The Sword"),  # no connection at all
         )
         got = await self.put(*((c, (DM_ID,)) for c in cases))
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_unplaced"]), (0, 3))
+        self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 3))
 
     async def test_the_one_who_learned_and_a_teller_are_characters(self) -> None:
         group = await self.add("The Irendi", type="faction", status=CONFIRMED)
@@ -100,18 +155,29 @@ class Placing(Base):
             (check(who="The Irendi"), (DM_ID,)), (check(who="The Sword"), (DM_ID,)),
             (tell(teller="The Irendi"), (DM_ID,)),
         )  # fmt: skip
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_not_a_character"]), (0, 3))
+        self.assertEqual((got.stored, got.counts["reveal_not_a_character"]), (0, 3))
 
 
 class WhatCanBeLearned(Base):
     async def test_something_the_character_can_already_see_is_not_proposed(self) -> None:
         await self.know(CONNECTION, self.rel, [self.tran])
         got = await self.put((check(), (DM_ID,)))
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_known"]), (0, 1))
+        self.assertEqual((got.stored, got.counts["reveal_known"]), (0, 1))
 
     async def test_a_teller_who_does_not_know_it_tells_nothing(self) -> None:
         got = await self.put((tell(), (DM_ID,)))
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_teller_ignorant"]), (0, 1))
+        self.assertEqual((got.stored, got.counts["reveal_teller_ignorant"]), (0, 1))
+
+    async def test_a_player_character_who_sees_it_through_the_party_has_nothing_to_learn(
+        self,
+    ) -> None:
+        await self.memory.link_party(GUILD_A, self.c, {1, 2})
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, self.rel,
+            [self.ids["okthandom"], self.ids["mara"]], source="dm",
+        )  # fmt: skip
+        got = await self.put((check(who="Okthandom"), (DM_ID,)), (tell(teller="Mara"), (DM_ID,)))
+        self.assertEqual((got.stored, got.counts["reveal_known"]), (1, 1))  # (Mara tells Tran)
 
     async def test_a_teller_who_knows_it_tells_the_listener_only(self) -> None:
         await self.know(CONNECTION, self.rel, [self.clyde])
@@ -126,9 +192,9 @@ class WhatCanBeLearned(Base):
 class OncePerSession(Base):
     async def test_one_per_character_and_statement_across_re_runs_and_wordings(self) -> None:
         first = await self.put((check(), (DM_ID,)))
-        again = await self.put((check(subject="Shela", obj="Bruno"), (DM_ID,)))  # (same one)
+        again = await self.put((check(rel="KNOWS"), (DM_ID,)))  # (the same one, said again)
         self.assertEqual((first.stored, again.stored), (1, 0))
-        self.assertEqual(again.counts and again.counts["reveal_repeated"], 1)
+        self.assertEqual(again.counts["reveal_repeated"], 1)
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute("UPDATE memory_reveal_proposals SET status = 'dismissed'")
         self.assertEqual((await self.put((check(), (DM_ID,)))).stored, 0)  # (any status)
@@ -138,7 +204,7 @@ class OncePerSession(Base):
 class Consent(Base):
     async def test_a_speaker_not_recorded_now_keeps_it_from_being_stored(self) -> None:
         got = await self.put((check(), (DM_ID, BOB)))
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_not_recorded"]), (0, 1))
+        self.assertEqual((got.stored, got.counts["reveal_not_recorded"]), (0, 1))
 
     async def test_a_speaker_who_stops_wipes_the_waiting_one_and_the_count_leaves_it_out(
         self,
@@ -188,18 +254,28 @@ class BackupAndIsolation(Base):
             {**good, "status": "done"}, {**good, "statement_kind": "story"},
             {**good, "check_name": "Athletics"}, {**good, "teller_id": "a" * 32},
             {**good, "how": "tell"}, {**good, "speaker_ids": [True]}, {**good, "id": "x"},
-            {**good, "extra": 1}, {**good, "lines": ["1"] * 11},
+            {**good, "extra": 1}, {**good, "lines": ["1"] * 11}, {**good, "speaker_ids": []},
         ):  # fmt: skip
             with self.subTest(bad), self.assertRaises(CampaignError):
                 RevealProposalsSection().check([bad])
         with self.assertRaises(CampaignError):
             RevealProposalsSection().check([good, good])  # (one id once)
+        with self.assertRaises(CampaignError):  # (one per character and statement per session)
+            RevealProposalsSection().check([good, {**good, "id": "f" * 32}])
+        RevealProposalsSection().check([good, {**good, "id": "f" * 32, "session_started_at": 1}])
 
     async def test_another_campaign_places_nothing_on_this_one_s_statements(self) -> None:
-        other = (await self.campaigns.create(GUILD_B, "Elsewhere", 9)).id
-        got = await self.reveals.store(
-            GUILD_B, other, [(check(), (DM_ID,))], opted_in=RECORDED, session_started_at=500,
+        other = (await self.campaigns.create(GUILD_A, "Elsewhere", 9)).id
+        for name in ("Tran", "Bruno", "Shela"):  # (the same names, no connection)
+            await self.memory.add_entity(
+                GUILD_A, other, name=name, type="character", status=CONFIRMED, source="dm"
+            )
+        got = await self.put((check(), (DM_ID,)), campaign=other)
+        self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 1))
+        self.assertEqual(await self.rows(), [])
+        away = (await self.campaigns.create(GUILD_B, "Far", 9)).id
+        far = await self.reveals.store(
+            GUILD_B, away, [(check(), (DM_ID,))], opted_in=RECORDED, session_started_at=500,
             prompt_version="reveals-1", model="m",
         )  # fmt: skip
-        self.assertEqual((got.stored, got.counts and got.counts["reveal_not_a_character"]), (0, 1))
-        self.assertEqual(await self.rows(), [])
+        self.assertEqual(far.stored, 0)

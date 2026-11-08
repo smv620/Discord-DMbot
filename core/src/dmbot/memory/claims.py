@@ -1889,8 +1889,8 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
-        went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds, reveals
+        and scenes went."""
 
         # (imported here: they need this module's names)
         from dmbot.memory import deed_proposals, reveal_proposals

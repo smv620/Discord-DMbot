@@ -61,6 +61,7 @@ def _checked(rows: object) -> list[Row]:
         raise CampaignError(DAMAGED)
     out: list[Row] = []
     ids: set[str] = set()
+    once: set[tuple[Any, ...]] = set()  # (the table's one-per-session rule, so a file can't break it)
     for r in rows:
         if not (
             isinstance(r, dict)
@@ -81,10 +82,15 @@ def _checked(rows: object) -> list[Row]:
             and _text(r["prompt_version"], 1, 40)
             and _text(r["model"], 0, 80)
             and r["status"] in STATUSES
+            and (r["status"] == "kept" or len(r["speaker_ids"]) >= 1)
             and _int(r["created_at"], 1, INT64_MAX)
             and (r["decided_at"] is None or _int(r["decided_at"], 1, INT64_MAX))
         ):
             raise CampaignError(DAMAGED)
+        key = (r["session_started_at"], r["character_id"], r["statement_kind"], r["statement_id"])
+        if key in once:
+            raise CampaignError(DAMAGED)
+        once.add(key)
         ids.add(r["id"])
         out.append(tuple(r[k] for k in _ORDER))
     return out
@@ -102,7 +108,9 @@ class RevealProposalsSection:
             "SELECT id, character_id, statement_kind, statement_id, how, check_name, teller_id,"
             " lines, speaker_ids, session_started_at, prompt_version, model, status, created_at,"
             " decided_at FROM memory_reveal_proposals"
-            " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, id LIMIT %s",
+            # (past the cap, the rows still waiting for the DM are kept first, then the newest)
+            " WHERE guild_id = %s AND campaign_id = %s"
+            " ORDER BY status = 'proposed' DESC, created_at DESC, id LIMIT %s",
             (guild_id, campaign_id, ROWS_MAX),
         )
         return [

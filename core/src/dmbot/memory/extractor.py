@@ -411,6 +411,18 @@ async def _ask_deeds(
     return True
 
 
+async def _note(
+    progress: Callable[[int, int], Awaitable[None]] | None, done: int, total: int
+) -> None:
+    """Tell the progress card (part `done` of `total`); a failing one never stops the read."""
+    if progress is None:
+        return
+    try:
+        await progress(done, total)
+    except Exception as exc:
+        log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
+
+
 async def _ask_reveals(
     client: Client,
     report: Report,
@@ -528,7 +540,7 @@ async def run(
     split, `recap_numbers`). They are left out of what is sent, so a retelling read aloud at the
     start of a session gives no claim and no name as this session's events; they are only counted.
 
-    `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
+    `progress`: awaited with (part n, of m) before each call is sent (an import's progress card,
     #3307); a failing one is logged by type and never stops the read.
 
     `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
@@ -549,6 +561,9 @@ async def run(
     candidates = [s for s in readable(lines) if s.started_ms > after_ms]
     report.recap_lines = sum(1 for s in candidates if s.number in left_out)
     work = batches([s for s in candidates if s.number not in left_out])
+    # Every wait shows how far along it is (CLAUDE.md): the deed and reveal questions are parts of
+    # the same read, at most one more call per batch each, so they count in the same "n of m".
+    parts = len(work) * (1 + int(deeds) + int(reveals))
     report.through_ms = after_ms
     reached = after_ms  # how far the batches in a row, all answered, go
     broken = False  # a batch failed: later ones are read, but a restart must come back to it
@@ -574,7 +589,7 @@ async def run(
         report.calls += 1
         if progress is not None:
             try:
-                await progress(index + 1, len(work))
+                await progress(index + 1, parts)
             except Exception as exc:
                 log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
         if count_call is not None:
@@ -675,10 +690,13 @@ async def run(
     # The deed question comes last, after every batch's claims and readings: the readings are the
     # older feature and keep the calls the limit leaves, so deeds only ever use what is left over
     # (Supervisor, #3585). Only batches that were read for claims are asked.
+    done_deeds = 0
     if deeds:
         for batch in answered:
             if report.calls >= max_calls or time.monotonic() - started > max_seconds:
                 break
+            await _note(progress, len(work) + done_deeds + 1, parts)
+            done_deeds += 1
             if not await _ask_deeds(
                 client, report, batch, dm_ids, consenting, count_call, deed_pairs
             ):
@@ -708,9 +726,10 @@ async def run(
     # Who learned what comes after the deeds, for the same reason: the older features keep the
     # calls the limit leaves (Supervisor's ruling on #2996: readings, then deeds, then reveals).
     if reveals:
-        for batch in answered:
+        for at, batch in enumerate(answered):
             if report.calls >= max_calls or time.monotonic() - started > max_seconds:
                 break
+            await _note(progress, len(work) * (1 + int(deeds)) + at + 1, parts)
             if not await _ask_reveals(client, report, batch, dm_ids, consenting, count_call):
                 break
     if reveals and reveal_store is not None and report.reveal_proposals:

@@ -793,18 +793,72 @@ class RevealPass(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((report.reveals_failed, report.calls, len(counted)), (3, 6, 6))
 
     async def test_someone_who_stopped_after_the_answer_takes_the_reveal_with_them(self) -> None:
-        asked: list[int] = []
+        ai = Revealing()
 
         async def consenting() -> Collection[int]:
-            asked.append(1)
-            # recorded for the claims call and the reveal call, stopped right after its answer
-            return {DM, ALICE} if len(asked) <= 2 else {ALICE}
+            # recorded until the reveal question is answered, stopped right after
+            answered = reveal_reading.REVEAL_SYSTEM in ai.systems
+            return {ALICE} if answered else {DM, ALICE}
 
         stash = Stash()
-        report = await go(
-            Revealing(), Kept(), dm_session(10), consenting, reveals=True, reveal_store=stash
-        )
+        report = await go(ai, Kept(), dm_session(10), consenting, reveals=True, reveal_store=stash)
         self.assertEqual((report.reveals, report.reveals_refused, stash.got), (0, 1, []))
+
+    async def test_the_store_is_given_who_is_recorded_after_the_last_answer(self) -> None:
+        ai = Revealing()
+
+        async def consenting() -> Collection[int]:
+            return {DM, ALICE, BOB} if reveal_reading.REVEAL_SYSTEM not in ai.systems else {DM}
+
+        stash = Stash()
+        await go(ai, Kept(), dm_session(10), consenting, reveals=True, reveal_store=stash)
+        self.assertEqual(set(stash.opted_in), {DM})
+
+    async def test_every_reveal_call_moves_the_progress_card(self) -> None:
+        seen: list[tuple[int, int]] = []
+
+        async def progress(done: int, total: int) -> None:
+            seen.append((done, total))
+
+        await go(
+            Revealing(), Kept(), dm_session(25), deeds=True, reveals=True,
+            reveal_store=Stash(), progress=progress,
+        )  # fmt: skip
+        self.assertEqual(seen, [(n, 9) for n in range(1, 10)])  # (3 claims, 3 deeds, 3 reveals)
+        alone: list[tuple[int, int]] = []
+
+        async def note(done: int, total: int) -> None:
+            alone.append((done, total))
+
+        await go(Revealing(), Kept(), dm_session(25), progress=note)
+        self.assertEqual(alone, [(1, 3), (2, 3), (3, 3)])  # (off: as before)
+
+    async def test_a_failing_store_is_counted_and_never_fatal(self) -> None:
+        class Broken(Stash):
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                raise RuntimeError("db down")
+
+        report = await go(Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Broken())
+        self.assertEqual((report.reveals, report.reveals_stored, report.failed), (1, 0, 1))
+
+    async def test_out_of_funds_on_the_reveal_call_stops_the_run(self) -> None:
+        report = await go(
+            Revealing(fail=AIOutOfFunds()), Kept(), dm_session(25), reveals=True,
+            reveal_store=Stash(),
+        )  # fmt: skip
+        self.assertEqual((report.stopped, report.calls), ("out of funds", 3 + 1))
+
+    async def test_why_the_store_dropped_some_reaches_the_log_line_as_counts(self) -> None:
+        from collections import Counter
+
+        class Dropping(Stash):
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                return SimpleNamespace(stored=0, counts=Counter({"reveal_unplaced": 1}))
+
+        report = await go(
+            Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Dropping()
+        )
+        self.assertIn("1 reveal_unplaced", report.line())
 
     async def test_the_families_only_mode_asks_nothing(self) -> None:
         ai = Revealing()
