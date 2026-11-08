@@ -31,6 +31,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +72,13 @@ SPLIT_DEPTH = 3  # a slice whose answer is cut off is halved this many times
 NAMES, RELATIONSHIPS, NOT_INCLUDED = "NAMES", "RELATIONSHIPS", "NOT INCLUDED"
 UNNAMED = "UNNAMED"  # people the text describes but never names (#2959)
 SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED)
+
+# Whether this read asks for each name's `about:` line (#2967 slice a): only when the DM said the
+# players know all of the upload, the one case the line is stored (Supervisor's ruling on #3832),
+# so no other read pays for it. Set by `read_lore` for its whole read, recursion and second looks
+# included, so no call in between has to pass it along.
+_ASK_ABOUT: ContextVar[bool] = ContextVar("lore_ask_about", default=False)
+_ABOUT_PART = re.compile(r" \| about: [^|\n]*?(?= \|)")  # (up to the next field, its space kept)
 
 # The worked examples pass 1 is shown (made-up text only: no published setting, no owner material).
 # A constant with a test that pins its format, because the reader below depends on that format.
@@ -226,9 +234,15 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text. Give 'about:' as one short line (about 15 words) saying what the "
-        "text says it is or does, in plain words and only from the text, never a guess "
-        '("a dwarf merchant who leads a caravan").\n'
+        "exactly from the text."
+        + (
+            " Give 'about:' as one short line (about 15 words) saying what the text says it is "
+            'or does, in plain words and only from the text, never a guess ("a dwarf merchant '
+            'who leads a caravan").'
+            if _ASK_ABOUT.get()
+            else ""
+        )
+        + "\n"
         "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
         "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
         "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
@@ -313,7 +327,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "in general or anyone already listed. Leave the heading out when there is no such "
         "person.\n"
         "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
-        + EXAMPLES
+        + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
     )
 
 
@@ -370,7 +384,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "words, no entry the list does not have. One entry for each list line.\n\n"
         f"For each NAMES line give name, kind (exactly one of {kinds}), also (its 'other "
         "names', else empty), secret (its 'secret:' disguises, else empty), quote (its "
-        "'quote:', else empty) and about (its 'about:', else empty). Leave out 'said:'. An "
+        "'quote:', else empty) and about ("
+        + ("its 'about:', else empty" if _ASK_ABOUT.get() else "always empty")
+        + "). Leave out 'said:'. An "
         "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
@@ -1038,7 +1054,17 @@ async def _in_step[T](stage: str, part: int, total: int, work: Awaitable[T]) -> 
     return await work
 
 
-async def read_lore(
+async def read_lore(*args: Any, players_line: bool = False, **kwargs: Any) -> LoreRead:
+    """`_read_lore` (below), asking for each name's `about:` line only when `players_line`: the DM
+    said the players know all of the upload (#2967 slice a)."""
+    token = _ASK_ABOUT.set(players_line)
+    try:
+        return await _read_lore(*args, **kwargs)
+    finally:
+        _ASK_ABOUT.reset(token)
+
+
+async def _read_lore(
     read_ai: Any,
     shape_ai: Any,
     text: str,

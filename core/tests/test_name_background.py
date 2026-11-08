@@ -285,9 +285,33 @@ class TheAboutLine(unittest.TestCase):
         (got,) = bg.read_answer(reply, "Torrga Icevein leads a caravan.")
         self.assertEqual(got.about, "a dwarf merchant")
         self.assertIn("about", bg.schema()["properties"]["names"]["items"]["required"])
-        self.assertIn("'about:'", lore_read.read_instructions())
-        self.assertIn("about (its 'about:'", lore_read.shape_instructions())
         self.assertIn("| about: ", lore_read.EXAMPLES)  # (the model copies the examples)
+        # (asked for only when the DM said the players know all of it, Supervisor's ruling)
+        self.assertNotIn("about:", lore_read.read_instructions())
+        self.assertIn("about (always empty)", lore_read.shape_instructions())
+        token = lore_read._ASK_ABOUT.set(True)
+        try:
+            self.assertIn("Give 'about:'", lore_read.read_instructions())
+            self.assertIn("| about: ", lore_read.read_instructions())
+            self.assertIn("about (its 'about:'", lore_read.shape_instructions())
+        finally:
+            lore_read._ASK_ABOUT.reset(token)
+
+    def test_the_read_asks_for_the_line_only_while_it_runs_and_only_when_told(self) -> None:
+        import asyncio
+        from unittest.mock import patch as patching
+
+        seen: list[bool] = []
+
+        async def fake(*_: Any, **__: Any) -> Any:
+            seen.append(lore_read._ASK_ABOUT.get())
+            return None
+
+        with patching.object(lore_read, "_read_lore", fake):
+            asyncio.run(lore_read.read_lore("x", players_line=True))
+            asyncio.run(lore_read.read_lore("x"))
+        self.assertEqual(seen, [True, False])
+        self.assertFalse(lore_read._ASK_ABOUT.get())  # (reset after the read)
 
     def test_a_line_with_a_control_character_is_dropped_and_a_fold_keeps_one(self) -> None:
         from dmbot.memory.spellings import fold_in_read

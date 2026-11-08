@@ -721,6 +721,8 @@ async def read_background(
         upload.text,
         own,
         AI_AT_ONCE,
+        # (the players' line is asked for only where it can be stored, #2967 slice a)
+        players_line=not speaker and lore_knowledge.normalize(choice) == lore_knowledge.WORLD,
         skip_name=lambda name: name_key(name) in known,
         progress=progress,
         aliases=aliases,
