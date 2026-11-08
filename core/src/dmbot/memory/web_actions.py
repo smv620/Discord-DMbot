@@ -27,7 +27,7 @@ from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
-from dmbot.memory.claims import ClaimStore
+from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -545,6 +545,8 @@ async def _unnamed(
             return _failed(GONE)
         if keep.unnamed or keep.type == PERSON or keep.status != CONFIRMED:
             return _failed(GONE)  # (only a name the DM has confirmed can take someone in)
+        if keep.type != entity.type:
+            return _failed(GONE)  # (a person joins a person, a group a group, #3736)
         written = await memory.merge(
             guild_id, cid, keep.id, entity.id, source=DM, dm_said_same=True
         )
@@ -566,6 +568,7 @@ async def _unnamed(
         and not e.person
         and (other := found.entities.get(e.entity_id)) is not None
         and not other.unnamed
+        and other.type == entity.type  # (only one of the same kind can take them in, #3736)
     }
     if len(others) > 1:
         return _failed(AMBIGUOUS)
@@ -1084,8 +1087,8 @@ async def _answer_waiting(
         return await _answer_which_one(guild_id, cid, a, w)
     if a.action in ("claim-confirm", "claim-reject"):
         claim = await w.claims.get(guild_id, cid, a.target_id)
-        if claim is None:
-            return _failed(NOT_FOUND)
+        if claim is None or claim.reason == WAITING_NAME_REASON:
+            return _failed(NOT_FOUND)  # (a held claim is in no list the DM sees, #3749)
         if claim.status != CLAIM_PROPOSED:
             done = CLAIM_CONFIRMED if a.action == "claim-confirm" else CLAIM_REJECTED
             return (

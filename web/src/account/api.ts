@@ -191,7 +191,23 @@ export interface RuleSharing {
   /** Whether the owner's plan lets the campaign share. */
   canShare: boolean;
 }
+/** One side of a decided pair of house rules (#3697): `set` is "" for the campaign's own rule, else the followed set's name. */
+export interface RuleSide {
+  set: string;
+  number: number;
+}
+/** Which of two house rules that disagree wins, as the DM decided (core `GET .../rule-decisions`, #3777). `a` and `b` are in the
+ * store's order; `winner` says which. No rule words and no names: the page has the words from its House rules read. */
+export interface RuleDecision {
+  a: RuleSide;
+  b: RuleSide;
+  winner: "a" | "b";
+  decidedAt: number;
+}
 export type RuleSharingChoice =
+  // "W:L": the campaign's own rule W wins over its own rule L; "A:B": forget the answer for that pair (#3697). Own rules only:
+  // a pair that involves a followed set's rule is read-only here and changed in Discord.
+  | { action: "decide_clash" | "clear_clash"; arg: string }
   | { action: "publish"; arg: string }
   | { action: "stop_sharing" | "unfollow" }
   | { action: "look_code" | "follow_code"; arg: string }
@@ -1673,7 +1689,7 @@ export interface WebNode {
   /** Which pictures exist to pick, sent only with `canSetIcon`. */
   iconHas?: { discord: boolean; dndbeyond: boolean };
   /** True only on a person the story never named, in the DM's Full View (#3732; core #3733). `name` is then the label
-   * ("Ken's sister (name unknown)"), built from the anchor's current name. */
+   * ("unnamed - Ken's sister"), built from the anchor's current name. */
   unnamed?: boolean;
   /** Who they are in the story's words ("sister"). */
   unnamedWhat?: string;
@@ -1681,6 +1697,49 @@ export interface WebNode {
   unnamedAnchor?: string | null;
 }
 export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
+
+/** The Story Graph's clean-up (#3740; core `web/graph_cleanup.py`, GET `.../web/cleanup`, PR #3764): the characters and groups no
+ * chain of connections links to a player character or the party, largest group first. Waiting, ended and secret connections
+ * join a chain, rejected ones and `led_to` do not. DM and game masters only (anyone else gets "not found"). */
+export interface CleanupEntry {
+  id: string;
+  /** For a person the story never named, already labelled by core ("unnamed - Ken's sister") from the anchor's present name. */
+  name: string;
+  kind: string;
+  /** True: DMbot found it and the DM has not kept it yet. */
+  waiting: boolean;
+  unnamed?: boolean;
+  /** Who they are in the story's words ("sister"), and the name they hang from; both only on a person never named. */
+  unnamedWhat?: string | null;
+  unnamedAnchor?: string | null;
+  /** DMbot's short summary of the scene it came up in (#3596). Missing when none is kept: the page then offers "Where was it said?". */
+  scene?: string;
+}
+/** One group of entries linked only to each other (an entry with no link is a group of one), with the connections inside it,
+ * worded as the map words them (`WebEdge`). */
+export interface CleanupGroup {
+  entries: CleanupEntry[];
+  links: WebEdge[];
+}
+/** The 15-minute check of the DM's fixes (#3741): counts only, and only when the campaign shares its story to improve DMbot.
+ * Not sent by the door yet (core's #3741 PR); missing means "show nothing". */
+export interface CleanupReview {
+  state: "off" | "idle" | "waiting" | "running" | "done";
+  /** While `waiting`: whole minutes until DMbot looks, and how many fixes it will look at. */
+  minutesLeft?: number;
+  fixes?: number;
+  /** When `done`: how many of the DM's connections DMbot should have caught. */
+  missed?: number;
+}
+export interface CleanupView {
+  groups: CleanupGroup[];
+  /** Every isolated entry; `groups` holds at most 300 of them, so `truncated` says the list is cut. */
+  total: number;
+  truncated: boolean;
+  /** True when the campaign has no player character yet (nothing is isolated then). Not sent by the door yet; missing means "unknown". */
+  noPlayerCharacter?: boolean;
+  review?: CleanupReview;
+}
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
 export interface WebBelief {
@@ -2675,6 +2734,8 @@ export interface AccountApi {
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** The sessions and lore a name can be found in, for the Names page's Partial campaign filter (#3675). */
   nameSources?(ref: string): Promise<NameSource[]>;
+  /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
+  graphCleanup?(ref: string): Promise<CleanupView>;
   /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
    * an API older than that. */
   nameMatches?(ref: string): Promise<MatchRow[]>;
@@ -2883,6 +2944,8 @@ export interface AccountApi {
   chooseRuleSharing?(campaignRef: string, choice: RuleSharingChoice): Promise<string>;
   /** Where a choice sent with `chooseRuleSharing` stands. */
   ruleSharingAnswer?(campaignRef: string, answer: string): Promise<RuleSharingAnswer>;
+  /** The pairs of house rules the DM has decided between (#3697). A game master only. */
+  ruleDecisions?(campaignRef: string): Promise<RuleDecision[]>;
   /** Whether DMbot may use this person's words to improve itself (#1610); on by default. Missing
    * from an older API, which shows no switch. */
   improvement?(): Promise<boolean>;
@@ -3215,8 +3278,8 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "graphCleanup", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {

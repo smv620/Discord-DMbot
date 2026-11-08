@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { GRAPH_CLEANUP_LIVE } from "../content/graph-cleanup-switch";
 import { UNNAMED_MAP_LIVE } from "../content/unnamed-map-switch";
 import { BIG_WEB, kindWords, UNNAMED_KIND, webPage as words } from "../content/web-words";
 import {
@@ -88,7 +89,7 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
   ]);
 }
 
-const UNNAMED_SUFFIX = "(name unknown)"; // core/memory/unnamed.py: how a person the story never named is labelled
+const UNNAMED_PREFIX = "unnamed - "; // core/memory/unnamed.py: how a person the story never named is labelled, then the description
 
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
@@ -107,6 +108,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   // The unnamed person whose panel is open (#3732). Kept as a copy: once they are named the node is gone from the map, and the panel (with its Undo) stays.
   const [naming, setNaming] = useState<WebNode | null>(null);
+  // The clean-up (#3740): the people and groups no chain of connections links to a player character; a game master opens it.
+  const [cleaning, setCleaning] = useState(false);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
   // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
@@ -412,7 +415,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         // Which end needs what: the page already holds the two names, so it can say them (#3426).
         const ends = graph?.edges.find((e) => e.links.some((l) => l.id === target.id));
         const ones = ends ? graph!.nodes.filter((n) => n.id === ends.a || n.id === ends.b) : [];
-        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.endsWith(UNNAMED_SUFFIX))?.name.slice(0, -UNNAMED_SUFFIX.length).trim() ?? null, NOT_NAMED_LIVE && api.nameThem !== undefined);
+        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.startsWith(UNNAMED_PREFIX))?.name.slice(UNNAMED_PREFIX.length).trim() || null, NOT_NAMED_LIVE && api.nameThem !== undefined);
         return words.showNamesFirst(ones.filter((n) => n.revealed === false).map((n) => n.name));
       }
       const said = refusal(error);
@@ -760,6 +763,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           {words.waitingUnnamed(graph.waitingUnnamed ?? 0)}{" "}
           <a href={`/account/names/${encodeURIComponent(ref)}`}>{words.waitingUnnamedLink}</a>
         </p>
+      )}
+      {GRAPH_CLEANUP_LIVE && canEdit && api.graphCleanup && (
+        <div class="stack">
+          <p>
+            <button type="button" class="button secondary" aria-expanded={cleaning} onClick={() => setCleaning(!cleaning)}>
+              {cleaning ? words.cleanupClose : words.cleanupOpen}
+            </button>
+          </p>
+          {cleaning && <LazyPanel load={() => import("./GraphCleanup")} what="the clean-up" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />}
+        </div>
       )}
       <p class="web-count" role="status" aria-live="polite">
         <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>

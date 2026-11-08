@@ -78,6 +78,9 @@ class UntilAnswered(Base):
                 " status = 'confirmed' WHERE id = %s",
                 (self.someone,),
             )
+        # (named but linked to no one at the table: the graph clean-up still shows it, #3740)
+        self.assertEqual(len(await self.of(self.someone)), 1)
+        await self.link("knows", self.rook, self.someone, "rook-pell")
         self.assertEqual(await self.of(self.someone), {})
 
     async def test_removing_or_merging_the_person_deletes_the_scene(self) -> None:
@@ -124,6 +127,8 @@ class UntilAnswered(Base):
             await conn.execute(
                 "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (made.value.id,)
             )
+        self.assertEqual(len(await self.of(made.value.id)), 1)  # (isolated: kept, #3740)
+        await self.link("knows", self.rook, made.value.id, "rook-orsk")
         self.assertEqual(await self.of(made.value.id), {})
 
 

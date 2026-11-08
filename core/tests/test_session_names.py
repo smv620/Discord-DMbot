@@ -77,3 +77,29 @@ class DescribedPeople(unittest.TestCase):
             "barbarians", "Garrick", "Mira's sister Ren", "owlbears", "Cultist Mara", "the cultist",
         ):  # fmt: skip
             self.assertFalse(descriptions.is_described_person(text), text)
+
+    def test_a_description_with_a_tail_names_one_person_by_its_head_word(self) -> None:
+        """#3736: what a description is about is the word before its tail ("the barmaid with red
+        hair" is a barmaid, not hair); a job word names one person only when something says
+        which one."""
+        for text in ("the barmaid with red hair", "the red-haired barmaid", "the guard at the gate",
+                     "the old man by the fire"):  # fmt: skip
+            self.assertTrue(descriptions.is_described_person(text), text)
+        for text in ("a guard", "the barmaid", "the cave by the river", "the"):
+            self.assertFalse(descriptions.is_described_person(text), text)
+
+    def test_one_particular_group_is_a_group_and_a_plain_crowd_word_is_not(self) -> None:
+        for text in ("the loud sailors sitting in the corner", "three hooded figures",
+                     "the drinkers at the bar"):  # fmt: skip
+            self.assertTrue(descriptions.is_described_group(text), text)
+            self.assertFalse(descriptions.is_described_person(text), text)
+        for text in ("the sailors", "men", "people", "the woman", "The Iron Hand",
+                     "all the guards", "these people", "the other men", "the local people",
+                     "the women of the town", "the town folk"):  # fmt: skip
+            self.assertFalse(descriptions.is_described_group(text), text)
+
+    def test_a_name_in_the_tail_still_leaves_a_description_and_a_name_and_job_is_none(self) -> None:
+        self.assertTrue(descriptions.is_described_person("the barmaid at the Three Flags"))
+        self.assertTrue(descriptions.is_described_group("the sailors from Waterdeep"))
+        for text in ("bram the guard", "old tom the smith", "Mira's sister Ren"):
+            self.assertFalse(descriptions.is_described_person(text), text)

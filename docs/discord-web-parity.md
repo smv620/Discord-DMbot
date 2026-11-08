@@ -41,6 +41,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
 | Names DMbot has met but not named yet (name them, remove, same as someone) | `/account/names` | live | `NOT_NAMED_LIVE` |
+| Graph clean-up: the people and groups not linked to a player character, with their scenes, Add a connection and the Names page's panel | `/account/web` (the Clean up the map button) | built, switched off | `GRAPH_CLEANUP_LIVE` (#3740); Discord shows a count with a link (CloudDev-lead, after this page): desk work, so the page is the place to work |
 | People the story never named, drawn on the map for the DM (dashed node, the same three actions, a Graph settings kind, a line for the waiting ones) | `/account/web` | built, switched off | `UNNAMED_MAP_LIVE` (#3732, #3734) |
 | Who is this? for one name (the clarify page) | `/account/clarify` | in an open PR (not yet on development), behind its own switch | `name-clarify-switch` |
 | The names waiting for a check; the recap's name checks | `/account/questions`, recap page | built, switched off | `QUESTIONS_LIVE`, `RECAP_NAME_CHECKS_LIVE` |
@@ -149,7 +150,7 @@ match. "In Discord" says where the DM finds it today.
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |
 | Session notes; after-session report | notes and report cards | `SESSION_NOTES_LIVE` (#3027), `AFTER_SESSION_REPORT_LIVE` |
-| Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the decided pairs with Undo, and "Which wins?" after a website save; the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
+| Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the core half is built (the decided pairs, change one, clear one, own rules only; a pair with a followed set's rule is read-only there), the page is WebDev's; "Which wins?" after a save waits for the website rule editor (#3775); the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
 | Plot check (ask, answer an issue, decide a proposal) | plot cards | Plot check (`PLOT_CHECK_LIVE`) |
 | Continuity and contradictions | continuity card | missing ⚠ |
 | Threads (open plot threads) | threads card | missing ⚠ |
@@ -190,7 +191,7 @@ Written by WebDev-lead on 2026-11-07, after checking each ⚠ row of Section 2 a
 | Guide me (what to do next) | 🧭 button | no website page |
 | Continuity and contradictions | continuity card | the website has no page for them |
 | Open plot threads | threads card | the website has no page for them |
-| Rule clash (a house rule against a rule being checked) | clash card | on the way: #3697 (decided pairs now; "Which wins?" at website save) |
+| Rule clash (a house rule against a rule being checked) | clash card | on the way: #3697 (decided pairs now; "Which wins?" at website save, after the editor #3775) |
 | Rules lookup | `/dmbot rule` | also live help at the table: the owner may rule it Discord-only |
 
 ### Switched off and waiting (counted as "on the way", already filed)

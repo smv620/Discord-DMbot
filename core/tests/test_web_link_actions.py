@@ -13,6 +13,7 @@ from unittest.mock import patch
 import httpx
 
 from dmbot.memory import backstory_keep
+from dmbot.memory import claims as claims_mod
 from dmbot.memory import web_actions as wa
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
@@ -2402,6 +2403,22 @@ class WhichOneFromTheWebsite(Editing):
         self.assertEqual((picked.object_picked, picked.reason), (entry, ""))
         self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 0)
         self.assertEqual((await self.press("claim-pick", claim, text)).error, "")  # sent twice
+
+    async def test_a_held_claim_cannot_be_kept_or_turned_down_from_the_website(self) -> None:
+        """A held claim (#3749) is in no list the DM sees; an id that reaches the queue anyway is
+        not found, and the claim stays held."""
+        claim = await self.kept()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_claims SET reason = %s WHERE id = %s",
+                (claims_mod.WAITING_NAME_REASON, claim),
+            )
+        for action in ("claim-confirm", "claim-reject"):
+            with self.subTest(action):
+                self.assertEqual((await self.press(action, claim)).error, wa.NOT_FOUND)
+        held = await self.claims.get(self.g, self.one.id, claim)
+        assert held is not None
+        self.assertEqual(held.status, "proposed")
 
     async def test_a_pick_of_something_that_is_not_a_choice_is_gone(self) -> None:
         claim = await self.kept()
