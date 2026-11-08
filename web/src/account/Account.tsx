@@ -138,7 +138,9 @@ export default function Account({
             ? text.tooManyTries
             : why === "moved"
               ? text.signInMoved
-              : null;
+              : why === "removed"
+                ? text.signInRemoved
+                : null;
       setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice });
     } catch {
       setState({ kind: "down" });
