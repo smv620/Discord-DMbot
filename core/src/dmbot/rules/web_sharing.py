@@ -258,6 +258,7 @@ async def apply(
     return Outcome(SERVER, COULDNT)
 
 
+RULE_GONE = "rule-gone"  # a rule of the pair is not there any more (the page words it, #3775)
 NO_SUCH_RULE = "One of those rules isn't here any more. Open House rules again."
 
 
@@ -271,11 +272,11 @@ async def _clash(host: Host, guild_id: int, campaign: Campaign, item: Action) ->
     try:
         first, second = (int(part) for part in item.arg.split(":"))
     except ValueError:
-        return Outcome(BAD_CHOICE, NO_SUCH_RULE)  # (the door checked the shape; a stale row)
+        return Outcome(RULE_GONE, NO_SUCH_RULE)  # (the door checked the shape; a stale row)
     rules, _link = await host.own_rules(campaign)
     have = {rule.number for rule in rules}
     if first == second or not {first, second} <= have:
-        return Outcome(BAD_CHOICE, NO_SUCH_RULE)
+        return Outcome(RULE_GONE, NO_SUCH_RULE)
     one, other = RuleRef("", first), RuleRef("", second)
     if item.action == DECIDE_CLASH:
         await wins.record(guild_id, campaign.id, one, other, item.user_id)

@@ -399,7 +399,7 @@ class Clashes(Base):
     async def test_a_rule_that_is_not_there_any_more_is_refused(self) -> None:
         rid = await self.put(ws.DECIDE_CLASH, arg="2:9")
         await self.take_and_run()
-        self.assertEqual(await self.result(rid), ("failed", ws.BAD_CHOICE))
+        self.assertEqual(await self.result(rid), ("failed", ws.RULE_GONE))
         self.assertIn("isn't here any more", await self.note(rid))
         self.assertIsNone(await self.winner(2, 9))
 
@@ -413,7 +413,12 @@ class Clashes(Base):
         await self.houses.add(GUILD_A, self.same, DM_A, "Only here")
         rid = await self.put(ws.DECIDE_CLASH, arg="2:3")  # rule 3 is the other campaign's
         await self.take_and_run()
-        self.assertEqual(await self.result(rid), ("failed", ws.BAD_CHOICE))
+        self.assertEqual(await self.result(rid), ("failed", ws.RULE_GONE))
+
+    async def test_a_row_with_a_broken_argument_is_refused_not_a_crash(self) -> None:
+        rid = await self.put(ws.DECIDE_CLASH, arg="x")  # (the door would never queue it)
+        await self.take_and_run()
+        self.assertEqual(await self.result(rid), ("failed", ws.RULE_GONE))
 
 
 class TheQueue(Base):
