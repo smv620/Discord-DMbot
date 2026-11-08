@@ -26,6 +26,7 @@ import type {
   HouseRuleCampaign,
   HouseRules,
   OptionalRules,
+  RuleDecision,
   RuleSharing,
   RuleSharingAnswer,
   SharedRulesCampaign,
@@ -236,6 +237,8 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
       )) as HouseRules,
+    ruleDecisions: async (campaignRef) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
     ruleSharing: async (campaignRef) =>
       (await call(
         "GET",
