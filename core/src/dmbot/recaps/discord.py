@@ -123,6 +123,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.config import Settings
     from dmbot.consent import ConsentStore
     from dmbot.dm_screen.peek_notices import PeekNotices
+    from dmbot.dm_screen.said_as_hears import HearStore
     from dmbot.dm_screen.web_settings import SettingStore
     from dmbot.mail import Mailer
     from dmbot.memory.exposures import ExposureStore
@@ -265,6 +266,7 @@ class RecapFeatures:
         web_backups: web_backup.WebBackups | None
         web_line_deletions: web_line_delete.WebLineDeletions | None
         speaker_removals: speaker_removal.SpeakerRemovals | None
+        said_as_hears: HearStore | None
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
@@ -293,6 +295,7 @@ class RecapFeatures:
         async def run_web_line_deletions(self) -> None: ...
 
         async def run_speaker_removals(self) -> None: ...
+        async def run_said_as_hears(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -1986,6 +1989,10 @@ class RecapFeatures:
         take it over unchanged."""
         sweeps = 0
         while True:
+            try:  # first: someone is waiting to hear a name, and a few seconds is the whole wait
+                await self.run_said_as_hears()
+            except Exception as exc:
+                log.warning("The Hear it presses failed: %s", type(exc).__name__)
             try:
                 await self.run_recap_requests()
             except Exception as exc:  # the type only: a database error can quote a row
@@ -2093,6 +2100,8 @@ class RecapFeatures:
                             await self.web_line_deletions.sweep(guild.id)
                         if self.speaker_removals is not None:
                             await self.speaker_removals.sweep(guild.id)
+                        if self.said_as_hears is not None:
+                            await self.said_as_hears.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
