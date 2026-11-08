@@ -103,9 +103,9 @@ Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the 
 </document>
 Output:
 NAMES
-- Ysolde Marrow | person | quote: "Ysolde Marrow, a scout"
+- Ysolde Marrow | person | about: a scout who serves Captain Orrin Dace | quote: "Ysolde Marrow, a scout"
 - Lantern League | group | quote: "the Lantern League"
-- Orrin Dace | person | other names: Captain Orrin Dace | quote: "Captain Orrin Dace"
+- Orrin Dace | person | other names: Captain Orrin Dace | about: a captain who founded the Lantern League | quote: "Captain Orrin Dace"
 - Ravenmoor | place | quote: "lives in Ravenmoor"
 - Pell Wick | person | quote: "Pell Wick and Sorrel Tane"
 - Sorrel Tane | person | quote: "Sorrel Tane, and founded"

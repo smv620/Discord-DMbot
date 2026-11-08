@@ -616,6 +616,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
                 kept = " ".join(words)
         about = item.get("about")
         about = " ".join(about.split()) if isinstance(about, str) else ""
+        if not about.isprintable():  # (as the website's own box refuses one, all_names.py)
+            about = ""
         out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept, about))
     return out
 

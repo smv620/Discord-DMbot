@@ -287,6 +287,22 @@ class TheAboutLine(unittest.TestCase):
         self.assertIn("about", bg.schema()["properties"]["names"]["items"]["required"])
         self.assertIn("'about:'", lore_read.read_instructions())
         self.assertIn("about (its 'about:'", lore_read.shape_instructions())
+        self.assertIn("| about: ", lore_read.EXAMPLES)  # (the model copies the examples)
+
+    def test_a_line_with_a_control_character_is_dropped_and_a_fold_keeps_one(self) -> None:
+        from dmbot.memory.spellings import fold_in_read
+
+        item = {"name": "Torrga", "kind": "person", "also": [], "secret": [], "quote": "",
+                "about": "a merchant\x00"}  # fmt: skip
+        (got,) = bg.read_answer(json.dumps({"names": [item]}), "Torrga trades.")
+        self.assertEqual(got.about, "")
+        folded, _ = fold_in_read(
+            [
+                bg.Found("Caer-Konig", "place", (), (), ""),
+                bg.Found("Caer Konig", "place", (), (), "", "a fishing town"),
+            ]
+        )
+        self.assertEqual([f.about for f in folded], ["a fishing town"])
 
 
 class ThePath(NamesTest):
@@ -583,6 +599,18 @@ class ThePath(NamesTest):
         texts = {e.name: e.players_text for e in await self.entities()}
         self.assertEqual(texts, {"Torrga": about, "Hlin": None, "Sephek": None, "Veron": None})
         self.assertNotIn(about, {e.description for e in await self.entities()})
+
+    async def test_the_store_keeps_the_line_only_for_a_shown_name_up_to_120(self) -> None:
+        from dmbot.memory.models import NewName
+
+        names = [
+            NewName("Ada", "npc", PROPOSED, shown=True, players_text="x" * 120),
+            NewName("Bo", "npc", PROPOSED, shown=True, players_text="x" * 121),
+            NewName("Cy", "npc", PROPOSED, shown=False, players_text="a smith"),
+        ]
+        await self.memory.add_names(GUILD, self.campaign.id, names, source="dm")
+        texts = {e.name: e.players_text for e in await self.entities()}
+        self.assertEqual(texts, {"Ada": "x" * 120, "Bo": None, "Cy": None})
 
     async def test_known_names_are_not_suggested_again(self) -> None:
         await ui.save_name(self.memory, self.campaign, "Vale Keep", "place", [], [])
