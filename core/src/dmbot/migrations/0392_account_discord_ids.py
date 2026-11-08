@@ -18,6 +18,15 @@ from __future__ import annotations
 #                         account_id_history (0068) is one row per move and its columns (old, new)
 #                         do not fit "added" or "removed"; both are read together for the export.
 #
+# There is deliberately no CHECK tying discord_id to account_id: an account move (0068) changes
+# `web_users.user_id`, and ON UPDATE CASCADE carries the new number into these rows, which would
+# break such a check mid-move. The doors keep a Discord ID from being its own account's extra, and
+# the trigger below stops a move onto another account's added or removed ID. A move discards the
+# target account's own row (and so its links), as it already discards its Try It. The sessions of a
+# removed first ID stay valid until they expire (a session is the account's, not one Discord ID's).
+# `link` does not check Try It, installs, sessions or hand-over offers of the added ID; slice 3
+# decides what an added account's leftovers become.
+#
 # Row-level security: an account reads its own rows. Writing is only through the two doors below
 # and the sign-in trigger, which open the tables to themselves with the same `dmbot.owner_sync`
 # setting the move doors use ('move'), set and put back inside each function.
@@ -26,8 +35,7 @@ SQL = r"""
         discord_id BIGINT PRIMARY KEY CHECK (discord_id > 0),
         account_id BIGINT NOT NULL REFERENCES web_users (user_id)
             ON DELETE CASCADE ON UPDATE CASCADE,
-        added_at   BIGINT NOT NULL,
-        CHECK (discord_id <> account_id)
+        added_at   BIGINT NOT NULL
     );
     CREATE INDEX account_discord_ids_by_account ON account_discord_ids (account_id);
 
@@ -35,8 +43,7 @@ SQL = r"""
         discord_id BIGINT PRIMARY KEY CHECK (discord_id > 0),
         account_id BIGINT NOT NULL REFERENCES web_users (user_id)
             ON DELETE CASCADE ON UPDATE CASCADE,
-        removed_at BIGINT NOT NULL,
-        CHECK (discord_id = account_id)
+        removed_at BIGINT NOT NULL
     );
 
     CREATE TABLE account_link_history (
@@ -78,19 +85,19 @@ SQL = r"""
         AS $fn$
     DECLARE
         before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
-        found BIGINT;
+        owner_id BIGINT;
     BEGIN
         PERFORM set_config('dmbot.owner_sync', 'move', true);
         IF EXISTS (SELECT 1 FROM account_reserved r WHERE r.discord_id = d) THEN
-            found := NULL;
+            owner_id := NULL;
         ELSE
-            SELECT m.account_id INTO found FROM account_discord_ids m WHERE m.discord_id = d;
-            IF found IS NULL THEN
-                SELECT u.user_id INTO found FROM web_users u WHERE u.user_id = d;
+            SELECT m.account_id INTO owner_id FROM account_discord_ids m WHERE m.discord_id = d;
+            IF owner_id IS NULL THEN
+                SELECT u.user_id INTO owner_id FROM web_users u WHERE u.user_id = d;
             END IF;
         END IF;
         PERFORM set_config('dmbot.owner_sync', before, true);
-        RETURN found;
+        RETURN owner_id;
     END
     $fn$;
 
@@ -222,6 +229,19 @@ SQL = r"""
             RAISE EXCEPTION 'A DMbot ID never changes';
         ELSIF NEW.user_id <> OLD.user_id AND dmbot_owner_sync() <> 'move' THEN
             RAISE EXCEPTION 'A DMbot ID never changes';
+        ELSIF NEW.user_id <> OLD.user_id THEN
+            -- A move may not land on a Discord ID that is another account's (added or removed).
+            PERFORM set_config('dmbot.owner_sync', 'move', true);
+            SELECT 'account_linked' INTO refusal WHERE
+                EXISTS (SELECT 1 FROM account_discord_ids m
+                        WHERE m.discord_id = NEW.user_id AND m.account_id <> OLD.user_id)
+                OR EXISTS (SELECT 1 FROM account_reserved r
+                           WHERE r.discord_id = NEW.user_id AND r.account_id <> OLD.user_id);
+            PERFORM set_config('dmbot.owner_sync', before, true);
+            IF refusal IS NOT NULL THEN
+                RAISE EXCEPTION 'This Discord account belongs to a DMbot account'
+                    USING ERRCODE = 'P0001', HINT = refusal;
+            END IF;
         END IF;
         RETURN NEW;
     END

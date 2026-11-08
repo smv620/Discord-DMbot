@@ -4,6 +4,8 @@ own. Needs Postgres. Nothing here changes what the bot or the website does yet."
 
 from __future__ import annotations
 
+from typing import Any
+
 from psycopg import errors as pg_errors
 
 from dmbot import accounts
@@ -198,6 +200,91 @@ class Removing(DatabaseTest):
         self.assertEqual(await history(self.db, OTHER), [])  # not another account's
 
 
+async def setting(conn: Any) -> str:
+    cur = await conn.execute("SELECT COALESCE(current_setting('dmbot.owner_sync', true), '') AS s")
+    row = await cur.fetchone()
+    assert row is not None
+    return str(row["s"])
+
+
+class Housekeeping(DatabaseTest):
+    async def test_the_doors_put_the_move_setting_back_on_every_path(self) -> None:
+        await add_user(self.db, FIRST)
+        await add_user(self.db, OTHER)
+        async with self.db.user(FIRST) as conn:
+            for before in ("", "trigger"):
+                if before:
+                    await conn.execute("SELECT set_config('dmbot.owner_sync', %s, true)", (before,))
+                for call, args in (
+                    ("dmbot_account_of", (OTHER,)),
+                    ("dmbot_account_link", (FIRST, SECOND, NOW)),  # ok
+                    ("dmbot_account_link", (FIRST, SECOND, NOW)),  # taken
+                    ("dmbot_account_link", (FIRST, OTHER, NOW)),  # has_account
+                    ("dmbot_account_link", (FIRST, 0, NOW)),  # refused before any setting
+                    ("dmbot_account_link", (OTHER, THIRD, NOW)),  # not_yours
+                    ("dmbot_account_unlink", (FIRST, THIRD, NOW)),  # not_linked
+                    ("dmbot_account_unlink", (FIRST, SECOND, NOW)),  # last? no: ok
+                    ("dmbot_account_unlink", (FIRST, FIRST, NOW)),  # last
+                ):
+                    marks = ", ".join(["%s"] * len(args))
+                    await conn.execute(f"SELECT {call}({marks})", args)
+                    self.assertEqual(await setting(conn), before, (call, args))
+
+    async def test_link_refuses_nonsense_ids(self) -> None:
+        await add_user(self.db, FIRST)
+        self.assertEqual(await link(self.db, FIRST, 0), "not_yours")
+        self.assertEqual(await link(self.db, FIRST, -5), "not_yours")
+
+    async def test_unlink_of_someone_elses_id_is_not_linked(self) -> None:
+        await add_user(self.db, FIRST)
+        await add_user(self.db, OTHER)
+        await link(self.db, OTHER, SECOND)
+        self.assertEqual(await unlink(self.db, FIRST, SECOND), "not_linked")
+        self.assertEqual(await accounts.account_of(self.db, SECOND), OTHER)
+
+    async def test_the_first_id_can_go_when_two_others_remain_and_is_then_not_linked(self) -> None:
+        await add_user(self.db, FIRST)
+        await link(self.db, FIRST, SECOND)
+        await link(self.db, FIRST, THIRD)
+        self.assertEqual(await unlink(self.db, FIRST, FIRST), "ok")
+        self.assertEqual(await unlink(self.db, FIRST, FIRST), "not_linked")
+        self.assertEqual(await unlink(self.db, FIRST, SECOND), "ok")
+        self.assertEqual(await unlink(self.db, FIRST, THIRD), "last")
+
+    async def test_an_account_move_carries_the_links_along(self) -> None:
+        # What the move door does to the account's row: change its number, with the cascade.
+        await add_user(self.db, FIRST)
+        await link(self.db, FIRST, SECOND)
+        await unlink(self.db, FIRST, FIRST)
+        async with self.db.unscoped() as conn:
+            await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+            await conn.execute(
+                "UPDATE web_users SET user_id = %s WHERE user_id = %s", (THIRD, FIRST)
+            )
+        self.assertEqual(await accounts.account_of(self.db, SECOND), THIRD)
+        self.assertIsNone(await accounts.account_of(self.db, FIRST))
+
+    async def test_a_move_cannot_land_on_another_accounts_added_or_removed_id(self) -> None:
+        await add_user(self.db, FIRST)
+        await add_user(self.db, OTHER)
+        await link(self.db, OTHER, SECOND)
+        for target in (SECOND,):
+            with self.assertRaises(pg_errors.RaiseException):
+                async with self.db.unscoped() as conn:
+                    await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+                    await conn.execute(
+                        "UPDATE web_users SET user_id = %s WHERE user_id = %s", (target, FIRST)
+                    )
+        await link(self.db, OTHER, THIRD)
+        await unlink(self.db, OTHER, OTHER)
+        with self.assertRaises(pg_errors.RaiseException):
+            async with self.db.unscoped() as conn:
+                await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+                await conn.execute(
+                    "UPDATE web_users SET user_id = %s WHERE user_id = %s", (OTHER, FIRST)
+                )
+
+
 class Isolation(DatabaseTest):
     async def test_an_account_reads_only_its_own_rows(self) -> None:
         await add_user(self.db, FIRST)
@@ -238,6 +325,12 @@ class WebsiteSignIn(DatabaseTest):
         web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
         self.addAsyncCleanup(web.close)
         return web
+
+    async def test_a_returning_account_signs_in_again_as_before(self) -> None:
+        web = await self.web()
+        user = DiscordUser(id=FIRST, name="Again", email=None)
+        await sessions.sign_in(web, user, [], now=NOW, days=1)
+        await sessions.sign_in(web, user, [], now=NOW + 5, days=1)
 
     async def test_a_removed_or_added_discord_id_gets_the_plain_refusal(self) -> None:
         web = await self.web()
