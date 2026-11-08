@@ -27,7 +27,7 @@ from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
-from dmbot.memory.claims import ClaimStore
+from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -1084,8 +1084,8 @@ async def _answer_waiting(
         return await _answer_which_one(guild_id, cid, a, w)
     if a.action in ("claim-confirm", "claim-reject"):
         claim = await w.claims.get(guild_id, cid, a.target_id)
-        if claim is None:
-            return _failed(NOT_FOUND)
+        if claim is None or claim.reason == WAITING_NAME_REASON:
+            return _failed(NOT_FOUND)  # (a held claim is in no list the DM sees, #3749)
         if claim.status != CLAIM_PROPOSED:
             done = CLAIM_CONFIRMED if a.action == "claim-confirm" else CLAIM_REJECTED
             return (
