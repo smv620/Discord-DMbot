@@ -16,6 +16,7 @@ from dmbot.web import accounts as web_accounts
 PUBLIC_NAMES = (
     "NAME_MAX",
     "account_email",
+    "account_of",
     "active_subscription",
     "customer_id",
     "delete_person",
