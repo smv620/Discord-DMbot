@@ -1,7 +1,7 @@
 """🎤 Say it on the Names page (#2316): a clip of the DM saying a name, turned into a respelling.
 
 The website's container does no listening: the speech-sound model runs in a worker the bot starts
-(dm_screen/said_as_listens.py). A press queues the clip on a row (`dmbot_web_listen_add`, 0388),
+(dm_screen/said_as_listens.py). A press queues the clip on a row (`dmbot_web_listen_add`, 0389),
 the bot writes the respelling and clears the clip in the same statement, and the page reads the
 row (`dmbot_web_listen_read`). The route waits a few seconds for the answer so the page can use it
 at once; a slower one comes back as an id to poll.
