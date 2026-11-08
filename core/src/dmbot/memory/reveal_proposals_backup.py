@@ -61,7 +61,7 @@ def _checked(rows: object) -> list[Row]:
         raise CampaignError(DAMAGED)
     out: list[Row] = []
     ids: set[str] = set()
-    once: set[tuple[Any, ...]] = set()  # (one per session, as the table says: a file cannot break it)
+    once: set[tuple[Any, ...]] = set()  # (one per session, as the table says)
     for r in rows:
         if not (
             isinstance(r, dict)
