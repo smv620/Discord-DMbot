@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from dmbot.memory import claims
 from dmbot.memory.claims import Extracted
 from dmbot.memory.models import CLAIM_CONFIRMED, CONFIRMED, MemoryRuleError
@@ -80,8 +82,8 @@ class TheMainNameBlock(MemoryTest):
         self.assertEqual(claims.names_of(entities, []).one("the ferrywoman")[0], woman)
 
 
-class ThePersonWithoutAName(MemoryTest):
-    """A claim about "the woman" waits for the DM and never makes a name to check (#3431)."""
+class WithBram(MemoryTest):
+    """A campaign with Bram and the claim store."""
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -98,6 +100,10 @@ class ThePersonWithoutAName(MemoryTest):
 
     async def waiting(self) -> list[claims.Claim]:
         return await self.claims.waiting(GUILD_A, self.c, opted_in={7})
+
+
+class ThePersonWithoutAName(WithBram):
+    """A claim about "the woman" waits for the DM and never makes a name to check (#3431)."""
 
     async def test_a_described_person_waits_and_is_not_made_a_name(self) -> None:
         got = await self.propose(said("Bram", "knows", "the woman"))
@@ -268,3 +274,86 @@ class ThePersonWithoutAName(MemoryTest):
             r for r in await self.memory.relations(GUILD_A, self.c) if r.id == done.claim.fact_id
         ]
         self.assertEqual({fact.subject_id, fact.object_id}, {hesta, people[0][0].id})
+
+
+class TheHeldPile(WithBram):
+    """Past a read's cap a claim about a person with no name is held, never dropped (#3749): the
+    next read asks the held ones first, within its own cap, so the pile shrinks by up to the cap
+    each read. A held claim is in no list, and an id that reaches Keep anyway is refused."""
+
+    WOMEN = ("the old woman", "the tall woman", "the young woman", "the blind woman", "the woman")
+
+    async def held(self) -> list[dict[str, object]]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE campaign_id = %s AND status = 'proposed'"
+                " AND reason = %s",
+                (self.c, claims.WAITING_NAME_REASON),
+            )
+            return list(await cur.fetchall())
+
+    async def test_held_past_the_cap_and_the_pile_shrinks_each_read(self) -> None:
+        with patch.object(claims, "UNPLACED_LIMIT", 2):
+            got = await self.propose(*(said("Bram", "knows", w) for w in self.WOMEN))
+            self.assertEqual((got.described, got.described_held), (2, 3))
+            self.assertEqual((len(await self.waiting()), len(await self.held())), (2, 3))
+            await self.propose()  # (the next read: the held ones first, up to its cap of 2)
+            self.assertEqual((len(await self.waiting()), len(await self.held())), (4, 1))
+            await self.propose()
+            self.assertEqual((len(await self.waiting()), len(await self.held())), (5, 0))
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])  # (none made by a read)
+
+    async def test_a_held_claim_cannot_be_kept_or_turned_down(self) -> None:
+        with patch.object(claims, "UNPLACED_LIMIT", 1):
+            await self.propose(*(said("Bram", "knows", w) for w in self.WOMEN[:2]))
+        rows = await self.held()
+        self.assertEqual(len(rows), 1)
+        held_id = str(rows[0]["id"])
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.confirm(GUILD_A, self.c, held_id, opted_in={7})
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.reject(GUILD_A, self.c, held_id)
+        self.assertEqual(len(await self.held()), 1)  # (still held, untouched)
+
+    async def test_held_ones_go_before_the_read_s_own(self) -> None:
+        with patch.object(claims, "UNPLACED_LIMIT", 2):
+            await self.propose(*(said("Bram", "knows", w) for w in self.WOMEN[:3]))
+            (first_held,) = await self.held()
+            await self.propose(
+                said("Bram", "knows", "the old man"), said("Bram", "knows", "the boy")
+            )
+            asked = {c.id for c in await self.waiting()}
+            self.assertIn(str(first_held["id"]), asked)  # (the held one was asked first)
+            self.assertEqual(len(await self.held()), 1)  # (one of this read's own is held now)
+
+    async def test_held_people_never_crowd_out_a_claim_waiting_for_its_name(self) -> None:
+        with (
+            patch.object(claims, "UNPLACED_LIMIT", 1),
+            patch.object(claims, "WAITING_NAME_CLAIMS", 2),
+        ):
+            await self.propose(*(said("Bram", "knows", w) for w in self.WOMEN))
+            self.assertEqual(len(await self.held()), 4)
+            got = await self.propose(said("Bram", "knows", "Corwin Hale"), new_names=0)
+        self.assertEqual(got.deferred, 1)  # (kept waiting for its name, not let go)
+
+    async def test_the_pile_is_logged_in_counts_only(self) -> None:
+        with (
+            patch.object(claims, "UNPLACED_LIMIT", 1),
+            self.assertLogs("dmbot.memory.claims", level="INFO") as said_now,
+        ):
+            await self.propose(*(said("Bram", "knows", w) for w in self.WOMEN[:3]))
+        (line,) = [m for m in said_now.output if "people with no name held" in m]
+        self.assertIn("2 new this read, 0 taken up, 2 held now", line)
+        self.assertNotIn("woman", line)
+
+    async def test_a_waiting_claim_whose_name_is_answered_between_reads_is_asked_next_read(
+        self,
+    ) -> None:
+        await self.propose(said("Bram", "knows", "Corwin Hale"), new_names=0)
+        corwin = await self.add("Corwin Hale", type="character", status=CONFIRMED)
+        self.assertTrue(corwin)
+        self.assertEqual(await self.waiting(), [])  # (in no list until a read asks it)
+        await self.propose()
+        (claim,) = await self.waiting()
+        self.assertEqual(claim.reason, "")
+        await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})  # (answerable)
