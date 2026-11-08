@@ -50,11 +50,13 @@ FAILED = "DMbot couldn't send that email, so nothing was offered. Try again in a
 
 
 # One owner's offers go one at a time in this process, from the day's count to the sent email, so
-# two sends that arrive together cannot both read "four" and make a sixth (#2547). A lock per owner,
-# forgotten when nobody holds it. The bot and the website's API are separate processes; the limit
-# is a courtesy to the mail service and the recipient, and two presses in different processes in
-# the same second is the one case this does not close. (A database lock would need a connection
-# held across the send, and a small pool of them waiting would starve the send's own queries.)
+# two sends that arrive together cannot both read "four" and make a sixth (#2547). A lock per
+# owner, forgotten when nobody holds or waits for it (a waiter keeps it alive, so two tasks never
+# end up with different locks for one owner). The bot and the website's API are separate
+# processes; the limit is a courtesy to the mail service and the recipient, and two presses in
+# different processes in the same second is the one case this does not close (the mail cap in
+# `dmbot_claim_email` still bounds it). A database lock would need a connection held across the
+# send, and a small pool of them waiting would starve the send's own queries.
 _OWNER_LOCKS: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
 
 

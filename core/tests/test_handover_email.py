@@ -5,6 +5,7 @@ nothing waiting. As the website's own database role, through the route the accou
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 import time
@@ -167,9 +168,7 @@ class Offering(OfferBase):
         self.assertEqual((await self.offer("late@example.org")).status_code, 200)
 
     async def test_offers_that_arrive_together_cannot_make_a_sixth(self) -> None:
-        import asyncio
-
-        async with self.db.unscoped() as conn:
+        async with self.db.unscoped() as conn:  # (the day's count is the mail log's: start clean)
             await conn.execute("DELETE FROM sent_emails")
         store = CampaignStore(self.db, clock=lambda: self.now)
 
@@ -185,6 +184,48 @@ class Offering(OfferBase):
         self.assertEqual(answers.count("emailed"), handover_email.OFFERS_PER_DAY)
         self.assertEqual(answers.count("too_soon"), 8 - handover_email.OFFERS_PER_DAY)
         self.assertEqual(len(self.transport.sent), handover_email.OFFERS_PER_DAY)
+
+    async def test_the_lock_is_held_to_the_sent_email_and_only_for_that_owner(self) -> None:
+        store = CampaignStore(self.db, clock=lambda: self.now)
+
+        def send(owner: int, address: str) -> Any:
+            return handover_email.offer_by_email(
+                self.db, store, self.sender, owner_id=owner, owner_name="Alice",
+                guild_id=THURSDAY.id, campaign_id=self.campaign.id, campaign_name="One",
+                server_name="Thursday", raw_email=address, site_url=SITE, now=self.now,
+            )  # fmt: skip
+
+        self.transport.gate = asyncio.Event()
+        first = asyncio.create_task(send(ALICE.id, "first@example.org"))
+        await asyncio.sleep(0.5)  # it is in the mail server, held at the gate
+        second = asyncio.create_task(send(ALICE.id, "second@example.org"))
+        stranger = asyncio.create_task(send(ALICE.id + 1, "other@example.org"))
+        await asyncio.sleep(0.5)
+        self.assertFalse(second.done())  # the same owner waits for the first to finish
+        self.assertEqual(await stranger, "not_allowed")  # another owner is not held up (not theirs)
+        self.transport.gate.set()
+        self.assertEqual(await first, "emailed")
+        self.assertEqual(await second, "emailed")
+        sent_to = [to for to, _ in self.transport.sent]
+        self.assertEqual(sent_to, ["first@example.org", "second@example.org"])
+
+    async def test_a_failed_send_releases_the_lock_for_the_next_offer(self) -> None:
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        self.transport.fail = True
+        args: dict[str, Any] = dict(
+            owner_id=ALICE.id, owner_name="Alice", guild_id=THURSDAY.id,
+            campaign_id=self.campaign.id, campaign_name="One", server_name="Thursday",
+            site_url=SITE, now=self.now,
+        )  # fmt: skip
+        down = await handover_email.offer_by_email(
+            self.db, store, self.sender, raw_email="a@example.org", **args
+        )
+        self.assertEqual(down, "email_failed")
+        self.transport.fail = False
+        up = await handover_email.offer_by_email(
+            self.db, store, self.sender, raw_email="b@example.org", **args
+        )
+        self.assertEqual(up, "emailed")
 
     async def test_a_bad_address_is_refused_and_nothing_is_offered(self) -> None:
         for bad in ("", "nobody", "a b@example.org", "two@@example.org", 5):
