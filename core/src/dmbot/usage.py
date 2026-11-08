@@ -208,7 +208,9 @@ async def add_minutes(
             # Free because of the server, not the person (#3792): the session's minutes are kept,
             # but they are not this owner's plan hours, which a paid owner's other servers draw
             # on. Nothing to limit, so no standing to report either.
-            return Standing(s.access, s.month, 0, 0, None, False, False)
+            return Standing(
+                s.access, s.month, used_before=0, used_after=0, buys_hours=False, renews=False
+            )
         # The row lock this upsert takes serialises two campaigns of one owner ticking at
         # once; the total it returns, not the earlier read, says where the hours stand now.
         cur = await conn.execute(
