@@ -91,7 +91,6 @@ export const namesPage = {
   removeOther: (other: string): string => `Remove the other name ${other}`,
   hideCheck: "🙈 Hide from players",
   hideHint: "Players don't know this one yet, so it stays off the Story Graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
-  waiting: "Waiting for DMbot…",
   mergeHeading: "Same as another name",
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
   mergeSearch: "Find the other name",
