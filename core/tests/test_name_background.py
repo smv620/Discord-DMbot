@@ -277,6 +277,18 @@ class TheReader(unittest.TestCase):
         )
 
 
+class TheAboutLine(unittest.TestCase):
+    def test_the_read_keeps_the_line_and_the_prompts_ask_for_it(self) -> None:
+        item = {"name": "Torrga Icevein", "kind": "person", "also": [], "secret": [], "quote": "",
+                "about": "  a dwarf   merchant "}  # fmt: skip
+        reply = json.dumps({"names": [item]})
+        (got,) = bg.read_answer(reply, "Torrga Icevein leads a caravan.")
+        self.assertEqual(got.about, "a dwarf merchant")
+        self.assertIn("about", bg.schema()["properties"]["names"]["items"]["required"])
+        self.assertIn("'about:'", lore_read.read_instructions())
+        self.assertIn("about (its 'about:'", lore_read.shape_instructions())
+
+
 class ThePath(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -547,6 +559,30 @@ class ThePath(NamesTest):
         self.assertEqual(len(stored["npc"]), 1)
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
+
+    async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
+        """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
+        guess or a backstory never does; a line past the column's 120 letters is left to the DM,
+        never cut; the DM's own note is never where it comes from."""
+        about = "a dwarf merchant who leads a caravan"
+        cases = (
+            ("Torrga", True, True, about),  # (everyone knows it)
+            ("Hlin", False, True, ""),  # (not among the names the players know)
+            ("Sephek", True, False, ""),  # (a smart guess: no fold)
+            ("Veron", True, True, "x " * 70),  # (too long: left empty)
+        )
+        for name, known, everyone, line in cases:
+            found = bg.Found(name, "npc", (), (), "", line or about)
+            await ui_bg.store(
+                self.memory,
+                self.campaign,
+                [found],
+                world={name.casefold()} if known else (),
+                fold_secret=everyone,
+            )
+        texts = {e.name: e.players_text for e in await self.entities()}
+        self.assertEqual(texts, {"Torrga": about, "Hlin": None, "Sephek": None, "Veron": None})
+        self.assertNotIn(about, {e.description for e in await self.entities()})
 
     async def test_known_names_are_not_suggested_again(self) -> None:
         await ui.save_name(self.memory, self.campaign, "Vale Keep", "place", [], [])

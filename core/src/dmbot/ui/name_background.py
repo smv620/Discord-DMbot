@@ -1105,6 +1105,9 @@ async def store(
                 shown=known,
                 # only an item the unique-item judge kept reaches this point (#3618)
                 unique=True if item.kind == "item" else None,
+                # the players' line (#2967 slice a): only when the DM said the players know all of
+                # it; a spoilers upload, a smart guess and a backstory never fill it
+                players_text=item.about if known and fold_secret else "",
             )
         )
         items.append(item)

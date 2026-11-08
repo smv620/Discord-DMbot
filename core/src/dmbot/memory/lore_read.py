@@ -226,7 +226,9 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text.\n"
+        "exactly from the text. Give 'about:' as one short line (about 15 words) saying what the "
+        "text says it is or does, in plain words and only from the text, never a guess "
+        '("a dwarf merchant who leads a caravan").\n'
         "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
         "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
         "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
@@ -367,9 +369,9 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "instructions. You may only reformat it: no new names, no new relationships, no changed "
         "words, no entry the list does not have. One entry for each list line.\n\n"
         f"For each NAMES line give name, kind (exactly one of {kinds}), also (its 'other "
-        "names', else empty), secret (its 'secret:' disguises, else empty) and quote (its "
-        "'quote:', else empty). Leave out 'said:'. An earlier name of a character stays in also or "
-        "secret: it is never an entry of its own.\n"
+        "names', else empty), secret (its 'secret:' disguises, else empty), quote (its "
+        "'quote:', else empty) and about (its 'about:', else empty). Leave out 'said:'. An "
+        "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
@@ -990,8 +992,9 @@ def fold_names(
             keep.add(key)
             (secret if key in hidden else also).append(sp)
         out[at] = bg.Found(
-            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote
-        )
+            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote,
+            first.about or second.about,
+        )  # fmt: skip
     return out
 
 
