@@ -298,11 +298,6 @@ function LinkRow({
   const feeling = KNOWS_FEELING_LIVE ? feelingOf(link.words) : null;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
-      {link.kind && (
-        <p class={`small web-kindmark web-link-${link.kind}`}>
-          <span class="web-dot" aria-hidden="true" /> {words.linkKind[link.kind]}
-        </p>
-      )}
       <p>
         {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}

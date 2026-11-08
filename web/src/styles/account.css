@@ -1101,11 +1101,7 @@
 }
 
 /* Players View / Full View (#2405): what the players have not learned yet is dimmed in the drawing only,
-   never the words, so the text keeps its contrast; a theory is a dotted line. */
-.account .web-edge.web-theory .web-line {
-  stroke-dasharray: 2 6;
-  stroke-linecap: round;
-}
+   never the words, so the text keeps its contrast; a theory is drawn lighter (web-map.css). */
 
 .account .web-edge.web-dim .web-line {
   opacity: 0.5;

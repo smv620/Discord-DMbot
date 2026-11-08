@@ -68,16 +68,6 @@ export function startNodes(
   });
 }
 
-/** The kinds of connection, in the order they are shown. */
-export const LINK_KINDS = ["family", "ally", "group", "work", "other"];
-
-/** The kind a line has: the kind its connections share, else "other" (a mixed line has no one colour). */
-export function edgeKind(edge: { links: { kind?: string | undefined }[] }): string {
-  // A kind this page does not know (a newer API) is "other", so it always has a colour, a chip and an area.
-  const kinds = new Set(edge.links.map((l) => (l.kind !== undefined && LINK_KINDS.includes(l.kind) ? l.kind : "other")));
-  return kinds.size === 1 ? [...kinds][0]! : "other";
-}
-
 /** The kinds of name in the order their areas and the legend give them: the people first, then the places and
  * things, each style's kinds together by key (#2992). */
 export function orderedKinds(kinds: Iterable<string>): string[] {
