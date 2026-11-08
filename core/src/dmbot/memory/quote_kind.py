@@ -23,9 +23,9 @@ in the quote changes nothing:
   in the quote is followed by a fact word and what is known holds neither name nor a pronoun that
   could be one, and never for a line still waiting for the who-is-it check.
 - **An origin in an apposition belongs to the first name.** "Griz, son of Lee, an Ursine warrior
-  from the Spine of the World": the place tie the AI put on Lee is Griz's. English allows either
-  reading; the head of the phrase is the one the sample's key holds (Supervisor's #3780 cause note),
-  and the tie moves only when its place is the one after "from".
+  from the Spine of the World": the place tie the AI put on Lee is Griz's. The apposition
+  ("an Ursine warrior from …") follows the whole phrase "Griz, son of Lee" and describes its
+  head, Griz, as "son of Lee" does. The tie moves only when its place is the one after "from".
 
 Corrections are counted as `kind_*` in the read's `dropped` counts (kept lines, logged apart from
 drops); the one real drop is counted as `knows_a_fact`. Counts only, never a word.
