@@ -1,4 +1,4 @@
-# ruff: noqa: RUF001, RUF002, RUF003  (IPA letters look like Latin ones; they are the point here)
+# ruff: noqa: RUF003  (IPA letters look like Latin ones; they are the point here)
 """The speech-sound worker's manager (#2316): a stand-in worker speaks the same protocol, so the
 start, the one-at-a-time rule, the idle unload, a crash and a missing model are all checked
 without a machine-learning runtime."""
