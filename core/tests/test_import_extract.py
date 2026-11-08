@@ -198,6 +198,7 @@ class TheImportRead(WithImports):
             ),
             transcripts=self.transcripts,
             _extract_session=AsyncMock(return_value=outcome),
+            _read_importance=AsyncMock(),  # (the importance reading after a finished read, #3172)
         )
         me._mark_import_read = partial(BOT._mark_import_read, me)
         return me
@@ -216,6 +217,8 @@ class TheImportRead(WithImports):
         self.assertTrue(await kwargs["renew"]())  # (the claim is still ours and now fresh)
         through, _ = await self.transcripts.extraction(GUILD, sid)
         self.assertEqual(through, START * 1000 + DAY * 1000)  # marked read to its last line
+        me._read_importance.assert_awaited_once()  # (then its importance, on the same claim)
+        self.assertTrue(await me._read_importance.await_args.kwargs["renew"]())
 
     async def test_the_import_card_is_told_each_batch_then_read_or_waiting(self) -> None:
         for outcome, final in (("done", "read"), ("limit", "waiting")):
