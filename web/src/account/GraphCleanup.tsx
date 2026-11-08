@@ -23,16 +23,16 @@ function asNode(e: CleanupEntry): WebNode {
 function WhereSaid({ entry, api, refId }: { entry: CleanupEntry; api: AccountApi; refId: string }) {
   const [state, setState] = useState<"idle" | "loading" | "none" | { places: NamePlace[]; more: number }>("idle");
   async function look(): Promise<void> {
-    if (!api.clarifyName || state === "loading") return;
+    if (!api.cleanupPlaces || state === "loading") return;
     setState("loading");
     try {
-      const got = await api.clarifyName(refId, entry.id);
+      const got = await api.cleanupPlaces(refId, entry.id);
       setState(got.places.length === 0 && got.morePlaces <= 0 ? "none" : { places: got.places, more: got.morePlaces });
     } catch {
       setState("none");
     }
   }
-  if (!api.clarifyName) return null;
+  if (!api.cleanupPlaces) return null;
   return (
     <div class="stack">
       {state === "idle" && (

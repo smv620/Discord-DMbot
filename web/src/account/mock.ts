@@ -2796,6 +2796,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return MOCK_NAME_SOURCES;
     },
     // The graph clean-up page (#3740, #3762): the DM's view only. The data is in its own file, loaded on demand.
+    async cleanupPlaces(ref, id) {
+      calls.push(`cleanupPlaces:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      // One pretend window for the people the clean-up lists (ids e1..e6), none for any other id.
+      if (!/^e[1-6]$/.test(id)) throw new ApiError("not-found");
+      return { places: [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "They talked about it by the fire." }] }], morePlaces: 0 };
+    },
     async graphCleanup(ref): Promise<CleanupView> {
       calls.push(`graphCleanup:${ref}`);
       await reachable();
