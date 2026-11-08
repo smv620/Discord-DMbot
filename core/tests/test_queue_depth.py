@@ -107,9 +107,10 @@ class TheDepths(DatabaseTest):
     async def test_the_line_holds_only_numbers_and_fixed_words(self) -> None:
         planted = (await self.campaigns.create(GUILD, "Planted Xq7 Name", fx.DM)).id
         await self.recap(100, campaign=planted)
-        line = depth_line(await queue_depths(self.db, GUILD, now=1000))
+        depths = await queue_depths(self.db, GUILD, now=1000)
+        line = depth_line(depths)
+        self.assertEqual(line, "queue: recaps 1 (oldest 900 s), audio 0, imports 0")
         self.assertNotIn("Xq7", line)
-        self.assertNotIn("Planted", line)
         self.assertNotIn(planted, line)
 
 
