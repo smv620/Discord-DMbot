@@ -180,11 +180,12 @@ class Settings:
     recap_voice_tags: bool = True
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
+    recap_audio_per_month: int = 8
     # The most credits Hear it (the website's 🔊 on a name) may spend for one campaign in a
-    # calendar month (UTC): about a dollar at 5,000, some sixty clips of a name. Past it a press
+    # calendar month (UTC): about a dollar at 5,000, some sixty clips of a name. It stops at or just
+    # past this (the press that crosses it is made). Past it a press
     # says the voice is off and the page falls back to the browser's (#3818).
     hear_credits_per_month: int = 5000
-    recap_audio_per_month: int = 8
 
     @property
     def pictures_ready(self) -> bool:

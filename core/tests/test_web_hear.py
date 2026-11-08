@@ -274,6 +274,42 @@ class Hearing(Base):
         await bot.apply(host, cache, THURSDAY.id, item)  # the same words: the cache answers
         self.assertEqual((host.used, voice.calls), ({self.one.id: len(WORDS)}, 1))
 
+    async def test_a_count_that_cannot_be_added_does_not_lose_the_paid_clip(self) -> None:
+        host = FakeHost(self.campaign(), FakeVoice())
+
+        async def broken(guild_id: int, campaign_id: str, credits: int) -> None:
+            raise RuntimeError("the database blinked")
+
+        host.hear_spent = broken  # type: ignore[method-assign]
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        done = await bot.apply(host, bot.HearCache(), THURSDAY.id, item)
+        self.assertEqual((done.error, done.audio is not None), ("", True))  # still served
+
+    async def test_a_reply_the_voice_company_charged_for_but_we_could_not_read_is_counted(
+        self,
+    ) -> None:
+        voice = FakeVoice()
+        host = FakeHost(self.campaign(), voice)
+        real = host.narrator
+
+        def charged() -> Any:
+            found = real()
+            assert found is not None
+            found.credits = 40  # what it charged before the reply turned out unreadable
+
+            async def unreadable(*_a: Any, **_k: Any) -> Any:
+                from dmbot.recaps.audio.eleven import ProviderError
+
+                raise ProviderError("reply")
+
+            found.speech = unreadable  # type: ignore[method-assign]
+            return found
+
+        host.narrator = charged  # type: ignore[method-assign]
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        done = await bot.apply(host, bot.HearCache(), THURSDAY.id, item)
+        self.assertEqual((done.error, host.used.get(self.one.id)), (bot.FAILED, 40))
+
     async def test_an_used_up_month_says_voice_off_and_makes_no_call(self) -> None:
         voice = FakeVoice()
         host = FakeHost(self.campaign(), voice)

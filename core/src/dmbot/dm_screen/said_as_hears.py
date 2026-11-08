@@ -218,6 +218,17 @@ class HearStore:
             return int(cur.rowcount)
 
 
+async def _count(host: Host, guild_id: int, campaign_id: str, credits: int) -> None:
+    """Add what the voice company charged to the month. A failure here is logged as a type and
+    goes no further: the clip was paid for and is still served, so the DM does not pay twice."""
+    if credits <= 0:
+        return
+    try:
+        await host.hear_spent(guild_id, campaign_id, credits)
+    except Exception as exc:
+        log.warning("Hear it: the month's count could not be added to: %s", type(exc).__name__)
+
+
 async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outcome:
     """Make the clip for one press. Never raises for a refusal: the outcome carries the word."""
     if item.tries > TRIES_MAX:  # taken again after a stall: spoken once already, never again
@@ -237,6 +248,9 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
     # The month's allowance: past it a press says the voice is off (the page then falls back to
     # the browser's), and no call is made. A cache hit above never reaches this.
     if await host.hear_used(guild_id, item.campaign_id) >= host.hear_limit:
+        log.info(
+            "Hear it: the month's allowance is used"
+        )  # (a count, so dev1 can tell it from a fault)
         return Outcome(VOICE_OFF)
     try:
         # The seed comes from the words, so the same words sound the same each time.
@@ -244,10 +258,11 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
         speech = await voice.speech(item.text, seed=seed)
     except ProviderError as exc:
         log.info("Hear it: the voice company said %s", exc.kind)  # the kind, never the words
+        await _count(host, guild_id, item.campaign_id, voice.credits)  # a reply it charged for
         return Outcome(
             VOICE_OFF if exc.kind == "auth" else BUSY if exc.kind in ("busy", "plan") else FAILED
         )
-    await host.hear_spent(guild_id, item.campaign_id, voice.credits)  # paid for, even if refused
+    await _count(host, guild_id, item.campaign_id, voice.credits)  # paid for, even if refused
     clip = wav(speech.pcm)
     if len(clip) > CLIP_MAX:
         return Outcome(FAILED)
