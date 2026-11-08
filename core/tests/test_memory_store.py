@@ -156,8 +156,14 @@ class Isolation(MemoryTest):
             )  # fmt: skip
         # and an internal importance assessment of a character (#3172)
         await importance_rank.ImportanceStore(self.db).add(
-            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
+            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "reading")]
         )
+        # and a story role no connection shows, with its campaign's codes (#3172)
+        from collections import Counter
+
+        from dmbot.memory.role_store import NewRole, RoleStore
+
+        await RoleStore(self.db).add(GUILD_A, self.c, [NewRole(a, "god", "reading")], Counter())
         # and the AI's scene of a waiting question (#3596)
         from dmbot.memory.scenes import ENTITY, Scene, Scenes
 
