@@ -8,6 +8,7 @@ from unittest.mock import patch
 from dmbot.memory import claims
 from dmbot.memory.claims import Extracted
 from dmbot.memory.models import CLAIM_CONFIRMED, CONFIRMED, MemoryRuleError
+from dmbot.memory.store import SAME_KIND_ONLY
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 
@@ -357,3 +358,67 @@ class TheHeldPile(WithBram):
         (claim,) = await self.waiting()
         self.assertEqual(claim.reason, "")
         await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})  # (answerable)
+
+
+class TheUnnamedGroup(WithBram):
+    """A particular group the story never names is kept as a group (#3736): "unnamed - loud
+    sailors in the corner", of the group kind, joined only to a group."""
+
+    async def test_a_person_and_a_group_kept_together_make_one_of_each(self) -> None:
+        got = await self.propose(
+            said("the barmaid with red hair", "knows", "the loud sailors in the corner")
+        )
+        self.assertEqual((got.waiting, got.described), (1, 1))
+        (claim,) = await self.waiting()
+        await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        made = {label: e.type for e, label in await self.memory.unnamed(GUILD_A, self.c)}
+        self.assertEqual(
+            made,
+            {
+                "unnamed - the barmaid with red hair": "character",
+                "unnamed - the loud sailors in the corner": "faction",
+            },
+        )
+
+    async def test_a_group_is_joined_only_to_a_group(self) -> None:
+        group = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="the loud sailors in the corner", kind="faction"
+        )
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (group.entity.id,)
+            )
+        with self.assertRaises(MemoryRuleError) as said_no:
+            await self.memory.join_same_person(GUILD_A, self.c, group.entity.id, self.bram)
+        self.assertEqual(str(said_no.exception), SAME_KIND_ONLY)
+        crew = await self.add("The Salt Crew", type="faction", status=CONFIRMED)
+        joined = await self.memory.join_same_person(GUILD_A, self.c, group.entity.id, crew)
+        self.assertEqual(joined.value.id, crew)
+
+    async def test_only_a_person_or_a_group_can_have_no_name(self) -> None:
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.add_unnamed(GUILD_A, self.c, what="the old sword", kind="item")
+
+    async def test_a_counted_group_is_kept_and_a_crowd_word_is_not(self) -> None:
+        got = await self.propose(
+            said("Bram", "fought", "three hooded figures"), said("Bram", "knows", "all the guards")
+        )
+        self.assertEqual(got.described, 1)
+        (claim,) = await self.waiting()
+        self.assertEqual(claim.object, "three hooded figures")
+
+    async def test_two_unnamed_a_person_and_a_group_are_never_one(self) -> None:
+        person = await self.memory.add_unnamed(GUILD_A, self.c, what="the old man", read={})
+        group = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="the loud sailors in the corner", kind="faction", read={}
+        )
+        with self.assertRaises(MemoryRuleError) as said_no:
+            await self.memory.join_same_person(GUILD_A, self.c, person.entity.id, group.entity.id)
+        self.assertEqual(str(said_no.exception), SAME_KIND_ONLY)
+
+    async def test_a_group_has_no_role_and_players_never_see_it(self) -> None:
+        group = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="the loud sailors in the corner", kind="faction"
+        )
+        self.assertEqual((group.entity.type, group.entity.role), ("faction", None))
+        self.assertTrue(group.entity.unseen_by_players)

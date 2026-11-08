@@ -1667,10 +1667,15 @@ async def _unnamed_rows(
                 campaign.id,
                 what=u.what,
                 anchor_id=fixed if u.anchored else None,
-                role=u.role[: unnamed_mod.MAX_ROLE],
+                # (a role is what a person is to their anchor: a group gets none, #3736)
+                role=None
+                if descriptions.is_described_group(u.what)
+                else u.role[: unnamed_mod.MAX_ROLE],
                 # ("someone" is never joined to another "someone": two pronouns for nobody
                 # are two people unless the story gives a real shared descriptor)
                 read=None if u.what == who_resolve.SOMEONE else read,
+                # a particular group the story never names is a group (#3736)
+                kind="faction" if descriptions.is_described_group(u.what) else "character",
             )
         except MemoryRuleError:  # an anchor that went away meanwhile, or no word: counted
             if dropped is not None:

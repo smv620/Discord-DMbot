@@ -55,7 +55,7 @@ from dmbot.transcript.topics import OFF_TOPIC
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "extractor-2"  # bump when SYSTEM changes (it is recorded with every claim)
+PROMPT_VERSION = "extractor-3"  # bump when SYSTEM changes (it is recorded with every claim)
 DEED_PROMPT_VERSION = "deeds-2"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
@@ -130,10 +130,14 @@ Rules for what counts as a claim:
    shipment the villain is waiting for).
 
 9. A subject or object is a particular someone or something: a name, or a clear description of
-   one particular thing. Never a number or amount ("two", "a few copper"), a measure or a time
-   ("four miles per hour", "five days ago"), weather or scenery ("snow", "a blizzard"), a form of
-   address or a title said alone ("Friend", "Captain"), or a plain word for a crowd or a kind
-   ("the dogs", "people"). If a line only says one of those, it is no claim.
+   one particular thing. Someone the story never names is written as the description that best
+   tells them apart, in the transcript's words ("the barmaid with red hair", not "the woman"),
+   and one particular group the same way ("the loud sailors in the corner", "three hooded
+   figures"). Never a number or
+   amount ("two", "a few copper"), a measure or a time ("four miles per hour", "five days ago"),
+   weather or scenery ("snow", "a blizzard"), a form of address or a title said alone ("Friend",
+   "Captain"), or a plain word for a crowd or a kind ("the dogs", "people"). If a line only says
+   one of those, it is no claim.
 
 10. Someone who goes along with a player character or with the whole group for a stretch (a
    familiar, a hired guide, a rescued prisoner) is the relationship "travels with": the

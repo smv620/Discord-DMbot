@@ -428,6 +428,10 @@ def hidden_old_pronoun(entity: Entity) -> bool:
 NOT_A_LIST = "That name is not a list of names."
 SPLIT_REASON = "split into separate names"  # a claim set aside by "These are separate names"
 SPELLING_TAKEN = "Pick another spelling."  # a new name that is another entry's secret name
+# What a person or group the story never names may be (#2790, groups since #3736): never an item,
+# a place or anything else, which have no "unnamed - " form.
+UNNAMED_KINDS = frozenset({"character", "faction"})
+SAME_KIND_ONLY = "A person can only be joined to a person, and a group to a group."
 
 
 class MemoryStore:
@@ -1607,6 +1611,7 @@ class MemoryStore:
         details: str = "",
         read: dict[str, str] | None = None,
         seen_at: int | None = None,
+        kind: str = "character",
     ) -> UnnamedAdded:
         """The unnamed person a stated relationship needs ("Ken's sister", "a hooded figure"):
         a proposed character with no alias, so no name match can find it.
@@ -1627,7 +1632,7 @@ class MemoryStore:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, "extractor") as w:
             return await self._add_unnamed_in(
-                w, word, role, details, anchor_id, read, seen_at=seen_at
+                w, word, role, details, anchor_id, read, seen_at=seen_at, kind=kind
             )
 
     async def _add_unnamed_in(
@@ -1639,11 +1644,15 @@ class MemoryStore:
         anchor_id: str | None,
         read: dict[str, str] | None = None,
         seen_at: int | None = None,
+        kind: str = "character",
     ) -> UnnamedAdded:
-        """`add_unnamed` inside an open write. `seen_at`: when the session that met them began, for
-        the last-resort "(first seen …)" that keeps the name unique (#3736); the write's own time
-        when not given."""
-        same = unnamed_mod.same_person_key(word, role)
+        """`add_unnamed` inside an open write. `kind`: a person ("character") or a particular group
+        the story never names ("faction", "the loud sailors in the corner", #3736). `seen_at`: when
+        the session that met them began, for the last-resort "(first seen …)" that keeps the name
+        unique (#3736); the write's own time when not given."""
+        if kind not in UNNAMED_KINDS:
+            raise MemoryRuleError("Only a person or a group can have no name yet.")
+        same = f"{kind}|{unnamed_mod.same_person_key(word, role)}"
         anchor_name: str | None = None
         if anchor_id is not None:
             anchor = await _entity_row(w, anchor_id)
@@ -1657,7 +1666,8 @@ class MemoryStore:
             r
             for r in live
             if r["unnamed_anchor"] == anchor_id
-            and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+            and f"{r['type']}|{unnamed_mod.same_person_key(r['unnamed_what'], r['unnamed_role'])}"
+            == same
         ]
         key = f"{anchor_id or ''}|{same}"
         if anchor_id is not None and found:
@@ -1675,7 +1685,7 @@ class MemoryStore:
             ENTITIES,
             {
                 "id": new_id(),
-                "type": "character",
+                "type": kind,
                 "name": unnamed_mod.stored(word, anchor_name),
                 "description": details.strip(),
                 "status": PROPOSED,
@@ -1683,7 +1693,7 @@ class MemoryStore:
                 "source": "extractor",
                 "created_at": w.now,
                 "played_by": None,
-                "role": NPC,
+                "role": NPC if kind == "character" else None,  # (a group has no role)
                 "needs_look": False,
                 "unique_item": None,
                 "unnamed": True,
@@ -3650,8 +3660,8 @@ class MemoryStore:
                 raise MemoryRuleError("That isn't an unnamed person and a named one.")
             if PERSON in (unnamed["type"], named["type"]):
                 raise MemoryRuleError("A player or the DM can't be joined this way.")
-            if unnamed["type"] != "character" or named["type"] != "character":
-                raise MemoryRuleError("Only a character can be joined to a character.")
+            if unnamed["type"] not in UNNAMED_KINDS or unnamed["type"] != named["type"]:
+                raise MemoryRuleError(SAME_KIND_ONLY)  # (a group joins a group, #3736)
             hanging = await w.select(
                 ENTITIES,
                 " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')",
@@ -3702,8 +3712,8 @@ class MemoryStore:
         newer's connections and facts move onto it, as in any merge, in one change (one Undo).
         Nothing else is guessed: each had no name, so there is no other name to carry, and nobody
         learns anything they did not know."""
-        if older["type"] != "character" or newer["type"] != "character":
-            raise MemoryRuleError("Only a character can be joined to a character.")
+        if older["type"] not in UNNAMED_KINDS or older["type"] != newer["type"]:
+            raise MemoryRuleError(SAME_KIND_ONLY)
         for one in (older, newer):
             hanging = await w.select(
                 ENTITIES,

@@ -545,6 +545,8 @@ async def _unnamed(
             return _failed(GONE)
         if keep.unnamed or keep.type == PERSON or keep.status != CONFIRMED:
             return _failed(GONE)  # (only a name the DM has confirmed can take someone in)
+        if keep.type != entity.type:
+            return _failed(GONE)  # (a person joins a person, a group a group, #3736)
         written = await memory.merge(
             guild_id, cid, keep.id, entity.id, source=DM, dm_said_same=True
         )
@@ -566,6 +568,7 @@ async def _unnamed(
         and not e.person
         and (other := found.entities.get(e.entity_id)) is not None
         and not other.unnamed
+        and other.type == entity.type  # (only one of the same kind can take them in, #3736)
     }
     if len(others) > 1:
         return _failed(AMBIGUOUS)
