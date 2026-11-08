@@ -278,8 +278,8 @@ export default function CampaignSettings({
       {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
         <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
       )}
-      {SHARE_STORY_LIVE && s && s.shareStory !== undefined && api.setCampaignSetting && (
-        <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareStory }} />
+      {SHARE_STORY_LIVE && s && s.shareImprove !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareImprove }} />
       )}
       {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />

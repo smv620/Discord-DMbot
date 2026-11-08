@@ -38,14 +38,14 @@ describe("Share your story to improve DMbot", () => {
     expect(screen.getByRole("button", { name: words.turnOn })).toBeTruthy();
   });
 
-  it("asks before turning it on, and sends share_story on", async () => {
+  it("asks before turning it on, and sends share_improve on", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
     render(<ShareStoryPanel api={api} campaignRef="100.cmp1" on={false} />);
     fireEvent.click(screen.getByRole("button", { name: words.turnOn }));
     expect(screen.getByText(words.askOn)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: words.yesOn }));
-    await waitFor(() => expect(api.calls).toContain("setCampaignSetting:100.cmp1:share_story:on"));
+    await waitFor(() => expect(api.calls).toContain("setCampaignSetting:100.cmp1:share_improve:on"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
@@ -53,13 +53,13 @@ describe("Share your story to improve DMbot", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: words.turnOff })).toBeTruthy());
   });
 
-  it("turning it off asks nothing, and sends share_story off", async () => {
+  it("turning it off asks nothing, and sends share_improve off", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
     render(<ShareStoryPanel api={api} campaignRef="100.cmp1" on={true} />);
     fireEvent.click(screen.getByRole("button", { name: words.turnOff }));
     expect(screen.queryByText(words.askOn)).toBeNull();
-    await waitFor(() => expect(api.calls).toContain("setCampaignSetting:100.cmp1:share_story:off"));
+    await waitFor(() => expect(api.calls).toContain("setCampaignSetting:100.cmp1:share_improve:off"));
   });
 
   it("Cancel changes nothing", () => {
@@ -74,7 +74,7 @@ describe("Share your story to improve DMbot", () => {
   it("says it is slow to answer when nothing comes back, and gives up", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
-    api.campaignSettingAnswer = async () => ({ setting: "share_story", value: "on", note: "", error: "", state: "waiting" } as never);
+    api.campaignSettingAnswer = async () => ({ setting: "share_improve", value: "on", note: "", error: "", state: "waiting" } as never);
     render(<ShareStoryPanel api={api} campaignRef="100.cmp1" on={false} />);
     fireEvent.click(screen.getByRole("button", { name: words.turnOn }));
     fireEvent.click(screen.getByRole("button", { name: words.yesOn }));

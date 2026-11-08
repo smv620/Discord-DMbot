@@ -1446,7 +1446,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
       }
       // Sharing the story (#3741): `.ss-failed` is a refusal, with nothing changed; every other campaign says done at once.
-      if (asked.setting === "share_story") {
+      if (asked.setting === "share_improve") {
         if (/\.ss-failed$/.test(ref)) return { ...base, state: "failed", error: "refused" };
         return { ...base, state: "done" };
       }
@@ -2593,7 +2593,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareStory: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
               // What the bot has switched on (#3693): a DM's page only, like the settings.
               features: {
                 writtenAt: 1_790_000_000,
@@ -2620,7 +2620,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       // The server's door: "<main>/<fallback>", both offered, the fallback not the main rules.
       if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
       // The server's door: sharing the story is "on" or "off" (#3741).
-      if (choice.setting === "share_story" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
+      if (choice.setting === "share_improve" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
       if (choice.setting === "dndbeyond_invite" && choice.value !== "" && !/^https:\/\/(www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}$/.test(choice.value)) throw new ApiError("bad-value");

@@ -41,7 +41,7 @@ export default function ShareStoryPanel({ api, campaignRef, on }: { api: Account
     setWait({ on: next, state: "sending", since });
     let queued = false;
     try {
-      const id = await api.setCampaignSetting(campaignRef, { setting: "share_story", value: next ? "on" : "off" });
+      const id = await api.setCampaignSetting(campaignRef, { setting: "share_improve", value: next ? "on" : "off" });
       queued = true;
       for (let i = 0; i < POLLS && live.current; i++) {
         await new Promise((r) => setTimeout(r, POLL_MS));
