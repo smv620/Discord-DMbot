@@ -165,3 +165,28 @@ class ThePromptAndTheReport(unittest.TestCase):
         text = gr.report("c" * 32, many, verdicts, now=1, review_commit=None)
         self.assertLessEqual(len(text), 60000)
         self.assertIn("more not shown", text)
+
+
+class TheStatusLine(unittest.TestCase):
+    """The clean-up page's `review` (#3741), worked out on the server's clock."""
+
+    def test_each_state(self) -> None:
+        from dmbot.web.graph_cleanup import review_line
+
+        at = 1_000_000.0
+        self.assertEqual(review_line(None, at), {"state": "off"})
+        self.assertEqual(review_line({"on": False}, at), {"state": "off"})
+        self.assertEqual(review_line({"on": True, "waiting": None, "last": None}, at),
+                         {"state": "idle"})  # fmt: skip
+        waiting = {"on": True, "waiting": {"fixes": 2, "lastFixAt": int(at) - 181,
+                                           "checkingSince": None, "tries": 0}}  # fmt: skip
+        self.assertEqual(review_line(waiting, at),
+                         {"state": "waiting", "minutesLeft": 12, "fixes": 2})  # fmt: skip
+        overdue = {"on": True, "waiting": {"fixes": 1, "lastFixAt": int(at) - 3600}}
+        self.assertEqual(review_line(overdue, at)["minutesLeft"], 0)
+        running = {"on": True, "waiting": {"fixes": 1, "lastFixAt": 1, "checkingSince": 5}}
+        self.assertEqual(review_line(running, at), {"state": "running", "fixes": 1})
+        done = {"on": True, "waiting": None, "last": {"missed": 2, "stopped": False}}
+        self.assertEqual(review_line(done, at), {"state": "done", "missed": 2})
+        stopped = {"on": True, "waiting": None, "last": {"missed": 0, "stopped": True}}
+        self.assertEqual(review_line(stopped, at), {"state": "stopped"})

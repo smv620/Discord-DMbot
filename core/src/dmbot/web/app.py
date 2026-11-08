@@ -2079,7 +2079,7 @@ def create_app(
         group first, each with its links and scenes (#3740). DM only; anyone else "not found"."""
         session, _token = signed
         try:
-            return await graph_cleanup.read_cleanup(db, session, ref)
+            return await graph_cleanup.read_cleanup(db, session, ref, now=clock())
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

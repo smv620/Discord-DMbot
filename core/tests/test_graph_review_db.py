@@ -221,6 +221,14 @@ class TheStatusDoor(Base):
         got = await self.status(self.session)
         self.assertEqual((got["on"], got["waiting"]["fixes"], got["last"]), (True, 1, None))
         self.assertIsNone(got["waiting"]["checkingSince"])
+        from dmbot.web import graph_cleanup
+
+        page = await graph_cleanup.read_cleanup(
+            self.web, self.session, self.cref, now=time.time() + 60
+        )
+        self.assertEqual(page["review"]["state"], "waiting")
+        self.assertEqual(page["review"]["fixes"], 1)
+        self.assertIn(page["review"]["minutesLeft"], (13, 14))
         self.assertIsNone(await self.status(self.player))
 
 
