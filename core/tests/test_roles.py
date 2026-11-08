@@ -168,6 +168,30 @@ class TheStore(Base):
         self.assertEqual(sum(v == "reading" for v in codes.values()), roles.ADDED_MAX)
 
 
+class TheWhy(Base):
+    async def test_backed_and_stored_roles_together_and_a_merged_twin_counts(self) -> None:
+        tavin = await self.memory.add_entity(
+            GUILD, self.c, type="character", name="Tavin", source=DM, status=CONFIRMED,
+            role="player_character", played_by=101,
+        )  # fmt: skip
+        made = await self.memory.add_relation(
+            GUILD, self.c, self.mira, "mentor_of", str(tavin.value.id), source=DM,
+            confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        twin = await self.entry(GUILD, self.c, "Mira the Old")
+        lost: Counter[str] = Counter()
+        await self.store.add(GUILD, self.c, [NewRole(twin, "god", "reading", 100)], lost)
+        await self.memory.merge(GUILD, self.c, self.mira, twin, source=DM, dm_said_same=True)
+        why = await self.store.why(GUILD, self.c, self.mira)
+        self.assertEqual([w.role for w in why], ["god", "mentor"])
+        god, mentor = why
+        self.assertEqual((god.stored_reason, god.session_started_at), ("reading", 100))
+        assert made.value is not None
+        self.assertEqual(mentor.relation_ids, (made.value[0].id,))
+        self.assertEqual(await self.store.why(GUILD, self.c, twin), [])  # (ask the one that stayed)
+        self.assertEqual(await self.store.why(GUILD, self.c, "f" * 32), [])  # (no such entry)
+
+
 class TheBackup(Base):
     async def test_a_round_trip_keeps_added_codes_and_open_and_ended_roles(self) -> None:
         await self.store.add_code(GUILD, self.c, *GOOD)
