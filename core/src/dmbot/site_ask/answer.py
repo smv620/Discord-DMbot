@@ -31,7 +31,10 @@ UNKNOWN_LINK = "/help"
 OWN_DATA = "I can't see anyone's campaign. Sign in and look on your account page."
 OWN_DATA_LINK = "/account"
 OFF_TOPIC = "I only answer questions about DMbot and this website: what it does, what it costs."
-CANT = "DMbot can't answer right now. The page above is the best match."
+CANT = "DMbot can't answer right now. Try again in a little while."
+
+# A reply holding a link or an email address is not shown (the page gives the only link).
+_LINKISH = re.compile(r"https?|www\.|://|[\w.+-]+@[\w-]+\.\w", re.I)
 
 # A question about someone's own campaign, people or data. Caught before the model is asked, so
 # the model never sees anything about them and cannot guess.
@@ -113,6 +116,8 @@ async def answer(workers: Workers, ranker: Ranker, question: str) -> Answer:
     reply = await workers.ask(SYSTEM + passages, f"<question>{question}</question>")
     log.info("Site answer: %d tokens in, %d out", reply.tokens_in, reply.tokens_out)
     text = reply.text.strip()
+    if _LINKISH.search(text):
+        return Answer(UNKNOWN, UNKNOWN_LINK)  # the answer never carries a link or an address
     if text.upper().startswith("UNKNOWN"):
         return Answer(UNKNOWN, UNKNOWN_LINK)
     if text.upper().startswith("OWNDATA"):
