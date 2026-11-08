@@ -4,8 +4,12 @@ its scene until it is linked. Invented names."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.scenes import ENTITY, Scene, Scenes
+from dmbot.transcript.models import Line, line_ref
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import graph_cleanup
 from dmbot.web.recaps import RecapError
 from tests.test_web_all_names import MEMBER
@@ -13,7 +17,10 @@ from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_relationships import BOB_USER, TheRoute, Web
 
 
-class TheCleanup(Web):
+class Isolated(Web):
+    """The fixture plus a pair linked only to each other (no tests of its own, so the classes
+    below do not run each other's)."""
+
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # (the fixture links Mira to Rook, a player character; the drunk and the sailors are
@@ -22,6 +29,8 @@ class TheCleanup(Web):
         self.sailors = await self.add("The Salt Crew", "faction")
         await self.link("knows", self.drunk, self.sailors, "drunk-sailors")
 
+
+class TheCleanup(Isolated):
     async def test_the_dm_gets_the_isolated_group_and_the_count_agrees(self) -> None:
         page = await graph_cleanup.read_cleanup(self.web, self.session, self.cref)
         ids = [sorted(e["id"] for e in g["entries"]) for g in page["groups"]]
@@ -106,6 +115,85 @@ class TheCleanup(Web):
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
 
 
+class WhereItWasSaid(Isolated):
+    """ "Where was it said?" for a kept isolated entry (#3767 item 1), and the page's word for a
+    campaign with no player character (item 2)."""
+
+    async def said(self) -> None:
+        tx = TranscriptStore(self.db)
+        sid = await tx.open_session(self.g, self.one.id, 1000)
+        lines = [
+            Line(61_000, 777, "The road was long.", "The road was long."),
+            Line(65_000, ALICE.id, "Old Fenn bought the round.", "Old Fenn bought the round."),
+            Line(70_000, 778, "It was cold there.", "It was cold there."),
+        ]
+        await tx.add_lines(self.g, sid, lines)
+        await self.memory.add_mention(
+            self.g, self.one.id, self.drunk, line_ref=line_ref(sid, 65_000, ALICE.id),
+            span=(0, 8), confidence=1.0, method="exact", source="scan", session_started_at=1000,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            for user in (ALICE.id, 777):  # (778 never agreed)
+                await conn.execute(
+                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, 0)"
+                    " ON CONFLICT DO NOTHING",
+                    (self.g, user),
+                )
+
+    async def test_a_kept_isolated_entry_has_its_places_and_a_player_gets_nothing(self) -> None:
+        await self.said()
+        got = await graph_cleanup.read_places(self.web, self.session, self.cref, self.drunk)
+        (place,) = got["places"]
+        texts = [line.get("text") for line in place["lines"]]
+        self.assertIn("Old Fenn bought the round.", texts)
+        self.assertNotIn("It was cold there.", texts)  # (778 never agreed)
+        self.assertIn({"removed": True}, place["lines"])
+        road = next(x for x in place["lines"] if x.get("text") == "The road was long.")
+        self.assertEqual(road["speaker"], "Someone")  # (777 agrees; no kept speaker name)
+        self.assertEqual(got["morePlaces"], 0)
+        for who, entity in ((self.player, self.drunk), (self.session, self.keep)):  # (a place)
+            with self.assertRaises(RecapError) as caught:
+                await graph_cleanup.read_places(self.web, who, self.cref, entity)
+            self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_a_secret_other_name_does_not_hide_it_from_the_dm(self) -> None:
+        await self.said()
+        await self.alias(self.drunk, "The Pale Hand", secret=True)
+        got = await graph_cleanup.read_places(self.web, self.session, self.cref, self.drunk)
+        self.assertEqual(len(got["places"]), 1)
+
+    async def refused_places(self, who: Any, ref: str, entity: str) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await graph_cleanup.read_places(self.web, who, ref, entity)
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_another_campaign_s_dm_its_ids_and_gone_entries_get_nothing(self) -> None:
+        await self.said()
+        as_bob = await self.signed(BOB_USER, THURSDAY)  # (Bob DMs "Two" in this server)
+        await self.refused_places(as_bob, self.cref, self.drunk)
+        other = await self.campaigns.create(self.g, "Other", ALICE.id)
+        stranger = await self.memory.add_entity(
+            self.g, other.id, type="character", name="Stranger", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        await self.refused_places(self.session, self.cref, stranger.value.id)  # (through One's ref)
+        await self.memory.merge(
+            self.g, self.one.id, self.mira, self.drunk, source="dm", dm_said_same=True
+        )
+        await self.refused_places(self.session, self.cref, self.drunk)  # (merged away)
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.sailors, "rejected", source="dm"
+        )
+        await self.refused_places(self.session, self.cref, self.sailors)  # (removed)
+
+    async def test_the_page_says_whether_a_player_character_is_set(self) -> None:
+        page = await graph_cleanup.read_cleanup(self.web, self.session, self.cref)
+        self.assertFalse(page["noPlayerCharacter"])
+        other = await self.campaigns.create(self.g, "Other", ALICE.id)
+        empty = await graph_cleanup.read_cleanup(self.web, self.session, f"{self.g}.{other.id}")
+        self.assertTrue(empty["noPlayerCharacter"])
+
+
 class TheCleanupRoute(TheRoute):
     async def test_the_dm_gets_the_page_and_a_player_a_404(self) -> None:
         drunk = await self.add("Old Fenn", "character", role="npc")
@@ -116,4 +204,10 @@ class TheCleanupRoute(TheRoute):
             self.assertIn(drunk, listed)
         async with await self.client(self.player) as client:
             refused = await client.get(f"/me/campaigns/{self.cref}/web/cleanup")
+            self.assertEqual(refused.status_code, 404)
+        async with await self.client(self.session) as client:
+            places = await client.get(f"/me/campaigns/{self.cref}/web/cleanup/{drunk}/places")
+            self.assertEqual(places.json(), {"places": [], "morePlaces": 0})
+        async with await self.client(self.player) as client:
+            refused = await client.get(f"/me/campaigns/{self.cref}/web/cleanup/{drunk}/places")
             self.assertEqual(refused.status_code, 404)

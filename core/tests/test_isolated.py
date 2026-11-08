@@ -122,6 +122,14 @@ class ThePageShape(unittest.TestCase):
         self.assertNotIn("scene", next(e for e in group["entries"] if e["id"] == "sailors"))
         self.assertEqual([x["id"] for e in group["links"] for x in e["links"]], ["l1"])
 
+    def test_it_says_when_no_player_character_is_kept(self) -> None:
+        waiting = {"entries": [self.entry("hero", role="player_character", status="proposed"),
+                               self.entry("bram")], "links": [], "scenes": {}}  # fmt: skip
+        self.assertTrue(graph_cleanup.shape(waiting)["noPlayerCharacter"])
+        kept = {"entries": [self.entry("hero", role="player_character"), self.entry("bram")],
+                "links": [], "scenes": {}}  # fmt: skip
+        self.assertFalse(graph_cleanup.shape(kept)["noPlayerCharacter"])
+
     def test_past_the_limit_a_count(self) -> None:
         got = {
             "entries": [self.entry("hero", role="player_character")]
