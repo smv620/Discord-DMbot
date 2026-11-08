@@ -86,7 +86,7 @@ class Round:
         per_user: dict[int, list[messages.Line]] = {}
         clears: dict[int, list[str]] = {}
         for campaign in await self.campaigns(guild_id):
-            if campaign.paused or not campaign.dm_user_ids:
+            if campaign.paused or not campaign.dm_accounts:
                 continue
             try:
                 await self._campaign(campaign, per_user, clears)
@@ -128,7 +128,7 @@ class Round:
         was_answered, new_question = answered(before, merged), grew(before, merged)
         recording = await self.sender.recording(g, c) if self.notify else False
         now = int(self.clock())
-        for user_id in campaign.dm_user_ids if self.notify else ():
+        for user_id in campaign.dm_accounts if self.notify else ():
             try:  # one DM's trouble never costs the others their notice
                 await self._user(
                     campaign,

@@ -304,7 +304,7 @@ HELP_TEXT = (
 
 def dm_list(campaign: Campaign) -> str:
     """'<@1>, <@2>' for messages (sent with pings turned off)."""
-    return ", ".join(f"<@{uid}>" for uid in sorted(campaign.dm_user_ids)) or "nobody"
+    return ", ".join(f"<@{uid}>" for uid in sorted(campaign.dm_accounts)) or "nobody"
 
 
 def upload_limit(guild_limit: int) -> int:

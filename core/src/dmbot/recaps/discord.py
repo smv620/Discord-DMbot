@@ -545,7 +545,7 @@ class RecapFeatures:
             session = await self.transcripts.session(gid, table.transcript_session_id)
             if session is None or session.lines == 0:
                 return
-            dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+            dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
             if dm <= 0:
                 return
             # A short session asks first (#2104): what the recap would read is not changed.
@@ -966,7 +966,7 @@ class RecapFeatures:
         except Exception:
             log.exception("Recap: couldn't count the questions for the email")
             return
-        for user_id in sorted(campaign.dm_user_ids):
+        for user_id in sorted(campaign.dm_accounts):
             try:
                 await remind_the_dm(
                     self.mailer,
@@ -1133,7 +1133,7 @@ class RecapFeatures:
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.recap_allowed(gid, cid, None):
             return "refused"
-        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
         if dm <= 0:
             return "refused"
         # Like any session, it waits for the DM's name answers first (#2174).
@@ -1599,7 +1599,7 @@ class RecapFeatures:
                 gid,
                 cid,
                 job,
-                campaign.dm_user_ids if campaign is not None else (),
+                campaign.dm_accounts if campaign is not None else (),
             )
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
@@ -1919,7 +1919,7 @@ class RecapFeatures:
                 raise PlanUnchecked  # not a no: try again, and don't count it
             log.info("Import: no recap written (not in the plan)")
             return "your plan doesn't include recaps"
-        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
         if dm <= 0:
             log.warning("Import: no recap written (the campaign has no DM)")
             return "the campaign has no DM"

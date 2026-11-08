@@ -7,7 +7,8 @@ Error messages in `CampaignError` are shown to DMs, so they use plain words (CLA
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Literal
 
 # Rulesets a DM can pick, with the plain label shown in pickers.
@@ -203,6 +204,37 @@ class Campaign:
     owner_left_at: int | None = None
     # When DMbot first saw the owner was not in the server (#1214); None while they are here.
     owner_missing_since: int | None = None
+    # Accounts and Discord IDs (#2533). One DMbot account can hold several Discord accounts, and
+    # `dm_user_ids` and `owner_user_id` hold the account's number. For "is this Discord user a DM"
+    # use `is_dm` / `is_owner` (or `in dm_user_ids`, which holds every Discord ID that can act as a
+    # DM account and is for membership only). For anything that sends, lists, counts or loops per
+    # DM, use `dm_accounts`: one number per DM, so a person with two Discord accounts is one DM,
+    # is messaged once and counts once. A message goes to the account's number (its first Discord
+    # ID) until the account can choose another. `owner_ids` is the owner's Discord IDs, for
+    # membership only. Left empty they follow `dm_user_ids` and `owner_user_id`, which is exact for
+    # every campaign whose people have one Discord account.
+    dm_accounts: frozenset[int] = frozenset()
+    owner_ids: frozenset[int] = frozenset()
+    # Which DM account each Discord ID in `dm_user_ids` acts as (an ID with no entry is its own).
+    login_accounts: Mapping[int, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.dm_accounts:
+            object.__setattr__(self, "dm_accounts", self.dm_user_ids)
+        if not self.owner_ids and self.owner_user_id is not None:
+            object.__setattr__(self, "owner_ids", frozenset({self.owner_user_id}))
+
+    def is_dm(self, user_id: int) -> bool:
+        """This Discord user is a DM of the campaign, through any Discord account of a DM."""
+        return user_id in self.dm_user_ids
+
+    def dm_account_of(self, user_id: int) -> int:
+        """The DM account this Discord user acts as, or their own ID if they are not a DM."""
+        return self.login_accounts.get(user_id, user_id)
+
+    def is_owner(self, user_id: int) -> bool:
+        """This Discord user is the campaign's owner, through any Discord account of the owner."""
+        return user_id in self.owner_ids
 
     @property
     def table_chat_id(self) -> int | None:

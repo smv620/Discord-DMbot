@@ -3472,7 +3472,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 any_state=seen == owner_presence.ACCOUNT_DELETED,
             ):
                 log.info("A campaign's owner is gone from Discord; it is ownerless now")
-                for dm in sorted(campaign.dm_user_ids - {owner}):  # the owner can't read it
+                for dm in sorted(campaign.dm_accounts - {owner}):  # the owner can't read it
                     await self._dm_user(dm, f"**{campaign.name}**: {owner_presence.TELL_DMS}")
             return await self.campaigns.get(gid, cid) or campaign
         except Exception:
@@ -3798,7 +3798,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if here is not None and here in agreed:
                 starter = here
         else:
-            starter = next(iter(campaign.dm_user_ids)) if len(campaign.dm_user_ids) == 1 else None
+            # (the speaker's Discord ID: with several Discord accounts there is no one to name)
+            starter = (
+                next(iter(campaign.dm_user_ids))
+                if len(campaign.dm_user_ids) == 1 and len(campaign.dm_accounts) == 1
+                else None
+            )
         return people_lines(
             rows,
             agreed,
@@ -9778,7 +9783,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # private messages instead, and nothing named on the screen (as the secret
                 # questions do). Told only if a DM got every part.
                 results = []
-                for dm in campaign.dm_user_ids:
+                for dm in campaign.dm_accounts:
                     got = [await self.sidebar_send_dm(dm, text) for text in texts]
                     results.append("sent" if all(g == "sent" for g in got) else got[-1])
                 sent = "sent" in results
@@ -9980,7 +9985,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             reached = closed = 0
             on_screen = 0  # the message stayed on the DM screen (the count of checks is in it)
             if campaign.dm_screen_visibility != "private":  # players may look at the screen
-                reached, closed = await by_private_message(campaign.dm_user_ids)
+                reached, closed = await by_private_message(campaign.dm_accounts)
             else:
                 sent = await self.post_message(
                     table.screen_channel_id,
@@ -9999,7 +10004,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     now = await self.campaigns.get(gid, cid)
                     if now is None or now.dm_screen_visibility != "private":
                         await secret_posts.hide_one(sent)
-                        reached, closed = await by_private_message((now or campaign).dm_user_ids)
+                        reached, closed = await by_private_message((now or campaign).dm_accounts)
                     else:
                         secret_posts.remember(gid, cid, sent)
                         reached = on_screen = 1
@@ -10008,7 +10013,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if closed and described:  # nobody could be told: their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
-            if on_screen or reached >= len(campaign.dm_user_ids):
+            if on_screen or reached >= len(campaign.dm_accounts):
                 # Told: the screen has it, or every DM got it. A co-DM whose private messages are
                 # closed has not heard, so then the "new names" step still posts them.
                 table.new_names = []
@@ -10052,7 +10057,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if shown and self.lookup is not None:
                 self.lookup.drop([cid])
             if failed:  # the message said "now shown" for these: say it was not, with no name
-                for dm_id in sorted(campaign.dm_user_ids):
+                for dm_id in sorted(campaign.dm_accounts):
                     await self.sidebar_send_dm(dm_id, SUMMARY_PARTIAL)
             log.info(
                 "Secrets said at the table: %d told, %d shown, %d not", len(listed), shown, failed
@@ -10089,7 +10094,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             closed_dms = 0  # DMs whose private messages are closed
             for said in found:
                 if alone:  # players may look at the screen: the name goes to the DMs only
-                    for dm_id in sorted(campaign.dm_user_ids):
+                    for dm_id in sorted(campaign.dm_accounts):
                         sent = await self.sidebar_send_dm(
                             dm_id,
                             question_text(
@@ -11231,7 +11236,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is not None:
             who = discord.utils.escape_markdown(campaign.name)
             marked = f"❓ **DMbot has a question** · {who}\n{text}"
-            order = sorted(campaign.dm_user_ids, key=lambda u: (u != campaign.owner_user_id, u))
+            order = sorted(campaign.dm_accounts, key=lambda u: (u != campaign.owner_user_id, u))
             for user_id in order:
                 try:  # one DM failing must not stop the others
                     copy = dm_links.for_campaign(
@@ -11274,7 +11279,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # must know which one it is about.
                 who = discord.utils.escape_markdown(campaign.name)
                 marked = f"❓ **DMbot has a question** · {who}\n{text}"
-                for user_id in sorted(campaign.dm_user_ids):
+                for user_id in sorted(campaign.dm_accounts):
                     try:  # one DM failing must not stop the others
                         plain = dm_links.for_campaign(
                             None,
@@ -11365,7 +11370,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 or view
             )  # (for_campaign gives the view back; `or` keeps the type a View)
-            for user_id in sorted(campaign.dm_user_ids):
+            for user_id in sorted(campaign.dm_accounts):
                 # Each DM in its own try: one that fails must not stop the others, nor discard a
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
