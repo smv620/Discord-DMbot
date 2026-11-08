@@ -182,6 +182,16 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_REL_READ_ON must be 1"):
             load_settings({**BASE, "DMBOT_REL_READ_ON": "maybe"})
 
+    def test_role_match_is_its_own_switch_inside_meaning_search(self) -> None:
+        self.assertFalse(load_settings(BASE).role_match)
+        on = load_settings({**BASE, "DMBOT_ROLE_MATCH": "1"})
+        self.assertTrue(on.role_match)
+        self.assertFalse(on.role_match_on)  # (no meaning search, no key: nothing is sent)
+        both = {**BASE, "DMBOT_ROLE_MATCH": "1", "DMBOT_MEANING_SEARCH": "1", "VOYAGE_API_KEY": "k"}
+        self.assertTrue(load_settings(both).role_match_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
+            load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(
