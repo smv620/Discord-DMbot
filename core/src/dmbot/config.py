@@ -108,6 +108,9 @@ class Settings:
     # record. Off until the extractor is; it only runs when the extractor does, inside the same
     # call limits. Nothing is stored yet while storing is not built.
     story_deeds_on: bool = False
+    # A fourth question (#2996, part 2 slice 1): who learned what, proposed for the DM to keep.
+    # Off until dev1's sample run; only runs when the extractor does, inside the same call limits.
+    story_reveals_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -423,6 +426,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_WHO_APPLY must be 1 (on) or 0 (off), got "' + who_apply_raw + '".'
         )
+    reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
+    if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_REVEALS must be 1 (on) or 0 (off), got "' + reveals_raw + '".'
+        )
     deeds_raw = (get("DMBOT_STORY_DEEDS") or "0").lower()
     if deeds_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_STORY_DEEDS must be 1 (on) or 0 (off), got "' + deeds_raw + '".')
@@ -616,6 +624,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_deeds_on=deeds_raw in ("1", "true", "on"),
+        story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
