@@ -54,7 +54,11 @@ class TheCard(Base):
         bot = MagicMock()
         bot.consent.consenting = AsyncMock(return_value={7})
         campaign = SimpleNamespace(
-            id=self.c, guild_id=self.g, name="One", dm_user_ids=frozenset({7})
+            id=self.c,
+            guild_id=self.g,
+            name="One",
+            dm_user_ids=frozenset({7}),
+            dm_accounts=frozenset({7}),
         )
         it = MagicMock(client=bot, user=MagicMock(id=7))
         it.response.defer = AsyncMock()

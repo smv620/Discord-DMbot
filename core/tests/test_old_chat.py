@@ -18,7 +18,11 @@ GUILD, CID, CHANNEL, DM, PLAYER = 1, "c" * 32, 700, 10, 20
 
 def campaign(channel_id: int | None = CHANNEL) -> Any:
     return SimpleNamespace(
-        id=CID, guild_id=GUILD, dm_user_ids=frozenset({DM}), dmbchat_channel_id=channel_id
+        id=CID,
+        guild_id=GUILD,
+        dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
+        dmbchat_channel_id=channel_id,
     )
 
 

@@ -222,7 +222,9 @@ def campaign(**kw: Any) -> Any:
         "guild_id": GUILD_A, "id": CID, "name": "Frost", "dm_user_ids": frozenset({DM_ID}),
         "dm_screen_visibility": "private",
     }  # fmt: skip
-    return SimpleNamespace(**{**base, **kw})
+    data = {**base, **kw}
+    data.setdefault("dm_accounts", data["dm_user_ids"])
+    return SimpleNamespace(**data)
 
 
 class StepBase(Base):

@@ -558,7 +558,12 @@ class NameCards(NamesTest):
         with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
             await form.on_submit(it)  # a DM, but spoken recaps lapsed since the press
         self.assertIn("Spoken recaps aren't on", it.response.sent[0][0])
-        gone = SimpleNamespace(dm_user_ids=frozenset({999}), guild_id=GUILD, id=self.campaign.id)
+        gone = SimpleNamespace(
+            dm_user_ids=frozenset({999}),
+            dm_accounts=frozenset({999}),
+            guild_id=GUILD,
+            id=self.campaign.id,
+        )
         it = self.it()
         with (
             patch.object(name_card, "_current", AsyncMock(return_value=(gone, "Belleros"))),

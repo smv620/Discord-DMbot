@@ -26,6 +26,7 @@ def campaign(last_voice: int | None, picked: int | None) -> Campaign:
         fallback_ruleset="2014",
         optional_rules_default=True,
         dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
         dm_screen_channel_id=None,
         last_voice_channel_id=last_voice,
         dm_screen_visibility="peek",

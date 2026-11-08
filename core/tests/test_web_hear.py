@@ -215,7 +215,9 @@ class Hearing(Base):
         return await bot.apply(host, cache or bot.HearCache(), THURSDAY.id, item)
 
     def campaign(self, *dms: int) -> Any:
-        return SimpleNamespace(dm_user_ids=frozenset(dms or (ALICE.id,)))
+        return SimpleNamespace(
+            dm_user_ids=frozenset(dms or (ALICE.id,)), dm_accounts=frozenset(dms or (ALICE.id,))
+        )
 
     async def test_a_clip_is_made_as_wav_and_the_second_press_is_free(self) -> None:
         voice = FakeVoice()

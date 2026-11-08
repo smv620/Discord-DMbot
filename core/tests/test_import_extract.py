@@ -193,7 +193,11 @@ class TheImportRead(WithImports):
             import_job=SimpleNamespace(store=self.store),
             campaigns=SimpleNamespace(
                 get=AsyncMock(
-                    return_value=SimpleNamespace(dm_user_ids=frozenset({5}), dm_screen_channel_id=9)
+                    return_value=SimpleNamespace(
+                        dm_user_ids=frozenset({5}),
+                        dm_accounts=frozenset({5}),
+                        dm_screen_channel_id=9,
+                    )
                 )
             ),
             transcripts=self.transcripts,

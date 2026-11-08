@@ -665,8 +665,10 @@ class PlanChecks(UsageTest):
                 "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.a.id,)
             )
         campaign = cast(Campaign, await self.campaign())
-        as_dm = replace(campaign, dm_user_ids=frozenset({OWNER}))
-        not_dm = replace(campaign, dm_user_ids=frozenset({NEW_OWNER}))
+        as_dm = replace(campaign, dm_user_ids=frozenset({OWNER}), dm_accounts=frozenset({OWNER}))
+        not_dm = replace(
+            campaign, dm_user_ids=frozenset({NEW_OWNER}), dm_accounts=frozenset({NEW_OWNER})
+        )
         # A DM of the campaign is asked to take it on (with the button); anyone else is
         # told it needs one of its DMs.
         self.assertEqual(await self.bot.plan_refusal(GUILD_A, as_dm, OWNER), hours.NO_OWNER_ASK)

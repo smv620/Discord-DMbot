@@ -71,6 +71,7 @@ def make_table(
         campaign_name=name,
         dm_user_id=STARTER,  # whoever pressed Start; not necessarily a campaign DM
         dm_user_ids=frozenset({DM, CO_DM}),
+        dm_accounts=frozenset({DM, CO_DM}),
         segmenter=SimpleNamespace(session=5),
         recent=Recent.new(),
         sidebar_limiter=AskLimiter(),

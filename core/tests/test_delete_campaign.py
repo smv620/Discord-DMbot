@@ -29,6 +29,7 @@ class Words(unittest.TestCase):
             name="Curse of  Strahd",
             owner_user_id=owner,
             dm_user_ids=dms,
+            dm_accounts=dms,
             is_owner=lambda user_id: user_id == owner,
         )
 

@@ -209,7 +209,9 @@ class Listening(Base):
     # ---- the bot's half -----------------------------------------------------------------
 
     def campaign(self, *dms: int) -> Any:
-        return SimpleNamespace(dm_user_ids=frozenset(dms or (ALICE.id,)))
+        return SimpleNamespace(
+            dm_user_ids=frozenset(dms or (ALICE.id,)), dm_accounts=frozenset(dms or (ALICE.id,))
+        )
 
     def item(self, clip: bytes | None = None, **kw: Any) -> bot.Listen:
         return bot.Listen(

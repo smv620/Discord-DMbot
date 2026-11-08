@@ -39,6 +39,7 @@ def campaign(level: str = "normal", name: str = "Frostmaiden", vis: str = "peek"
         fallback_ruleset="2014",
         optional_rules_default=True,
         dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
         dm_screen_channel_id=None,
         last_voice_channel_id=None,
         dm_screen_visibility=vis,
