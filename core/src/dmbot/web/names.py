@@ -19,13 +19,16 @@ from dmbot import plan_rules
 from dmbot.ai import TierClient
 from dmbot.db import Database
 from dmbot.recaps.notify import parse_ref
-from dmbot.said_as.suggest import SuggestFailed, suggest
+from dmbot.said_as.suggest import SPELLING, SuggestFailed, suggest
 from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
 log = logging.getLogger(__name__)
 
+# The suggestion's spelling check moved to `said_as.suggest`; tests written against this module
+# (the respelling's) still read it here under its old name.
+_SPELLING = SPELLING
 SAID_AS_MAX = 80  # the same limit as the bot's MemoryStore.set_said_as and the database's check
 ALIAS_ID_LENGTH = 32
 
