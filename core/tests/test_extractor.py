@@ -860,6 +860,23 @@ class RevealPass(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("1 reveal_unplaced", report.line())
 
+    async def test_the_pre_check_skips_a_batch_that_could_hold_no_reveal(self) -> None:
+        plain = await go(
+            Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Stash(),
+            reveals_precheck=True,
+        )  # fmt: skip
+        self.assertEqual((plain.reveals_skipped, plain.calls), (1, 1))  # (only the claims call)
+        self.assertIn("1 batch(es) skipped", plain.line())
+        told = [line(n, DM, "Bruno told Tran the truth." if n == 3 else "") for n in range(1, 11)]
+        asked = await go(
+            Revealing(), Kept(), told, reveals=True, reveal_store=Stash(), reveals_precheck=True
+        )
+        self.assertEqual((asked.reveals_skipped, asked.reveals), (0, 1))
+
+    async def test_without_the_pre_check_every_batch_is_asked(self) -> None:
+        report = await go(Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Stash())
+        self.assertEqual((report.reveals_skipped, report.reveals), (0, 1))
+
     async def test_the_families_only_mode_asks_nothing(self) -> None:
         ai = Revealing()
         await go(ai, Kept(), dm_session(10), reveals=True, reveal_store=Stash(), family_only=True)

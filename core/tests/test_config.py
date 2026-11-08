@@ -197,6 +197,11 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_REVEALS": "1"}).story_reveals_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_REVEALS": "maybe"})
+        self.assertFalse(load_settings(BASE).story_reveals_precheck)
+        on = {**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "1"}
+        self.assertTrue(load_settings(on).story_reveals_precheck)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS_PRECHECK must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "maybe"})
 
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)

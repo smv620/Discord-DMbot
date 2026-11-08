@@ -9337,6 +9337,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.settings.story_deeds_on and self.memory is not None
                 else None,
                 reveals=self.settings.story_reveals_on,
+                reveals_precheck=self.settings.story_reveals_precheck,
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
@@ -9514,6 +9515,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.settings.story_deeds_on and self.memory is not None
                 else None,
                 reveals=self.settings.story_reveals_on,
+                reveals_precheck=self.settings.story_reveals_precheck,
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,

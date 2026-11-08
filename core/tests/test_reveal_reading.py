@@ -203,3 +203,27 @@ class TheAnswer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ThePreCheck(unittest.TestCase):
+    def test_a_dm_check_or_discovery_word_asks(self) -> None:
+        said = (
+            "Roll Insight for me.", "You notice a hidden door.", "You realize he lied.",
+            "You find out the truth.", "Make a Perception check.", "You recognise her.",
+        )  # fmt: skip
+        for words in said:
+            with self.subTest(words):
+                self.assertTrue(rr.could_hold_reveal([(words, True)]))
+
+    def test_check_and_discovery_words_count_on_the_dm_s_lines_only(self) -> None:
+        self.assertFalse(rr.could_hold_reveal([("I rolled a 19 on Insight!", False)]))
+        self.assertFalse(rr.could_hold_reveal([("I notice nothing.", False)]))
+
+    def test_a_telling_word_on_anyone_s_line_asks(self) -> None:
+        self.assertTrue(rr.could_hold_reveal([("Bruno told me about Shela.", False)]))
+        self.assertTrue(rr.could_hold_reveal([("She whispers a name.", True)]))
+
+    def test_see_and_plain_talk_do_not_ask(self) -> None:
+        self.assertFalse(rr.could_hold_reveal([("You see a long road ahead.", True)]))
+        self.assertFalse(rr.could_hold_reveal([("We walk on.", False), ("Snow falls.", True)]))
+        self.assertFalse(rr.could_hold_reveal([]))

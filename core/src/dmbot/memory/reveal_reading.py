@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,6 +62,31 @@ GROUP_WORDS = frozenset({
     "the others", "others", "we", "us", "the players", "players", "the table",
 })  # fmt: skip
 RELATION_MAX = 60  # a relationship is a few words ("is secretly the brother of")
+
+# The pre-check (Supervisor's ruling on #2996, behind DMBOT_STORY_REVEALS_PRECHECK): a batch is
+# asked only when it could hold a reveal. Check and discovery words count on the DM's lines only
+# (the DM says what a check found); telling words on anyone's (a tell is in character, often a
+# player's). "see" is left out on purpose: it is in nearly every line of narration.
+_DM_WORDS = re.compile(
+    r"\b(perception|investigation|insight|nature|history|arcana|religion|survival|medicine"
+    r"|checks?|rolls?|rolled|notic(?:e|es|ed|ing)|recogni[sz](?:e|es|ed|ing)"
+    r"|reali[sz](?:e|es|ed|ing)|learn(?:s|ed|t|ing)?|discover(?:s|ed|ing)?"
+    r"|(?:find|finds|found|finding) out)\b",
+    re.IGNORECASE,
+)
+_TELL_WORDS = re.compile(
+    r"\b(tells?|told|telling|says?|said|whispers?|whispered|explains?|explained|reveals?"
+    r"|revealed|mentions?|mentioned|warns?|warned|confess(?:es|ed)?|admits?|admitted"
+    r"|informs?|informed|asks?|asked)\b",
+    re.IGNORECASE,
+)
+
+
+def could_hold_reveal(lines: Sequence[tuple[str, bool]]) -> bool:
+    """Whether a batch (each line's words, and whether the DM spoke it) could hold a reveal: a DM
+    line with a check or discovery word, or any line with a telling word. Pure; never sent."""
+    return any((dm and _DM_WORDS.search(text)) or _TELL_WORDS.search(text) for text, dm in lines)
+
 
 REVEAL_SYSTEM = """You help a Dungeon Master keep track of what each character in their tabletop
 role-playing game has learned.
@@ -269,5 +294,5 @@ def _reveal(item: Any, known: set[str], dm: set[str]) -> tuple[RevealProposal | 
 
 __all__ = [
     "CHECK", "CHECKS", "GROUP_WORDS", "MAX_REVEALS", "REVEAL_SYSTEM", "TELL", "Parsed",
-    "RevealProposal", "check_name", "parse_reveals",
+    "RevealProposal", "check_name", "could_hold_reveal", "parse_reveals",
 ]  # fmt: skip
