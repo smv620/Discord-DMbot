@@ -69,6 +69,30 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
           `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/suggest`,
         )) as { suggestion: string }
       ).suggestion,
+    // The press is queued for the bot (the web container never holds the speech key), then polled about once a second
+    // for up to a minute; the clip arrives once, as base64 WAV, on the look that says done.
+    hearSaidAs: async (campaignRef, nameId, text, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/hear`;
+      const queued = (await call("POST", base, { text })) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; progress?: unknown; audio?: string; mime?: string } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          onLook?.(sharedOf(got?.progress as never));
+        } catch (error) {
+          if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
+        }
+        if (got?.state === "done") {
+          if (!got.audio) throw new ApiError("server");
+          const bytes = Uint8Array.from(atob(got.audio), (c) => c.charCodeAt(0));
+          return new Blob([bytes], { type: got.mime ?? "audio/wav" });
+        }
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
     respellFromVoice: async (campaignRef, nameId, clip) =>
       (
         (await call(
