@@ -44,6 +44,11 @@ const SCRIPTED = new Set([
   "pricing.html",
   "unsubscribe.html",
 ]);
+// The search bar in the header (#3855) puts its island, and so a script, on every page while SEARCH_LIVE is on, so then the
+// list above is not the limit; every inline script still has to be allowed by its hash below.
+const SEARCH_ON = /SEARCH_LIVE\s*=\s*true/.test(
+  readFileSync(new URL("../src/content/search-switch.ts", import.meta.url), "utf8"),
+);
 const dist = process.argv[2] ?? new URL("../dist/", import.meta.url).pathname;
 const policy = readFileSync(join(dist, "_headers"), "utf8").match(
   /^\s*Content-Security-Policy:[^\n]*?script-src ([^;\n]*);/m,
@@ -54,7 +59,7 @@ if (!policy) problems.push("dist/_headers has no script-src");
 for (const page of htmlFiles(dist)) {
   const name = relative(dist, page);
   const html = readFileSync(page, "utf8");
-  if (!SCRIPTED.has(name) && /<script/i.test(html)) {
+  if (!SEARCH_ON && !SCRIPTED.has(name) && /<script/i.test(html)) {
     problems.push(`${name} has a script; only ${[...SCRIPTED].join(" and ")} should`);
   }
   for (const hash of inlineScriptHashes(html)) {

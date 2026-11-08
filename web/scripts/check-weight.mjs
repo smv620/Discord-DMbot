@@ -23,9 +23,14 @@ import { checkBuild, table } from "./weight.mjs";
 // the switched panels) load on demand with import(), so the recaps page is 174 KB and the largest page
 // is /account at 178.8 KB. The budget is back at 185 KB. A chunk loaded on demand is not part of a page's
 // weight, so it has its own limit.
+// Raised on 2026-11-08 (#3855): the search bar's island is on every page once SEARCH_LIVE is on. Measured with it off and on:
+// the island's own chunk is 10.1 KB (4.1 KB compressed); a page with no island of its own also gains Astro's small start-up
+// script in its HTML (index.html 15.6 to 21.2 KB, help.html 51.5 to 57.0 KB, 2.2 KB compressed); every page gains 1.2 to
+// 11.1 KB in all, and the three heaviest signed-in pages (names 188.3, recaps 191.0, web 192.2 KB) pass 185. Each budget is
+// the largest page now plus about 1 KB.
 export const budgets = {
-  htmlKB: 52,
-  totalKB: 185,
+  htmlKB: 58,
+  totalKB: 194,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
