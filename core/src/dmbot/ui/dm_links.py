@@ -43,6 +43,8 @@ PAGES = frozenset(
         "import",
         "timeline",
         "transcripts",
+        "campaigns",  # the campaign's home: `/account/campaigns/<ref>`
+        "restore",  # Load a backup: one page for every campaign, so no ref (NO_REF)
     }
 )
 
@@ -65,7 +67,7 @@ def _host(site_url: str) -> str:
 
 # Pages that are one page for every campaign: they have no `<ref>` in their address, because the
 # site serves them only at `/account/<page>` (web/public/_redirects has a rewrite for the others).
-NO_REF = frozenset({"questions"})
+NO_REF = frozenset({"questions", "restore"})
 
 
 def site_link(
@@ -91,6 +93,54 @@ def site_link(
     if page in NO_REF:
         return f"https://{host}/account/{page}{query}"
     return f"https://{host}/account/{page}/{ref}{query}"
+
+
+def handover_link(site_url: str) -> str:
+    """The hand-over page (#437): one page for a person offered a campaign, at `/handover`, outside
+    the account area. No ids: the offer's token is in the address's hash only when the person
+    follows an email. "" without an https site."""
+    host = _host(site_url)
+    return f"https://{host}/handover" if host else ""
+
+
+def restore_link(site_url: str) -> str:
+    """The Load a backup page (one page for every campaign). "" without an https site."""
+    return site_link(site_url, "restore", 0, "x")
+
+
+def account_link(site_url: str) -> str:
+    """The account page, where a campaign's page falls back to when it has no page of its own
+    (a page behind a switch that is off, a restored campaign whose id is not known yet)."""
+    host = _host(site_url)
+    return f"https://{host}/account" if host else ""
+
+
+# The website's address, set once at start (the bot's `settings.site_url`). Senders that are far
+# from the bot object (a module-level `tell_new`, an offers loop) read it here rather than carry
+# it through every call; unset (the default, and in tests) the website button is simply left out.
+_site = ""
+
+
+def configure_site(site_url: str) -> None:
+    global _site
+    _site = site_url
+
+
+def view_for(
+    view: discord.ui.View | None, guild_id: int, campaign_id: str, links: DMLinks
+) -> discord.ui.View | None:
+    """`for_campaign` with the configured website address."""
+    return for_campaign(view, _site, guild_id, campaign_id, links)
+
+
+def view_with_site(view: discord.ui.View | None, site_url_for_page: str) -> discord.ui.View | None:
+    """`view` with one "Open on the website" button for an address built by `handover_link` or
+    `account_link` with the configured site, or the view unchanged when it is empty."""
+    return add_links(view, site_url=site_url_for_page)
+
+
+def configured_site() -> str:
+    return _site
 
 
 def questions_link(site_url: str) -> str:

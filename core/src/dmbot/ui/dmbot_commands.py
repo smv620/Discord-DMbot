@@ -41,7 +41,7 @@ from dmbot.dm_screen import handover
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import logic
+from dmbot.ui import dm_links, logic
 from dmbot.waiting import WaitingMessage, message_is_gone
 
 if TYPE_CHECKING:
@@ -839,7 +839,14 @@ class RestoreChoice(_Menu):
                 await asyncio.sleep(1.0)
         log.info("Telling the person the restore result privately")
         with contextlib.suppress(discord.HTTPException):
-            await interaction.user.send(done, allowed_mentions=NO_PINGS)
+            # The Load a backup page for the person who restored (#3663): where they can see the
+            # same result and try again. A restored campaign's own page is not known here.
+            view = dm_links.view_with_site(None, dm_links.restore_link(dm_links.configured_site()))
+            await interaction.user.send(
+                done,
+                view=view if view is not None else discord.utils.MISSING,
+                allowed_mentions=NO_PINGS,
+            )
 
     async def _restore_steps(
         self,

@@ -14,19 +14,21 @@ SENDS = re.compile(
 )
 
 # Reaches the DM through `ask_privately`, `ask_live` or `tell_dms` in bot.py, which add the links.
-THROUGH_THE_HELPER = {"bot.py", "recaps/discord.py", "questions/discord.py"}
-# Not converted yet: each is a later piece of #3663 Part A, and the list shrinks to empty there.
-NOT_YET = {
+THROUGH_THE_HELPER = {
+    "bot.py",
+    "recaps/discord.py",
+    "questions/discord.py",
+    # (piece 4: the campaign's home, the hand-over page, Load a backup and the script's page)
     "dm_screen/game_masters.py",
     "dm_screen/handover.py",
     "dm_screen/site_offers.py",
-    "fightbot.py",
-    "sheet_reread.py",
     "ui/dmbot_commands.py",
     "ui/theatre_button.py",
 }
 # Not a message about a question to answer, so no links (each with its reason).
 OUT_OF_SCOPE = {
+    "fightbot.py": "a player's own combat reminder, to a player about their own sheet",
+    "sheet_reread.py": "a player's own sheet questions, to a player",
     "consent_dm.py": "messages to players (consent), not to the DM (#3663 out of scope)",
     "sidebar/service.py": "the DM's own live questions and DMbot's in-game replies at the table: "
     "live and brief on purpose, no links",
@@ -45,7 +47,7 @@ class EveryPrivateMessageToTheDM(unittest.TestCase):
         return found
 
     def test_every_sender_is_listed(self) -> None:
-        listed = THROUGH_THE_HELPER | NOT_YET | set(OUT_OF_SCOPE)
+        listed = THROUGH_THE_HELPER | set(OUT_OF_SCOPE)
         self.assertEqual(
             sorted(self.senders() - listed),
             [],
@@ -54,5 +56,5 @@ class EveryPrivateMessageToTheDM(unittest.TestCase):
         )
 
     def test_no_list_names_a_file_that_no_longer_sends(self) -> None:
-        listed = THROUGH_THE_HELPER | NOT_YET | set(OUT_OF_SCOPE)
+        listed = THROUGH_THE_HELPER | set(OUT_OF_SCOPE)
         self.assertEqual(sorted(listed - self.senders()), [])

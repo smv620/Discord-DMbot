@@ -22,7 +22,7 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
-from typing import Protocol
+from typing import Any, Protocol
 
 import discord
 
@@ -51,6 +51,7 @@ from dmbot.dm_screen.handover import (
 )
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.ui import dm_links
 
 log = logging.getLogger(__name__)
 
@@ -206,12 +207,17 @@ class SiteOffers:
         if moved.result == "reopened" and old is not None:
             with contextlib.suppress(discord.HTTPException):
                 member = await _member(old, offer.from_user_id)
-                await member.send(MOVE_FAILED.format(campaign=name), allowed_mentions=NO_PINGS)
+                await member.send(
+                    MOVE_FAILED.format(campaign=name),
+                    view=_home(offer.guild_id, offer.campaign_id),
+                    allowed_mentions=NO_PINGS,
+                )
             if new is not None and offer.to_user_id:
                 with contextlib.suppress(discord.HTTPException):
                     member = await _member(new, offer.to_user_id)
                     await member.send(
                         MOVE_FAILED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                        view=_home(offer.guild_id, offer.campaign_id),
                         allowed_mentions=NO_PINGS,
                     )
         elif moved.result == "ended" and new is not None and offer.to_user_id:
@@ -221,6 +227,7 @@ class SiteOffers:
                 member = await _member(new, offer.to_user_id)
                 await member.send(
                     MOVE_ENDED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                    view=_home(offer.guild_id, offer.campaign_id),
                     allowed_mentions=NO_PINGS,
                 )
         elif moved.result == "moved":
@@ -233,6 +240,7 @@ class SiteOffers:
                             server=md(new.name),
                             name=md(offer.to_name or "The new owner"),
                         ),
+                        view=_home(new.id, offer.campaign_id),
                         allowed_mentions=NO_PINGS,
                     )
             if new is not None:
@@ -242,6 +250,7 @@ class SiteOffers:
                         MOVED_NEW_OWNER.format(
                             campaign=name, server=md(new.name), owner=md(offer.from_name)
                         ),
+                        view=_home(new.id, offer.campaign_id),
                         allowed_mentions=NO_PINGS,
                     )
             # Last, so a slow mail server never delays the two private messages. A process that
@@ -529,7 +538,11 @@ async def _tell_decision(
     if to_owner is not None and tell_owner:
         with contextlib.suppress(discord.HTTPException):
             member = await _member(guild, offer.from_user_id)
-            await member.send(to_owner, allowed_mentions=NO_PINGS)
+            await member.send(
+                to_owner,
+                view=_home(offer.guild_id, offer.campaign_id),
+                allowed_mentions=NO_PINGS,
+            )
     if offer.via_email or offer.delivered_at is None:
         return  # an email offer has no Discord message; or it was never sent: nothing to change
     with contextlib.suppress(discord.HTTPException):
@@ -545,7 +558,18 @@ async def _tell_decision(
                 if offer.status != "withdrawn":
                     return  # they chose it themselves; the site told them
         if offer.status == "withdrawn":  # no message to change: tell them anyway
-            await member.send(to_person, allowed_mentions=NO_PINGS)
+            await member.send(
+                to_person,
+                view=_home(offer.guild_id, offer.campaign_id),
+                allowed_mentions=NO_PINGS,
+            )
+
+
+def _home(guild_id: int, campaign_id: str) -> Any:
+    """The campaign's page on the website as a link button under a private note about its move
+    or hand-over (#3663), or nothing when the site has no https address (`MISSING`)."""
+    view = dm_links.view_for(None, guild_id, campaign_id, dm_links.DMLinks(page="campaigns"))
+    return view if view is not None else discord.utils.MISSING
 
 
 async def _member(guild: discord.Guild, user_id: int) -> discord.Member:
