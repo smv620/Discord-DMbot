@@ -259,7 +259,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "a long document has many. The kinds, in plain words: is family of (say the role, such as "
         "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
         "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
-        "mentors, is an apprentice of, is a rival of, owns, is in (a place inside a place; for a "
+        "mentors, is an apprentice of, is a rival of, owns (the item is theirs: his or her, "
+        "bought, belongs to), carries (has the item with them now: carries, wears, keeps in a "
+        "pack, grabbed and fled with; write owns and carries for one pair only when the text "
+        "says both), found (discovered, came upon, dug up), is in (a place inside a place; for a "
         "character or group say whether it lives in, lived in, works in, worked in, comes from "
         "or was last seen in; an item is only ever kept in a place), leads (also: rules, is the "
         "speaker, mayor or captain of), founded, worships, "
@@ -373,7 +376,11 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
         'a character, creature or group it is tied to the place b: put in "words" '
         f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; an item is only ever kept in a "
-        'place: say "is kept in" or "was kept in"; owns = a owns b; '
+        'place: say "is kept in" or "was kept in"; owns = a owns b (b is a\'s: his or her, '
+        "bought, belongs to, a's vessel); carries = a has the item b with them now (carries, "
+        "wears, keeps in a pack, grabbed and fled with); write two lines, one owns and one "
+        "carries, only when the text says both; found = a found b (discovered, came upon, dug "
+        "up: a past event, not owning); "
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty; the feeling the text shows: an argument, a "
