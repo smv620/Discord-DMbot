@@ -910,7 +910,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       // A "knows (wary)" connection with its lore line, for the feeling picker (#3607).
       // An unnamed person (#3732): in a campaign reference ending ".unnamed" the DM's map holds Ken's sister, with a line to the first name.
       if (/\.unnamed$/.test(ref)) {
-        found.nodes.push({ id: "u1", name: "Ken's sister (name unknown)", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
+        found.nodes.push({ id: "u1", name: "unnamed - Ken's sister", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
         found.links.push({ id: "lu1", a: found.nodes[0]!.id, b: "u1", words: "sister of", secret: false, direction: "a-b" });
       }
       if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
