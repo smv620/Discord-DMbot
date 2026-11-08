@@ -10,6 +10,7 @@ import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { cleanupWords as w } from "../src/content/graph-cleanup-words";
+import { QUIET_SECONDS } from "../src/account/useObservedWait";
 import { namePlaceWords } from "../src/content/name-places";
 import { webPage } from "../src/content/web-words";
 
@@ -193,5 +194,56 @@ describe("the clean-up", () => {
     render(<Web api={api} path="/account/web/100.cmp1.cleanup" />);
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     expect(screen.queryByRole("button", { name: webPage.cleanupOpen })).toBeNull();
+  });
+});
+
+describe("the clean-up's sign-in, stalled wait and review line (#3785)", () => {
+  it("goes to the sign-in screen when the read says the session ended", async () => {
+    const api = mockApi("table");
+    api.graphCleanup = async () => {
+      throw new ApiError("signed-out");
+    };
+    await open("cleanup", api);
+    expect(await screen.findByText(webPage.signedOut)).toBeTruthy();
+    expect(screen.queryByText(w.down)).toBeNull();
+  });
+
+  it("goes to the sign-in screen when adding a connection says the session ended", async () => {
+    const api = mockApi("table");
+    api.changeWebLink = async () => {
+      throw new ApiError("signed-out");
+    };
+    await open("cleanup", api);
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: w.addHeading("Old Pell") }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "Mira" } });
+    fireEvent.click(await screen.findByRole("button", { name: /^Connect to Mira/ }));
+    fireEvent.input(screen.getByLabelText(w.wordsLabel), { target: { value: "sells rope to" } });
+    fireEvent.click(screen.getByRole("button", { name: w.add }));
+    expect(await screen.findByText(webPage.signedOut)).toBeTruthy();
+    expect(screen.queryByText(w.addFailed)).toBeNull();
+  });
+
+  it("says the wait is stalled when nothing has moved", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const api = mockApi("table");
+      api.graphCleanup = () => new Promise(() => {});
+      await open("cleanup", api);
+      await screen.findByText(w.stage);
+      expect(screen.queryByText(w.quiet)).toBeNull();
+      await vi.advanceTimersByTimeAsync(QUIET_SECONDS * 1000 + 1000);
+      expect(await screen.findByText(w.quiet)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows the running review line", async () => {
+    const api = mockApi("table");
+    const real = api.graphCleanup!.bind(api);
+    api.graphCleanup = async (ref) => ({ ...(await real(ref)), review: { state: "running" } });
+    await open("cleanup", api);
+    expect(await screen.findByText(w.reviewRunning)).toBeTruthy();
   });
 });
