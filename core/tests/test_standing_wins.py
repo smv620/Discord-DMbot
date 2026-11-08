@@ -42,6 +42,11 @@ class TheWord(unittest.TestCase):
     def test_the_other_way_is_used_when_that_is_all_there_is(self) -> None:
         self.assertEqual(standing.dm_line_word({("b", "a"): 40}, "a", "b"), "friendly")
 
+    def test_the_line_s_own_word_stays_when_it_is_on_the_dm_s_step(self) -> None:
+        self.assertEqual(standing.dm_line_word({("a", "b"): 40}, "a", "b", "trusts"), "trusts")
+        self.assertEqual(standing.dm_line_word({("a", "b"): 80}, "a", "b", "Close"), "Close")
+        self.assertEqual(standing.dm_line_word({("a", "b"): -80}, "a", "b", "trusts"), "hostile")
+
     def test_none_when_the_dm_set_nothing_for_the_pair(self) -> None:
         self.assertIsNone(standing.dm_line_word({("a", "c"): 40}, "a", "b"))
         self.assertIsNone(standing.dm_line_word({}, "a", "b"))
@@ -193,3 +198,72 @@ class TheStoreReader(NamesTest):
         self.assertIn("knows **Cerric**", players or "")
         for word in ("hostile", "friendly"):
             self.assertNotIn(word, players or "")
+
+
+class ThePicker(NamesTest):
+    """The DM's feeling pick on a `knows` line writes their Reputation in the same change (#3642),
+    so the line never seems to ignore the pick, and one Undo puts both back."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Belleros", "npc", CONFIRMED), NewName("Cerric", "npc", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        bel, cer = made.value
+        assert bel and cer
+        self.bel: str = bel
+        self.cer: str = cer
+        link = await self.memory.add_relation(
+            GUILD, self.campaign.id, self.bel, "knows", self.cer, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="wary",
+        )  # fmt: skip
+        assert link.value is not None
+        self.link = link.value[0]
+
+    async def pick(self, word: str) -> Any:
+        from dmbot.memory.link_edits import change_words
+
+        return await change_words(
+            self.memory, GUILD, self.campaign.id, self.link, "knows", word, dm_feeling=True
+        )
+
+    async def scores(self) -> dict[tuple[str, str], int]:
+        return await self.memory.dm_line_scores(GUILD, self.campaign.id, self.bel)
+
+    async def test_a_pick_over_a_dm_standing_moves_both_and_one_undo_puts_both_back(self) -> None:
+        await self.memory.set_impression(
+            GUILD, self.campaign.id, self.bel, self.cer, standing.HOSTILE, source="dm"
+        )
+        done = await self.pick("trusts")
+        assert done is not None and done.batch is not None
+        self.assertEqual(done.value.detail, "trusts")
+        self.assertEqual(await self.scores(), {(self.bel, self.cer): 40})
+        self.assertEqual(standing.dm_line_word(await self.scores(), self.bel, self.cer, "trusts"),
+                         "trusts")  # fmt: skip
+        await self.memory.undo(GUILD, self.campaign.id, done.batch)
+        self.assertEqual(await self.scores(), {(self.bel, self.cer): -80})
+        (line,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bel)
+        self.assertEqual(line.detail, "wary")
+
+    async def test_picking_the_line_s_own_word_again_still_sets_the_standing(self) -> None:
+        await self.memory.set_impression(
+            GUILD, self.campaign.id, self.bel, self.cer, standing.DEVOTED, source="dm"
+        )
+        await self.pick("wary")
+        self.assertEqual(await self.scores(), {(self.bel, self.cer): 0})
+
+    async def test_neutral_closes_the_dm_s_standing_and_keeps_the_story_s(self) -> None:
+        await self.memory.add_feeling(GUILD, self.campaign.id, self.bel, self.cer, -80)
+        await self.memory.set_impression(
+            GUILD, self.campaign.id, self.bel, self.cer, standing.HOSTILE, source="dm"
+        )
+        await self.pick("neutral")
+        self.assertEqual(await self.scores(), {})
+
+    async def test_a_reader_s_change_of_words_sets_no_standing(self) -> None:
+        from dmbot.memory.link_edits import change_words
+
+        await change_words(self.memory, GUILD, self.campaign.id, self.link, "knows", "trusts")
+        self.assertEqual(await self.scores(), {})

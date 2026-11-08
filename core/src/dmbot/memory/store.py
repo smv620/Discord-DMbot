@@ -49,6 +49,7 @@ from dmbot.memory import (
     merge_restore,
     notify,
     report_fixed,
+    reputation_words,
     standing,
     states,
     told,
@@ -5286,13 +5287,16 @@ class MemoryStore:
         source: str,
         directional: bool = False,
         swap: bool = False,
+        dm_feeling: bool = False,
     ) -> Written[Relation]:
         """New words between the same two names, in ONE change, so one Undo puts the old words
         back whole. The new connection is added (keeping who sees it) and the old one ended in the
         same write, so a refusal leaves the old as it was. Words that only differ in capitals are
         the same connection (the duplicate rule): nothing is ended, and the connection comes back
         as it is. Words that already exist between the two names reuse that connection, and a
-        secret one never becomes public."""
+        secret one never becomes public. `dm_feeling`: the DM picked a feeling on a `knows` line
+        (#3642), so their own Reputation for the pair is written in the same change, and the line
+        and the Reputation screen never disagree (`_dm_feeling_in`)."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None or current["status"] != CONFIRMED:
@@ -5313,6 +5317,8 @@ class MemoryStore:
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
                 unrevealed=bool(current["unrevealed"]), directional=directional,
             )  # fmt: skip
+            if dm_feeling and predicate == "knows" and source == DM:
+                await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
             if new.id == relation_id:
                 return Written(new, w.batch)
             # The words are new, or match a duplicate only proposed so far (the upgrade just made it
@@ -6369,6 +6375,46 @@ async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
             for r in hanging
         },
     )
+
+
+async def _dm_feeling_in(w: Changes, viewer_id: str, subject_id: str, word: str) -> None:
+    """The DM's Reputation for how `viewer_id` feels about `subject_id`, from the feeling they
+    picked on the `knows` line (#3642), in the caller's write: the step the word stands for, saved
+    as the DM's dated impression (the one before it closed, so the history stays), or, for
+    "neutral", the DM's standing for the pair closed. Nothing for ends that hold no standing (a
+    place judged, a person at the table): the line's own word is all there is."""
+    a, b = await _entity_row(w, viewer_id), await _entity_row(w, subject_id)
+    if (
+        a["type"] not in STANDING_VIEWERS
+        or b["type"] not in STANDING_SUBJECTS
+        or "person" in (a["type"], b["type"])
+    ):
+        return
+    old = await w.select(
+        IMPRESSIONS, " AND viewer_id = %s AND subject_id = %s AND closed_at IS NULL",
+        [viewer_id, subject_id],
+    )  # fmt: skip
+    picked = reputation_words.word_of(word)
+    if picked is None:
+        return  # (not one of the nine: nothing to say about their standing)
+    score = reputation_words.score_of(picked)
+    if score is None:  # (neutral: no opinion; only the DM's own standing is closed)
+        for row in old:
+            if row["source"] == DM:
+                await w.update(IMPRESSIONS, row["id"], {"closed_at": w.now})
+        return
+    if any(r["score"] == score and r["weight"] == standing.DM_WEIGHT for r in old):
+        return  # (already so)
+    for row in old:
+        await w.update(IMPRESSIONS, row["id"], {"closed_at": w.now})
+    await w.insert(
+        IMPRESSIONS,
+        {
+            "id": new_id(), "viewer_id": viewer_id, "subject_id": subject_id, "score": score,
+            "weight": standing.DM_WEIGHT, "source": DM, "from_session_at": None,
+            "created_at": w.now, "closed_at": None,
+        },
+    )  # fmt: skip
 
 
 async def _unique_labels(

@@ -294,7 +294,7 @@ def _rows(
         shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
         # (only the line's own side words a feeling: from the other end it reads "is known to")
         if secrets and standing and ahead and shown.predicate == "knows":
-            word = dm_line_word(standing, r.subject_id, r.object_id)
+            word = dm_line_word(standing, r.subject_id, r.object_id, r.detail)
             if word is not None:  # the DM's word always wins over a reader's (#3642)
                 shown = dataclasses.replace(shown, detail=word)
         words = (

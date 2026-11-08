@@ -103,6 +103,8 @@ async def change_words(
     predicate: str,
     detail: str,
     first: str | None = None,
+    *,
+    dm_feeling: bool = False,
 ) -> Written[Relation] | None:
     """New words between the same two names, keeping who sees it, in ONE change (so one Undo
     puts the old words back). None when the words are the ones it already has, capitals aside:
@@ -117,13 +119,15 @@ async def change_words(
     # Only a one-way role ("niece") has a side to be on; "cousin" reads the same both ways, so
     # retyping it must write nothing.
     swap = directional and first is not None and first == link.object_id
-    if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()) and not (
-        directional and (not link.directional or swap)
+    if (
+        (predicate, detail.casefold()) == (link.predicate, link.detail.casefold())
+        and not (directional and (not link.directional or swap))
+        and not dm_feeling  # (the same word picked again still sets the DM's Reputation, #3642)
     ):
         return None
     written = await memory.change_relation_words(
         guild_id, campaign_id, link.id, predicate, detail, source=DM,
-        directional=directional, swap=swap,
+        directional=directional, swap=swap, dm_feeling=dm_feeling,
     )  # fmt: skip
     unchanged = written.value.id == link.id and written.value.directional == link.directional
     return None if unchanged and not swap else written

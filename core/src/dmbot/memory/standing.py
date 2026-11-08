@@ -84,7 +84,9 @@ LINE_WORD = {
 }
 
 
-def dm_line_word(dm_scores: Mapping[tuple[str, str], int], a: str, b: str) -> str | None:
+def dm_line_word(
+    dm_scores: Mapping[tuple[str, str], int], a: str, b: str, own: str | None = None
+) -> str | None:
     """The word a `knows` line between `a` and `b` shows a DM when the DM set a standing for the
     pair (#3642): `dm_scores` holds the DM's open impressions, (viewer, subject) to score. The DM's
     word always wins over a reader's, so it replaces the line's own; a's view of b is preferred,
@@ -94,7 +96,15 @@ def dm_line_word(dm_scores: Mapping[tuple[str, str], int], a: str, b: str) -> st
     score = dm_scores.get((a, b))
     if score is None:
         score = dm_scores.get((b, a))
-    return None if score is None else LINE_WORD[step_of(score)]
+    if score is None:
+        return None
+    from dmbot.memory import reputation_words  # (here: it imports this module)
+
+    step = step_of(score)
+    # (the line's own word stays when it is on the DM's step: a picked "trusts" reads "trusts",
+    # not "friendly", and the two still never disagree, #3642)
+    word = reputation_words.word_of(own)
+    return own if own and word and reputation_words.step_of_word(word) == step else LINE_WORD[step]
 
 
 @dataclass(frozen=True, slots=True)
