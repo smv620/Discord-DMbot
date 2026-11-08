@@ -871,6 +871,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "server": (503, "server"),  # the AI did not answer (a suggestion, #3806)
         "voice_off": (
             409,
             "voice_off",

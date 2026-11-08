@@ -416,6 +416,20 @@ class TheRoutes(Names):
         self.assertEqual((secret.status_code, secret.json()), (404, {"error": "not_found"}))
         voice = await client.post(f"{base}/{self.main}/said-as/from-voice", headers=HEADERS)
         self.assertEqual((voice.status_code, voice.json()), (409, {"error": "voice_off"}))
+        cut = create_app(
+            settings(),
+            self.web,
+            FakeDiscord(),
+            said_as_ai=FakeAI(cut=True),
+            clock=lambda: NOW,  # type: ignore[arg-type]
+        )
+        cutter = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=cut), base_url="https://web-api.internal.test"
+        )
+        self.addAsyncCleanup(cutter.aclose)
+        cutter.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        failed = await cutter.post(f"{base}/{self.main}/said-as/suggest", headers=HEADERS)
+        self.assertEqual((failed.status_code, failed.json()), (503, {"error": "server"}))
         none = await client.post(f"{base}/{self.title}/said-as/from-voice", headers=HEADERS)
         self.assertEqual(none.status_code, 404)  # a name that isn't listed says nothing of voice
         bob_token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)  # type: ignore[arg-type]
