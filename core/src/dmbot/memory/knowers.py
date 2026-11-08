@@ -159,6 +159,43 @@ async def set_statement_knowers(
     return list(chosen)
 
 
+NOT_ONE_CHARACTER = "Only a character can learn something this way."
+
+
+async def learn(w: Changes, kind: str, statement_id: str, character_id: str) -> bool:
+    """One character learns one statement (#2996, part 2 slice 1: the DM keeps a "who learned
+    what" proposal). Unlike `set_statement_knowers`, which sets the whole list, this adds ONE row,
+    at the character's own point of view and sure (1.0), and leaves everyone else as they were:
+    nothing spreads past the one who learned it. It never lowers a certainty, and a character who
+    already knows it surely changes nothing (returns False). Only the DM, and only a character
+    (never a group, never the party: the party is never a knower). A row a hide put to sleep for
+    this character is replaced, as the DM's word is final (`_drop_asleep`)."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    if kind not in _COLUMNS:
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    column, table = _COLUMNS[kind]
+    statement = await w.get(table, statement_id)
+    if statement is None or statement.get("status") in ("rejected", "merged"):
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    player = (await _known_characters(w, [character_id]))[character_id]
+    entity = await w.get(ENTITIES, character_id)
+    if entity is None or entity["type"] != "character":
+        raise MemoryRuleError(NOT_ONE_CHARACTER)
+    view = await _view_for(w, character_id, player)
+    await _drop_asleep(w, column, statement_id, [view])
+    have = await w.select(
+        KNOWERS, f" AND {column} = %s AND perspective_id = %s", [statement_id, view]
+    )
+    if not have:
+        await w.insert(KNOWERS, _row(column, statement_id, view, w.now))
+        return True
+    if have[0]["confidence"] >= KNOWN:
+        return False
+    await w.update(KNOWERS, have[0]["id"], {"confidence": 1.0})  # (never down: only up to sure)
+    return True
+
+
 async def know_own_disguise(w: Changes, relation_id: str, entity_id: str) -> None:
     """The one in disguise knows it (#3091): a new `disguised_as` connection is listed to its
     subject at 1.0 in the same write, on every path, so that if the subject is a player character
@@ -780,15 +817,19 @@ def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, An
     }  # fmt: skip
 
 
-async def _drop_asleep(w: Changes, column: str, statement_id: str) -> None:
+async def _drop_asleep(
+    w: Changes, column: str, statement_id: str, views: Collection[str] | None = None
+) -> None:
     """The DM names who knows a statement: the rows a hide put to sleep for it are final now, the
     DM's list replaces them (they go, Undo brings them back), and a hide's 0.0 belief in a
     connection becomes the DM's own, so nothing the hide marked comes back over what the DM said
-    (#3082). A (statement, point of view) is one thing: the row and the belief change together."""
+    (#3082). A (statement, point of view) is one thing: the row and the belief change together.
+    `views`: only these points of view (one character learning it, `learn`), else all."""
     asleep = await w.select(
         KNOWERS,
-        f" AND {column} = %s AND cardinality(hidden_by) > 0",
-        [statement_id],
+        f" AND {column} = %s AND cardinality(hidden_by) > 0"
+        + ("" if views is None else " AND perspective_id = ANY(%s)"),
+        [statement_id] if views is None else [statement_id, list(views)],
         dormant=True,
     )
     if not asleep:
