@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { GRAPH_CLEANUP_LIVE } from "../content/graph-cleanup-switch";
 import { UNNAMED_MAP_LIVE } from "../content/unnamed-map-switch";
 import { BIG_WEB, kindWords, UNNAMED_KIND, webPage as words } from "../content/web-words";
 import {
@@ -107,6 +108,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   // The unnamed person whose panel is open (#3732). Kept as a copy: once they are named the node is gone from the map, and the panel (with its Undo) stays.
   const [naming, setNaming] = useState<WebNode | null>(null);
+  // The clean-up (#3740): the people and groups no chain of connections links to a player character; a game master opens it.
+  const [cleaning, setCleaning] = useState(false);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
   // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
@@ -760,6 +763,16 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           {words.waitingUnnamed(graph.waitingUnnamed ?? 0)}{" "}
           <a href={`/account/names/${encodeURIComponent(ref)}`}>{words.waitingUnnamedLink}</a>
         </p>
+      )}
+      {GRAPH_CLEANUP_LIVE && canEdit && api.graphCleanup && (
+        <div class="stack">
+          <p>
+            <button type="button" class="button secondary" aria-expanded={cleaning} onClick={() => setCleaning(!cleaning)}>
+              {cleaning ? words.cleanupClose : words.cleanupOpen}
+            </button>
+          </p>
+          {cleaning && <LazyPanel load={() => import("./GraphCleanup")} what="the clean-up" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />}
+        </div>
       )}
       <p class="web-count" role="status" aria-live="polite">
         <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
