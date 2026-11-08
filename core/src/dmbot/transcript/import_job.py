@@ -454,7 +454,7 @@ class ImportStore:
         lines done."""
         if not cleaned:
             return
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             await conn.execute(
                 "UPDATE transcript_lines t SET text = c.text, topic = c.topic"
                 " FROM unnest(%s::bigint[], %s::text[], %s::text[]) AS c(id, text, topic)"

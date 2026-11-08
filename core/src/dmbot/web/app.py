@@ -49,6 +49,7 @@ from dmbot.web import (
     features_view,
     feedback,
     game_masters,
+    graph_cleanup,
     handover_accept,
     handover_offer,
     house_file,
@@ -2072,6 +2073,30 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/cleanup")
+    async def me_campaign_web_cleanup(ref: str, signed: Signed) -> dict[str, Any]:
+        """The graph clean-up: the characters and groups no chain links to the party, largest
+        group first, each with its links and scenes (#3740). DM only; anyone else "not found"."""
+        session, _token = signed
+        try:
+            return await graph_cleanup.read_cleanup(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/cleanup/{entity_id}/places")
+    async def me_campaign_web_cleanup_places(
+        ref: str, entity_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        """ "Where was it said?" for one character or group on the graph clean-up page, kept or
+        waiting (#3767). DM only; anyone else, or an id that is not one, "not found"."""
+        session, _token = signed
+        try:
+            return await graph_cleanup.read_places(db, session, ref, entity_id)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/find")
     async def me_campaign_web_find(
         ref: str, signed: Signed, q: str = "", view: str | None = None
@@ -3259,6 +3284,21 @@ def create_app(
             return await rule_sharing.read_sharing(
                 db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
             )
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/rule-decisions")
+    async def me_campaign_rule_decisions(ref: str, signed: Signed) -> dict[str, Any]:
+        """Which of two disagreeing house rules wins, as the DM decided (#3697): the pairs, for
+        the campaign's DMs only (a player gets 403 `not_allowed`). Changing one is a choice on
+        `.../rule-sharing` (`decide_clash`, `clear_clash`). 404 while DMBOT_WEB_RULE_SHARING is
+        off."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"decisions": await rule_sharing.read_decisions(db, session, ref)}
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

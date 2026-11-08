@@ -332,17 +332,24 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
 
 
 def scoped_select(
-    table: Table, where: sql.Composable | None = None, *, awake_only: bool = False
+    table: Table,
+    where: sql.Composable | None = None,
+    *,
+    awake_only: bool = False,
+    stamp: bool = False,
 ) -> sql.Composed:
     """SELECT a table's columns for one server and campaign, plus `where`. `awake_only`: leave out
-    the rows put to sleep (`hidden_by` set, see KNOWERS)."""
+    the rows put to sleep (`hidden_by` set, see KNOWERS). `stamp`: also read the build that made the
+    row (`made_by_commit`, #3739), for a backup; the row readers never need it."""
     asleep = (
         sql.SQL(" AND cardinality(hidden_by) = 0")
         if awake_only and table.name == "memory_knowers"
         else sql.SQL("")
     )
     return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}{}").format(
-        sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
+        sql.SQL(", ").join(
+            sql.Identifier(c) for c in (*table.columns, *(("made_by_commit",) if stamp else ()))
+        ),
         sql.Identifier(table.name),
         asleep,
         where if where is not None else sql.SQL(""),
@@ -889,6 +896,11 @@ def _filled(table: Table, snapshot: Any) -> Any:
     (#1189), so Undo across a migration puts back what the row is now."""
     if not isinstance(snapshot, dict):
         return snapshot
+    if "made_by_commit" in snapshot:
+        # The build's stamp (#3739) is never part of a change: the web's SQL doors log the whole
+        # row (`to_jsonb`), which now carries it, but the row readers and Undo name their columns.
+        # With it in, "changed again since" would always be true for such a row.
+        snapshot = {k: v for k, v in snapshot.items() if k != "made_by_commit"}
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
     if table.name == "memory_entities" and snapshot.get("role") == "god":

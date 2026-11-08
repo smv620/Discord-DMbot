@@ -53,6 +53,7 @@ from dmbot.memory import (
     told,
     whereabouts,
 )
+from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
@@ -428,6 +429,10 @@ def hidden_old_pronoun(entity: Entity) -> bool:
 NOT_A_LIST = "That name is not a list of names."
 SPLIT_REASON = "split into separate names"  # a claim set aside by "These are separate names"
 SPELLING_TAKEN = "Pick another spelling."  # a new name that is another entry's secret name
+# What a person or group the story never names may be (#2790, groups since #3736): never an item,
+# a place or anything else, which have no "unnamed - " form.
+UNNAMED_KINDS = frozenset({"character", "faction"})
+SAME_KIND_ONLY = "A person can only be joined to a person, and a group to a group."
 
 
 class MemoryStore:
@@ -459,7 +464,12 @@ class MemoryStore:
     ) -> AsyncIterator[Changes]:
         if source not in SOURCES:
             raise ValueError(f"Unknown memory source: {source!r}")
-        async with self._db.guild(guild_id) as conn:
+        # Lineage (#3739, `dmbot.lineage`): a write whose source is not the DM is DMbot rewriting
+        # its own work, so rows it updates take the running build's stamp; the DM's own edit keeps
+        # the stamp the row was made with. An Undo is the DM's act too, so it updates without
+        # restamping (the change log holds named columns only, not the stamp, so it cannot hand
+        # the older one back); a row it brings back from a delete is a new insert by this build.
+        async with self._db.guild(guild_id, by_dmbot=source != DM and undoes is None) as conn:
             # Changes to one campaign's memory happen one at a time, so versions never
             # clash. NO KEY UPDATE still lets other tables add rows that link to the
             # campaign (a session starting) while a long write runs.
@@ -1558,6 +1568,19 @@ class MemoryStore:
             )  # fmt: skip
         return {(str(r["viewer_id"]), str(r["subject_id"])): int(r["score"]) for r in rows}
 
+    async def isolated_rows(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[list[isolated_mod.Entry], list[isolated_mod.Link]]:
+        """The rows the graph clean-up's rule reads (#3740, `memory/isolated.py`), in one snapshot:
+        see `isolated_rows_in`."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await isolated_rows_in(scope)
+
+    async def isolated_count(self, guild_id: int, campaign_id: str) -> int:
+        """How many characters and groups no chain links to the party (#3740), for the Discord DM
+        screen's count (CloudDev wires it). The same rule as the website's page."""
+        return len(isolated_mod.isolated_ids(*await self.isolated_rows(guild_id, campaign_id)))
+
     async def find_or_add_people(
         self, guild_id: int, campaign_id: str, name: str, *, source: str
     ) -> Entity:
@@ -1602,6 +1625,7 @@ class MemoryStore:
         details: str = "",
         read: dict[str, str] | None = None,
         seen_at: int | None = None,
+        kind: str = "character",
     ) -> UnnamedAdded:
         """The unnamed person a stated relationship needs ("Ken's sister", "a hooded figure"):
         a proposed character with no alias, so no name match can find it.
@@ -1622,7 +1646,7 @@ class MemoryStore:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, "extractor") as w:
             return await self._add_unnamed_in(
-                w, word, role, details, anchor_id, read, seen_at=seen_at
+                w, word, role, details, anchor_id, read, seen_at=seen_at, kind=kind
             )
 
     async def _add_unnamed_in(
@@ -1634,11 +1658,15 @@ class MemoryStore:
         anchor_id: str | None,
         read: dict[str, str] | None = None,
         seen_at: int | None = None,
+        kind: str = "character",
     ) -> UnnamedAdded:
-        """`add_unnamed` inside an open write. `seen_at`: when the session that met them began, for
-        the last-resort "(first seen …)" that keeps the name unique (#3736); the write's own time
-        when not given."""
-        same = unnamed_mod.same_person_key(word, role)
+        """`add_unnamed` inside an open write. `kind`: a person ("character") or a particular group
+        the story never names ("faction", "the loud sailors in the corner", #3736). `seen_at`: when
+        the session that met them began, for the last-resort "(first seen …)" that keeps the name
+        unique (#3736); the write's own time when not given."""
+        if kind not in UNNAMED_KINDS:
+            raise MemoryRuleError("Only a person or a group can have no name yet.")
+        same = f"{kind}|{unnamed_mod.same_person_key(word, role)}"
         anchor_name: str | None = None
         if anchor_id is not None:
             anchor = await _entity_row(w, anchor_id)
@@ -1652,7 +1680,8 @@ class MemoryStore:
             r
             for r in live
             if r["unnamed_anchor"] == anchor_id
-            and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+            and f"{r['type']}|{unnamed_mod.same_person_key(r['unnamed_what'], r['unnamed_role'])}"
+            == same
         ]
         key = f"{anchor_id or ''}|{same}"
         if anchor_id is not None and found:
@@ -1670,7 +1699,7 @@ class MemoryStore:
             ENTITIES,
             {
                 "id": new_id(),
-                "type": "character",
+                "type": kind,
                 "name": unnamed_mod.stored(word, anchor_name),
                 "description": details.strip(),
                 "status": PROPOSED,
@@ -1678,7 +1707,7 @@ class MemoryStore:
                 "source": "extractor",
                 "created_at": w.now,
                 "played_by": None,
-                "role": NPC,
+                "role": NPC if kind == "character" else None,  # (a group has no role)
                 "needs_look": False,
                 "unique_item": None,
                 "unnamed": True,
@@ -3324,7 +3353,7 @@ class MemoryStore:
         if not rows:
             return 0
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for entity_id, heard, times in rows:
                 cur = await conn.execute(
                     "INSERT INTO said_as_suggestions"
@@ -3645,8 +3674,8 @@ class MemoryStore:
                 raise MemoryRuleError("That isn't an unnamed person and a named one.")
             if PERSON in (unnamed["type"], named["type"]):
                 raise MemoryRuleError("A player or the DM can't be joined this way.")
-            if unnamed["type"] != "character" or named["type"] != "character":
-                raise MemoryRuleError("Only a character can be joined to a character.")
+            if unnamed["type"] not in UNNAMED_KINDS or unnamed["type"] != named["type"]:
+                raise MemoryRuleError(SAME_KIND_ONLY)  # (a group joins a group, #3736)
             hanging = await w.select(
                 ENTITIES,
                 " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')",
@@ -3697,8 +3726,8 @@ class MemoryStore:
         newer's connections and facts move onto it, as in any merge, in one change (one Undo).
         Nothing else is guessed: each had no name, so there is no other name to carry, and nobody
         learns anything they did not know."""
-        if older["type"] != "character" or newer["type"] != "character":
-            raise MemoryRuleError("Only a character can be joined to a character.")
+        if older["type"] not in UNNAMED_KINDS or older["type"] != newer["type"]:
+            raise MemoryRuleError(SAME_KIND_ONLY)
         for one in (older, newer):
             hanging = await w.select(
                 ENTITIES,
@@ -7200,3 +7229,43 @@ async def _check_growth(w: Changes, session_started_at: int | None) -> None:
     row = await cur.fetchone()
     if row is not None and row["n"] >= MAX_NEW_TERMS_PER_SESSION:
         raise MemoryRuleError("Enough new kinds of things for one session; review them first.")
+
+
+async def isolated_rows_in(
+    scope: Scope,
+) -> tuple[list[isolated_mod.Entry], list[isolated_mod.Link]]:
+    """Every live character and group, and every link between two of them that is kept or
+    waiting (never a guess connection, #2412), as the graph clean-up's rule takes them (#3740).
+    Only the columns the rule reads: a lore campaign can hold thousands of entries, and the scene
+    sweep calls this on each card open.
+    Inside the caller's scope, so the sweep decides and deletes in one transaction."""
+    cur = await scope.conn.execute(
+        "SELECT id, type, status, unnamed, role, party FROM memory_entities"
+        " WHERE guild_id = %s AND campaign_id = %s AND type IN ('character', 'faction')"
+        " AND status IN ('proposed', 'confirmed') AND merged_into IS NULL",
+        scope.ids,
+    )
+    rows = await cur.fetchall()
+    ids = [str(r["id"]) for r in rows]
+    cur = await scope.conn.execute(
+        "SELECT id, subject_id, object_id, predicate, status FROM memory_relations"
+        " WHERE guild_id = %s AND campaign_id = %s AND status IN ('proposed', 'confirmed')"
+        " AND NOT (status = 'proposed' AND secret AND source = 'extractor')"  # (a guess, #2412)
+        " AND subject_id = ANY(%s::text[]) AND object_id = ANY(%s::text[])",
+        (*scope.ids, ids, ids),
+    )
+    links = await cur.fetchall()
+    entries = [
+        isolated_mod.Entry(
+            str(r["id"]), str(r["type"]), str(r["status"]), bool(r["unnamed"]),
+            r["role"] == PLAYER_CHARACTER, bool(r["party"]),
+        )
+        for r in rows
+    ]  # fmt: skip
+    return entries, [
+        isolated_mod.Link(
+            str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
+            str(r["status"]),
+        )
+        for r in links
+    ]  # fmt: skip

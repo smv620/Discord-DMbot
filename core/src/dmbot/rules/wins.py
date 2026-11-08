@@ -99,6 +99,20 @@ class WinsStore:
                 return win.winner
         return None
 
+    async def forget_pair(
+        self, guild_id: int, campaign_id: str, first: RuleRef, second: RuleRef
+    ) -> bool:
+        """Clear the DM's answer for one pair (the website's "Clear this choice"). True if there
+        was one. Only that pair goes: a rule's other decisions stay."""
+        a, b = _sides(first, second)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM house_rule_wins WHERE guild_id = %s AND campaign_id = %s AND"
+                " a_set = %s AND a_number = %s AND b_set = %s AND b_number = %s",
+                (guild_id, campaign_id, a.set, a.number, b.set, b.number),
+            )
+            return bool(cur.rowcount)
+
     async def forget_own_rule(self, guild_id: int, campaign_id: str, number: int) -> int:
         """A rule of the campaign's own was removed or changed: what was decided about it no
         longer holds. Returns how many pairs went."""

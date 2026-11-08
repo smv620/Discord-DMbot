@@ -59,6 +59,11 @@ async def keep_from_job(conn: Conn, guild_id: int, campaign_id: str, session_at:
     """Keep the beat sheet the recap job holds as the session's notes, replacing the ones there.
     A job with no beats writes nothing: a recap started over clears its job's beats, not the
     notes."""
+    # The notes are DMbot's own work rewritten (lineage, #3739): replacing them restamps the row.
+    # The setting is put back after, so the rest of the caller's transaction is unaffected.
+    cur = await conn.execute("SELECT current_setting('dmbot.rewrites', true) AS v")
+    before = (await cur.fetchone() or {}).get("v") or ""
+    await conn.execute("SELECT set_config('dmbot.rewrites', 'on', true)")
     await conn.execute(
         "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
         " job_created_at) SELECT guild_id, campaign_id, session_at, beats, updated_at, created_at"
@@ -68,6 +73,7 @@ async def keep_from_job(conn: Conn, guild_id: int, campaign_id: str, session_at:
         " written_at = excluded.written_at, job_created_at = excluded.job_created_at",
         (guild_id, campaign_id, session_at),
     )
+    await conn.execute("SELECT set_config('dmbot.rewrites', %s, true)", (before,))
 
 
 class SessionNotesStore:

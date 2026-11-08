@@ -110,7 +110,7 @@ class ReportStore:
         were kept."""
         kept = 0
         found: list[str] = []
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for item in sorted_:
                 d = item.difference
                 sort = item.sort if item.sort in SORTS else NOT_SORTED
@@ -257,7 +257,7 @@ class ReportStore:
         lately (a second press must not start a second run); one stalled for `STALLED_S` is
         taken over."""
         now = int(self._now())
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
                 " done, total, started_at, updated_at, reason)"

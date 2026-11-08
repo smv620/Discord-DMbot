@@ -19,6 +19,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 CONFIRMED_ONLY = "reads confirmed connections only (and, for players, only those the party holds)"
 DM_ONLY = "DM-side by design"
 READERS = {
+    "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
     "memory/importance_rank.py": CONFIRMED_ONLY
@@ -127,6 +128,8 @@ STORE = {
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
     "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
+    "isolated_rows_in": "kept and waiting links, no guess connections, for the DM's graph "
+    "clean-up (#3740); ids and words only, never shown to a player",
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
 }
 

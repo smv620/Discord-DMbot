@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 const path = "/account/web/100.cmp1.unnamed";
-const label = "Ken's sister (name unknown)";
+const label = "unnamed - Ken's sister";
 async function open() {
   const api = mockApi("table");
   render(<Web api={api} path={path} />);
@@ -64,7 +64,7 @@ describe("people not named yet on the map", () => {
 
   it("opens the Names page's own panel, and gives one Undo after a name", async () => {
     const api = await open();
-    fireEvent.click(await screen.findByRole("button", { name: /Ken's sister \(name unknown\)/, expanded: false }));
+    fireEvent.click(await screen.findByRole("button", { name: /unnamed - Ken's sister/, expanded: false }));
     fireEvent.click(await screen.findByRole("button", { name: words.changeFor(label) }));
     fireEvent.input(await screen.findByLabelText(nn.nameLabel), { target: { value: "Ilse" } });
     fireEvent.click(screen.getByRole("button", { name: nn.give }));
@@ -89,13 +89,13 @@ describe("people not named yet on the map", () => {
     named.on = false;
     await open();
     expect(screen.queryByText(words.waitingUnnamed(2), { exact: false })).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: /Ken's sister \(name unknown\)/, expanded: false }));
+    fireEvent.click(await screen.findByRole("button", { name: /unnamed - Ken's sister/, expanded: false }));
     expect(screen.queryByRole("button", { name: words.changeFor(label) })).toBeNull();
   });
 
   it("offers neither 'make middle' nor reveal on an unnamed person, and tags it with the new kind", async () => {
     await open();
-    const row = await screen.findByRole("button", { name: /Ken's sister \(name unknown\)/, expanded: false });
+    const row = await screen.findByRole("button", { name: /unnamed - Ken's sister/, expanded: false });
     fireEvent.click(row);
     expect(screen.queryByRole("button", { name: words.makeMiddle(label) })).toBeNull();
     expect(screen.queryByRole("button", { name: words.revealFor(label) })).toBeNull();

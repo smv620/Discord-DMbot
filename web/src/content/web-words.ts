@@ -308,7 +308,7 @@ export const webPage = {
       : held.length === 1
         ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
         : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
-  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
+  // `who` is how the page calls the person ("someone's sister"), without the "unnamed - " prefix.
   nameThemFirst: (who: string | null, onWeb: boolean): string =>
     onWeb
       ? who === null
