@@ -18,7 +18,14 @@ Rules held in code, not trust:
   or an entry alone (subject only: "Tran learned that Shela exists"). Placing the words on a stored
   statement is the claims' name rules, at the store; a reveal of something DMbot has no statement
   for is not this list's (it is a claim first).
-- **One proposal for a (character, statement) in a session**, across batches (`covered`).
+- **Never the party, never a crowd.** The one who learned it, and a teller, is one character: "the
+  party" or "everyone" is refused (the party is never a knower; a reveal to several characters is
+  one proposal each, and one to the whole party is not this slice's).
+- **One proposal for a (character, statement) in a session.** Within an answer the words decide;
+  across batches `covered` holds the keys the extractor pass actually proposed (PR 3 adds a key
+  only once its words are placed on a stored statement and the teller's knowledge is checked), so a
+  reveal dropped there never hides a later real one. PR 3 also keeps its own set by statement id,
+  which catches two wordings of one statement.
 - **The transcript is data**: a pronoun is never a name, every cited line is one of the batch, and
   words that read like an instruction to DMbot are refused.
 
@@ -38,7 +45,7 @@ from dmbot.memory.models import NAME_MAX
 from dmbot.memory.readings import PRONOUNS
 
 _LIST_START = re.compile(r'\s*\{\s*"reveals"\s*:\s*\[')
-MAX_REVEALS = 20  # one batch of the transcript holds this many at most
+MAX_REVEALS = 20  # the reveals read from one answer; any more are counted as refused
 CHECK, TELL = "check", "tell"
 # The notice, discover and recall checks (rule 2): what a character can learn a hidden thing by.
 # A fight's roll, a save or a persuasion is not a way of learning a statement.
@@ -47,6 +54,13 @@ CHECKS = (
     "Survival", "Medicine",
 )  # fmt: skip
 _CHECK_BY_WORD = {c.casefold(): c for c in CHECKS}
+_CHECK_WORDS = re.compile(r"\s+(?:skill\s+)?checks?$")
+_IN_BRACKETS = re.compile(r"^(.*?)\s*\((.*?)\)\s*$")
+# Words for many people at once: never the one who learned something, and never a teller.
+GROUP_WORDS = frozenset({
+    "the party", "party", "everyone", "everybody", "the group", "group", "all", "all of us",
+    "the others", "others", "we", "us", "the players", "players", "the table",
+})  # fmt: skip
 RELATION_MAX = 60  # a relationship is a few words ("is secretly the brother of")
 
 REVEAL_SYSTEM = """You help a Dungeon Master keep track of what each character in their tabletop
@@ -70,11 +84,16 @@ worked; false for a tell), "teller" (who told them, or "" for a check), what the
 "subject", "relationship" and "object" (for example "Bruno", "desires", "Shela"; for learning only
 that someone or something exists, give the subject and leave relationship and object ""), and
 "lines" (the numbers of the lines it comes from; for a check, at least one of them the DM's).
-Names are names: never "he", "she", "they" or "it".
+Names are names: never "he", "she", "they" or "it", and never "DM" or "Player". One reveal for
+each character who learned it: never "the party" or "everyone"; if several characters each learned
+it, list each one. "check" is exactly one of the nine names above, the single word. Do not list
+something the character already knew, or saw happen with their own eyes.
 
 Answer with JSON only, in this shape:
 {"reveals": [{"how": "check", "who": "...", "check": "Insight", "succeeded": true, "teller": "",
-"subject": "...", "relationship": "...", "object": "...", "lines": [1]}]}
+"subject": "...", "relationship": "...", "object": "...", "lines": [1]},
+{"how": "tell", "who": "...", "check": "", "succeeded": false, "teller": "...",
+"subject": "...", "relationship": "", "object": "", "lines": [2]}]}
 Answer {"reveals": []} if there are none."""
 
 
@@ -113,7 +132,21 @@ class Parsed:
 
 
 def _text(value: object) -> str:
-    return " ".join(str(value).split()) if isinstance(value, (str, int)) else ""
+    # (`True` is an int too: never a name)
+    ok = isinstance(value, (str, int)) and not isinstance(value, bool)
+    return " ".join(str(value).split()) if ok else ""
+
+
+def check_name(word: object) -> str:
+    """The check's name as listed, or "" when it is not one of `CHECKS`. "Insight check",
+    "Wisdom (Insight)" and "Perception (WIS)" are read as the check they name."""
+    text = _CHECK_WORDS.sub("", _text(word).casefold())
+    bracketed = _IN_BRACKETS.match(text)
+    tries = (bracketed.group(2), bracketed.group(1)) if bracketed else (text,)
+    for t in tries:
+        if t.strip() in _CHECK_BY_WORD:
+            return _CHECK_BY_WORD[t.strip()]
+    return ""
 
 
 def _whole_items(text: str) -> list[object]:
@@ -129,8 +162,8 @@ def _whole_items(text: str) -> list[object]:
             at += 1
         try:
             item, at = decoder.raw_decode(text, at)
-        except ValueError:  # the cut item, or the end of the list
-            return [] if text[at:].lstrip().startswith("]") else items
+        except ValueError:  # the cut item, or the end of the list (then every item is whole)
+            return items
         items.append(item)
 
 
@@ -146,8 +179,8 @@ def parse_reveals(
     people recorded now); `dm_lines` (required, so the rule can't be left out) are the ones the DM
     spoke. `cut`: the answer stopped at the length limit, so the items before the broken one are
     kept and the broken one is not counted as refused. `covered`: the (who, subject, relationship,
-    object) keys an earlier batch of the same session already proposed, added to as this one is
-    read."""
+    object) keys the session already proposed; read, never added to here (the caller adds a key
+    once its proposal is placed and stored)."""
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
@@ -161,6 +194,7 @@ def parse_reveals(
     known = {str(r) for r in refs}
     dm = {str(n) for n in dm_lines}
     covered = covered if covered is not None else set()
+    seen: set[tuple[str, str, str, str]] = set()  # (this answer's own repeats)
     refused, check_refused, repeated = max(0, len(items) - MAX_REVEALS), 0, 0
     out: list[RevealProposal] = []
     for item in items[:MAX_REVEALS]:
@@ -171,10 +205,10 @@ def parse_reveals(
             else:
                 refused += 1
             continue
-        if reveal.key in covered:
+        if reveal.key in covered or reveal.key in seen:
             repeated += 1
             continue
-        covered.add(reveal.key)
+        seen.add(reveal.key)
         out.append(reveal)
     return Parsed(tuple(out), refused, check_refused, repeated)
 
@@ -197,6 +231,10 @@ def _a_name(name: str) -> bool:
     return bool(name) and len(name) <= NAME_MAX and name.casefold() not in PRONOUNS
 
 
+def _one_character(name: str) -> bool:
+    return _a_name(name) and name.casefold() not in GROUP_WORDS
+
+
 def _reveal(item: Any, known: set[str], dm: set[str]) -> tuple[RevealProposal | None, str]:
     """The reveal, or None with "check" (a check that doesn't count) or "" (anything else)."""
     if not isinstance(item, dict):
@@ -205,21 +243,23 @@ def _reveal(item: Any, known: set[str], dm: set[str]) -> tuple[RevealProposal | 
     who, subject = _text(item.get("who")), _text(item.get("subject"))
     relationship, obj = _text(item.get("relationship")), _text(item.get("object"))
     lines = _lines(item, known, dm)
-    if how not in (CHECK, TELL) or not lines or not _a_name(who) or not _a_name(subject):
+    if how not in (CHECK, TELL) or not lines or not _one_character(who) or not _a_name(subject):
         return None, ""
     if bool(relationship) != bool(obj) or (obj and not _a_name(obj)):
         return None, ""  # a connection needs both its words; an entry alone needs neither
-    if len(relationship) > RELATION_MAX or who.casefold() in (subject.casefold(), obj.casefold()):
+    if len(relationship) > RELATION_MAX:
+        return None, ""  # (a relationship is a few words, never a sentence)
+    if who.casefold() in (subject.casefold(), obj.casefold()):
         return None, ""  # (learning about oneself is not a reveal this list keeps)
     words = [who, subject, relationship, obj]
     check, teller = "", ""
     if how == CHECK:
-        check = _CHECK_BY_WORD.get(_text(item.get("check")).casefold(), "")
+        check = check_name(item.get("check"))
         if item.get("succeeded") is not True or not check or not set(lines) & dm:
             return None, "check"  # only the DM's word makes a check a success
     else:
         teller = _text(item.get("teller"))
-        if not _a_name(teller) or teller.casefold() == who.casefold():
+        if not _one_character(teller) or teller.casefold() == who.casefold():
             return None, ""  # a tell has someone else who tells
         words.append(teller)
     if any(reads_like_instruction(w) for w in words if w):
@@ -228,6 +268,6 @@ def _reveal(item: Any, known: set[str], dm: set[str]) -> tuple[RevealProposal | 
 
 
 __all__ = [
-    "CHECK", "CHECKS", "MAX_REVEALS", "REVEAL_SYSTEM", "TELL", "Parsed", "RevealProposal",
-    "parse_reveals",
+    "CHECK", "CHECKS", "GROUP_WORDS", "MAX_REVEALS", "REVEAL_SYSTEM", "TELL", "Parsed",
+    "RevealProposal", "check_name", "parse_reveals",
 ]  # fmt: skip
