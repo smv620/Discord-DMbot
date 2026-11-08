@@ -284,6 +284,7 @@ from dmbot.memory import (
     embed_sources,
     embedding,
     extractor,
+    importance_step,
     lore_context,
     lore_queue,
     meaning,
@@ -3173,6 +3174,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("kind offer", lambda: self.offer_kind(table)),
             # Deeds the party did, noticed in the session, for the DM to record (#3175).
             ("deeds to record", lambda: self.offer_deeds(table)),
+            # How much each entry the session touched matters, and its roles (#3172): after the
+            # extractor, inside the same call limit, live wherever it runs (ruled); after the
+            # posts the DM waits for, since nothing above reads a rank.
+            ("importance", lambda: self.write_importance(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -8967,6 +8972,90 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             report.questions += empty  # (the questions asked about, with and without lines)
             log.info(report.line())
 
+    async def write_importance(self, table: Table) -> None:
+        """After a live session (#3172, slice 3): see `_read_importance`."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        await self._read_importance(table.guild_id, table.campaign_id, table.transcript_session_id)
+
+    async def _read_importance(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        renew: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
+        """PlotBot's reading of importance for one stored session (`memory.importance_step`):
+        ranks and story roles for the entries it touched. Only where the story extractor runs (no
+        switch of its own on collecting: the owner's ruling) and the plan allows the story;
+        inside the extractor's session and daily call limits, only lines of people who agree,
+        counts only in the log. Never raises."""
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+        ):
+            return  # (off means off: nothing is read or asked)
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await transcripts.session(gid, sid)
+                if session is None:
+                    return
+                _after_ms, used = await transcripts.extraction(gid, sid)
+                now = int(time.time())
+                allowed = extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    await transcripts.extractor_calls_since(gid, cid, now - 86400),
+                )
+                if allowed <= 0:
+                    log.info("Importance: no calls left in the extractor's limit")
+                    return
+                agreed = await self.consent.consenting(gid)
+                items, codes, labels = await importance_step.gather(
+                    memory._db,
+                    transcripts,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    session_id=sid,
+                    session_started_at=session.started_at,
+                    agreed=agreed,
+                    mentions=lambda i: memory.mentions(gid, cid, i),
+                )
+                if not items:
+                    return
+
+                async def count_call() -> None:
+                    await transcripts.record_extraction(
+                        gid, sid, through_ms=0, calls=1, now=int(time.time())
+                    )
+
+                report = await importance_step.run(
+                    ai,
+                    memory._db,
+                    items,
+                    codes,
+                    labels,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    session_started_at=session.started_at,
+                    consenting=lambda: self.consent.consenting(gid),
+                    max_calls=allowed,
+                    count_call=count_call,
+                    renew=renew,
+                )
+                log.info(report.line())
+            except Exception as exc:  # the type only: never fatal, never a word of the story
+                log.warning("Importance: the reading failed (%s)", type(exc).__name__)
+
     async def write_who(self, table: Table) -> None:
         """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
         each waiting name could be (see `memory.who_step`). It only ranks, unless
@@ -11486,6 +11575,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # finds nothing new, rather than the card sticking on "reading")
                 await store.set_story(gid, ready.session_id, "read", int(time.time()))
                 await self._mark_import_read(gid, ready.session_id)
+                # (an imported session is a session too: its importance, in the same limit #3172)
+                await self._read_importance(
+                    gid,
+                    ready.campaign_id,
+                    ready.session_id,
+                    renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
+                )
             elif outcome == "limit":
                 await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome
