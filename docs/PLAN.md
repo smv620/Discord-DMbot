@@ -5950,6 +5950,8 @@ dozen screens, and gets the same list, words and context in both places.
      entered the Three Flags tavern in Targos, this someone was just leaving and bumped into Claude while the
      party talked to the bartender." Or: "the patron at the bar who put 5 copper down for Marge, the bartender,
      to buy Claude a drink." It is kept until the question is answered (named, joined, removed or decided),
+     or for as long as its entry is linked to no player character or the party, so the graph clean-up page can show
+     it (Supervisor, 2026-11-07, #3740); it is
      shown in Discord and on the website alike, and to the DM only. It is made only from lines of people who
      agreed to be recorded, goes when any of them stops, never invents (a detail the lines don't give is left
      out) and is counted, never logged, in words.
@@ -6019,6 +6021,12 @@ dozen screens, and gets the same list, words and context in both places.
   was only in the DM's head is fine and isn't reported. A missed clue is written up as
   `DMbot_graph_improvements_<timestamp>.md` (#3741), and for campaigns that share to improve DMbot, posted as a
   Discussion in the owner's **private** repository, never this public one (#3742).
+  **The sharing switch** (Supervisor, 2026-11-07, #3741): "Share this campaign's story to improve DMbot" is a
+  campaign setting only the DM turns on, off by default. Its words say that quotes from the story go privately to
+  DMbot's developers. Anyone who opted out of improving DMbot is still left out, checked when the check runs. Turning
+  it off queues nothing and deletes any check not yet run and any report not yet posted. Fixes made in Discord count
+  as well as the website's, and the clean-up page shows the DM a counts-only line ("DMbot will check your fixes in
+  12 minutes").
 - **Every thing DMbot makes records the commit that made it** (owner, 2026-11-07, #3739): entries, connections,
   claims, recaps, music, voiceovers, map coordinates, pictures, transcript cleaning and anything else generated, so a
   fault is pinned to a version, and an old row from a version that's already fixed isn't taken for a new bug.
