@@ -67,11 +67,14 @@ RELATION_MAX = 60  # a relationship is a few words ("is secretly the brother of"
 # asked only when it could hold a reveal. Check and discovery words count on the DM's lines only
 # (the DM says what a check found); telling words on anyone's (a tell is in character, often a
 # player's). "see" is left out on purpose: it is in nearly every line of narration.
-_DM_WORDS = re.compile(
-    r"\b(perception|investigation|insight|nature|history|arcana|religion|survival|medicine"
-    r"|checks?|rolls?|rolled|notic(?:e|es|ed|ing)|recogni[sz](?:e|es|ed|ing)"
-    r"|reali[sz](?:e|es|ed|ing)|learn(?:s|ed|t|ing)?|discover(?:s|ed|ing)?"
-    r"|(?:find|finds|found|finding) out)\b",
+_DM_CHECK_WORDS = re.compile(
+    r"\b(" + "|".join(c.casefold() for c in CHECKS) + r"|checks?|roll(?:s|ed|ing)?)\b",
+    re.IGNORECASE,
+)  # (built from CHECKS, so a check added there is never skipped here)
+_DISCOVERY_WORDS = re.compile(
+    r"\b(notic(?:e|es|ed|ing)|recogni[sz](?:e|es|ed|ing)|reali[sz](?:e|es|ed|ing)"
+    r"|learn(?:s|ed|t|ing)?|discover(?:s|ed|ing|y|ies)?"
+    r"|(?:find|finds|found|finding)(?:\s+\w+)?\s+out)\b",
     re.IGNORECASE,
 )
 _TELL_WORDS = re.compile(
@@ -82,10 +85,27 @@ _TELL_WORDS = re.compile(
 )
 
 
+CHECK_WORD, DISCOVERY_WORD, TELLING_WORD = "check", "discovery", "telling"
+
+
+def reveal_reason(lines: Sequence[tuple[str, bool]]) -> str:
+    """Why a batch (each line's words, and whether the DM spoke it) could hold a reveal: a DM line
+    with a check word ("check") or a discovery word ("discovery"), or any line with a telling word
+    ("telling"); "" when it could hold none. The first reason found is given, as a count key, so
+    the report says which word family let a batch through. Pure; never sent."""
+    for text, dm in lines:
+        if dm and _DM_CHECK_WORDS.search(text):
+            return CHECK_WORD
+        if dm and _DISCOVERY_WORDS.search(text):
+            return DISCOVERY_WORD
+        if _TELL_WORDS.search(text):
+            return TELLING_WORD
+    return ""
+
+
 def could_hold_reveal(lines: Sequence[tuple[str, bool]]) -> bool:
-    """Whether a batch (each line's words, and whether the DM spoke it) could hold a reveal: a DM
-    line with a check or discovery word, or any line with a telling word. Pure; never sent."""
-    return any((dm and _DM_WORDS.search(text)) or _TELL_WORDS.search(text) for text, dm in lines)
+    """Whether a batch could hold a reveal (`reveal_reason` gives why)."""
+    return bool(reveal_reason(lines))
 
 
 REVEAL_SYSTEM = """You help a Dungeon Master keep track of what each character in their tabletop
@@ -294,5 +314,5 @@ def _reveal(item: Any, known: set[str], dm: set[str]) -> tuple[RevealProposal | 
 
 __all__ = [
     "CHECK", "CHECKS", "GROUP_WORDS", "MAX_REVEALS", "REVEAL_SYSTEM", "TELL", "Parsed",
-    "RevealProposal", "check_name", "could_hold_reveal", "parse_reveals",
+    "RevealProposal", "check_name", "could_hold_reveal", "parse_reveals", "reveal_reason",
 ]  # fmt: skip

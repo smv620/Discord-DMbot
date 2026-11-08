@@ -54,8 +54,8 @@ from dmbot.memory.reveal_proposals import RevealProposals
 from dmbot.memory.reveal_reading import (
     REVEAL_SYSTEM,
     RevealProposal,
-    could_hold_reveal,
     parse_reveals,
+    reveal_reason,
 )
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
@@ -297,6 +297,9 @@ class Report:
     reveals_cut: int = 0  # reveal answers that stopped at the length limit
     reveals_stored: int = 0  # proposals kept for the DM to answer
     reveals_skipped: int = 0  # batches the pre-check found could hold no reveal: not asked
+    # Why the pre-check let each asked batch through (check, discovery, telling): counts only, so
+    # a dropped reveal on dev1's run can be traced to the word family to fix
+    reveals_asked_by: Counter[str] = field(default_factory=Counter)
     # Why the others were not stored (unplaced, known, teller_ignorant, repeated, ...): counts only
     reveals_dropped: Counter[str] = field(default_factory=Counter)
     reveal_proposals: list[RevealProposal] = field(default_factory=list, repr=False)  # (words)
@@ -341,6 +344,7 @@ class Report:
                 f" {self.reveals_check_refused} check(s) refused, {self.reveals_failed} failed,"
                 f" {self.reveals_cut} cut short, {self.reveals_stored} kept,"
                 f" {self.reveals_skipped} batch(es) skipped"
+                + "".join(f", asked for {k} {n}" for k, n in sorted(self.reveals_asked_by.items()))
                 + "".join(f", {n} {k}" for k, n in sorted(self.reveals_dropped.items()) if n)
                 if self.reveals
                 or self.reveals_refused
@@ -441,7 +445,7 @@ async def _ask_reveals(
     precheck: bool = False,
 ) -> bool:
     """The fourth question of one batch (#2996): who learned what. With `precheck`, a batch that
-    could hold no reveal (`could_hold_reveal`) is not asked at all and is counted as skipped. As
+    could hold no reveal (`reveal_reason`) is not asked at all and is counted as skipped. As
     `_ask_deeds`: who is recorded is asked again first, the call is counted, never fatal; False
     when the run must stop (out of money). Repeats across batches are held back by statement when
     the proposals are stored (the words alone can't tell a dropped reveal from a kept one), so
@@ -450,9 +454,13 @@ async def _ask_reveals(
     heard = [s for s in batch if s.user_id in agreed]
     if not heard:
         return True
-    if precheck and not could_hold_reveal([(s.text, s.user_id in dm_ids) for s in heard]):
-        report.reveals_skipped += 1  # (no call made, nothing counted against the limit)
-        return True
+    if precheck:
+        why = reveal_reason([(s.text, s.user_id in dm_ids) for s in heard])
+        if not why:
+            # (the pre-check exists to save calls: a skip must never use the session's limit)
+            report.reveals_skipped += 1
+            return True
+        report.reveals_asked_by[why] += 1
     rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in heard]
     dm_lines = {str(s.number) for s in heard if s.user_id in dm_ids}
     report.calls += 1
