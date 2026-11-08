@@ -277,6 +277,58 @@ class TheReader(unittest.TestCase):
         )
 
 
+class TheAboutLine(unittest.TestCase):
+    def test_the_read_keeps_the_line_and_the_prompts_ask_for_it(self) -> None:
+        item = {"name": "Torrga Icevein", "kind": "person", "also": [], "secret": [], "quote": "",
+                "about": "  a dwarf   merchant "}  # fmt: skip
+        reply = json.dumps({"names": [item]})
+        (got,) = bg.read_answer(reply, "Torrga Icevein leads a caravan.")
+        self.assertEqual(got.about, "a dwarf merchant")
+        self.assertIn("about", bg.schema()["properties"]["names"]["items"]["required"])
+        self.assertIn("| about: ", lore_read.EXAMPLES)  # (the model copies the examples)
+        # (asked for only when the DM said the players know all of it, Supervisor's ruling)
+        self.assertNotIn("about:", lore_read.read_instructions())
+        self.assertIn("about (always empty)", lore_read.shape_instructions())
+        token = lore_read._ASK_ABOUT.set(True)
+        try:
+            self.assertIn("Give 'about:'", lore_read.read_instructions())
+            self.assertIn("| about: ", lore_read.read_instructions())
+            self.assertIn("about (its 'about:'", lore_read.shape_instructions())
+        finally:
+            lore_read._ASK_ABOUT.reset(token)
+
+    def test_the_read_asks_for_the_line_only_while_it_runs_and_only_when_told(self) -> None:
+        import asyncio
+        from unittest.mock import patch as patching
+
+        seen: list[bool] = []
+
+        async def fake(*_: Any, **__: Any) -> Any:
+            seen.append(lore_read._ASK_ABOUT.get())
+            return None
+
+        with patching.object(lore_read, "_read_lore", fake):
+            asyncio.run(lore_read.read_lore("x", players_line=True))
+            asyncio.run(lore_read.read_lore("x"))
+        self.assertEqual(seen, [True, False])
+        self.assertFalse(lore_read._ASK_ABOUT.get())  # (reset after the read)
+
+    def test_a_line_with_a_control_character_is_dropped_and_a_fold_keeps_one(self) -> None:
+        from dmbot.memory.spellings import fold_in_read
+
+        item = {"name": "Torrga", "kind": "person", "also": [], "secret": [], "quote": "",
+                "about": "a merchant\x00"}  # fmt: skip
+        (got,) = bg.read_answer(json.dumps({"names": [item]}), "Torrga trades.")
+        self.assertEqual(got.about, "")
+        folded, _ = fold_in_read(
+            [
+                bg.Found("Caer-Konig", "place", (), (), ""),
+                bg.Found("Caer Konig", "place", (), (), "", "a fishing town"),
+            ]
+        )
+        self.assertEqual([f.about for f in folded], ["a fishing town"])
+
+
 class ThePath(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -547,6 +599,42 @@ class ThePath(NamesTest):
         self.assertEqual(len(stored["npc"]), 1)
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
+
+    async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
+        """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
+        guess or a backstory never does; a line past the column's 120 letters is left to the DM,
+        never cut; the DM's own note is never where it comes from."""
+        about = "a dwarf merchant who leads a caravan"
+        cases = (
+            ("Torrga", True, True, about),  # (everyone knows it)
+            ("Hlin", False, True, ""),  # (not among the names the players know)
+            ("Sephek", True, False, ""),  # (a smart guess: no fold)
+            ("Veron", True, True, "x " * 70),  # (too long: left empty)
+        )
+        for name, known, everyone, line in cases:
+            found = bg.Found(name, "npc", (), (), "", line or about)
+            await ui_bg.store(
+                self.memory,
+                self.campaign,
+                [found],
+                world={name.casefold()} if known else (),
+                fold_secret=everyone,
+            )
+        texts = {e.name: e.players_text for e in await self.entities()}
+        self.assertEqual(texts, {"Torrga": about, "Hlin": None, "Sephek": None, "Veron": None})
+        self.assertNotIn(about, {e.description for e in await self.entities()})
+
+    async def test_the_store_keeps_the_line_only_for_a_shown_name_up_to_120(self) -> None:
+        from dmbot.memory.models import NewName
+
+        names = [
+            NewName("Ada", "npc", PROPOSED, shown=True, players_text="x" * 120),
+            NewName("Bo", "npc", PROPOSED, shown=True, players_text="x" * 121),
+            NewName("Cy", "npc", PROPOSED, shown=False, players_text="a smith"),
+        ]
+        await self.memory.add_names(GUILD, self.campaign.id, names, source="dm")
+        texts = {e.name: e.players_text for e in await self.entities()}
+        self.assertEqual(texts, {"Ada": "x" * 120, "Bo": None, "Cy": None})
 
     async def test_known_names_are_not_suggested_again(self) -> None:
         await ui.save_name(self.memory, self.campaign, "Vale Keep", "place", [], [])
