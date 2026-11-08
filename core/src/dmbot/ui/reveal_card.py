@@ -6,8 +6,8 @@ through them one at a time with Keep and Not this.
 Nothing is recorded until the DM presses Keep, and the press is the DM's own
 `MemoryStore.learn_statement`, with one Undo, sent first as its own private message. The card says
 what a Keep means for the table: "Keeping this lets Tran's player see it." for a player's character,
-and "Tran was only guessing; keeping this makes it sure." when they held it as a guess (Supervisor's
-rulings on #2996). The words are read from DMbot's memory when the card is shown (the row holds ids
+and "Tran was only guessing. Keeping this makes Tran sure of it." when they held it as a guess
+(Supervisor's rulings on #2996: it is Tran who becomes sure; the fact was already true). The words are read from DMbot's memory when the card is shown (the row holds ids
 only), DM-only, shown only here. Every press is checked: the presser is one of the campaign's DMs
 (the DM screen can be seen by players), and who is still recorded is asked again, so a proposal with
 a speaker who has stopped is gone before it is shown. Logs carry counts, never the words.
@@ -63,7 +63,7 @@ def card(shown: Shown, left: int) -> str:
     how = discord.utils.escape_markdown(shown.how)
     lines = [f"💡 **{who}** learned that {what}. How: {how}."]
     if shown.guessing:  # (Supervisor's wording, #2996)
-        lines.append(f"{who} was only guessing; keeping this makes it sure.")
+        lines.append(f"{who} was only guessing. Keeping this makes {who} sure of it.")
     if shown.player:
         lines.append(f"Keeping this lets {who}'s player see it.")
     if left > 1:

@@ -130,7 +130,7 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
         pc = Shown("Tran", "Bruno knows Shela", "Clyde told them", True, True)
         text = dc.card(pc, 1)
         self.assertIn("Keeping this lets Tran's player see it.", text)
-        self.assertIn("Tran was only guessing; keeping this makes it sure.", text)
+        self.assertIn("Tran was only guessing. Keeping this makes Tran sure of it.", text)
 
     def test_the_words_cannot_format_or_ping(self) -> None:
         text = dc.card(Shown("*Tran*", "@everyone **loud**", "<@1> told them", False, False), 1)
