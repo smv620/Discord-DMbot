@@ -35,6 +35,7 @@ class TheReadingsTheQuoteRulesOut(unittest.TestCase):
         got, lost = run(Connection("Hlin Trollbane", "serves", "Sephek Kaltro", HLIN))
         assert got is not None
         self.assertEqual((got.a, got.how, got.b), ("Hlin Trollbane", "knows", "Sephek Kaltro"))
+        self.assertEqual(got.words, "hostile")  # ("eliminate" is a cue for it, as "kill" is)
         self.assertEqual(lost["kind_contract_against"], 1)
 
     def test_an_apprentice_who_serves_is_mentored_by_the_master(self) -> None:
@@ -57,7 +58,7 @@ class TheReadingsTheQuoteRulesOut(unittest.TestCase):
     def test_knowing_who_someone_is_is_no_tie_to_another_name_in_the_note(self) -> None:
         got, lost = run(Connection("Brotherhood", "knows", "Danneth", NOTE))
         self.assertIsNone(got)
-        self.assertEqual(lost["kind_knows_a_fact"], 1)
+        self.assertEqual(lost["knows_a_fact"], 1)
 
     def test_an_origin_in_an_apposition_belongs_to_the_first_name(self) -> None:
         made = Connection("Lee", "located_in", "Spine of the World", GRIZ, words="comes from")
@@ -81,6 +82,61 @@ class WhatEachCheckLeavesAlone(unittest.TestCase):
             self.assertEqual(got, made, made)
             self.assertEqual(sum(lost.values()), 0, made)
 
+    def test_real_employment_with_a_hostile_word_nearby_stays_service(self) -> None:
+        for a, b, quote in (
+            ("Hlin", "Bounty Hunters' Guild", "Hlin works for the Bounty Hunters' Guild"),
+            ("Pell", "hunting lodge", "Pell is employed by the hunting lodge"),
+            ("Sephek", "Torrga", "Sephek serves Torrga, killing anyone who threatens her"),
+            ("Mara", "Zhentarim", "Mara is an assassin who kills for the Zhentarim"),
+        ):
+            made = Connection(a, "serves", b, quote)
+            self.assertEqual(run(made)[0], made, quote)
+
+    def test_apprentice_elsewhere_in_the_quote_turns_nothing_round(self) -> None:
+        for a, b, quote in (
+            ("Norro", "Syllar Sparkwalker", SPIRE),  # (the Keeper, not one of the apprentices)
+            ("Hlin", "Torrga", "Hlin, who once trained an apprentice, now works for Torrga"),
+        ):
+            made = Connection(a, "serves", b, quote)
+            self.assertEqual(run(made)[0], made, quote)
+
+    def test_hired_names_the_employer_first_so_it_is_left_alone(self) -> None:
+        for words in ("hired", "employed", "hired to kill"):
+            made = Connection("Torrga", FALLBACK_PREDICATE, "Sephek",
+                              f"Torrga {words} Sephek", words=words)  # fmt: skip
+            self.assertEqual(run(made)[0], made, words)
+        got, _ = run(Connection("Sephek", FALLBACK_PREDICATE, "Torrga",
+                                "Sephek was hired by Torrga", words="hired by"))  # fmt: skip
+        assert got is not None
+        self.assertEqual(got.how, "serves")
+
+    def test_genuine_knowing_with_a_fact_word_nearby_stays(self) -> None:
+        for quote in (
+            "Hlin and Sephek know each other well, though Hlin knows that the guild watches",
+            "Hlin has known Sephek for years; she knows how to pick locks",
+            "Hlin knows where the Brotherhood's hired agent Sephek hides",
+            "Hlin knows that she betrayed him to Sephek",
+        ):
+            made = Connection("Hlin", "knows", "Sephek", quote)
+            self.assertEqual(run(made)[0], made, quote)
+
+    def test_an_owner_word_about_someone_else_leaves_leads(self) -> None:
+        quote = "Veron rules the Fishers; the owner of the Blue Clam is his cousin"
+        made = Connection("Veron", "leads", "Fishers", quote)
+        self.assertEqual(run(made)[0], made)
+
+    def test_an_apposition_moves_only_its_own_place_and_keeps_real_names(self) -> None:
+        other = Connection("Lee", "located_in", "Mirabar",
+                           "Griz, son of Lee, a dwarf from the Spine, hails from Mirabar",
+                           words="comes from")  # fmt: skip
+        self.assertEqual(run(other)[0], other)  # (Mirabar is not the place after "from")
+        holly = Connection("Lee", "located_in", "Spine of the World",
+                           "Holly Ashdown, daughter of Lee, a dwarf from the Spine of the World",
+                           words="comes from")  # fmt: skip
+        got, _ = run(holly)
+        assert got is not None
+        self.assertEqual(got.a, "Holly Ashdown")
+
     def test_knowing_a_fact_that_names_the_other_end_stays(self) -> None:
         for quote in (
             "Hlin knows that Sephek killed again",
@@ -94,6 +150,24 @@ class WhatEachCheckLeavesAlone(unittest.TestCase):
         self.assertEqual(run(made)[0], made)
 
 
+class TheWaitingPath(unittest.TestCase):
+    def test_a_waiting_line_is_never_dropped_for_knowing_a_fact(self) -> None:
+        made = Connection("Hlin", "knows", "Sephek", "It knows where he sleeps")
+        self.assertEqual(held(made, Counter(), waiting=True), made)
+
+    def test_an_apprentice_waiting_for_its_pronoun_keeps_track_of_the_missing_end(self) -> None:
+        piece = "Master Syllar Sparkwalker trained many. Among his apprentices was Wit."
+        reply = json.dumps({"connections": [
+            {"a": "Wit", "how": "works for", "b": "Syllar Sparkwalker",
+             "quote": "Among his apprentices was Wit."},
+        ]})  # fmt: skip
+        open_: list[bg.Unsettled] = []
+        bg.read_connections(reply, piece, unsettled=open_, others={"wit", "syllar sparkwalker"})
+        for u in open_:  # (if the quote waits, its ends and its missing one stay in step)
+            missing = u.made.a if u.missing_is_a else u.made.b
+            self.assertEqual(missing, "Syllar Sparkwalker")
+
+
 class ThroughTheReader(unittest.TestCase):
     def test_read_connections_applies_it_and_counts(self) -> None:
         said = "Hlin Trollbane gives the party a contract to capture or eliminate Sephek Kaltro"
@@ -103,5 +177,5 @@ class ThroughTheReader(unittest.TestCase):
         piece = said + "."
         lost: Counter[str] = Counter()
         (got,) = bg.read_connections(reply, piece, dropped=lost)
-        self.assertEqual(got.how, "knows")
+        self.assertEqual((got.how, got.words), ("knows", "hostile"))
         self.assertEqual(lost["kind_contract_against"], 1)

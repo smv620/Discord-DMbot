@@ -1048,14 +1048,16 @@ def read_connections(
             # (held to its quote before it waits for the who-is-it check, as the kept ones are;
             # `missing_is_a` follows the ends when an apprentice's are turned round, and an end the
             # check moved is left where it was, since the missing end is not settled yet)
-            if (kind := quote_kind.held(open_.made, lost)) is not None:
-                swapped = (kind.a, kind.b) == (open_.made.b, open_.made.a)
-                if swapped:
-                    unsettled.append(replace(open_, made=kind, missing_is_a=not open_.missing_is_a))
-                elif (kind.a, kind.b) == (open_.made.a, open_.made.b):
-                    unsettled.append(replace(open_, made=kind))
-                else:
-                    unsettled.append(open_)
+            seen_kind: Counter[str] = Counter()  # (counted only when the change is applied)
+            kind = quote_kind.held(open_.made, seen_kind, waiting=True) or open_.made
+            if (kind.a, kind.b) == (open_.made.b, open_.made.a):
+                unsettled.append(replace(open_, made=kind, missing_is_a=not open_.missing_is_a))
+                lost.update(seen_kind)
+            elif (kind.a, kind.b) == (open_.made.a, open_.made.b):
+                unsettled.append(replace(open_, made=kind))
+                lost.update(seen_kind)
+            else:
+                unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
         if stepped and len(out) + len(unsettled or ()) > kept_before:
