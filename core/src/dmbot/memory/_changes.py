@@ -425,6 +425,9 @@ class Changes(Scope):
         # Beliefs the DM's write added, (point of view, connection): The truth taking up a
         # connection is how the DM fixes a "denied" difference (#2661).
         self.belief_additions: list[tuple[str, str]] = []
+        # The DM's own writes to entries, (before, after): a merge ("Same as…") or a name given to
+        # someone the story never named, which the graph clean-up's careful check reads (#3741).
+        self.entity_changes: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
         # Items that name a connection the DM deleted, found before the delete takes them with it
         # (the database cascades them away), and connections an Undo brought back (#2661).
         self.deleted_items: set[tuple[str, str]] = set()
@@ -778,6 +781,8 @@ class Changes(Scope):
         self.tables.add(table.name)
         if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
             self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if table.name == "memory_entities" and self.source == "dm" and self.undoes is None:
+            self.entity_changes += [(b, a) for _, b, a in rows]
         if self.undoes is not None:
             for _, before, after in rows:
                 self._note_undone(table, op, before, after)
@@ -821,6 +826,8 @@ class Changes(Scope):
         if self.source == "dm" and self.undoes is None:
             if table.name == "memory_relations":
                 self.relation_changes.append((op, before, after))
+            elif table.name == "memory_entities":
+                self.entity_changes.append((before, after))
             elif table.name == "memory_beliefs" and op == "insert" and after is not None:
                 self.belief_additions.append(
                     (str(after["perspective_id"]), str(after["relation_id"]))

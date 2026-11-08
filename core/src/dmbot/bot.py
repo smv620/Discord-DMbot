@@ -316,6 +316,7 @@ from dmbot.memory.exposures import (
     find_exposures,
     secret_connections,
 )
+from dmbot.memory.graph_review_run import GraphReviews
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.importance_backup import ImportanceSection
@@ -1504,6 +1505,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
         # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
         self.improvement = improvement
+        # The careful check of the DM's graph clean-up fixes (#3741): built only with a key, the
+        # story memory, transcripts and the improvement opt-outs to ask; it runs only for the
+        # campaigns whose DM shares their story to improve DMbot.
+        self.graph_reviews: GraphReviews | None = (
+            GraphReviews(
+                memory,
+                transcripts,
+                self.ai_client.tier(FEATURE_TIERS[Feature.GRAPH_REVIEW], Feature.GRAPH_REVIEW),
+                consenting=self.consent.consenting,
+                improvement_allowed=improvement.allowed,
+                clock=time.time,
+            )
+            if self.ai_client
+            and memory is not None
+            and transcripts is not None
+            and improvement is not None
+            else None
+        )
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -1764,6 +1783,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [self._watched(self._plot_talk_loop(), "plot-talk")]
                 if self.plot_talk is not None
+                else []
+            ),
+            *(
+                [self._watched(self._graph_review_loop(), "graph-review")]
+                if self.graph_reviews is not None
                 else []
             ),
             *(
@@ -12314,6 +12338,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         lock like Discord's button, so a running session is never paused under its feet."""
         return await self.set_paused(campaign.guild_id, campaign.id, user_id, paused)
 
+    async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
+        """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
+        await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
+
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
         of use (in its own try: a failure there costs only the first lookup's wait), and whether
@@ -12779,6 +12807,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_line_fixes.run_one(self, store, guild_id, item)
+
+    async def _graph_review_loop(self) -> None:
+        """Every minute: the careful check of the DM's graph clean-up fixes that have waited 15
+        minutes since the last one (#3741). One server at a time, each in its own try, counts
+        and error types only in the log."""
+        await asyncio.sleep(90)
+        while True:
+            if self.graph_reviews is not None:
+                for guild in list(self.guilds):
+                    try:
+                        with log_context(guild_id=guild.id):
+                            await self.graph_reviews.round(guild.id)
+                    except Exception as exc:  # the type only: a database error can quote a row
+                        log.warning("Graph checks failed for a server: %s", type(exc).__name__)
+            await asyncio.sleep(60)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

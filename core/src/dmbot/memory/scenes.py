@@ -88,8 +88,9 @@ class Scenes:
         """Delete the scenes whose question is answered. An entry's question is open while it is
         a suggestion (`proposed`) or a person the story never named (confirmed and `unnamed`), and
         it has not been merged away; a claim's while it waits. An entry no chain links to the party
-        keeps its scene too, for the graph clean-up page, until it is linked (#3740). Returns how
-        many went."""
+        keeps its scene too, for the graph clean-up page, until it is linked (#3740), and so does
+        an entry the DM fixed until the careful check has read it (#3741). Returns how many
+        went."""
         async with self._store._read(guild_id, campaign_id) as scope:
             # (the graph is read only when an entry's scene is up for deletion, since the DM
             # opens scene cards often and a lore campaign's graph is large; and inside this one
@@ -110,6 +111,10 @@ class Scenes:
             cur = await scope.conn.execute(
                 "DELETE FROM memory_scenes s WHERE s.guild_id = %s AND s.campaign_id = %s AND ("
                 " (s.subject_kind = 'entity' AND NOT s.subject_id = ANY(%s::text[])"
+                # (a fixed entry waiting for the careful check keeps its scene for it, #3741)
+                "  AND NOT EXISTS (SELECT 1 FROM graph_review_pending p"
+                "   WHERE p.guild_id = s.guild_id AND p.campaign_id = s.campaign_id"
+                "   AND s.subject_id = ANY(p.entity_ids))"
                 "  AND NOT EXISTS (SELECT 1 FROM memory_entities e"
                 "   WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "   AND e.id = s.subject_id AND e.merged_into IS NULL"

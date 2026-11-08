@@ -47,6 +47,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "npcs_channel_id": "a channel of one server; made again at the next /dmbot start",
     "last_voice_channel_id": "a voice channel of one server",
     "table_chat_channel_id": "a channel of one server; only the switch (table_chat) travels",
+    "share_improve": "the DM's own consent to share the story to improve DMbot (#3741): whoever "
+    "restores a backup becomes its DM and chooses again; off until then",
 }
 
 # Settings the backup carries (so the file is complete) that a restore deliberately does not

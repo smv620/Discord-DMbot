@@ -76,6 +76,7 @@ from dmbot.campaigns.parts import (
 )
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
+from dmbot.memory import graph_review
 
 log = logging.getLogger(__name__)
 
@@ -654,6 +655,18 @@ class CampaignStore:
                 sql.SQL("target_ruleset = %s, fallback_ruleset = %s"),
                 (target, fallback),
             )
+
+    async def set_share_improve(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Share this campaign's story to improve DMbot" (#3741), the DM's switch. Off deletes
+        every waiting graph check and every report not yet posted, in the same transaction
+        (Supervisor's ruling: "off means off")."""
+        async with self._db.guild(guild_id) as conn:
+            saved = await self._update(
+                conn, guild_id, campaign_id, sql.SQL("share_improve = %s"), (on,)
+            )
+            if not on:
+                await graph_review.drop_all(conn, guild_id, campaign_id)
+            return saved
 
     async def set_optional_rules_default(
         self, guild_id: int, campaign_id: str, enabled: bool
