@@ -4621,6 +4621,15 @@ marked).** A DM manages every campaign from the website as fully as from Discord
    then a written table of every Discord campaign action with its website status (the parity list,
    #2554), then each missing group in that order of use. A new Discord campaign action ships with its
    website way, or with a held line on the parity list saying when.
+**Search the website** (owner, 2026-11-08, #3855, #3856). A search bar in the site's header answers in two lines.
+Line 1 appears at once: the getdmbot.com page that best matches the query ("a summary of episodes" gives the recaps page).
+It comes from an index built with the site, with a hand-kept list of the words people use for each page; it runs in the
+browser, costs nothing and sends nothing. Line 2 shows "[... thinking ...]" while DMbot writes a short answer about DMbot or
+its website, from DMbot's public, user-facing words only (site pages, help, What's new, the user-facing parts of this plan;
+a fixed allow-list built in at deploy time, never internal files, issues or anyone's data). It never invents: what the
+words don't cover gets "I don't know" and a link. Anyone may ask; 20 questions an hour per address and a daily cap keep the
+cost bounded, answers are cached for a day, and logs hold counts only. Website-only on purpose (it searches the site).
+
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
