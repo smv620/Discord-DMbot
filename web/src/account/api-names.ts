@@ -93,16 +93,32 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       throw new ApiError("still-waiting");
     },
-    respellFromVoice: async (campaignRef, nameId, clip) =>
-      (
-        (await call(
-          "POST",
-          `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/from-voice`,
-          undefined,
-          false,
-          clip,
-        )) as { respelling: string }
-      ).respelling,
+    // The bot listens, not this server: a clip it answers within ~20 s comes back at once (200); otherwise a 202 {id} is
+    // polled every 1.5 s for up to 3 minutes (#3828, core #3827). The page can stop waiting at any look.
+    respellFromVoice: async (campaignRef, nameId, clip, watch) => {
+      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}/names/${encodeURIComponent(nameId)}/said-as/from-voice`;
+      const first = (await call("POST", base, undefined, false, clip)) as { respelling?: string; id?: string };
+      if (first?.respelling) return first.respelling;
+      if (!first?.id) throw new ApiError("server");
+      for (let i = 0; i < 120; i++) {
+        if (watch?.cancelled?.()) throw new ApiError("server");
+        await new Promise((r) => setTimeout(r, 1500));
+        if (watch?.cancelled?.()) throw new ApiError("server");
+        let got = null as { state?: string; error?: string; respelling?: string; progress?: unknown } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(first.id)}`)) as NonNullable<typeof got>;
+        } catch (error) {
+          if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
+        }
+        if (got?.state === "done") {
+          if (!got.respelling) throw new ApiError("server");
+          return got.respelling;
+        }
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (got?.state === "waiting" || got?.state === "working") watch?.onLook?.({ state: got.state, progress: sharedOf(got.progress as never) });
+      }
+      throw new ApiError("still-waiting");
+    },
     saveSaidAs: async (campaignRef, nameId, saidAs) => {
       await call(
         "PUT",

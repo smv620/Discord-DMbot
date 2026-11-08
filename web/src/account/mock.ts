@@ -3381,13 +3381,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       // A 44-byte WAV header with no samples: enough for a pretend clip.
       return new Blob([new Uint8Array(44)], { type: "audio/wav" });
     },
-    async respellFromVoice(campaignRef, nameId, clip) {
+    async respellFromVoice(campaignRef, nameId, clip, watch) {
       calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
       await reachable();
       signedIn();
       const found = sayable(nameId);
       if (!found) throw new ApiError("not-found");
       if (clip.size === 0) throw new ApiError("bad-clip");
+      if (/\.voice-off$/.test(campaignRef)) throw new ApiError("voice-off");
+      // `.voice-slow`: a 202, then waiting, then working, then done; `.voice-busy` stays waiting (a table is recording).
+      if (/\.voice-(slow|busy)$/.test(campaignRef)) {
+        const busy = /\.voice-busy$/.test(campaignRef);
+        for (let i = 0; i < (busy ? 40 : 3); i++) {
+          if (watch?.cancelled?.()) throw new ApiError("server");
+          watch?.onLook?.({ state: busy || i === 0 ? "waiting" : "working", progress: null });
+          await new Promise((r) => setTimeout(r, busy ? 1000 : 600));
+        }
+      }
       const half = Math.ceil(found.text.length / 2);
       return `${found.text.slice(0, half).toLowerCase()}-${found.text.slice(half).toUpperCase()}`;
     },

@@ -22,6 +22,11 @@ export const sayIt = {
   again: "Record again",
   useThis: "Use this",
   sending: "Turning it into letters…",
+  // The bot does the listening and may be busy, so the wait says where the clip is (#3828; the #2564 rule).
+  voiceWaiting: "Waiting for DMbot",
+  voiceWorking: "Listening to your clip",
+  voiceBusy: "DMbot is busy at the table right now. This will finish when the session ends, or you can type it.",
+  typeInstead: "Type it instead",
   hear: "🔊 Hear it",
   // Hear it in the recap narrator's voice (#3807): the words go to DMbot's voice service, so it is said once, and the
   // wait shows DMbot is working. With no narration set up the browser's own voice reads it, and that is said too.
@@ -30,7 +35,7 @@ export const sayIt = {
   hearQuiet: "Still working. You can keep going: your spelling stays in the box. If no sound comes, press 🔊 Hear it again.",
   browserVoice: "This is your browser's voice, not the narrator's. Recaps will sound different.",
   // Said once, near the buttons.
-  how: "DMbot only listens while you press 🎤 Say it. DMbot turns what you say into letters. Check them before you save. Your recording is deleted once it's turned into letters.",
+  how: "DMbot only listens while you press 🎤 Say it. Your recording is turned into letters on DMbot's server and deleted right away. Nobody else hears it. Check the letters before you save.",
   filled: "Here is what DMbot heard, as letters. Change them if they're not right, then save.",
   suggested: "Here is a suggestion. Change it if it's not right, then save.",
   playbackLabel: (name: string): string => `Your recording of ${name}`,
