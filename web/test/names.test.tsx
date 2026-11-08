@@ -9,7 +9,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names, { namesRefFromPath } from "../src/account/Names";
+import { QUIET_SECONDS } from "../src/account/useObservedWait";
 import { NAME_LIMIT, namesPage as w } from "../src/content/names-words";
+import { savingWait } from "../src/content/work-progress";
 
 afterEach(cleanup);
 
@@ -425,7 +427,7 @@ describe("what a DM can do", () => {
     await waitFor(() => expect(calls(api, "allNames").length).toBeGreaterThan(before));
   });
 
-  it("shows Waiting for DMbot… while a change is out, and clears it after", async () => {
+  it("shows DMbot's stage and how long while a change is out, and clears it after", async () => {
     const api = mockApi("table");
     let finish: () => void = () => {};
     api.changeName = () => new Promise((go) => (finish = () => go({ removed: true })));
@@ -433,10 +435,31 @@ describe("what a DM can do", () => {
     await ready();
     const row = await edit("Gorrak");
     fireEvent.click(row.getByLabelText(w.hideCheck));
-    const line = await screen.findByText(w.waiting);
-    expect(line.getAttribute("role")).toBe("status");
+    const line = await screen.findByText(savingWait.stage);
+    expect(line.closest("[role='status']")).toBeTruthy();
+    expect(screen.getByText(/Running for/)).toBeTruthy();
+    expect(screen.queryByText(savingWait.quiet)).toBeNull();
     finish();
-    await waitFor(() => expect(screen.queryByText(w.waiting)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(savingWait.stage)).toBeNull());
+  });
+
+  it("says the wait has stalled, and what to do, after a minute with no answer", async () => {
+    const api = mockApi("table");
+    api.changeName = () => new Promise(() => {});
+    open(DM, api);
+    await ready();
+    const row = await edit("Gorrak");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"], shouldAdvanceTime: true });
+    try {
+      fireEvent.click(row.getByLabelText(w.hideCheck));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(screen.getByText(savingWait.stage)).toBeTruthy();
+      expect(screen.queryByText(savingWait.quiet)).toBeNull();
+      await vi.advanceTimersByTimeAsync((QUIET_SECONDS + 5) * 1000);
+      expect(screen.getByText(savingWait.quiet)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says a change may still happen, never that nothing was changed", async () => {

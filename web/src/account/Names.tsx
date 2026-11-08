@@ -28,6 +28,7 @@ import {
 import CampaignNav from "./CampaignNav";
 import { InfoButton, InfoText } from "./InfoTip";
 import NameThem, { type NamedInfo } from "./NameThem";
+import SavingWait from "./SavingWait";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
@@ -688,6 +689,7 @@ function MergeMany({
         <button type="button" class="button" aria-busy={busy} disabled={busy} onClick={onYes}>
           {busy ? words.mergeManyBusy : words.mergeManyYes}
         </button>
+        <SavingWait active={busy} />
         <button type="button" class="button secondary" disabled={busy} onClick={onNo}>
           {words.mergeManyNo}
         </button>
@@ -1133,9 +1135,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         <span>{words.hideCheck}</span>
       </label>
       <p class="small muted">{words.hideHint}</p>
-      <p role="status" class="small muted">
-        {working ? words.waiting : ""}
-      </p>
+      <SavingWait active={working} />
 
       <fieldset class="name-others">
         <legend>{words.othersHeading}</legend>
