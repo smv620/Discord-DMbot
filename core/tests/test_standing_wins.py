@@ -223,10 +223,13 @@ class ThePicker(NamesTest):
         self.link = link.value[0]
 
     async def pick(self, word: str) -> Any:
+        """As the website's picker sends it: "feeling:<word>" read as "knows (<word>)"."""
         from dmbot.memory.link_edits import change_words
+        from dmbot.memory.link_words import predicate_for
 
+        predicate, detail = predicate_for(f"knows ({word})")
         return await change_words(
-            self.memory, GUILD, self.campaign.id, self.link, "knows", word, dm_feeling=True
+            self.memory, GUILD, self.campaign.id, self.link, predicate, detail, dm_feeling=True
         )
 
     async def scores(self) -> dict[tuple[str, str], int]:
@@ -251,16 +254,35 @@ class ThePicker(NamesTest):
         await self.memory.set_impression(
             GUILD, self.campaign.id, self.bel, self.cer, standing.DEVOTED, source="dm"
         )
-        await self.pick("wary")
+        done = await self.pick("wary")
+        assert done is not None and done.batch is not None  # (an Undo to offer)
         self.assertEqual(await self.scores(), {(self.bel, self.cer): 0})
+        await self.memory.undo(GUILD, self.campaign.id, done.batch)
+        self.assertEqual(await self.scores(), {(self.bel, self.cer): 80})
 
-    async def test_neutral_closes_the_dm_s_standing_and_keeps_the_story_s(self) -> None:
-        await self.memory.add_feeling(GUILD, self.campaign.id, self.bel, self.cer, -80)
+    async def test_a_pick_that_changes_nothing_writes_nothing(self) -> None:
+        await self.memory.set_impression(
+            GUILD, self.campaign.id, self.bel, self.cer, standing.WARY, source="dm"
+        )
+        self.assertIsNone(await self.pick("wary"))
+
+    async def test_neutral_closes_the_dm_s_standing(self) -> None:
         await self.memory.set_impression(
             GUILD, self.campaign.id, self.bel, self.cer, standing.HOSTILE, source="dm"
         )
-        await self.pick("neutral")
+        done = await self.pick("neutral")
+        assert done is not None
+        self.assertEqual(done.value.detail, "")  # (neutral is stored as no word)
         self.assertEqual(await self.scores(), {})
+        self.assertIsNone(standing.dm_line_word(await self.scores(), self.bel, self.cer, ""))
+
+    async def test_neutral_leaves_a_standing_from_the_story(self) -> None:
+        await self.memory.add_feeling(GUILD, self.campaign.id, self.bel, self.cer, -80)
+        await self.pick("neutral")
+        rows = await self.memory.opinion_history(
+            GUILD, self.campaign.id, self.bel, self.cer, attitude=False
+        )
+        self.assertEqual([(r.source, r.closed_at) for r in rows], [(BACKGROUND_SOURCE, None)])
 
     async def test_a_reader_s_change_of_words_sets_no_standing(self) -> None:
         from dmbot.memory.link_edits import change_words

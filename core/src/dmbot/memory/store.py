@@ -5295,8 +5295,8 @@ class MemoryStore:
         the same connection (the duplicate rule): nothing is ended, and the connection comes back
         as it is. Words that already exist between the two names reuse that connection, and a
         secret one never becomes public. `dm_feeling`: the DM picked a feeling on a `knows` line
-        (#3642), so their own Reputation for the pair is written in the same change, and the line
-        and the Reputation screen never disagree (`_dm_feeling_in`)."""
+        (#3642), so their own Reputation for the pair is written in the same change and the line
+        never seems to ignore the pick (`_dm_feeling_in`)."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None or current["status"] != CONFIRMED:
@@ -6381,7 +6381,8 @@ async def _dm_feeling_in(w: Changes, viewer_id: str, subject_id: str, word: str)
     """The DM's Reputation for how `viewer_id` feels about `subject_id`, from the feeling they
     picked on the `knows` line (#3642), in the caller's write: the step the word stands for, saved
     as the DM's dated impression (the one before it closed, so the history stays), or, for
-    "neutral", the DM's standing for the pair closed. Nothing for ends that hold no standing (a
+    "neutral", the DM's standing for the pair closed (a standing worked out from the story stays,
+    as it does when the DM sets none). Nothing for ends that hold no standing (a
     place judged, a person at the table): the line's own word is all there is."""
     a, b = await _entity_row(w, viewer_id), await _entity_row(w, subject_id)
     if (
@@ -6390,13 +6391,14 @@ async def _dm_feeling_in(w: Changes, viewer_id: str, subject_id: str, word: str)
         or "person" in (a["type"], b["type"])
     ):
         return
+    # (a picked "neutral" is stored as no word at all, `link_words.predicate_for`)
+    picked = reputation_words.word_of(word) if word else reputation_words.NEUTRAL
+    if picked is None:
+        return  # (not one of the nine: nothing to say about their standing)
     old = await w.select(
         IMPRESSIONS, " AND viewer_id = %s AND subject_id = %s AND closed_at IS NULL",
         [viewer_id, subject_id],
     )  # fmt: skip
-    picked = reputation_words.word_of(word)
-    if picked is None:
-        return  # (not one of the nine: nothing to say about their standing)
     score = reputation_words.score_of(picked)
     if score is None:  # (neutral: no opinion; only the DM's own standing is closed)
         for row in old:

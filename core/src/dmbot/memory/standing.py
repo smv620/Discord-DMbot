@@ -89,7 +89,8 @@ def dm_line_word(
 ) -> str | None:
     """The word a `knows` line between `a` and `b` shows a DM when the DM set a standing for the
     pair (#3642): `dm_scores` holds the DM's open impressions, (viewer, subject) to score. The DM's
-    word always wins over a reader's, so it replaces the line's own; a's view of b is preferred,
+    word always wins over a reader's, so it replaces the line's own (`own`), unless that word is on
+    the DM's step (a picked "trusts" on Friendly stays "trusts"); a's view of b is preferred,
     else b's of a: the pair has one line, so the other way's standing stands in for it (the issue
     asks for either direction). None when the DM set neither, and the line keeps its own word.
     DM-only: a player's screen never calls this."""
