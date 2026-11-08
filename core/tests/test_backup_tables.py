@@ -194,10 +194,21 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 (g, c, A, SPEAKER),
             ),
             "memory_importance": (
-                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
+                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
                 " source, session_started_at, lines, recorded_at)"
-                " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
+                " VALUES (%s, %s, %s, 3, 'reading', 'plotbot', 100, '{}', 5)",
                 (g, c, A),
+            ),
+            "memory_role_codes": (
+                "INSERT INTO memory_role_codes (guild_id, campaign_id, code, label, description,"
+                " examples, not_this, source, created_at) VALUES (%s, %s, 'smuggler', 'smuggler',"
+                " 'Moves goods past the law.', '{a,b,c}', 'minion', 'reading', 5)",
+                (g, c),
+            ),
+            "memory_roles": (
+                "INSERT INTO memory_roles (guild_id, campaign_id, id, entity_id, role, reason,"
+                " recorded_at) VALUES (%s, %s, %s, %s, 'smuggler', 'reading', 5)",
+                (g, c, "d" * 32, A),
             ),
             "pc_icons": (
                 "INSERT INTO pc_icons (guild_id, campaign_id, entity_id, choice, set_by, updated_at)"
