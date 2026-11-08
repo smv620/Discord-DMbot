@@ -7,6 +7,8 @@ campaign's readings added. When the closest is close enough (`THRESHOLD`) and cl
 second (`MARGIN`), that role is used instead and nothing new is added, so near-duplicates
 ("henchman" beside `minion`) don't fill the campaign's `roles.ADDED_MAX`. Otherwise the new role is
 added as before: a weak or close match is never guessed, and a failed call never blocks (counted).
+Two new roles in one answer are matched only against the roles already held, never each other:
+both are added (the cautious choice; a later reading matches against them).
 
 What goes to Voyage AI (the ruling's terms): the seeded roles' fixed texts, and a role's
 description and examples (`roles.embed_text`), never `not_this`, never a transcript line, never a
@@ -60,13 +62,11 @@ class Best:
 
 
 def nearest(vector: Sequence[float], vectors: Mapping[str, Sequence[float]]) -> Best | None:
-    """The closest role and the runner-up's score, or None when there is nothing to compare, a
-    vector is the wrong length or a number is not finite. Equal scores are ordered by code, so the
-    result never depends on the order of the input."""
-    try:
-        scored = [(cosine(vector, v), code) for code, v in vectors.items()]
-    except ValueError:  # (a vector of another length)
-        return None
+    """The closest role and the runner-up's score, or None when there is nothing to compare or a
+    number is not finite. A vector of another length is left out (one bad row must not stop every
+    match in the campaign). Equal scores are ordered by code, so the result never depends on the
+    order of the input."""
+    scored = [(cosine(vector, v), code) for code, v in vectors.items() if len(v) == len(vector)]
     if not scored or not all(math.isfinite(s) for s, _ in scored):
         return None
     scored.sort(key=lambda sc: (-sc[0], sc[1]))
@@ -150,17 +150,24 @@ class RoleMatcher:
             raise ValueError("embedding count")
         return [list(v) for v in made]
 
-    async def _added_vectors(self, guild_id: int, campaign_id: str) -> dict[str, list[float]]:
-        """The campaign's added roles' vectors: the missing or changed ones are made and kept, and
-        those of codes that are gone are dropped. Read back from the campaign's own rows."""
+    async def _added_vectors(
+        self, guild_id: int, campaign_id: str, dims: int
+    ) -> dict[str, list[float]]:
+        """The campaign's added roles' vectors: the missing, changed or wrong-length ones (`dims`,
+        the seeded vectors' length) are made again and kept, and those of codes that are gone are
+        dropped. Read from the campaign's own rows."""
         texts = await self._added.added_texts(guild_id, campaign_id)
-        kept = await self._store.kept(guild_id, campaign_id, self._model, kind=vs.ROLE)
-        have = {owner: h for (_k, owner), h in kept.items()}
+        rows = await self._store.vectors(guild_id, campaign_id, self._model, vs.ROLE)
+        have = {row.owner_id: row for row in rows}
         gone = sorted(set(have) - set(texts))
         if gone:
             await self._store.drop(guild_id, campaign_id, vs.ROLE, gone)
-        stale = sorted(c for c, t in texts.items() if have.get(c) != vs.text_hash(t))
         made: dict[str, list[float]] = {}
+        for code, text in texts.items():
+            row = have.get(code)
+            if row is not None and row.hash == vs.text_hash(text) and len(row.vector) == dims:
+                made[code] = list(row.vector)
+        stale = sorted(set(texts) - set(made))
         if stale:
             for code, vector in zip(
                 stale, await self._embed([texts[c] for c in stale]), strict=True
@@ -170,11 +177,6 @@ class RoleMatcher:
                 guild_id, campaign_id, self._model,
                 [vs.Item(vs.ROLE, c, vs.text_hash(texts[c]), v) for c, v in made.items()],
             )  # fmt: skip
-        fresh = set(texts) - set(made)
-        if fresh:
-            for row in await self._store.vectors(guild_id, campaign_id, self._model, vs.ROLE):
-                if row.owner_id in fresh:
-                    made[row.owner_id] = list(row.vector)
         return made
 
     async def place(
@@ -191,7 +193,8 @@ class RoleMatcher:
         if not new:
             return out
         seeded = await self._seeded.get(self._embedder, self._model, self._count)
-        added = await self._added_vectors(guild_id, campaign_id)
+        dims = len(next(iter(seeded.values()), []))
+        added = await self._added_vectors(guild_id, campaign_id, dims)
         pool = {c: v for c, v in {**seeded, **added}.items() if c in known and c != roles.COMMONER}
         for (code, _text), vector in zip(new, await self._embed([t for _c, t in new]), strict=True):
             out.vectors[code] = vector

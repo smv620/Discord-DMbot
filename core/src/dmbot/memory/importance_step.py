@@ -371,7 +371,12 @@ async def _write(
         report.roles_added += await role_store.add(guild_id, campaign_id, new, report.lost)
         groups = {i.entity_id: i.group for i in items}
         for v in verdicts:
-            for code in v.ended:
+            kept = {swap.get(c, c) for c in v.roles}
+            # (a role ended here is read through the same swap, and one the answer also holds
+            # after it, such as "henchman" swapped to `minion` beside ended `minion`, stays)
+            for code in dict.fromkeys(swap.get(c, c) for c in v.ended):
+                if code in kept:
+                    continue
                 report.roles_ended += await role_store.end(
                     guild_id, campaign_id, v.entity_id, code, also=groups[v.entity_id],
                     keep_dm=True,

@@ -189,7 +189,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
-    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words): "
+    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words, "
+    "and added story roles' texts): "
     "made again from the text, and never carried, so a person's words leave no copy (#2664)",
     "name_pass_reports": "the name pass's report and Undo record: a run's history, the fixes "
     "themselves are in the transcript (#2684)",

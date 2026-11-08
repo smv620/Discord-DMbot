@@ -173,6 +173,7 @@ class TheMatcher(DatabaseTest):
         self.roles = RoleStore(self.db)
         self.store = vs.VectorStore(self.db)
         self.vex = await self.entry("Vex")
+        self.counted = 0
 
     async def entry(self, name: str) -> str:
         made = await self.memory.add_entity(
@@ -181,16 +182,29 @@ class TheMatcher(DatabaseTest):
         return str(made.value.id)
 
     def matcher(self, embedder: FakeEmbedder) -> rm.RoleMatcher:
-        return rm.RoleMatcher(embedder, self.store, self.roles, "m", rm.SeededVectors())
+        return rm.RoleMatcher(
+            embedder, self.store, self.roles, "m", rm.SeededVectors(), count_call=self.count
+        )
+
+    async def count(self) -> None:
+        self.counted += 1
 
     async def consenting(self) -> Collection[int]:
         return set()
 
-    async def read(self, embedder: FakeEmbedder, *new: dict[str, object]) -> step.Report:
+    async def read(
+        self,
+        embedder: FakeEmbedder,
+        *new: dict[str, object],
+        holds: list[str] | None = None,
+        ended: list[str] | None = None,
+        item: ir.Item | None = None,
+    ) -> step.Report:
         await self.roles.ensure_codes(self.g, self.c)
         codes = await self.roles.codes(self.g, self.c)
+        held = holds if holds is not None else [str(p["code"]) for p in new]
         reply = json.dumps({
-            "entries": [{"entry": 1, "rank": 2, "roles": [str(p["code"]) for p in new]}],
+            "entries": [{"entry": 1, "rank": 2, "roles": held, "ended_roles": ended or []}],
             "new_roles": list(new),
         })  # fmt: skip
 
@@ -199,7 +213,7 @@ class TheMatcher(DatabaseTest):
                 return Reply(reply, False)
 
         return await step.run(
-            AI(), self.db, [ir.Item(1, self.vex, "Vex", "character", 1)], codes, {},
+            AI(), self.db, [item or ir.Item(1, self.vex, "Vex", "character", 1)], codes, {},
             guild_id=self.g, campaign_id=self.c, session_started_at=100,
             consenting=self.consenting, max_calls=3, matcher=self.matcher(embedder),
         )  # fmt: skip
@@ -271,6 +285,55 @@ class TheMatcher(DatabaseTest):
         self.assertEqual((report.match_failed, report.codes_added), (1, 1))
         self.assertEqual(await self.held(), {"heir"})
         self.assertIn("1 match(es) failed", report.line())
+
+    async def test_holding_the_new_role_and_its_match_stores_it_once(self) -> None:
+        henchman = proposed("henchman", "A thug doing a villain's work")
+        embedder = FakeEmbedder({text_of(henchman): axis(INDEX["minion"])})
+        await self.read(embedder, henchman, holds=["henchman", "minion"])
+        rows = [r.role for r in await self.roles.held(self.g, self.c)]
+        self.assertEqual(rows, ["minion"])
+
+    async def test_a_role_held_through_the_swap_is_not_ended_in_the_same_answer(self) -> None:
+        henchman = proposed("henchman", "A thug doing a villain's work")
+        embedder = FakeEmbedder({text_of(henchman): axis(INDEX["minion"])})
+        report = await self.read(embedder, henchman, ended=["minion"])
+        self.assertEqual(await self.held(), {"minion"})
+        self.assertEqual(report.roles_ended, 0)
+
+    async def test_every_call_is_counted_and_not_this_is_never_sent(self) -> None:
+        heir = {**proposed("heir", "Next in line to rule"), "not_this": "Unusual warning words"}
+        sent: list[str] = []
+        embedder = FakeEmbedder({text_of(heir): axis(len(SEEDED))})
+        real = embedder.embed
+
+        async def watch(texts: Sequence[str], *, query: bool = False) -> list[list[float]]:
+            sent.extend(texts)
+            return await real(texts, query=query)
+
+        embedder.embed = watch  # type: ignore[method-assign]
+        report = await self.read(embedder, heir)
+        self.assertEqual(report.codes_added, 1)
+        self.assertEqual(self.counted, len(embedder.calls))  # (seeded once, the proposed once)
+        self.assertEqual(self.counted, 2)
+        self.assertFalse(any("Unusual warning words" in t for t in sent))
+
+    async def test_a_kept_vector_of_another_length_is_made_again(self) -> None:
+        await self.roles.add_code(
+            self.g, self.c, "heir", "heir", "Next in line to rule",
+            ("a one.", "a two.", "a three."), "",
+        )  # fmt: skip
+        heir_text = roles.embed_text("Next in line to rule", ("a one.", "a two.", "a three."))
+        await self.store.save(
+            self.g, self.c, "m", [vs.Item(vs.ROLE, "heir", vs.text_hash(heir_text), [1.0, 0.0])]
+        )
+        claimant = proposed("claimant", "Has a claim to the throne")
+        embedder = FakeEmbedder({
+            heir_text: axis(len(SEEDED)), text_of(claimant): axis(len(SEEDED)),
+        })  # fmt: skip
+        report = await self.read(embedder, claimant)
+        self.assertEqual(report.codes_matched, 1)
+        (kept,) = await self.store.vectors(self.g, self.c, "m", vs.ROLE)
+        self.assertEqual(len(kept.vector), DIM)
 
 
 if __name__ == "__main__":

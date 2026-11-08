@@ -11,8 +11,12 @@ margins:
 - `precision`: right of used (cases with a seeded role); `coverage`: right of all such cases;
 - `none wrong`: cases with no seeded role (`NONE`) that a used match would wrongly swallow;
 - the margins (best minus second) of right and wrong best matches, as quartiles;
-- `choose`: the loosest pair with no `none wrong` and precision at least 90% (the rule proposed on
-  #3172), with its coverage; Supervisor rules the pair and the switch from these numbers.
+- `choose`: among the pairs with no `none wrong` and precision at least 90% (the rule proposed on
+  #3172), the one with the most right matches, then the more precise, then the stricter; with its
+  coverage. Supervisor rules the pair and the switch from these numbers.
+
+The model is `VOYAGE_EMBED_MODEL` as the bot reads it (default `voyage-3.5`), printed first, so the
+numbers are for the model the bot uses.
 
 The key is read from the environment and never printed. Every text is embedded as a document (a
 role is compared with roles). Nothing is written to a database. The pure part (`evaluate`) takes the
@@ -156,7 +160,11 @@ async def main_async(_args: argparse.Namespace) -> int:
     from dmbot.config import Settings  # the model is the bot's own setting
     from dmbot.memory.voyage import HttpTransport, Voyage
 
-    settings = Settings(discord_token="x", ears_secret="x", voyage_key=key)
+    model = os.environ.get("VOYAGE_EMBED_MODEL", "") or "voyage-3.5"  # (the bot's default)
+    settings = Settings(
+        discord_token="x", ears_secret="x", voyage_key=key, voyage_embed_model=model
+    )
+    print(f"model {settings.voyage_embed_model}")
     transport = HttpTransport(key)
     voyage = Voyage(
         transport,
