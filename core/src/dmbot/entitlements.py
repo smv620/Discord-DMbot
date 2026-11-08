@@ -471,7 +471,7 @@ async def owned_campaigns(conn: Conn, user_id: int) -> int:
     async with _as_person(conn, user_id):
         # Campaigns in a listed free server take no slot of the owner's cap (#3792).
         cur = await conn.execute(
-            "SELECT dmbot_owned_campaigns_outside(%s) AS n", (sorted(_free_guilds),)
+            "SELECT dmbot_owned_campaigns_outside(%s::bigint[]) AS n", (sorted(free_guilds()),)
         )
         row = await cur.fetchone()
     assert row is not None  # a function call always gives a row

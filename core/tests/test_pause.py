@@ -459,6 +459,37 @@ class FreeServers(PauseTest):
         self.assertNotIn(new.id, await self.paused_ids(ALICE))
         await self.assert_in_step(ALICE)
 
+    async def test_the_setting_is_put_back_and_the_website_may_only_count(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.make(GUILD_B, "Test table", ALICE, played=300)
+        await self.make(GUILD_A, "Real", ALICE, played=100)
+        async with self.db.meter(GUILD_A, ALICE) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'x', true)")
+            await conn.execute("SELECT dmbot_owned_campaigns_outside(%s::bigint[])", ([GUILD_B],))
+            await conn.execute(
+                "SELECT * FROM dmbot_pause_over_cap(5, '{}', %s::bigint[])", ([GUILD_B],)
+            )
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync') AS s")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["s"], "x")  # as it was, on the counting path and the early return
+        async with self.db.meter(GUILD_A, ALICE) as conn:  # NULLs in the list change nothing
+            cur = await conn.execute(
+                "SELECT dmbot_owned_campaigns_outside(ARRAY[NULL, %s]::bigint[]) AS n", (GUILD_B,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)
+
+    async def test_an_already_paused_campaign_in_a_listed_server_is_left_as_it_is(self) -> None:
+        await self.give_plan(ALICE, 1)
+        listed = await self.make(GUILD_B, "Test table", ALICE, played=300)
+        await self.store.set_paused(GUILD_B, listed.id, ALICE, True, NOW)
+        await self.make(GUILD_A, "Real", ALICE, played=100)
+        self.assertEqual(await self.counted(ALICE), 1)
+        await self.settle(ALICE)  # nothing is over the cap, so nothing is paused
+        self.assertEqual(await self.paused_ids(ALICE), {listed.id})
+
     async def test_with_no_listed_server_the_old_rule_holds(self) -> None:
         from dmbot import entitlements
 

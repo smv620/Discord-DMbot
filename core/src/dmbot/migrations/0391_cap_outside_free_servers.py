@@ -15,6 +15,11 @@ from __future__ import annotations
 # `dmbot_owned_campaigns_outside(skip)` is the count (the old no-argument one stays, for anything
 # that has no list). `dmbot_pause_over_cap(keep, live, skip)` is 0037's function with the same
 # list; the two-argument form is now a thin call to it with an empty list. No rows change.
+#
+# The website's role may call the count with any list, so an owner could learn which server each of
+# their OWN campaigns is in by varying it. That is accepted: it is only their own campaigns, which
+# the website already lists them with (`dmbot_web_owned_campaigns`). NULL elements are dropped
+# first, so both functions treat a list the same way.
 SQL = r"""
     CREATE FUNCTION dmbot_owned_campaigns_outside(skip BIGINT[]) RETURNS BIGINT
         LANGUAGE plpgsql SECURITY DEFINER
@@ -27,6 +32,7 @@ SQL = r"""
         IF me IS NULL THEN
             RETURN 0;
         END IF;
+        skip := array_remove(skip, NULL);
         IF COALESCE(cardinality(skip), 0) = 0 THEN
             RETURN (SELECT count(*) FROM owner_campaigns oc
                     WHERE oc.owner_user_id = me AND NOT oc.paused);
@@ -50,14 +56,16 @@ SQL = r"""
         me BIGINT := dmbot_current_user();
         before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
         n BIGINT;
-        left_out BIGINT[] := COALESCE(skip, '{}');
+        left_out BIGINT[] := array_remove(COALESCE(skip, '{}'), NULL);
     BEGIN
         IF me IS NULL OR keep IS NULL OR keep < 0 THEN
             RETURN;
         END IF;
         n := dmbot_owned_campaigns_outside(left_out);
         IF n <= keep THEN
-            RETURN;  -- nothing over the cap: the common case, answered before any lock
+            -- Nothing over the cap: the common case, answered before any lock (as in 0037, so a
+            -- campaign started at this very moment is counted by the next call).
+            RETURN;
         END IF;
         PERFORM set_config('dmbot.owner_sync', 'pause', true);
         -- Same lock order as 0037: the campaign rows first, in a fixed order, then the person.

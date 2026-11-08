@@ -161,7 +161,7 @@ async def settle_cap(
             return None
         # Campaigns in a listed free server are neither counted nor paused (#3792).
         cur = await conn.execute(
-            "SELECT * FROM dmbot_pause_over_cap(%s, %s, %s)",
+            "SELECT * FROM dmbot_pause_over_cap(%s, %s, %s::bigint[])",
             (keep, live or [], sorted(entitlements.free_guilds())),
         )
         paused = [
