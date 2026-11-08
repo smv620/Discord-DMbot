@@ -73,7 +73,7 @@ export const text = {
   signInMoved:
     "This Discord account's DMbot account moved to a new Discord account. Sign in with the new one.",
   signInRemoved:
-    "This Discord account is not a DMbot account of its own. Sign in with the Discord account you used first. To use this one too, add it from that account's page.",
+    "This Discord account can't start a DMbot account. Sign in with the Discord account you used first. If this one was removed from a DMbot account, add it back from that account's page.",
   tooManyTries: "Too many tries. Wait about 10 minutes, then tap Sign in with Discord again.",
 
   // Sign in by an emailed link (#1231)
