@@ -67,6 +67,7 @@ from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.standing import dm_line_word
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
+from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
 from dmbot.ui import all_names, logic, player_id, told_name
 from dmbot.ui import companion as companion_ui
@@ -721,6 +722,7 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        suggest=say and getattr(interaction.client, "said_as_ai", None) is not None,
         players_line=(sees_secrets(campaign, interaction.user.id) and entity.type != "person"),
         say_it_url=(
             all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
@@ -889,6 +891,7 @@ class NameCard(_Menu):
         led: bool = False,
         book: bool = False,
         say: bool = False,
+        suggest: bool = False,
         say_it_url: str = "",
         players_line: bool = False,
         hide: bool | None = None,
@@ -929,6 +932,8 @@ class NameCard(_Menu):
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if say:  # how the recap narrator says this name (#2171), the same as the website's field
             self.add_item(_Button(self._say, label=SAY_BUTTON, style=grey, row=2))
+            if suggest:
+                self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=2))
         if led:  # the DM's word that this led to a thread or an event (#1679)
             self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
         if book:  # the DM's word that this is an entry in their adventure (#1715)
@@ -1274,6 +1279,38 @@ class NameCard(_Menu):
         self.origin = None  # the form's answer replaces this message; cancel keeps it
         await interaction.response.send_modal(SayForm(self.campaign_id, self.entity_id, name, said))
 
+    async def _suggest(self, interaction: discord.Interaction) -> None:
+        """💡 Suggest (#2316): DMbot offers how to say this name, from the name and its kind
+        alone. Nothing is saved until the DM presses Use this."""
+        await _answer_first(interaction, in_place=False)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        ai = getattr(interaction.client, "said_as_ai", None)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if ai is None or not await _spoken_recaps(interaction, campaign):
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        try:
+            spelling = await said_as_suggest.suggest(ai, name, entity.type if entity else "")
+        except said_as_suggest.SuggestFailed:
+            await _tell(interaction, SUGGEST_FAILED)
+            return
+        if not spelling:
+            await _tell(interaction, SUGGEST_NONE)
+            return
+        view = SuggestOffer(self.campaign_id, self.entity_id, spelling)
+        await _send(
+            interaction,
+            f"💡 DMbot suggests the narrator say **{_md(name)}** as **{_md(spelling)}**. Use it?",
+            view,
+        )
+
     async def _add(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         if found:
@@ -1542,6 +1579,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
+SUGGEST_BUTTON = "💡 Suggest"  # DMbot offers a spelling for the DM to take or not (#2316)
 PLAYERS_LINE_BUTTON = "💬 Line for the players"  # the players' line for an entry (#2967)
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
 
@@ -1595,6 +1633,57 @@ class PlayersLineForm(discord.ui.Modal, title="Line for the players"):
         )
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+SUGGEST_NONE = "DMbot has no suggestion for that name. You can type how to say it instead."
+SUGGEST_FAILED = "Something went wrong on DMbot's side. Try again in a minute, or type it."
+
+
+class SuggestOffer(_Menu):
+    """DMbot's suggested spelling, for the DM to take or leave (#2316). The DM decides: Use this
+    saves it exactly as ✏️ would (a DM only, spoken recaps still on, checked again now)."""
+
+    def __init__(self, campaign_id: str, entity_id: str, spelling: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.spelling = spelling
+        self.add_item(_Button(self._use, label="✅ Use this", style=discord.ButtonStyle.success))
+        self.add_item(_Button(self._no, label="No thanks", style=discord.ButtonStyle.secondary))
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _replace(interaction, "👍 Left as it was.", None)
+
+    async def _use(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _name = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on any press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if not await _spoken_recaps(interaction, campaign):  # the plan may have lapsed meanwhile
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        try:
+            await memory.set_said_as(
+                campaign.guild_id, campaign.id, self.entity_id, self.spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        await show_card(
+            interaction,
+            campaign.id,
+            self.entity_id,
+            replace=True,
+            note=f"🔊 The narrator will say it as **{_md(self.spelling)}**.",
+        )
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
