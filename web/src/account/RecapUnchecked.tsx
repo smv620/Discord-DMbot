@@ -65,7 +65,7 @@ export default function RecapUnchecked({
         {text.uncheckedHeading}
       </h3>
       <p>{text.uncheckedLead}</p>
-      <DraftPreview checking={recap.status === "draft"}>
+      <DraftPreview checking={recap.working && recap.status === "draft"}>
         <p class="recap-unchecked-text">
           {draft.map((sentence, i) =>
             marked.has(i + 1) ? (

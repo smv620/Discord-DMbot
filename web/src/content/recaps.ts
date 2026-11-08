@@ -69,6 +69,8 @@ export const text = {
   working: "DMbot is still writing this recap. Check back in a few minutes.",
   // The big mark over a draft DMbot is still checking (#3861): the owner's exact word.
   draftMark: "DRAFT",
+  // What a screen reader is told instead of the mark: that the words are a draft still being checked.
+  draftNote: "Draft, still being checked.",
   // Written, but the checks that read it before the DM does can't run yet (#2297). One steady line:
   // it stays up through the short gaps between tries, until the recap is ready or has failed.
   waitingForCheck:
