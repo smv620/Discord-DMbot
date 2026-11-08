@@ -264,7 +264,9 @@ describe("the recheck after a waiting answer (#3322)", () => {
     vi.useFakeTimers();
     fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
     await passTime(0);
-    await passTime(121_000);
+    await passTime(119_000);
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.stuck)).toBeNull();
+    await passTime(2_000);
     expect(within(tileFor("A map of the Brass Ford")).getByText(w.stuck)).toBeTruthy();
   });
 
@@ -291,6 +293,44 @@ describe("the recheck after a waiting answer (#3322)", () => {
     const atStop = api.pictures.mock.calls.length;
     await passTime(3 * WAITING_RECHECK_MS);
     expect(api.pictures.mock.calls.length).toBe(atStop);
+  });
+
+  it("keeps another tile's failure on the page through a read of the rhythm", async () => {
+    const tile = (code: string, poster: string, alt: string): PictureItem => ({
+      code,
+      cursor: `1791004000:${code}`,
+      at: 1791004000,
+      sessionNumber: 2,
+      poster,
+      description: alt,
+      previewUrl: `/pictures/preview-${code}.webp`,
+      permanent: false,
+      isPublic: true,
+      mine: true,
+    });
+    const pictures = vi.fn(async () => ({
+      pictures: [tile("pic-1", "Mira", "A map of the Brass Ford"), tile("pic-2", "Brannoch", "A torn page from a diary")],
+      more: false,
+      isDm: true,
+      usage: null,
+      sessions: [2],
+      posters: ["Mira", "Brannoch"],
+    }));
+    const pictureAction = vi.fn(async (_ref: string, code: string) => {
+      if (code === "pic-2") throw new Error("boom");
+      return { state: "waiting" as const, note: "" };
+    });
+    const api = { pictures, pictureAction } as unknown as AccountApi;
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    fireEvent.click(within(tileFor("A torn page from a diary")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    expect(within(tileFor("A torn page from a diary")).getByText(w.actionFailed)).toBeTruthy();
+    await passTime(WAITING_RECHECK_MS);
+    expect(within(tileFor("A torn page from a diary")).getByText(w.actionFailed)).toBeTruthy();
   });
 
   it("no extra read is made while the tab is hidden", async () => {

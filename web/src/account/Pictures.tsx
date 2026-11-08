@@ -32,7 +32,7 @@ export function refFromPath(path: string): string | null {
 
 type Load = "loading" | "ok" | "failed";
 
-/** After a "waiting" answer the list is read once more after this long: the bot usually answers within a minute, and
+/** While a picture action waits, the list is read again every this long, for as long as a tile waits: the bot usually answers within a minute, and
  * the page should notice by itself rather than wait for a reload (#3322). */
 export const WAITING_RECHECK_MS = 10_000;
 
@@ -93,11 +93,11 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     rhythm.current = null;
   }
   function startRhythm(): void {
-    if (rhythm.current !== null) return;
+    if (!mounted.current || rhythm.current !== null) return; // a read that was in flight at leaving starts nothing
     rhythm.current = setInterval(() => {
       if (!mounted.current || Object.keys(waitingNow.current).length === 0) return stopRhythm();
       if (typeof document !== "undefined" && document.hidden) return; // a hidden tab does not read
-      void readFirst(appliedRef.current);
+      void readFirst(appliedRef.current, true);
     }, WAITING_RECHECK_MS);
   }
   /** Has this tile been waiting for STUCK_SECONDS or more, by the page's clock? */
@@ -121,12 +121,15 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     return f;
   }
 
-  async function readFirst(f: PictureFilter): Promise<void> {
+  // A read the rhythm makes (`keep`) leaves the messages on the page alone: another tile's failure must stay readable.
+  async function readFirst(f: PictureFilter, keep = false): Promise<void> {
     if (!ref || !api.pictures) return setLoad("failed");
     const mine = ++reads.current;
     setLoad("loading");
-    setListProblem(false);
-    setProblems({});
+    if (!keep) {
+      setListProblem(false);
+      setProblems({});
+    }
     try {
       const got: PictureList = await api.pictures(ref, f);
       if (mine !== reads.current) return;
