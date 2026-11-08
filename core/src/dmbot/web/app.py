@@ -2084,6 +2084,19 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/cleanup/{entity_id}/places")
+    async def me_campaign_web_cleanup_places(
+        ref: str, entity_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        """ "Where was it said?" for one character or group on the graph clean-up page, kept or
+        waiting (#3767). DM only; anyone else, or an id that is not one, "not found"."""
+        session, _token = signed
+        try:
+            return await graph_cleanup.read_places(db, session, ref, entity_id)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/find")
     async def me_campaign_web_find(
         ref: str, signed: Signed, q: str = "", view: str | None = None
