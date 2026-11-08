@@ -123,3 +123,45 @@ class Expansion(DatabaseTest):
         self.assertEqual(by_hand.dm_accounts, frozenset({5, 6}))
         self.assertTrue(by_hand.is_owner(5) and not by_hand.is_owner(6))
         self.assertEqual(by_hand.dm_account_of(6), 6)
+
+
+class Guards(DatabaseTest):
+    async def test_the_last_dm_account_stays_when_its_first_id_was_taken_off(self) -> None:
+        store = CampaignStore(self.db)
+        campaign = await store.create(GUILD, "Frostmaiden", OWNER)
+        await add_user(self.db, OWNER)
+        await link(self.db, OWNER, OWNER_2)
+        await unlink(self.db, OWNER, OWNER)
+        for who in (OWNER, OWNER_2):  # the account number, or a Discord ID that acts as it
+            with self.assertRaises(CampaignError):
+                await store.remove_dm(GUILD, campaign.id, who)
+        again = await store.get(GUILD, campaign.id)
+        assert again is not None
+        self.assertEqual(again.dm_accounts, frozenset({OWNER}))
+
+    async def test_a_taken_off_first_id_cannot_be_added_as_a_dm(self) -> None:
+        store = CampaignStore(self.db)
+        campaign = await store.create(GUILD, "Frostmaiden", OWNER)
+        await add_user(self.db, CO_DM)
+        await link(self.db, CO_DM, CO_DM_2)
+        await unlink(self.db, CO_DM, CO_DM)
+        with self.assertRaises(CampaignError):
+            await store.add_dm(GUILD, campaign.id, CO_DM)
+        again = await store.get(GUILD, campaign.id)
+        assert again is not None
+        self.assertEqual(again.dm_accounts, frozenset({OWNER}))
+        # ...while its other Discord account can be added, and is stored as the account.
+        added = await store.add_dm(GUILD, campaign.id, CO_DM_2)
+        self.assertEqual(added.dm_accounts, frozenset({OWNER, CO_DM}))
+
+    async def test_a_whole_server_list_mixes_accounts_and_single_people(self) -> None:
+        store = CampaignStore(self.db)
+        first = await store.create(GUILD, "One", OWNER)
+        second = await store.create(GUILD, "Two", CO_DM)
+        await add_user(self.db, OWNER)
+        await link(self.db, OWNER, OWNER_2)
+        by_id = {c.id: c for c in await store.list_campaigns(GUILD)}
+        self.assertEqual(by_id[first.id].dm_user_ids, frozenset({OWNER, OWNER_2}))
+        self.assertEqual(by_id[first.id].dm_accounts, frozenset({OWNER}))
+        self.assertEqual(by_id[second.id].dm_user_ids, frozenset({CO_DM}))
+        self.assertTrue(by_id[second.id].is_owner(CO_DM))

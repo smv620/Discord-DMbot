@@ -379,6 +379,7 @@ MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (
     f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
 )
+NOT_A_LOGIN = "That Discord account was taken off its DMbot account, so it can't be added here."
 LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -698,8 +699,12 @@ class CampaignStore:
             # Read with the row locked (#77: one read), so two adds cannot pass the cap.
             current = await self._require(conn, guild_id, campaign_id, lock=True)
             # The table holds the DM's account number, never a second Discord ID (#2533).
-            account = await self._account_of(conn, user_id)
-            if user_id not in current.dm_user_ids and len(current.dm_accounts) >= MAX_DMS:
+            account = user_id if user_id in current.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
+            if account is None:
+                raise CampaignError(NOT_A_LOGIN)
+            if account not in current.dm_accounts and len(current.dm_accounts) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
             # One statement: the row is added and, only if it was new, the story's number moves
             # (who the DMs are changes what a viewer sees, #3294).
@@ -717,10 +722,13 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign row so two removals can't leave it with no DM.
             campaign = await self._require(conn, guild_id, campaign_id, lock=True)
-            account = await self._account_of(conn, user_id)
+            # (an account number from the list of game masters, or a Discord ID of one of them)
+            account = user_id if user_id in campaign.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
             if account == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
-            if user_id in campaign.dm_user_ids and len(campaign.dm_accounts) == 1:
+            if account in campaign.dm_accounts and len(campaign.dm_accounts) == 1:
                 raise CampaignError(LAST_DM)
             await conn.execute(
                 "WITH gone AS (DELETE FROM campaign_dms"
@@ -2073,15 +2081,22 @@ class CampaignStore:
                 roster.owner_ids.add(int(r["login"]))
         return result
 
-    async def _account_of(self, conn: Conn, user_id: int) -> int:
+    async def _account_of(self, conn: Conn, user_id: int) -> int | None:
         """The account number a Discord user is stored as in the campaign tables (#2533): the
         account they belong to, else their own ID (someone who has never signed in to the website
-        is their own account)."""
+        is their own account). None for a first Discord ID its account took off itself: it is
+        nobody's login any more and must not be stored as anyone."""
         if not await self._has_accounts(conn):
             return user_id
-        cur = await conn.execute("SELECT dmbot_account_of(%s) AS account", (user_id,))
+        cur = await conn.execute(
+            "SELECT dmbot_account_of(%s) AS account,"
+            " %s = ANY (ARRAY(SELECT dmbot_account_logins(%s))) AS own",
+            (user_id, user_id, user_id),
+        )
         row = await cur.fetchone()
-        return user_id if row is None or row["account"] is None else int(row["account"])
+        if row is not None and row["account"] is not None:
+            return int(row["account"])
+        return user_id if row is not None and row["own"] else None
 
     async def _has_accounts(self, conn: Conn) -> bool:
         if self._accounts is None:
@@ -2089,7 +2104,9 @@ class CampaignStore:
                 "SELECT to_regprocedure('dmbot_account_logins(bigint)') IS NOT NULL AS yes"
             )
             row = await cur.fetchone()
-            self._accounts = bool(row and row["yes"])
+            if not (row and row["yes"]):
+                return False  # (not remembered: the schema may be migrated a moment later)
+            self._accounts = True
         return self._accounts
 
     async def _plain_dms_for(
