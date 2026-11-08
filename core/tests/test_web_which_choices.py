@@ -55,6 +55,38 @@ class TheChoices(unittest.TestCase):
             [(c["side"], c["words"], [e["id"] for e in c["entries"]]) for c in site],
         )
 
+    def test_the_order_is_fixed_whatever_order_the_rows_come_in(self) -> None:
+        # (the database gives no order without ORDER BY: the DM's list must not reorder itself
+        # between two looks, #3776)
+        rows = [
+            entity("a" * 32, "Mira", type="faction"),  # (lowest id, but sorted after by kind)
+            entity("c" * 32, "Mira"),
+            entity("b" * 32, "Mira"),
+        ]
+        aliases = [
+            {
+                "entity_id": "a" * 32,
+                "text": text,
+                "key": key,
+                "kind": "short",
+                "secret": False,
+                "status": "confirmed",
+            }
+            for text, key in (("Mira the Bold", "mirathebold"), ("Ferry Mira", "ferrymira"))
+        ]
+        claim = info([])["claims"][0]  # type: ignore[index]
+        orders = [
+            which_choices(claim, list(r), list(a))
+            for r, a in ((rows, aliases), (rows[::-1], aliases[::-1]))
+        ]
+        self.assertEqual(orders[0], orders[1])
+        (one,) = orders[0]
+        self.assertEqual(
+            [(o.id, o.kind) for o in one.entries],
+            [("b" * 32, "character"), ("c" * 32, "character"), ("a" * 32, "faction")],
+        )
+        self.assertEqual(one.entries[2].note, "Ferry Mira, Mira the Bold")
+
     def test_a_secret_name_never_tells_two_entries_apart(self) -> None:
         facts = info(
             [entity("a" * 32, "Mira"), entity("b" * 32, "Mira")],
