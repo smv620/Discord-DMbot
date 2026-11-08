@@ -4627,8 +4627,12 @@ It comes from an index built with the site, with a hand-kept list of the words p
 browser, costs nothing and sends nothing. Line 2 shows "[... thinking ...]" while DMbot writes a short answer about DMbot or
 its website, from DMbot's public, user-facing words only (site pages, help, What's new, the user-facing parts of this plan;
 a fixed allow-list built in at deploy time, never internal files, issues or anyone's data). It never invents: what the
-words don't cover gets "I don't know" and a link. Anyone may ask; 20 questions an hour per address and a daily cap keep the
-cost bounded, answers are cached for a day, and logs hold counts only. Website-only on purpose (it searches the site).
+words don't cover gets "I don't know" and a link. Anyone may ask. **Cost limits** (owner, 2026-11-08): 100 questions an
+hour and 200 a day per visitor, and 300 an hour for the whole site. Over a limit, line 2 says "Too many requests to process,
+try again in about an hour." (after the daily limit: "Too many requests to process, try again tomorrow."); line 1 still
+works. A visitor is a keyed hash of their address, its key changed daily, kept only as counts for 24 hours and never logged.
+Answers are cached for a day (a cached answer doesn't count against the site's limit), and logs hold counts only.
+Website-only on purpose (it searches the site).
 
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
