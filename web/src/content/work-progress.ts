@@ -57,5 +57,5 @@ export function stageWords(stages: Record<string, string>, code: string | null |
 /** The words of `SavingWait` (#3347): a change DMbot has to apply, with no progress from the bot to show. */
 export const savingWait = {
   stage: "Waiting for DMbot to save it.",
-  quiet: "DMbot is slow to answer. Your change may still go through: look at the list in a minute before you try again.",
+  quiet: "DMbot is slow to answer. Your change may still go through: check the page in a minute before you try again.",
 };

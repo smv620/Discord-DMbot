@@ -689,11 +689,11 @@ function MergeMany({
         <button type="button" class="button" aria-busy={busy} disabled={busy} onClick={onYes}>
           {busy ? words.mergeManyBusy : words.mergeManyYes}
         </button>
-        <SavingWait active={busy} />
         <button type="button" class="button secondary" disabled={busy} onClick={onNo}>
           {words.mergeManyNo}
         </button>
       </div>
+      <SavingWait active={busy} />
     </div>
   );
 }

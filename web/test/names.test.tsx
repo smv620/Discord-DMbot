@@ -441,6 +441,7 @@ describe("what a DM can do", () => {
     expect(screen.queryByText(savingWait.quiet)).toBeNull();
     finish();
     await waitFor(() => expect(screen.queryByText(savingWait.stage)).toBeNull());
+    expect(screen.queryByText(/Running for/)).toBeNull();
   });
 
   it("says the wait has stalled, and what to do, after a minute with no answer", async () => {
