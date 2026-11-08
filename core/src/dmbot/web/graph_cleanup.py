@@ -16,7 +16,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory import isolated
 from dmbot.memory.models import PLAYER_CHARACTER
-from dmbot.web import all_names, relationships
+from dmbot.web import all_names, name_checks, relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -42,18 +42,41 @@ async def read_cleanup(db: Database, session: Session, ref: str) -> dict[str, An
     return shape(got)
 
 
+async def read_places(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:
+    """ "Where was it said?" for one character or group of the campaign (#3767): `places` (up to
+    three windows of lines, newest first) and `morePlaces`, made ready as the Names page's are
+    (`name_checks._with_places`: a line of someone who does not agree now is `{"removed": true}`).
+    `not_found` for anyone who is not a DM of the campaign, and for an id that is not a live
+    character or group of it. Words are read now and go to the page only; nothing is logged."""
+    guild_id, campaign_id = _parse(ref)
+    ent = name_checks._entity_id(entity_id)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_entity_places(%s, %s, %s) AS r", (guild_id, campaign_id, ent)
+        )
+        found = (await cur.fetchone() or {}).get("r")
+    if not isinstance(found, dict) or ent not in found:
+        raise RecapError("not_found")
+    one = found[ent]
+    card = name_checks._with_places({"name": str(one.get("name") or "")}, one)
+    return {"places": card.get("places", []), "morePlaces": int(card.get("morePlaces", 0))}
+
+
 def shape(got: dict[str, Any]) -> dict[str, Any]:
     """The door's answer as the page gets it (pure: the grouping is tested with no database)."""
     rows = {str(e["id"]): e for e in got.get("entries") or []}
     links = list(got.get("links") or [])
+    entries_in = [
+        isolated.Entry(
+            i, str(e["type"]), str(e["status"]), bool(e.get("unnamed")),
+            e.get("role") == PLAYER_CHARACTER, bool(e.get("party")),
+        )
+        for i, e in rows.items()
+    ]  # fmt: skip
     groups = isolated.isolated_groups(
-        (
-            isolated.Entry(
-                i, str(e["type"]), str(e["status"]), bool(e.get("unnamed")),
-                e.get("role") == PLAYER_CHARACTER, bool(e.get("party")),
-            )
-            for i, e in rows.items()
-        ),
+        entries_in,
         (
             isolated.Link(
                 str(r["id"]), str(r["a"]), str(r["b"]), str(r["predicate"]), str(r["status"])
@@ -102,4 +125,9 @@ def shape(got: dict[str, Any]) -> dict[str, Any]:
                 link.pop("revealed", None)
                 link.pop("pinned", None)
         shown.append({"entries": entries, "links": edges})
-    return {"groups": shown, "total": total, "truncated": count < total}
+    # (no kept player character: nothing can be isolated, and the page says why the list is empty,
+    # #3767 item 2; the rule's own test, so the message and the list agree)
+    no_pc = not isolated.has_player_character(entries_in)
+    return {
+        "groups": shown, "total": total, "truncated": count < total, "noPlayerCharacter": no_pc,
+    }  # fmt: skip
