@@ -3615,6 +3615,25 @@
     }
    ],
    "note": "born in the Temple of the Seldarine (the more exact place; m019 says the city)"
+  },
+  {
+   "id": "m135",
+   "a": "Syllar Sparkwalker",
+   "relation": "mentor_of",
+   "b": "Cerric Vanya'elen",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l121",
+     "line": 18
+    }
+   ],
+   "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (m011 says works_for)"
   }
  ],
  "events": [

@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 89 entries, 120 connections (80 must-find), 19 events.
+**Totals:** 89 entries, 121 connections (80 must-find), 19 events.
 
 ## Connections
 
@@ -161,6 +161,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | no | yes | 96 | vanished five days ago leading an expedition up it |
 | l119 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
 | l120 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | 18 | born in the Temple of the Seldarine (the more exact place; l019 says the city) |
+| l121 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | 18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (l011 says works_for) |
 
 ## Events
 
