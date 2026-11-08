@@ -46,6 +46,6 @@ export const cleanupWords = {
   reviewWaiting: (minutes: number, fixes: number): string =>
     `DMbot will check your ${fixes === 1 ? "fix" : "fixes"} in ${minutes} ${minutes === 1 ? "minute" : "minutes"}, once you stop making changes.`,
   reviewRunning: "DMbot is checking your fixes.",
-  reviewStopped: "DMbot couldn't finish checking your fixes. It will try again after your next fix.",
+  reviewStopped: "DMbot couldn't finish checking those fixes. Your fixes are kept; DMbot checks the ones you make next.",
   reviewDone: (missed: number): string => (missed === 0 ? "Checked: nothing was missed." : `Checked: DMbot should have connected ${missed}. It will learn from this.`),
 } as const;
