@@ -147,6 +147,10 @@ AUDIENCE: dict[str, str] = {
             "ui.deed_card.RecordButton",  # the same
             "ui.deed_card.NotButton",  # the same
             "ui.deed_card.UndoButton",  # the same
+            "ui.reveal_card.OpenButton",  # _checked: the presser is a DM of the campaign (#2996)
+            "ui.reveal_card.KeepButton",  # the same
+            "ui.reveal_card.NotButton",  # the same
+            "ui.reveal_card.UndoButton",  # the same
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
