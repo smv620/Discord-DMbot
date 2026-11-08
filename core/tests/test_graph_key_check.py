@@ -587,6 +587,39 @@ class UnnamedPeople(unittest.TestCase):
         self.assertEqual(report.unnamed_extras, 3)
         self.assertEqual(sum(report.extra_entries.values()), 0)
 
+    def raider_key(self) -> dict[str, Any]:
+        return {
+            "nodes": [{"name": "The barbarian with the maul", "kind": "person",
+                       "aliases": ["maul barbarian"], "unnamed": True, "must_find": False}],
+            "pairs": [], "must_not_names": ["maul barbarian"],
+        }  # fmt: skip
+
+    def test_an_unnamed_key_entry_is_found_by_description_never_by_a_name(self) -> None:
+        # (Supervisor's ruling on #3545: the raider is right as a person the story never names,
+        # and still a miss when his description is stored as a name)
+        named = backup([("n1", "maul barbarian", "character")], [])
+        report = gkc.check(named, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.MISSING)
+        self.assertFalse(row.must)  # (a good find, not a must)
+        self.assertEqual(report.violations, ["maul barbarian"])
+        unnamed = backup([("u1", "unnamed - maul barbarian", "character")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        report = gkc.check(unnamed, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.FOUND)
+        self.assertEqual(report.violations, [])  # (a description is no must-not name)
+        old = backup([("u2", "maul barbarian (name unknown)", "character")], [])
+        old["sections"]["memory"][0]["unnamed"] = True  # (an older backup's form)
+        report = gkc.check(old, self.raider_key())
+        self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
+
+    def test_other_must_not_names_still_count_as_descriptions(self) -> None:
+        key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
+        data = backup([("u1", "unnamed - the attackers", "character")], [])
+        data["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(data, key).violations, ["the attackers"])
+
 
 if __name__ == "__main__":
     unittest.main()
