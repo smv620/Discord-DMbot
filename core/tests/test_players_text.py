@@ -101,6 +101,53 @@ class TheLine(ConfirmedMemoryTest):
         await self.set("Greenlight from The Keep glows green")
         self.assertIn("Greenlight from The Keep glows", await self.says(PLAYERS))
 
+    # ---- the recap writer's who-and-what sheet (#2964, #3834) --------------------------------
+    # It is built from the same players' recall, so a name's players' line reaches it under the
+    # same gate, and nothing else of the DM's does.
+
+    async def sheet(self) -> str:
+        from types import SimpleNamespace
+
+        from dmbot.recaps import draft
+        from dmbot.recaps.discord import RecapFeatures
+
+        bot = SimpleNamespace(memory=self.memory, importance=None)
+        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, None, ["Greenlight"])  # type: ignore[arg-type]
+        lines = draft.sheet_lines(
+            [(m.text, m.known) for m in found], {"Greenlight", "The Keep"}, set()
+        )
+        return " | ".join(lines)
+
+    async def test_the_line_is_on_the_recap_sheet_and_the_dms_note_is_not(self) -> None:
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            from dmbot.memory._changes import ENTITIES
+
+            await w.update(ENTITIES, self.lantern, {"description": "secret: it is cursed"})
+        self.assertNotIn("cursed", await self.sheet())  # no line yet: no fallback to the note
+        await self.set(LINE)
+        sheet = await self.sheet()
+        self.assertIn(LINE, sheet)
+        self.assertNotIn("cursed", sheet)
+
+    async def test_a_line_naming_what_the_players_may_not_be_told_stays_off_the_sheet(self) -> None:
+        await self.add("Lord Veil", type="character", role="npc", hidden_from_players=True)
+        await self.set("sworn to guard the grave of Lord Veil")
+        sheet = await self.sheet()
+        self.assertNotIn("Veil", sheet)
+        self.assertNotIn("sworn", sheet)  # left out whole, not shown with a hole
+        self.assertIn("Greenlight", sheet)  # the entry itself is still on it
+
+    async def test_a_hidden_entry_and_its_line_are_not_on_the_sheet(self) -> None:
+        hidden = await self.add("Veilstone", type="item", hidden_from_players=True)
+        await self.set("it hums near the gate", hidden)
+        from types import SimpleNamespace
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        bot = SimpleNamespace(memory=self.memory, importance=None)
+        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, None, ["Veilstone"])  # type: ignore[arg-type]
+        self.assertTrue(all(not m.known or "hums" not in m.text for m in found))
+
 
 class TheBackup(ConfirmedMemoryTest):
     def test_a_backup_file_may_carry_the_line_within_its_limit(self) -> None:
