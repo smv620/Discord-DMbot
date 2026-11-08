@@ -63,7 +63,7 @@ def isolated_groups(entries: Iterable[Entry], links: Iterable[Link]) -> list[lis
     """The isolated groups, each its listed entries' ids (sorted), largest group first, then by
     the first id, so the same graph always gives the same order. Empty with no player character."""
     nodes: Mapping[str, Entry] = {e.id: e for e in entries if e.type in WALKED and e.status in LIVE}
-    pcs = [e.id for e in nodes.values() if e.player_character and e.status == "confirmed"]
+    pcs = [e.id for e in nodes.values() if _seed(e)]
     if not pcs:
         return []  # (a party left behind after its characters went is no anchor on its own)
     seeds = pcs + [e.id for e in nodes.values() if e.party]
@@ -88,6 +88,16 @@ def isolated_groups(entries: Iterable[Entry], links: Iterable[Link]) -> list[lis
             groups.append(listed)
     groups.sort(key=lambda g: (-len(g), g[0]))
     return groups
+
+
+def _seed(e: Entry) -> bool:
+    return e.player_character and e.status == "confirmed" and e.type in WALKED
+
+
+def has_player_character(entries: Iterable[Entry]) -> bool:
+    """Whether the campaign has a kept player character: without one nothing is isolated, and the
+    page says why its list is empty (#3767). The same test the rule seeds from."""
+    return any(_seed(e) for e in entries)
 
 
 def _listed(e: Entry) -> bool:

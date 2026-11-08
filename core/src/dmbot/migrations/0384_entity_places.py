@@ -1,4 +1,4 @@
-"""0385_entity_places
+"""0384_entity_places
 
 "Where was it said?" for any live character or group of a campaign, for the graph clean-up page
 (#3767).
@@ -16,9 +16,12 @@ import importlib
 # text, rebuilt from 0334 so the two cannot drift apart: the same DM-only check (NULL for anyone
 # else), up to three windows, newest first, of up to three table lines around each place, read from
 # transcript_lines now, the words and name only of a speaker with a consent row at this moment, and
-# `more` for the places not shown. An entry with a secret other name gets nothing, as in the recap
-# door. Each replacement is asserted, so a change to the original that moves a spot fails here.
-# The answer also names the entry, so the page can mark the name in each line. No row is written.
+# `more` for the places not shown. Unlike the recap door, an entry with a secret other name is
+# answered too: that door hid them so a waiting name's card never touches a secret, but this one is
+# the DM's alone, the clean-up page lists such entries, and the lines are transcript lines the
+# server may already read. Each replacement is asserted, so a change to the original that moves a
+# spot fails here. The answer also names the entry, so the page can mark the name in each line. No
+# row is written.
 _OLD = importlib.import_module("dmbot.migrations.0334_name_places_newest")
 _FROM = "CREATE OR REPLACE FUNCTION dmbot_recap_name_places(g BIGINT, c TEXT, at_ BIGINT)"
 _TO = "CREATE FUNCTION dmbot_web_entity_places(g BIGINT, c TEXT, eid TEXT)"
@@ -35,6 +38,10 @@ _ONE_ENTITY = """            SELECT e.id, e.name
               AND e.merged_into IS NULL AND e.status IN ('proposed', 'confirmed')
               AND e.type IN ('character', 'faction')
 """
+_SECRET = """              AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                              WHERE s.guild_id = g AND s.campaign_id = c
+                                AND s.entity_id = e.id AND s.secret)
+"""
 _RESULT = "jsonb_build_object(\n                'windows', wins,"
 _NAMED_RESULT = "jsonb_build_object(\n                'name', ent.name, 'windows', wins,"
 _ALTER = "dmbot_recap_name_places(BIGINT, TEXT, BIGINT)"
@@ -42,11 +49,12 @@ _NEW_ALTER = "dmbot_web_entity_places(BIGINT, TEXT, TEXT)"
 
 _SRC = _OLD.SQL[_OLD.SQL.index("CREATE OR REPLACE FUNCTION dmbot_recap_name_places") :]
 assert _SRC.count(_FROM) == 1 and _SRC.count(_PICK_ENTITY) == 1
-assert _SRC.count(_RESULT) == 1 and _SRC.count(_ALTER) == 2
+assert _SRC.count(_SECRET) == 1 and _SRC.count(_RESULT) == 1 and _SRC.count(_ALTER) == 2
 
 ENTITY_PLACES = (
     _SRC.replace(_FROM, _TO)
     .replace(_PICK_ENTITY, _ONE_ENTITY)
+    .replace(_SECRET, "")
     .replace(_RESULT, _NAMED_RESULT)
     .replace(_ALTER, _NEW_ALTER)
 )

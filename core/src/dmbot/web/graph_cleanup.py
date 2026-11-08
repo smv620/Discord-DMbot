@@ -68,14 +68,15 @@ def shape(got: dict[str, Any]) -> dict[str, Any]:
     """The door's answer as the page gets it (pure: the grouping is tested with no database)."""
     rows = {str(e["id"]): e for e in got.get("entries") or []}
     links = list(got.get("links") or [])
+    entries_in = [
+        isolated.Entry(
+            i, str(e["type"]), str(e["status"]), bool(e.get("unnamed")),
+            e.get("role") == PLAYER_CHARACTER, bool(e.get("party")),
+        )
+        for i, e in rows.items()
+    ]  # fmt: skip
     groups = isolated.isolated_groups(
-        (
-            isolated.Entry(
-                i, str(e["type"]), str(e["status"]), bool(e.get("unnamed")),
-                e.get("role") == PLAYER_CHARACTER, bool(e.get("party")),
-            )
-            for i, e in rows.items()
-        ),
+        entries_in,
         (
             isolated.Link(
                 str(r["id"]), str(r["a"]), str(r["b"]), str(r["predicate"]), str(r["status"])
@@ -125,10 +126,8 @@ def shape(got: dict[str, Any]) -> dict[str, Any]:
                 link.pop("pinned", None)
         shown.append({"entries": entries, "links": edges})
     # (no kept player character: nothing can be isolated, and the page says why the list is empty,
-    # #3767 item 2)
-    no_pc = not any(
-        e.get("role") == PLAYER_CHARACTER and e.get("status") == "confirmed" for e in rows.values()
-    )
+    # #3767 item 2; the rule's own test, so the message and the list agree)
+    no_pc = not isolated.has_player_character(entries_in)
     return {
         "groups": shown, "total": total, "truncated": count < total, "noPlayerCharacter": no_pc,
     }  # fmt: skip
