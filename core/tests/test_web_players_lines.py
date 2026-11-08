@@ -69,10 +69,10 @@ class OnTheCards(Base):
     async def test_a_rejected_or_merged_name_is_not_read(self) -> None:
         await self.line(self.someone, LINE, status="rejected")
         self.assertEqual(await self.read(self.session, [self.someone]), {})
-        await self.line(self.someone, LINE, status="merged")
+        # (a merged entry must name what it was merged into, or the table's own check refuses the row)
         async with self.db.guild(self.g) as conn:
             await conn.execute(
-                "UPDATE memory_entities SET merged_into = %s WHERE id = %s",
+                "UPDATE memory_entities SET status = 'merged', merged_into = %s WHERE id = %s",
                 (self.mira, self.someone),
             )
         self.assertEqual(await self.read(self.session, [self.someone]), {})
