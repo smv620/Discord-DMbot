@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.entitlements import RECAP_AUDIO_PLANS, plan_grant_access
+from dmbot.entitlements import RECAP_AUDIO_PLANS, Access, plan_grant_access
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.notify import parse_ref
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -36,6 +36,29 @@ def _parse(ref: str) -> tuple[int, str]:
     if parsed is None:
         raise RecapError("not_found")
     return parsed[0], parsed[1]
+
+
+async def owner_access(
+    db: Database, session: Session, guild_id: int, campaign_id: str, now: int
+) -> Access | None:
+    """The campaign owner's plan access, for a paid call a DM of the campaign presses on the
+    website (the Names page's Suggest and Hear, #3806, #3807). The owner comes from
+    `dmbot_web_recap_choices`, which answers a DM and nobody else, so a non-DM is "not found". None
+    when the campaign has no owner: nobody's plan can be charged."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_recap_choices(%s, %s) AS found", (guild_id, campaign_id)
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    if found is None:
+        raise RecapError("not_found")
+    owner = found.get("owner")
+    if not isinstance(owner, str) or not owner.isascii() or not owner.isdecimal():
+        return None
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    return access
 
 
 async def _audio_facts(

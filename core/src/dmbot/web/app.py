@@ -31,6 +31,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
+from dmbot.ai import TierClient
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
@@ -112,7 +113,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_answer as read_name_answer
 from dmbot.web.name_checks import read_campaign_checks, read_checks
-from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names import list_names, set_said_as, suggest_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
 from dmbot.web.node_summary_route import read_node_summary
@@ -214,6 +215,7 @@ def create_app(
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
     smart_names: names_smart.SmartNames | None = None,
+    said_as_ai: TierClient | None = None,
     smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
@@ -237,6 +239,7 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    said_as_limit = RateLimit(60, count=20)
     if smart_limit is None:
         # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
         # so one person gets 20 a minute, counted by account.
@@ -868,6 +871,11 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "server": (503, "server"),  # the AI did not answer (a suggestion, #3806)
+        "voice_off": (
+            409,
+            "voice_off",
+        ),  # spelling a spoken name is off (#3806)
         "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
@@ -2780,6 +2788,51 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
         return {"ok": True}
+
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/suggest")
+    async def me_campaign_name_said_as_suggest(
+        ref: str, alias_id: str, signed: Signed
+    ) -> dict[str, str]:
+        """DMbot's suggestion for how to say one name (#3806): `{"suggestion": "Kah-zeth"}`, or an
+        empty one when it has none. Not saved: the DM presses Save. DM only."""
+        session, _token = signed
+        # A press is a paid AI call: the same per-person limit as the meaning search.
+        taken = said_as_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            said = await suggest_said_as(
+                db,
+                session,
+                ref,
+                alias_id,
+                said_as_ai,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            said_as_limit.give_back(f"user-{session.user_id}")  # a refused press costs no turn
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"suggestion": said}
+
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/from-voice")
+    async def me_campaign_name_said_as_from_voice(
+        ref: str, alias_id: str, signed: Signed
+    ) -> dict[str, str]:
+        """Hearing the DM say a name and spelling it (#2316) is not built yet, so this answers
+        "voice_off", which the page words as "Saying it isn't available right now". The same checks
+        as the save come first, so a stranger learns nothing from it."""
+        session, _token = signed
+        try:
+            names = await list_names(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        if not any(n.get("id") == alias_id for n in names):
+            raise HTTPException(status_code=404, detail="not_found")
+        status, detail = recap_refusals["voice_off"]
+        raise HTTPException(status_code=status, detail=detail)
 
     @app.get("/me/campaigns/{ref}/recap-choices")
     async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:
