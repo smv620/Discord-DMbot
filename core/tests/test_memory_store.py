@@ -261,6 +261,16 @@ class Isolation(MemoryTest):
             "voyage-3.5",
             [vectors.Item(vectors.ASSERTION, "x", vectors.text_hash("x"), [1.0, 0.0])],
         )
+        # and a "who learned what" the session reader proposed (#2996): ids only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id, character_id,"
+                " statement_kind, statement_id, how, check_name, lines, speaker_ids,"
+                " prompt_version, model, status, created_at) VALUES (%s, %s, %s, %s, 'entry', %s,"
+                " 'check', 'Insight', ARRAY['1'], ARRAY[%s::bigint], 'reveals-1', 'm',"
+                " 'proposed', 5)",
+                (GUILD_A, self.c, "e" * 32, a, b, DM),
+            )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:

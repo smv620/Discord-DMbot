@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import logging
 import unittest
+from typing import Any
+from unittest.mock import patch
 
 from dmbot import entitlements, usage
 from dmbot.campaigns import CampaignStore
@@ -107,6 +109,111 @@ class TheGates(DatabaseTest):
         self.assertEqual(access.kind, "free")
         _plan, plain = await entitlements.plan_and_access(self.db, FRIEND, NOW)
         self.assertEqual(plain.kind, "none")
+
+    async def test_a_listed_server_tick_leaves_the_owners_plan_hours_alone(self) -> None:
+        campaign = await self.campaigns.create(LISTED, "Test table", DM)
+        other = await self.campaigns.create(OTHER, "Real table", DM)
+
+        async def hours_of() -> int:
+            async with self.db.meter(OTHER, DM) as conn:
+                return (await usage.standing_of(conn, DM, NOW)).used_before
+
+        before = await hours_of()
+        got = await usage.add_minutes(
+            self.db, guild_id=LISTED, campaign_id=campaign.id, owner_user_id=DM,
+            session_started_at=NOW - 600, minutes=7, now=NOW,
+        )  # fmt: skip
+        self.assertEqual((got.access.kind, got.used_after, got.grace_session), ("free", 0, None))
+        self.assertEqual(await hours_of(), before)  # the owner's hours did not move...
+        self.assertEqual(await usage.session_minutes(self.db, LISTED, campaign.id, NOW - 600), 7)
+        await usage.add_minutes(  # ...but a tick in an unlisted server still counts
+            self.db, guild_id=OTHER, campaign_id=other.id, owner_user_id=DM,
+            session_started_at=NOW - 600, minutes=5, now=NOW,
+        )  # fmt: skip
+        self.assertEqual(await hours_of(), before + 5)
+
+    async def test_a_person_on_the_free_list_still_ticks_in_a_listed_server(self) -> None:
+        self.addCleanup(entitlements.configure_free_users, ())
+        entitlements.configure_free_users({DM})  # free as a person: recorded, as before
+        campaign = await self.campaigns.create(LISTED, "Test table", DM)
+        got = await usage.add_minutes(
+            self.db, guild_id=LISTED, campaign_id=campaign.id, owner_user_id=DM,
+            session_started_at=NOW - 600, minutes=4, now=NOW,
+        )  # fmt: skip
+        self.assertEqual(got.used_after, 4)
+
+    async def test_with_no_listed_server_a_tick_is_recorded_as_before(self) -> None:
+        entitlements.configure_free_guilds(())
+        campaign = await self.campaigns.create(LISTED, "Test table", DM)
+        got = await usage.add_minutes(
+            self.db, guild_id=LISTED, campaign_id=campaign.id, owner_user_id=DM,
+            session_started_at=NOW - 600, minutes=3, now=NOW,
+        )  # fmt: skip
+        self.assertEqual(got.used_after, 3)
+
+    async def test_the_transcript_list_decides_per_server_for_one_owner(self) -> None:
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        from dmbot.web import transcripts
+
+        # Two servers, one owner with no plan: only the listed server's campaign is shown.
+        rows = {
+            LISTED: [{"id": "a", "name": "A", "sessions": 1, "owner": str(DM)}],
+            OTHER: [{"id": "b", "name": "B", "sessions": 1, "owner": str(DM)}],
+        }
+        guilds = [SimpleNamespace(id=g, name=str(g)) for g in (LISTED, OTHER)]
+        scoped: list[int] = []
+
+        async def scope(_conn: Any, guild: int) -> None:
+            scoped.append(guild)
+
+        class Conn:
+            async def execute(self, _sql: str, _params: Any = ()) -> Any:
+                async def fetch() -> Any:
+                    return {"found": rows[scoped[-1]]}
+
+                return SimpleNamespace(fetchone=fetch)
+
+        class Db:
+            @asynccontextmanager
+            async def user(self, *_a: Any, **_k: Any) -> Any:
+                yield Conn()
+
+        session = SimpleNamespace(user_id=DM, id_hash=b"x", guilds=guilds)
+        real = transcripts._plan_allows
+
+        async def gate(_db: Any, *args: Any, **kwargs: Any) -> None:
+            await real(self.db, *args, **kwargs)
+
+        with (
+            patch.object(transcripts, "_scoped", scope),
+            patch.object(transcripts, "_plan_allows", gate),
+        ):
+            shown = await transcripts.list_campaigns(
+                Db(),  # type: ignore[arg-type]
+                session,  # type: ignore[arg-type]
+                now=NOW,
+                enforce_plans=True,
+            )
+        self.assertEqual([c["ref"] for c in shown], [f"{LISTED}.a"])
+
+    async def test_the_websites_gates_follow_the_campaigns_server(self) -> None:
+        from dmbot.web import rule_sharing, transcripts
+        from dmbot.web.recaps import RecapError
+
+        owner = str(DM)  # an owner with no plan at all
+        await transcripts._plan_allows(self.db, owner, NOW, enforce_plans=True, guild_id=LISTED)
+        with self.assertRaises(RecapError):
+            await transcripts._plan_allows(self.db, owner, NOW, enforce_plans=True, guild_id=OTHER)
+        with self.assertRaises(RecapError):
+            await transcripts._plan_allows(self.db, owner, NOW, enforce_plans=True)
+        self.assertTrue(
+            await rule_sharing._can_share(self.db, owner, NOW, enforce_plans=True, guild_id=LISTED)
+        )
+        self.assertFalse(
+            await rule_sharing._can_share(self.db, owner, NOW, enforce_plans=True, guild_id=OTHER)
+        )
 
     async def test_the_sample_runs_paid_check_accepts_a_listed_server(self) -> None:
         from dmbot.devtools.sample_run import steps

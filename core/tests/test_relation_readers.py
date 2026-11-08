@@ -26,6 +26,8 @@ READERS = {
     + ": counts current, confirmed connections for a rank floor; never shown to a player",
     "memory/importance_step.py": CONFIRMED_ONLY
     + ": the connections the importance reading is shown, DM-only; never for a player",
+    "memory/reveal_proposals.py": CONFIRMED_ONLY
+    + ": who learned what is placed only on a confirmed connection, for the DM (#2996)",
     "memory/role_store.py": CONFIRMED_ONLY
     + ": the roles current, confirmed connections show, for the DM's why; never for a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",

@@ -7,6 +7,7 @@
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
 import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
+import PlayersKnow from "./PlayersKnow";
 import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -360,6 +361,7 @@ function NameRow({
           </p>
         )}
         <SceneLine scene={name.scene} />
+        <PlayersKnow line={name.playersText} campaignRef={campaignRef} name={name.name} />
         {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>

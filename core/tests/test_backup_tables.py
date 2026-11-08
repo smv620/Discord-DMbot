@@ -222,6 +222,14 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 'Helped them', ARRAY['1'], ARRAY[%s::bigint], 100, 'deeds-1', 'm', 'proposed', 5)",
                 (g, c, "d" * 32, SPEAKER),
             ),
+            "memory_reveal_proposals": (
+                "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id, character_id,"
+                " statement_kind, statement_id, how, check_name, lines, speaker_ids,"
+                " session_started_at, prompt_version, model, status, created_at) VALUES (%s, %s,"
+                " %s, %s, 'entry', %s, 'check', 'Insight', ARRAY['1'], ARRAY[%s::bigint], 100,"
+                " 'reveals-1', 'm', 'proposed', 5)",
+                (g, c, "e" * 32, A, A, SPEAKER),
+            ),
             "memory_scenes": (
                 "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
                 " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"
