@@ -17,6 +17,7 @@ import {
   type PictureUsage,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import WorkProgress from "./WorkProgress";
 
 /** The campaign in the address: `/account/pictures/<server>.<campaign>` (the page's own link, as Timeline does). */
 export function refFromPath(path: string): string | null {
@@ -31,9 +32,12 @@ export function refFromPath(path: string): string | null {
 
 type Load = "loading" | "ok" | "failed";
 
-/** After a "waiting" answer the list is read once more after this long: the bot usually answers within a minute, and
+/** While a picture action waits, the list is read again every this long, for as long as a tile waits: the bot usually answers within a minute, and
  * the page should notice by itself rather than wait for a reload (#3322). */
 export const WAITING_RECHECK_MS = 10_000;
+
+/** A picture action still waiting after this long is said to be stuck, and what to do is said with it (#3347). */
+const STUCK_SECONDS = 120;
 
 /** Has the list now shown what an action asked for? (A deleted tile is gone; the others carry the new flag.) */
 function shows(tiles: PictureItem[], code: string, action: PictureAction): boolean {
@@ -64,15 +68,43 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   const appliedRef = useRef<PictureFilter>({});
   // An action waiting for the bot: its picture's code and the action, until the list shows it.
   const [waiting, setWaiting] = useState<Record<string, PictureAction>>({});
-  // The same waiting actions, readable from a timer; and one recheck timer per waiting tile (#3322).
+  // The same waiting actions, readable from a timer (#3322).
   const waitingNow = useRef<Record<string, PictureAction>>({});
-  const rechecks = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // When each waiting tile began to wait (page clock, seconds): kept with the waiting state, so the wait can say how long (#3347).
+  const waitingSince = useRef<Record<string, number>>({});
+  const [since, setSince] = useState<Record<string, number>>({});
+  // One rhythm for every waiting tile: the list is read again every WAITING_RECHECK_MS while any tile waits (#3322).
+  const rhythm = useRef<ReturnType<typeof setInterval> | null>(null);
   // False once the page is left: an action still in flight then must not schedule anything (#3322).
   const mounted = useRef(true);
   function setWaitingState(next: Record<string, PictureAction>): void {
     waitingNow.current = next;
+    // A tile that was already waiting keeps its start time; a new one starts now.
+    const kept: Record<string, number> = {};
+    for (const code of Object.keys(next)) kept[code] = waitingSince.current[code] ?? Math.floor(Date.now() / 1000);
+    waitingSince.current = kept;
+    setSince(kept);
     setWaiting(next);
+    if (Object.keys(next).length === 0) stopRhythm();
+    else startRhythm();
   }
+  function stopRhythm(): void {
+    if (rhythm.current !== null) clearInterval(rhythm.current);
+    rhythm.current = null;
+  }
+  function startRhythm(): void {
+    if (!mounted.current || rhythm.current !== null) return; // a read that was in flight at leaving starts nothing
+    rhythm.current = setInterval(() => {
+      if (!mounted.current || Object.keys(waitingNow.current).length === 0) return stopRhythm();
+      if (typeof document !== "undefined" && document.hidden) return; // a hidden tab does not read
+      void readFirst(appliedRef.current, true);
+    }, WAITING_RECHECK_MS);
+  }
+  /** Has this tile been waiting for STUCK_SECONDS or more, by the page's clock? */
+  const stalledNow = (code: string): boolean => {
+    const began = since[code];
+    return began !== undefined && Math.floor(Date.now() / 1000) - began >= STUCK_SECONDS;
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const busyRef = useRef(false);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -89,12 +121,15 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     return f;
   }
 
-  async function readFirst(f: PictureFilter): Promise<void> {
+  // A read the rhythm makes (`keep`) leaves the messages on the page alone: another tile's failure must stay readable.
+  async function readFirst(f: PictureFilter, keep = false): Promise<void> {
     if (!ref || !api.pictures) return setLoad("failed");
     const mine = ++reads.current;
     setLoad("loading");
-    setListProblem(false);
-    setProblems({});
+    if (!keep) {
+      setListProblem(false);
+      setProblems({});
+    }
     try {
       const got: PictureList = await api.pictures(ref, f);
       if (mine !== reads.current) return;
@@ -132,20 +167,16 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     void readFirst({});
   }, [api, ref]);
 
-  // Leaving the page drops any pending recheck, so nothing reads after the page is gone.
-  const clearRechecks = (): void => {
-    for (const timer of Object.values(rechecks.current)) clearTimeout(timer);
-    rechecks.current = {};
-  };
+  // Leaving the page drops the rhythm, so nothing reads after the page is gone.
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      clearRechecks();
+      stopRhythm();
     };
   }, []);
-  // A different campaign's list must not be read by a timer started for this one.
-  useEffect(() => clearRechecks, [api, ref]);
+  // A different campaign's list must not be read by a rhythm started for this one.
+  useEffect(() => stopRhythm, [api, ref]);
 
   if (!PICTURES_LIVE || !api.pictures) return <p class="muted">{words.notOpen}</p>;
 
@@ -196,16 +227,6 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       if (result.state === "waiting") {
         setWaitingState({ ...waitingNow.current, [tile.code]: action });
         void readFirst(appliedRef.current);
-        // One more read after a while, for this tile only; a hidden tab does not read, and a tile that has
-        // changed in the meantime is not waiting any more, so nothing is read for it.
-        const code = tile.code;
-        clearTimeout(rechecks.current[code]);
-        rechecks.current[code] = setTimeout(() => {
-          delete rechecks.current[code];
-          if (typeof document !== "undefined" && document.hidden) return;
-          if (!waitingNow.current[code]) return;
-          void readFirst(appliedRef.current);
-        }, WAITING_RECHECK_MS);
       } else if (action === "delete") {
         setTiles((old) => old.filter((t) => t.code !== tile.code));
         void refreshUsage();
@@ -332,9 +353,13 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                   {!tile.isPublic && <div class="tag">{words.privateTag}</div>}
                   {tile.permanent && <div class="tag">{words.permanentTag}</div>}
                   {waiting[tile.code] && (
-                    <p class="small muted" role="status">
-                      {words.working}
-                    </p>
+                    <WorkProgress
+                      stage={words.waitingStage}
+                      startedAt={since[tile.code] ?? Math.floor(Date.now() / 1000)}
+                      state={stalledNow(tile.code) ? "stalled" : "running"}
+                      whatToDo={stalledNow(tile.code) ? words.stuck : undefined}
+                      progressUnknown
+                    />
                   )}
                   {problems[tile.code] && (
                     <p class="note bad" role="alert">

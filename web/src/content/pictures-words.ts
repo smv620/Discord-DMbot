@@ -40,5 +40,8 @@ export const picturesPage = {
       : `Permanent pictures are full (${limit} MB). Unmark one to make room.`,
   actionFailed: "Couldn't do that. Try again.",
   working: "Working on it. This can take a minute.",
+  // The wait for the bot (#3347): the stage, and what to do once it looks stuck.
+  waitingStage: "Waiting for DMbot to pick it up.",
+  stuck: "DMbot hasn't finished this one. It may still go through. Reload the page in a few minutes to see where it stands before you try again.",
   notAllowed: "Only the DM can do that.",
 } as const;
