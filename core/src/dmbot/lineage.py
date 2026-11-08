@@ -189,9 +189,13 @@ NOT_STAMPED: dict[str, str] = {
             "rule_set_suggestions_sent",
             "transcript_respells",  # positions kept so one Undo can put a spelling fix back
             "session_usage",
+            "graph_review_pending",
         ),
         _PLUMBING,
     ),
+    # (a report of DMbot's careful check names the build that ran it in its own `review_commit`,
+    # and the commit that made each entry it checked, #3741)
+    "graph_reviews": "names the build that wrote it in its own review_commit column (#3741)",
 }
 
 

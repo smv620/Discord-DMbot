@@ -11,10 +11,12 @@ linked to the party. Ids, names and scenes go to the page and no further; nothin
 
 from __future__ import annotations
 
+import math
+import time
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import isolated
+from dmbot.memory import graph_review, isolated
 from dmbot.memory.models import PLAYER_CHARACTER
 from dmbot.web import all_names, name_checks, relationships
 from dmbot.web.names import _parse
@@ -24,10 +26,14 @@ from dmbot.web.sessions import Session
 MAX_ENTRIES = 300  # the page shows the largest groups first; past this many entries, a count
 
 
-async def read_cleanup(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_cleanup(
+    db: Database, session: Session, ref: str, *, now: float | None = None
+) -> dict[str, Any]:
     """The isolated groups of the campaign `ref`, largest first: `groups` (each `entries` and
-    `links`), `total` (every isolated entry) and `truncated`. `not_found` for anyone who is not a
-    DM of the campaign (the door answers nothing), the same word as a campaign that is not there."""
+    `links`), `total` (every isolated entry) and `truncated`, with `review`, the careful check's
+    status line (#3741). `not_found` for anyone who is not a DM of the campaign (the door answers
+    nothing), the same word as a campaign that is not there. `now` is the server's clock, so the
+    page never works out a time itself."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -36,10 +42,41 @@ async def read_cleanup(db: Database, session: Session, ref: str) -> dict[str, An
             "SELECT dmbot_web_graph_cleanup(%s, %s) AS r", (guild_id, campaign_id)
         )
         found = await cur.fetchone()
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_review_status(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        status = (await cur.fetchone() or {}).get("r")
     got = found["r"] if found is not None else None
     if not isinstance(got, dict):
         raise RecapError("not_found")
-    return shape(got)
+    return {
+        **shape(got),
+        "review": review_line(status, time.time() if now is None else now),
+    }
+
+
+def review_line(status: object, now: float) -> dict[str, Any]:
+    """The careful check's status for the clean-up page (#3741; Supervisor's ruling 2), counts and
+    times only: `off` (the campaign does not share its story), `idle` (nothing fixed yet),
+    `waiting` with `minutesLeft` until the check and `fixes`, `running` (the bot is checking now,
+    with `fixes`), `done` with `missed`, or `stopped` when the last check gave up after its tries
+    (CLAUDE.md: a wait that fails says so). Pure."""
+    if not isinstance(status, dict) or not status.get("on"):
+        return {"state": "off"}
+    waiting = status.get("waiting")
+    if isinstance(waiting, dict):
+        fixes = int(waiting.get("fixes") or 0)
+        if waiting.get("checkingSince"):
+            return {"state": "running", "fixes": fixes}
+        due = int(waiting.get("lastFixAt") or 0) + graph_review.WAIT_S
+        return {"state": "waiting", "minutesLeft": max(0, math.ceil((due - now) / 60)),
+                "fixes": fixes}  # fmt: skip
+    last = status.get("last")
+    if isinstance(last, dict):
+        if last.get("stopped"):
+            return {"state": "stopped"}
+        return {"state": "done", "missed": int(last.get("missed") or 0)}
+    return {"state": "idle"}
 
 
 async def read_places(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:

@@ -119,6 +119,11 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",
+    "graph_review_pending": "the DM's graph clean-up fixes waiting 15 minutes for DMbot's "
+    "careful check (DM-only, ids only): bookkeeping that is gone within the hour (#3741)",
+    "graph_reviews": "DMbot's reports of what it missed, behind the campaign's \"share to improve "
+    "DMbot\" switch (DM-only): about DMbot, not the campaign's story, deleted by Stop recording me "
+    "and when the switch goes off (#3741)",
     "ai_feed": "the first 500 characters of each AI prompt and reply of a lore read or an import, "
     "for the DM's live windows (DM-only): kept 24 hours at most, deleted by Stop recording me, "
     "and a short-lived view of a job that is gone when a backup is restored (#3710)",

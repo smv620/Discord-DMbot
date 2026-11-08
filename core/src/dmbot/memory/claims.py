@@ -25,6 +25,7 @@ from dmbot.memory import (
     descriptions,
     evidence,
     forget_readings,
+    graph_review,
     kin,
     link,
     one_off,
@@ -1897,6 +1898,8 @@ class ClaimStore:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
+            # (DMbot's graph check reports that quote them, #3741)
+            readings += await graph_review.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"

@@ -48,7 +48,7 @@ async def read_campaign(
         cur = await conn.execute(
             "SELECT c.name, c.owner_user_id, c.dm_screen_visibility, c.dm_screen_level,"
             " c.transcript_keep_days, c.paused, c.story_mode, c.dndbeyond_invite,"
-            " c.target_ruleset, c.fallback_ruleset,"
+            " c.target_ruleset, c.fallback_ruleset, c.share_improve,"
             " (SELECT count(*) FROM campaign_dms m WHERE m.guild_id = c.guild_id"
             "    AND m.campaign_id = c.id) AS dm_count"
             " FROM campaigns c"
@@ -74,6 +74,8 @@ async def read_campaign(
                 "mainRules": str(mine["target_ruleset"]),
                 "fallbackRules": str(mine["fallback_ruleset"]),
                 "gameMasters": int(mine["dm_count"]),
+                # "Share this campaign's story to improve DMbot" (#3741), off by default.
+                "shareImprove": bool(mine["share_improve"]),
             }
         else:
             settings = None

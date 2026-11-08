@@ -59,6 +59,9 @@ READERS = {
     + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
     " confirmed, because the DM chooses what to change",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
+    "memory/graph_review_run.py": DM_ONLY
+    + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
+    "the report is DM-only and never shown to players",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
     "memory/set_definitions.py": "is a relationship word in use: any status, on purpose",
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
