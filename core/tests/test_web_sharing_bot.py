@@ -18,6 +18,7 @@ from dmbot.rules import rule_sets
 from dmbot.rules import web_sharing as ws
 from dmbot.rules.house import HouseRule, HouseRuleStore
 from dmbot.rules.rule_sets import RuleSetStore
+from dmbot.rules.wins import RuleRef, WinsStore
 from tests.pg import DatabaseTest
 
 GUILD_A, GUILD_B = 1001, 2002
@@ -35,6 +36,7 @@ class FakeHost:
         self.campaigns = campaigns
         self.rule_sets = sets
         self.houses = houses
+        self.house_wins = WinsStore(sets._db)
         self.refusal: str | None = None
         self.settled: list[bool] = []
 
@@ -364,6 +366,54 @@ class Following(Base):
         for row in await self.take_and_run(GUILD_B) + await self.rows(GUILD_A):
             self.assertNotIn(WORDS, row["note"])
             self.assertNotIn(code, row["note"])
+
+
+class Clashes(Base):
+    """Which of two disagreeing own rules wins, decided on the website (#3697)."""
+
+    async def winner(self, first: int, second: int) -> RuleRef | None:
+        return await self.host.house_wins.winner_of(
+            GUILD_A, self.pub, RuleRef("", first), RuleRef("", second)
+        )
+
+    async def test_a_decision_is_recorded_and_a_second_one_replaces_it(self) -> None:
+        one = await self.put(ws.DECIDE_CLASH, arg="2:1")
+        await self.take_and_run()
+        self.assertEqual(await self.result(one), ("done", ""))
+        self.assertEqual(await self.note(one), "✅ Rule 2 wins over rule 1.")
+        self.assertEqual(await self.winner(1, 2), RuleRef("", 2))
+        await self.put(ws.DECIDE_CLASH, arg="1:2")
+        await self.take_and_run()
+        self.assertEqual(await self.winner(2, 1), RuleRef("", 1))
+
+    async def test_clearing_forgets_the_pair_and_clearing_nothing_is_done(self) -> None:
+        await self.put(ws.DECIDE_CLASH, arg="2:1")
+        clear = await self.put(ws.CLEAR_CLASH, arg="1:2")  # either order names the pair
+        await self.take_and_run()
+        self.assertEqual(await self.result(clear), ("done", ""))
+        self.assertIsNone(await self.winner(1, 2))
+        again = await self.put(ws.CLEAR_CLASH, arg="1:2")
+        await self.take_and_run()
+        self.assertEqual(await self.result(again), ("done", ""))
+
+    async def test_a_rule_that_is_not_there_any_more_is_refused(self) -> None:
+        rid = await self.put(ws.DECIDE_CLASH, arg="2:9")
+        await self.take_and_run()
+        self.assertEqual(await self.result(rid), ("failed", ws.BAD_CHOICE))
+        self.assertIn("isn't here any more", await self.note(rid))
+        self.assertIsNone(await self.winner(2, 9))
+
+    async def test_someone_who_is_not_a_dm_any_more_changes_nothing(self) -> None:
+        rid = await self.put(ws.DECIDE_CLASH, arg="2:1", user=DM_B)
+        await self.take_and_run()
+        self.assertEqual(await self.result(rid), ("failed", ws.NOT_ALLOWED))
+        self.assertIsNone(await self.winner(1, 2))
+
+    async def test_a_rule_of_another_campaign_is_not_this_ones(self) -> None:
+        await self.houses.add(GUILD_A, self.same, DM_A, "Only here")
+        rid = await self.put(ws.DECIDE_CLASH, arg="2:3")  # rule 3 is the other campaign's
+        await self.take_and_run()
+        self.assertEqual(await self.result(rid), ("failed", ws.BAD_CHOICE))
 
 
 class TheQueue(Base):

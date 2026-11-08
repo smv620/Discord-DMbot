@@ -35,6 +35,7 @@ from dmbot.db import Database
 from dmbot.rules import house, rule_sets
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.rule_sets import RuleSetError
+from dmbot.rules.wins import RuleRef
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ KEEP_FOR_S = 86400  # as long as the website reads an answer back
 
 PUBLISH, STOP_SHARING, LOOK_CODE = "publish", "stop_sharing", "look_code"
 FOLLOW_HERE, FOLLOW_CODE, UNFOLLOW = "follow_here", "follow_code", "unfollow"
+# Which of two disagreeing own rules wins (#3697): arg `W:L` (W wins), `A:B` to forget the answer.
+DECIDE_CLASH, CLEAR_CLASH = "decide_clash", "clear_clash"
 
 # What a failed choice says, in the hyphenated words the page keys its plain ones by (the door
 # passes `error` on as it is). The Discord sentence behind it is in `note`.
@@ -90,6 +93,7 @@ class Host(Protocol):
     """What applying a choice needs from the running bot, so tests can stand in for it."""
 
     rule_sets: Any  # the RuleSetStore
+    house_wins: Any  # the WinsStore (None when the bot has none)
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
 
@@ -244,12 +248,40 @@ async def apply(
             return await _follow(host, sets, guild_id, campaign, item)
         if item.action == UNFOLLOW:
             return await _unfollow(host, sets, guild_id, campaign, item)
+        if item.action in (DECIDE_CLASH, CLEAR_CLASH):
+            return await _clash(host, guild_id, campaign, item)
     except RuleSetError as exc:
         return _refused(exc)
     except HouseRuleError as exc:  # the DM was removed, or the campaign deleted, since the check
         gone = str(exc) == house.NO_CAMPAIGN
         return Outcome(NOT_FOUND if gone else NOT_ALLOWED, str(exc))
     return Outcome(SERVER, COULDNT)
+
+
+NO_SUCH_RULE = "One of those rules isn't here any more. Open House rules again."
+
+
+async def _clash(host: Host, guild_id: int, campaign: Campaign, item: Action) -> Outcome:
+    """The DM's answer on which of two disagreeing rules wins (#3697), or forgetting it: the
+    same `WinsStore` calls as Discord's card. Own rules only: the arg cannot name a set. Both rules
+    must still exist now. Idempotent, so a retaken choice that finds its work done ends `done`."""
+    wins = host.house_wins
+    if wins is None:
+        return Outcome(SERVER, COULDNT)
+    try:
+        first, second = (int(part) for part in item.arg.split(":"))
+    except ValueError:
+        return Outcome(BAD_CHOICE, NO_SUCH_RULE)  # (the door checked the shape; a stale row)
+    rules, _link = await host.own_rules(campaign)
+    have = {rule.number for rule in rules}
+    if first == second or not {first, second} <= have:
+        return Outcome(BAD_CHOICE, NO_SUCH_RULE)
+    one, other = RuleRef("", first), RuleRef("", second)
+    if item.action == DECIDE_CLASH:
+        await wins.record(guild_id, campaign.id, one, other, item.user_id)
+        return Outcome(note=f"✅ Rule {first} wins over rule {second}.")
+    await wins.forget_pair(guild_id, campaign.id, one, other)
+    return Outcome(note="Done. If those two rules clash again, DMbot will ask which one wins.")
 
 
 async def _publish(

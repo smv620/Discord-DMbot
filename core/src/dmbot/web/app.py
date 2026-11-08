@@ -3263,6 +3263,21 @@ def create_app(
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/rule-decisions")
+    async def me_campaign_rule_decisions(ref: str, signed: Signed) -> dict[str, Any]:
+        """Which of two disagreeing house rules wins, as the DM decided (#3697): the pairs, for
+        the campaign's DMs only (a player gets 403 `not_allowed`). Changing one is a choice on
+        `.../rule-sharing` (`decide_clash`, `clear_clash`). 404 while DMBOT_WEB_RULE_SHARING is
+        off."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"decisions": await rule_sharing.read_decisions(db, session, ref)}
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     sharing_refusals = {
         **setting_refusals,
         "bad_action": (400, "bad_action"),
