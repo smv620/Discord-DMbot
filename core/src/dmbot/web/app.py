@@ -442,6 +442,12 @@ def create_app(
             moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
             moved.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
             return moved
+        except sessions.AccountRemoved:
+            # Taken off a DMbot account, or added to one (#2533): it can't start another.
+            removed = RedirectResponse(f"{account_page}?signin=removed", status_code=302)
+            removed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            removed.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
+            return removed
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
             # "try again" page, the log gets the details (no token, no names).
