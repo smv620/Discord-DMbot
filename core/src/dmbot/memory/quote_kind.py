@@ -67,7 +67,8 @@ APPOSITION = re.compile(
 )
 OPENERS = frozenset(
     {"originally", "formerly", "once", "recently", "later", "then", "now", "born", "in", "at", "on",
-     "the", "a", "an", "and", "but", "when", "after", "before", "as"}
+     "the", "a", "an", "and", "but", "when", "after", "before", "as",
+     "sir", "lady", "lord", "master", "mistress", "dame", "king", "queen", "prince", "princess"}
 )  # fmt: skip
 FROM_WORDS = frozenset({"comes from"})  # (the one wording `place_words` keeps for an origin)
 
@@ -90,8 +91,10 @@ def _contract_against(quote: str, made: Connection) -> bool:
     """A contract, bounty or payment, then a word for ending someone, then one of the two names."""
     names = [n for end in _ends(made) for n in end if n]
     for hit in CONTRACT.finditer(quote):
-        after = quote[hit.end() : hit.end() + 40]
-        if _has_name(after, *names):
+        # (the name must be what is to be ended, "capture or eliminate Sephek Kaltro"; in "hired
+        # Sephek to kill her rivals" the named one is the one hired, and that is service)
+        after = quote[hit.end() :]
+        if any(re.match(rf"\s+(?:or\s+\w+\s+)?(?:the\s+)?{_name(n)}", after, re.I) for n in names):
             return True
     return False
 
@@ -100,7 +103,8 @@ def _apprentice(quote: str, a: tuple[str, ...]) -> bool:
     """Whether the quote calls `a` an apprentice: "apprentices Emmerich and Wit" (the word, then
     the name within a short list) or "Wit, apprentice of …"."""
     for name in (n for n in a if n):
-        if re.search(rf"\bapprentices?\b[^.;!?]{{0,40}}?{_name(name)}", quote, re.I):
+        # (the list straight after the word: "the apprentices of Syllar" names the master)
+        if re.search(rf"\bapprentices?\s+(?!of\b|to\b)[^,.;!?]{{0,40}}?{_name(name)}", quote, re.I):
             return True
         if re.search(rf"{_name(name)},?\s+(?:an?\s+|the\s+)?apprentice\s+(?:of|to)\b", quote, re.I):
             return True
@@ -143,7 +147,7 @@ def held(made: Connection, lost: Counter[str], *, waiting: bool = False) -> Conn
         made = replace(made, how="serves", words="")
     if made.how == "serves" and _contract_against(quote, made):
         lost["kind_contract_against"] += 1
-        return replace(made, how="knows", words="hostile")  # ("eliminate" is a hostile cue too)
+        return replace(made, how="knows", words="hostile")  # (the chain itself is the cue)
     if made.how == "serves" and _apprentice(quote, a):
         lost["kind_apprentice"] += 1
         return replace(  # (a serves b: a is the apprentice, so b mentors a)

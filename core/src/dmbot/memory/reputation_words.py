@@ -103,10 +103,7 @@ _CUES = {
     HOSTILE: re.compile(
         r"\bhate|\bhatr|\benem|\bfoe|\bhostil|\bnemesis|\bkill|\bmurder|\bfight(?!er)|"
         r"\bfought|\bwar\b|\battack|\bhunt(?!er)|\bdespis|\bloath|\bfeud|\brevenge|"
-        r"\bvengeance|\bthreat|\bassault|\bbetray|"
-        # (a contract or vow to end someone is open enmity, as "kill" is: #3780's "a contract to
-        # capture or eliminate Sephek Kaltro")
-        r"\beliminat|\bassassin",
+        r"\bvengeance|\bthreat|\bassault|\bbetray",
         re.I,
     ),
     DEVOTED: re.compile(r"\blove|\bloyal|\bdevot|\badore|\bworship|\bfaithful|\bfealty", re.I),

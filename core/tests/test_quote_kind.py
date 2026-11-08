@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import unittest
 from collections import Counter
+from dataclasses import replace
 
 from dmbot.memory import background as bg
 from dmbot.memory.background import Connection
@@ -88,6 +89,8 @@ class WhatEachCheckLeavesAlone(unittest.TestCase):
             ("Pell", "hunting lodge", "Pell is employed by the hunting lodge"),
             ("Sephek", "Torrga", "Sephek serves Torrga, killing anyone who threatens her"),
             ("Mara", "Zhentarim", "Mara is an assassin who kills for the Zhentarim"),
+            ("Sephek", "Torrga", "Torrga hired Sephek to kill her rivals; Sephek is loyal"),
+            ("Sephek", "Torrga", "Torrga pays Sephek to kill anyone who crosses Torrga"),
         ):
             made = Connection(a, "serves", b, quote)
             self.assertEqual(run(made)[0], made, quote)
@@ -96,6 +99,12 @@ class WhatEachCheckLeavesAlone(unittest.TestCase):
         for a, b, quote in (
             ("Norro", "Syllar Sparkwalker", SPIRE),  # (the Keeper, not one of the apprentices)
             ("Hlin", "Torrga", "Hlin, who once trained an apprentice, now works for Torrga"),
+            (
+                "Syllar",
+                "Blackstaff Tower",
+                "Wit and Emmerich, the apprentices of Syllar, keep Blackstaff Tower, "
+                "which Syllar serves",
+            ),
         ):
             made = Connection(a, "serves", b, quote)
             self.assertEqual(run(made)[0], made, quote)
@@ -136,6 +145,10 @@ class WhatEachCheckLeavesAlone(unittest.TestCase):
         got, _ = run(holly)
         assert got is not None
         self.assertEqual(got.a, "Holly Ashdown")
+        sir = replace(holly, quote="Sir Griz, son of Lee, a dwarf from the Spine of the World")
+        moved, _ = run(sir)
+        assert moved is not None
+        self.assertEqual(moved.a, "Griz")
 
     def test_knowing_a_fact_that_names_the_other_end_stays(self) -> None:
         for quote in (
