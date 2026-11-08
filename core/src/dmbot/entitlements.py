@@ -160,7 +160,7 @@ def free_guilds() -> frozenset[int]:
     return _free_guilds
 
 
-async def _on_free_guild(conn: Conn) -> bool:
+async def on_free_guild(conn: Conn) -> bool:
     """Is this transaction set to a listed server (`dmbot.guild_id`, as `Database.meter` and
     `guild` set it)? One small query, and none at all while the list is empty."""
     if not _free_guilds:
@@ -346,7 +346,7 @@ async def inputs(
 ) -> tuple[Entitlement | None, Grant | None, Access]:
     """`effective`, with the paid plan and grant it came from: the hours meter needs them
     to find the month the hours belong to (dmbot.hours.month_for)."""
-    if user_id in _free_users or await _on_free_guild(conn):  # (the server: #3788)
+    if user_id in _free_users or await on_free_guild(conn):  # (the server: #3788)
         return None, None, free_access(None, now)
     async with _as_person(conn, user_id):
         plan = await _read_plan(conn, user_id)
