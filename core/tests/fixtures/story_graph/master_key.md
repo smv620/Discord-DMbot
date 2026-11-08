@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 95 entries, 134 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 95 entries, 135 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
 
 ## Ties both documents say
 
@@ -158,6 +158,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | m118 | The party | works_for | Keegan Velryn | stated | yes | yes | lore+session | L96, S135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
 | m119 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L96 | a kennel master the party met there |
 | m134 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | lore | L18 | born in the Temple of the Seldarine (the more exact place; m019 says the city) |
+| m135 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | lore | L18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (m011 says works_for) |
 | m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
 | m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
 | m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
