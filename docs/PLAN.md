@@ -3881,7 +3881,11 @@ are for this month only and don't roll over." The bot's "hours are used up" mess
 **Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
 account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
 ids, never in the repository) and counts as having every feature with no hours or campaign
-cap. The owner can also give other Discord users free access by hand from an admin page on
+cap. The same for a whole server (owner request, 2026-11-08, #3788): `DMBOT_FREE_GUILDS` lists
+Discord server ids (never in the repository, never logged beyond a count), and a campaign in a listed
+server has free access whoever its DM is, so the owner's test server never meets a plan check. The
+bot's plan decisions read it through the server the transaction is set to; the website's account page
+is the person's own and does not know the server. The owner can also give other Discord users free access by hand from an admin page on
 the website: a *grant* names the Discord id, a level ("like Guild": 87 hours and 5 campaigns,
 the default, or "no limits"), an optional end date and a short note. Reason for the default:
 every hour spends AI and speech-to-text money, so unlimited access for others is a choice the

@@ -14133,6 +14133,7 @@ def register_backup_sections(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     alerter = alerts.Alerter(settings.mail)
     alerts.install(alerter)
     alerter.say_if_off()

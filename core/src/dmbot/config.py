@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dmbot import imports_switch
 from dmbot.ai import DEFAULT_MODELS, AIModels
-from dmbot.entitlements import parse_free_users
+from dmbot.entitlements import parse_free_guilds, parse_free_users
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings
 from dmbot.memory.continuity import Levels
@@ -82,6 +82,7 @@ class Settings:
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
+    free_guilds: frozenset[int] = field(default=frozenset(), repr=False)
     # Plan checks at /dmbot start and the hours warnings (#437 part 2). Off until the
     # website goes live (#498): the meter records either way, and nobody is refused
     # before they can pay. `site_url` is where the refusals send people.
@@ -295,6 +296,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     try:
         free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+        free_guilds = parse_free_guilds(get("DMBOT_FREE_GUILDS"))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -569,6 +571,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
+        free_guilds=free_guilds,
         enforce_plans=enforce_raw in ("1", "true", "on"),
         site_url=get("WEB_SITE_URL").rstrip("/"),
         mail=mail,
