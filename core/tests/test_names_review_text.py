@@ -48,6 +48,36 @@ class ReviewTextTest(unittest.TestCase):
         self.assertEqual(seen(9), "The abbot secretly pays them.")
         self.assertEqual(seen(10), "")  # a server manager who is not a DM
 
+    def test_the_players_line_is_shown_under_the_name_whole_and_only_when_there_is_one(
+        self,
+    ) -> None:
+        line = "a" * 120
+        text = ui.suggestion_text(suggested("Ulfgar"), 1, players=line)
+        self.assertIn(f"\nPlayers know: {line}", text)  # whole: never cut on the card
+        self.assertLess(text.index("Players know"), text.index("Is this a name"))
+        self.assertTrue(text.index("📝 **Ulfgar**") < text.index("Players know"))
+        self.assertNotIn("Players know", ui.suggestion_text(suggested("Ulfgar"), 1))
+        self.assertNotIn("Players know", ui.suggestion_text(suggested("Ulfgar"), 1, players=""))
+        formatted = ui.suggestion_text(suggested("Ulfgar"), 1, players="*loud* _mood_")
+        self.assertIn(r"Players know: \*loud\* \_mood\_", formatted)  # as written, not formatting
+        mention = ui.suggestion_text(suggested("Ulfgar"), 1, players="@everyone <@123>")
+        self.assertIn("@everyone", mention)  # kept: the card is sent with no pings allowed
+
+    def test_the_sentence_around_the_name_goes_before_the_line_is_ever_cut(self) -> None:
+        around = "y" * (ui.SUGGESTION_MAX + 50)
+        text = ui.suggestion_text(
+            suggested("Ulfgar"), 1, players="Smith of the town.", context=around
+        )
+        self.assertIn("Players know: Smith of the town.", text)
+        self.assertNotIn(around, text)
+        self.assertLessEqual(len(text), ui.SUGGESTION_MAX)
+
+    def test_the_line_stays_when_a_long_scene_is_the_part_left_out(self) -> None:
+        scene = "x" * (ui.SUGGESTION_MAX + 50)
+        text = ui.suggestion_text(suggested("Ulfgar"), 1, players="Smith of the town.", scene=scene)
+        self.assertIn("Players know: Smith of the town.", text)
+        self.assertNotIn(scene, text)
+
     def test_two_rows_so_a_phone_never_cuts_the_labels(self) -> None:
         view = ui.SuggestionReview("c" * 32, ["a" * 32])
         view.match = Match("b" * 32, "Hrothgar")

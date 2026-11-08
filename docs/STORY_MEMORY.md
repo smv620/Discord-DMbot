@@ -1559,6 +1559,14 @@ gods and royalty, even while their name is hidden), 5 player character.
   and line numbers that showed it. Each campaign has its own list of codes (`memory_role_codes`), so a
   role its reading adds (at most 40) never crosses campaigns. Roles are for the DM only, like the rank,
   and never add to it; `commoner` is the default and never stored.
+- **The reading (slice 3, Supervisor's ruling 2026-11-08):** after the story extractor reads a session (live
+  or imported), one more step in the same call limit (`memory/importance_step.py`) shows the AI the entries
+  the session touched, 60 per call, the rest in later calls and counted, never dropped: each with its kind,
+  rank, roles, connections, the session's connections of it, the DM's notes and at most three lines naming
+  it from people recorded now (never a sidebar, table question or shared text). It answers a rank and why
+  (reading, revealed, demoted), roles held and ended, and at most two new roles of the campaign's own; all
+  checked against fixed codes, never coerced. A reading never ends a role the DM set or corrected. The
+  scorer is `devtools/rank_key_check.py`, against the draft rank key until the owner corrects it.
 - **Companions (`travels_with`, #3176, owner 2026-11-01, Supervisor's ruling):** a companion (a familiar,
   a hired guide, a rescued prisoner) is linked by the kind `travels_with` to a player character or to the
   party group entry. **The party stays the players' point of view and only they are its members**: a
