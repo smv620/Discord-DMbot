@@ -31,14 +31,14 @@ class TheRules(unittest.TestCase):
         self.assertEqual(ir.effective(ir.BACKGROUND, None), ir.BACKGROUND)
 
     def test_an_assessment_needs_a_rank_a_known_reason_and_a_source(self) -> None:
-        ok = ir.Assessment("e1", 3, "mentor")
+        ok = ir.Assessment("e1", 3, "reading")
         self.assertTrue(ok.valid())
         for bad in (
-            ir.Assessment("", 3, "mentor"),
-            ir.Assessment("e1", 6, "mentor"),
-            ir.Assessment("e1", -1, "mentor"),
+            ir.Assessment("", 3, "reading"),
+            ir.Assessment("e1", 6, "reading"),
+            ir.Assessment("e1", -1, "reading"),
             ir.Assessment("e1", 3, "because he is cool"),
-            ir.Assessment("e1", 3, "mentor", source="dm"),
+            ir.Assessment("e1", 3, "reading", source="dm"),
         ):
             self.assertFalse(bad.valid(), bad)
 
@@ -95,24 +95,24 @@ class TheStore(Base):
         self.assertEqual((await self.ranks())[self.wren], ir.PLAYER)
 
     async def test_the_newest_assessment_is_current_and_history_is_kept(self) -> None:
-        a = ir.Assessment(self.garrick, 3, "mentor", lines=(4, 9))
+        a = ir.Assessment(self.garrick, 3, "reading", lines=(4, 9))
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [a]), 1)
         self.assertEqual((await self.ranks())[self.garrick], 3)
         # raised, then corrected down: both rows stay, the newest is current
-        up = ir.Assessment(self.garrick, 4, "antagonist")
-        down = ir.Assessment(self.garrick, 2, "corrected")
+        up = ir.Assessment(self.garrick, 4, "reading")
+        down = ir.Assessment(self.garrick, 2, "dm_corrected")
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [up, down]), 2)
         self.assertEqual((await self.ranks())[self.garrick], 2)
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT rank, basis FROM memory_importance WHERE entity_id = %s ORDER BY seq",
+                "SELECT rank, reason FROM memory_importance WHERE entity_id = %s ORDER BY seq",
                 (self.garrick,),
             )
-            self.assertEqual([(r["rank"], r["basis"]) for r in await cur.fetchall()],
-                             [(3, "mentor"), (4, "antagonist"), (2, "corrected")])  # fmt: skip
+            self.assertEqual([(r["rank"], r["reason"]) for r in await cur.fetchall()],
+                             [(3, "reading"), (4, "reading"), (2, "dm_corrected")])  # fmt: skip
 
     async def test_the_same_rank_twice_is_written_once(self) -> None:
-        a = ir.Assessment(self.garrick, 3, "mentor")
+        a = ir.Assessment(self.garrick, 3, "reading")
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [a]), 1)
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [a]), 0)
 
@@ -124,17 +124,15 @@ class TheStore(Base):
             GUILD, self.campaign.id, 200, [Heard(self.garrick, DM, 1)]
         )
         self.assertEqual((await self.ranks())[self.garrick], ir.RECURRING)  # heard in two sessions
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 1, "met_a_pc")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 1, "reading")])
         self.assertEqual((await self.ranks())[self.garrick], ir.RECURRING)  # (never below)
-        await self.store.add(
-            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 4, "antagonist")]
-        )
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 4, "reading")])
         self.assertEqual((await self.ranks())[self.garrick], ir.MAJOR)
 
     async def test_a_place_is_assessed_like_any_entry_and_an_unknown_id_is_not(self) -> None:
         wrote = await self.store.add(
             GUILD, self.campaign.id,
-            [ir.Assessment(self.ashmere, 3, "lore_figure"), ir.Assessment("nope", 3, "mentor")],
+            [ir.Assessment(self.ashmere, 3, "reading"), ir.Assessment("nope", 3, "reading")],
         )  # fmt: skip
         self.assertEqual(wrote, 1)
         self.assertEqual((await self.ranks())[self.ashmere], ir.SIGNIFICANT)
@@ -145,7 +143,7 @@ class TheStore(Base):
         )
         (twin,) = made.value
         assert twin
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 3, "mentor")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 3, "reading")])
         await self.memory.merge(
             GUILD, self.campaign.id, self.garrick, twin, source="dm", dm_said_same=True
         )
@@ -166,7 +164,7 @@ class TheStore(Base):
 
     async def test_a_chain_of_merges_still_reaches_the_character_that_stayed(self) -> None:
         a, b = await self.twin("Garrick the Smith"), await self.twin("Old Garrick")
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(a, 3, "mentor")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(a, 3, "reading")])
         await self.memory.add_session_heard(GUILD, self.campaign.id, 100, [Heard(a, DM, 1)])
         await self.memory.add_session_heard(GUILD, self.campaign.id, 200, [Heard(b, DM, 1)])
         await self.merge(b, a)  # A into B
@@ -187,21 +185,23 @@ class TheStore(Base):
 
     async def test_a_correction_after_a_merge_lowers_the_rank_again(self) -> None:
         twin = await self.twin("Garrick the Smith")
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "antagonist")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "reading")])
         await self.merge(self.garrick, twin)
         self.assertEqual((await self.ranks())[self.garrick], 4)
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 1, "corrected")])
+        await self.store.add(
+            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 1, "dm_corrected")]
+        )
         self.assertEqual((await self.ranks())[self.garrick], 1)  # the newest, not the highest
 
     async def test_a_merged_or_rejected_entry_is_not_assessed(self) -> None:
         twin = await self.twin("Garrick the Smith")
         await self.merge(self.garrick, twin)
         self.assertEqual(
-            await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 3, "mentor")]), 0
+            await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 3, "reading")]), 0
         )
 
     async def test_no_more_than_twenty_line_numbers_are_kept(self) -> None:
-        a = ir.Assessment(self.garrick, 3, "mentor", lines=tuple(range(1, 40)))
+        a = ir.Assessment(self.garrick, 3, "reading", lines=tuple(range(1, 40)))
         await self.store.add(GUILD, self.campaign.id, [a])
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT cardinality(lines) AS n FROM memory_importance")
@@ -212,12 +212,12 @@ class TheStore(Base):
         # Garrick 3, the twin 4, merged, then Garrick 3 again: the group's newest is 4, so a 3
         # is a correction and not a repeat (add() compares with the group, as ranks() reads it).
         twin = await self.twin("Garrick the Smith")
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "mentor")])
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "antagonist")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "reading")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(twin, 4, "reading")])
         await self.merge(self.garrick, twin)
         self.assertEqual((await self.ranks())[self.garrick], 4)
         wrote = await self.store.add(
-            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "corrected")]
+            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "dm_corrected")]
         )
         self.assertEqual(wrote, 1)
         self.assertEqual((await self.ranks())[self.garrick], 3)
@@ -237,13 +237,13 @@ class TheStore(Base):
 
     async def test_a_backup_brings_the_ranks_back_in_the_same_order(self) -> None:
         twin = await self.twin("Wren the Quiet")
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "mentor")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 3, "reading")])
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 4, "reading")])
         await self.store.add(
-            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 4, "antagonist")]
+            GUILD, self.campaign.id, [ir.Assessment(self.garrick, 2, "dm_corrected")]
         )
-        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.garrick, 2, "corrected")])
         await self.store.add(
-            GUILD, self.campaign.id, [ir.Assessment(twin, 1, "met_a_pc", lines=(1, 2))]
+            GUILD, self.campaign.id, [ir.Assessment(twin, 1, "reading", lines=(1, 2))]
         )
         section = ImportanceSection()
         async with self.db.guild(GUILD) as conn:
@@ -265,12 +265,12 @@ class TheStore(Base):
         from dmbot.campaigns.models import CampaignError
 
         good = {
-            "entity_id": "a" * 32, "rank": 2, "basis": "mentor", "source": "plotbot",
+            "entity_id": "a" * 32, "rank": 2, "reason": "reading", "source": "plotbot",
             "session_started_at": None, "recorded_at": 5,
         }  # fmt: skip
         ImportanceSection().check([good])
         for bad in (
-            {**good, "rank": 6}, {**good, "rank": True}, {**good, "basis": "cool"},
+            {**good, "rank": 6}, {**good, "rank": True}, {**good, "reason": "cool"},
             {**good, "source": "dm"}, {**good, "entity_id": "x"}, {**good, "recorded_at": 0},
             {**good, "extra": 1},
         ):  # fmt: skip
@@ -279,17 +279,39 @@ class TheStore(Base):
         with self.assertRaises(CampaignError):
             ImportanceSection().check(cast(Any, "not a list"))
 
+    async def test_a_place_s_rank_comes_back_from_a_backup_too(self) -> None:
+        await self.store.add(GUILD, self.campaign.id, [ir.Assessment(self.ashmere, 4, "reading")])
+        section = ImportanceSection()
+        async with self.db.guild(GUILD) as conn:
+            rows = await section.dump(conn, GUILD, self.campaign.id)
+            await section.clear(conn, GUILD, self.campaign.id)
+            await section.load(conn, GUILD, self.campaign.id, section.check(rows))
+        self.assertEqual((await self.ranks())[self.ashmere], 4)  # (every kind is ranked, #3233)
+
+    async def test_a_backup_from_before_0388_reads_its_basis_as_the_migration_did(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+
+        old = {
+            "entity_id": "a" * 32, "rank": 2, "basis": "mentor", "source": "plotbot",
+            "session_started_at": None, "recorded_at": 5,
+        }  # fmt: skip
+        got = ImportanceSection().check([old, {**old, "basis": "corrected"}])
+        self.assertEqual([r[2] for r in got], ["reading", "dm_corrected"])
+        for bad in ({**old, "basis": "cool"}, {**old, "reason": "reading"}):
+            with self.assertRaises(CampaignError):
+                ImportanceSection().check([bad])
+
     async def test_the_reason_list_in_the_database_is_the_code_list(self) -> None:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint"
                 " WHERE conrelid = 'memory_importance'::regclass AND contype = 'c'"
-                " AND pg_get_constraintdef(oid) LIKE '%basis%'"
+                " AND pg_get_constraintdef(oid) LIKE '%reason%'"
             )
             (row,) = await cur.fetchall()
         import re
 
-        self.assertEqual(set(re.findall(r"'([a-z_]+)'::text", row["d"])), set(ir.BASES))
+        self.assertEqual(set(re.findall(r"'([a-z_]+)'::text", row["d"])), set(ir.REASONS))
 
 
 if __name__ == "__main__":

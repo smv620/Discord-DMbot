@@ -34,11 +34,27 @@ LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Play
 SESSIONS_FOR_RECURRING = 2  # separate sessions a character is heard in to be at least Recurring
 
 SOURCE_PLOTBOT, SOURCE_RULE = "plotbot", "rule"
-# The reason codes (a database CHECK holds the same list; a test keeps the two equal).
-BASES = (
+# Why a rank changed, a property of the assessment, never a word about the entry (#3172, owner
+# 2026-11-01: "corrected" said nothing about the character). What the entry IS in the story is its
+# roles (`memory/roles.py`). A database CHECK holds the same list; a test keeps the two equal.
+READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
+    "reading", "dm_corrected", "revealed", "demoted", "rule",
+)  # fmt: skip
+REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE)
+ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)
+# An old backup's `basis` code, as migration 0388 mapped the rows already stored.
+OLD_BASIS = frozenset({
     "background", "met_a_pc", "recurring", "quest_target", "quest_giver", "mentor", "rival",
     "henchman", "mini_boss", "companion", "antagonist", "ruler_or_god", "lore_figure", "corrected",
-)  # fmt: skip
+})  # fmt: skip
+
+
+def reason_of_old_basis(basis: str) -> str:
+    """The reason an old `basis` code reads as (migration 0388): "corrected" was the DM's
+    correction, every other code a reading. Pure."""
+    return DM_CORRECTED if basis == "corrected" else READING
+
+
 MAX_LINES = 20  # line numbers kept with one assessment
 
 
@@ -92,7 +108,7 @@ class Assessment:
 
     entity_id: str
     rank: int
-    basis: str
+    reason: str
     source: str = SOURCE_PLOTBOT
     session_started_at: int | None = None
     lines: tuple[int, ...] = field(default=())
@@ -101,7 +117,7 @@ class Assessment:
         return (
             bool(self.entity_id)
             and BACKGROUND <= self.rank <= PLAYER
-            and self.basis in BASES
+            and self.reason in REASONS
             and self.source in (SOURCE_PLOTBOT, SOURCE_RULE)
         )
 
@@ -257,7 +273,7 @@ class ImportanceStore:
         """Append these assessments and return how many were written. One that is not valid, names
         an entry the campaign does not have (or one that is not live), or says the rank the
         entry's whole merged group is already assessed at is skipped, so a re-run
-        writes nothing twice (a repeat with another reason code adds no row: the rank is what
+        writes nothing twice (a repeat with another reason adds no row: the rank is what
         counts). The comparison is with the group's newest, as `ranks()` reads it, so a correction
         back to a rank an older twin once had is still written."""
         wanted = [a for a in assessments if a.valid()]
@@ -275,11 +291,11 @@ class ImportanceStore:
                 if group.get(a.entity_id, (0, -1))[1] == a.rank:
                     continue
                 cur = await conn.execute(
-                    "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
+                    "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
                     " source, session_started_at, lines, recorded_at)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
-                        guild_id, campaign_id, a.entity_id, a.rank, a.basis, a.source,
+                        guild_id, campaign_id, a.entity_id, a.rank, a.reason, a.source,
                         a.session_started_at, list(a.lines[:MAX_LINES]), now,
                     ),
                 )  # fmt: skip

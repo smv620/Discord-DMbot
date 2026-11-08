@@ -3366,6 +3366,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const half = Math.ceil(found.text.length / 2);
       return `${found.text.slice(0, half).toUpperCase()}-${found.text.slice(half).toLowerCase()}`;
     },
+    // 🔊 Hear it in the narrator's voice (#3807): a campaign reference ending `.hear-off` has no narration (the browser's voice
+    // reads it instead), `.hear-soon` is pressed too often, `.hear-slow` takes its time, and any other answers with a tiny WAV.
+    async hearSaidAs(campaignRef, nameId, text, onLook) {
+      calls.push(`hearSaidAs:${campaignRef}:${nameId}:${text}`);
+      await reachable();
+      signedIn();
+      if (!sayable(nameId)) throw new ApiError("not-found");
+      if (text.trim() === "" || text.length > 80) throw new ApiError("bad-text");
+      if (/\.hear-off$/.test(campaignRef)) throw new ApiError("voice-off");
+      if (/\.hear-soon$/.test(campaignRef)) throw new ApiError("too-soon");
+      onLook?.(null);
+      if (/\.hear-slow$/.test(campaignRef)) await new Promise((r) => setTimeout(r, 4000));
+      // A 44-byte WAV header with no samples: enough for a pretend clip.
+      return new Blob([new Uint8Array(44)], { type: "audio/wav" });
+    },
     async respellFromVoice(campaignRef, nameId, clip) {
       calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
       await reachable();
