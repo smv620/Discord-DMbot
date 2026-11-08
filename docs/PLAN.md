@@ -5414,8 +5414,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     respelling in plain letters with the stressed part in capitals ("kah-ZETH"). The DM sees it, edits it
     if needed and saves. Discord has no microphone for buttons, so the name card gets a **🎤 Say it**
     link button straight to that name on the website (one tap, the link-button rule).
-  - **🔊 Hear it:** the website reads the respelling aloud with the browser's own voice, so the DM can
-    check it. No cost, and it isn't the narrator's voice.
+  - **🔊 Hear it:** the website plays the respelling in the **recap narrator's voice** (the same voice and
+    speech model as the voice-over), so the DM hears how the recap will really say it (owner, 2026-11-08,
+    #3807; it was the browser's own voice). One short speech call per new text, cached so a second press
+    is free, rate-limited, only on plans with a voice-over, counted in the campaign's allowance. Only the
+    words in the box go to the voice company; logs hold counts. With no voice set up, the browser's voice
+    plays and the page says it isn't the narrator's.
   - **How the clip becomes letters:** a small speech-sound recogniser on our own server turns the clip
     into speech sounds (IPA). Plain code turns those into the respelling. No outside service hears the
     clip. If the recogniser isn't installed or fails, the DM is told plainly and types it instead.
