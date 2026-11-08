@@ -140,6 +140,11 @@ export const campaignPage = {
     ],
   } as Record<string, [string, string][]>,
   saving: "Saving…",
+  // The wait for the bot's answer (#3347): DMbot's stage, how long it has run, and when it last moved (the shared panel).
+  stage: {
+    waiting: "Waiting for DMbot to pick it up.",
+    saving: "DMbot is saving it.",
+  } as Record<string, string>,
   slow: "This is taking longer than usual. Keep this page open.",
   offline: "DMbot isn't answering. It will make this change when it's back, if that is within an hour. Keep this page open, or reload it later to check.",
   saved: "Saved.",

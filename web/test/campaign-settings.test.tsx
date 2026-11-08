@@ -9,6 +9,7 @@ import { ApiError } from "../src/account/api";
 import CampaignPageView from "../src/account/CampaignPage";
 import { mockApi } from "../src/account/mock";
 import { campaignPage as w } from "../src/content/campaign-page";
+import { OFFLINE_AFTER_MS } from "../src/account/settings-timing";
 
 afterEach(() => {
   cleanup();
@@ -43,12 +44,38 @@ describe("changing a choice", () => {
     }
   });
 
-  it("waits with Saving… and locks the buttons meanwhile", async () => {
+  it("waits with DMbot's stage, and locks the buttons meanwhile", async () => {
     const { section } = await open("100.cmp1");
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
-    expect(await within(section).findByText(w.saving)).toBeTruthy();
+    expect(await within(section).findByText(w.stage.waiting as string)).toBeTruthy();
     expect((within(group(section, "level")).getByRole("button", { name: "🔔 Normal" }) as HTMLButtonElement).disabled).toBe(true);
     await within(section).findByText(/Saved\./, undefined, slow);
+  });
+
+  it("shows how long the change has run and when it last moved, and no bare Saving… line", async () => {
+    const { section } = await open("100.cmp1");
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    expect(await within(section).findByText(w.stage.waiting as string)).toBeTruthy();
+    expect(within(section).getByText(/Running for/)).toBeTruthy();
+    expect(within(section).queryByText(w.saving)).toBeNull();
+  });
+
+  it("before 30 seconds with no answer there is no offline line yet", async () => {
+    const { section } = await open("100.cmp1.cs-offline");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await vi.advanceTimersByTimeAsync(OFFLINE_AFTER_MS - 5_000);
+    expect(within(section).getByText(w.stage.waiting as string)).toBeTruthy();
+    expect(within(section).queryByText(w.offline)).toBeNull();
+  });
+
+  it("after 30 seconds without an answer the stalled panel shows with the offline words", async () => {
+    const { section } = await open("100.cmp1.cs-offline");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await vi.advanceTimersByTimeAsync(OFFLINE_AFTER_MS + 5_000);
+    expect(within(section).getByText(w.offline)).toBeTruthy();
+    expect(within(section).queryByText(w.saving)).toBeNull();
   });
 
   it("asks before a shorter keep-time, queues nothing until yes, and Keep current cancels", async () => {
@@ -89,7 +116,7 @@ describe("changing a choice", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
     for (let i = 0; i < 50; i += 1) await vi.advanceTimersByTimeAsync(250);
-    expect(within(section).getByText(`${w.saving} ${w.slow}`)).toBeTruthy();
+    expect(within(section).getByText(w.stage.waiting as string)).toBeTruthy();
     for (let i = 0; i < 100; i += 1) await vi.advanceTimersByTimeAsync(250);
     expect(within(section).getByText(w.offline)).toBeTruthy();
     expect(within(group(section, "level")).getByRole("button", { name: "🔔 Normal" }).getAttribute("aria-pressed")).toBe("true");
@@ -136,7 +163,7 @@ describe("when the site's own server cannot be reached while waiting (#2488)", (
     vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
     for (let i = 0; i < 50; i += 1) await vi.advanceTimersByTimeAsync(250);
-    expect(within(section).getByText(`${w.saving} ${w.slow}`)).toBeTruthy();
+    expect(within(section).getByText(w.stage.waiting as string)).toBeTruthy();
     for (let i = 0; i < 100; i += 1) await vi.advanceTimersByTimeAsync(250);
     expect(within(section).getByText(w.offline)).toBeTruthy();
     await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
