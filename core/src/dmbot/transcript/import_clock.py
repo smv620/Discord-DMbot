@@ -39,7 +39,7 @@ class ImportClockOffers:
         nothing can be offered). Older offers of the campaign still waiting are expired in the
         same statement's transaction: only the newest session's offer is ever live."""
         now = int(self._now())
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             await conn.execute(
                 "UPDATE import_clock_offers SET state = 'expired', updated_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND state IN ('offered', 'applying')"

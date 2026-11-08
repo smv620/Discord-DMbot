@@ -4,7 +4,9 @@ shared, deleted with the character or the campaign, and carried in backups."""
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
+from unittest import mock
 
 from psycopg import errors as pg_errors
 
@@ -32,6 +34,31 @@ class SheetTest(MemoryTest):
 
     async def linked(self, campaign: str | None = None) -> None:
         await self.sheets.link(GUILD_A, campaign or self.c, self.pc, CHARACTER)
+
+
+class Lineage(SheetTest):
+    """#3739 part 4: a snapshot read from a link takes the running build's stamp; a typed one,
+    the DM's, keeps the stamp the row has."""
+
+    async def stamp(self) -> str | None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT made_by_commit AS c FROM character_sheets")
+            row = await cur.fetchone()
+        assert row is not None
+        return row["c"]  # type: ignore[no-any-return]
+
+    async def test_a_read_from_a_link_restamps_and_a_typed_sheet_does_not(self) -> None:
+        old, new, later = "a" * 40, "b" * 40, "c" * 40
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": old}):
+            await self.linked()
+        self.assertEqual(await self.stamp(), old)
+        url = sheets.sheet_url(CHARACTER)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": new}):
+            await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 5, url=url)
+        self.assertEqual(await self.stamp(), new)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": later}):
+            await self.sheets.save(GUILD_A, self.c, self.pc, self.sheet_data, 6)  # typed
+        self.assertEqual(await self.stamp(), new)
 
 
 class Linking(SheetTest):

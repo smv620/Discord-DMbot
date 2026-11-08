@@ -39,10 +39,10 @@ is carried out by DMbot (`respell_names`), and a person's answer to a speaker qu
 build that wrote the last cleaning chunk. The session notes' backup section (`session_notes`) does
 not carry `made_by` yet (#3751); the transcript parts do, as they carry every column.
 
-**Part 1's backup** carries `made_by` for the memory section's own tables only (`memory/backup.py`,
-`_TAGS`). The other stamped tables are restored by their own sections, which do not carry it yet, so
-they restore with none ("made before versions were recorded"): honest, but a loss, filed as a
-follow-up under #3739.
+**The backup** carries `made_by` for the memory section's own tables (`memory/backup.py`, `_TAGS`,
+sheets and spelling rules included) and, through the transcript parts, for the transcript tables.
+The other stamped tables are restored by their own sections, or are not in a backup at all, so they
+restore with none ("made before versions were recorded"): honest, but a loss (#3751).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ OLD_ROW = "made before versions were recorded"
 
 
 # The tables that carry the stamp now (the catalog test checks this against the database). Each part
-# of #3739 adds its area's tables; `NOT_YET` shrinks by the same amount.
+# of #3739 added its area's tables.
 STAMPED_MEMORY = (
     "memory_entities", "memory_aliases", "memory_relations", "memory_claims", "memory_states",
     "memory_perspectives", "memory_beliefs", "memory_evidence", "memory_impressions",
@@ -76,17 +76,21 @@ STAMPED_TRANSCRIPTS = (
     "transcript_sessions", "transcript_lines", "session_imports", "said_as_suggestions",
     "session_notes",
 )  # fmt: skip
-STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS) | frozenset(STAMPED_TRANSCRIPTS)
+# Part 4: the rest (migration 0382). `memory_corrections` is stamped too: a reader may write it.
+STAMPED_REST = (
+    "ai_feed", "map_notes", "plot_checks", "plot_issues", "plot_chat", "import_clock_offers",
+    "character_sheets", "memory_corrections", "campaign_pictures",
+)  # fmt: skip
+STAMPED = (
+    frozenset(STAMPED_MEMORY)
+    | frozenset(STAMPED_RECAPS)
+    | frozenset(STAMPED_TRANSCRIPTS)
+    | frozenset(STAMPED_REST)
+)
 
 # Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
 # (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
 # moves its tables to `STAMPED`; the list ends empty.
-NOT_YET: tuple[str, ...] = (
-    # part 4: the rest
-    "ai_feed", "map_notes", "campaign_pictures", "picture_actions", "plot_chat", "plot_checks",
-    "plot_fine", "plot_issues", "pack_suggestions", "rule_set_suggestions", "import_clock_offers",
-    "character_sheets", "memory_corrections",
-)  # fmt: skip
 
 _DM = "what the DM wrote or chose"
 _QUEUE = "a queue of the DM's website choices, waiting for the bot"
@@ -138,6 +142,9 @@ NOT_STAMPED: dict[str, str] = {
             "report_answers",
             "secret_exposures",
             "recap_holds",
+            "plot_fine",
+            "pack_suggestions",
+            "rule_set_suggestions",
             "transcript_suggestions",
             "import_plays",
             "import_speakers",
@@ -160,6 +167,7 @@ NOT_STAMPED: dict[str, str] = {
             "web_rule_actions",
             "web_sheet_actions",
             "campaign_handover_offers",
+            "picture_actions",
             "merge_restores",
         ),
         _QUEUE,
