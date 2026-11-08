@@ -240,6 +240,9 @@ class NewName:
     # An item the unique-item judge kept (#3373) is stored as one particular thing (#3618), so a
     # second owner is flagged; None leaves it to the name guess and the DM's switch.
     unique: bool | None = None
+    # The players' line (#2967 slice a): only from an upload the DM said the players know all of;
+    # "" for none. A line longer than `PLAYERS_TEXT_MAX` is not stored (the DM writes one).
+    players_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
