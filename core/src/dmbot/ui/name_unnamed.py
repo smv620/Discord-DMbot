@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 NOT_NAMED = "not_named"  # the pseudo-kind of the group in the kind menu
 NAME_LABEL = "Their name"
 NAME_HELP = "What the story calls them, or what you know them as"
-ALREADY_DONE = "That person has a name now, or is gone. Open 📚 Browse names to see the list."
+ALREADY_DONE = "That one has a name now, or is gone. Open 📚 Browse names to see the list."
 FORM_TITLE = "Give them a name"
 
 
@@ -104,7 +104,13 @@ async def give_name(
     found = await cache.get(campaign.guild_id, campaign.id)
     for entry in found.exact(name):
         other = found.entities.get(entry.entity_id)
-        if other is not None and other.id != entity_id and not other.unnamed and not entry.person:
+        if (
+            other is not None
+            and other.id != entity_id
+            and not other.unnamed
+            and not entry.person
+            and other.type == entity.type  # (a group joins a group, #3736)
+        ):
             others[other.id] = other.name
     if len(others) > 1:
         await _tell(
@@ -120,7 +126,7 @@ async def give_name(
         await _replace(
             interaction,
             f"DMbot already knows someone called **{_md(other_name)}**. Is **{_md(label)}** "
-            "the same person?",
+            "the same one?",
             ask,
         )
         return
@@ -162,7 +168,7 @@ class JoinConfirm(_Menu):
         self.label = label
         self.other_name = other_name
         self.add_item(
-            _Button(self._yes, label="Yes, the same person", style=discord.ButtonStyle.primary)
+            _Button(self._yes, label="Yes, the same one", style=discord.ButtonStyle.primary)
         )
         self.add_item(_Button(self._no, label="No, different", style=discord.ButtonStyle.secondary))
 
