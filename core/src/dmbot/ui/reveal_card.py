@@ -7,8 +7,9 @@ Nothing is recorded until the DM presses Keep, and the press is the DM's own
 `MemoryStore.learn_statement`, with one Undo, sent first as its own private message. The card says
 what a Keep means for the table: "Keeping this lets Tran's player see it." for a player's character,
 and "Tran was only guessing. Keeping this makes Tran sure of it." when they held it as a guess
-(Supervisor's rulings on #2996: it is Tran who becomes sure; the fact was already true). The words are read from DMbot's memory when the card is shown (the row holds ids
-only), DM-only, shown only here. Every press is checked: the presser is one of the campaign's DMs
+(Supervisor's rulings on #2996: it is Tran who becomes sure; the fact was already true). The words
+are read from DMbot's memory when the card is shown (the row holds ids only), DM-only, shown only
+here. Every press is checked: the presser is one of the campaign's DMs
 (the DM screen can be seen by players), and who is still recorded is asked again, so a proposal with
 a speaker who has stopped is gone before it is shown. Logs carry counts, never the words.
 """
