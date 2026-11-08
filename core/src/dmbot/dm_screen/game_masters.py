@@ -36,6 +36,7 @@ from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.ui import dm_links
 
 log = logging.getLogger(__name__)
 
@@ -348,8 +349,11 @@ async def tell_new(guild: discord.Guild, campaign: Campaign, user_id: int, by: s
     """The one private message to a new game master. False if it could not be sent."""
     try:
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        # The campaign's page on the website, for the game master who has just been added (#3663).
+        view = dm_links.view_for(None, guild.id, campaign.id, dm_links.DMLinks(page="campaigns"))
         await member.send(
             TOLD.format(by=md(by), campaign=md(campaign.name), server=md(guild.name)),
+            view=view if view is not None else discord.utils.MISSING,
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException:

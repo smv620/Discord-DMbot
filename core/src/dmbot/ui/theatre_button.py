@@ -24,6 +24,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.transcript import rel_run
 from dmbot.transcript import theatre_job as job
 from dmbot.transcript.theatre_runs import TheatreRuns
+from dmbot.ui import dm_links
 from dmbot.ui.dmbot_commands import _bot, _tell
 
 log = logging.getLogger(__name__)
@@ -255,7 +256,22 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
     if not outcome.started and not outcome.taken_over:
         await edit(outcome.text)  # a second card for a run already going: say so, never hang
     elif outcome.started and not outcome.taken_over and edit_failed:
-        await bot.sidebar_send_dm(user, outcome.text)  # the last word still reaches the DM
+        # The last word still reaches the DM, with the script's page on the website (#3663).
+        site = bot.settings.site_url
+        # (the address is built here, but only for a site Discord would take: an https one)
+        page = (
+            script_link(site, guild_id, session.campaign_id, session.number)
+            if dm_links.site_link(site, "transcripts", guild_id, session.campaign_id)
+            else ""
+        )
+        view = dm_links.for_campaign(
+            None,
+            site,
+            guild_id,
+            session.campaign_id,
+            dm_links.DMLinks(page="transcripts", site_url_override=page),
+        )
+        await bot.sidebar_send_dm(user, outcome.text, view)
     return outcome
 
 

@@ -14138,6 +14138,7 @@ def register_backup_sections(
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
+    dm_links.configure_site(settings.site_url)  # the website button of every private message
     alerter = alerts.Alerter(settings.mail)
     alerts.install(alerter)
     alerter.say_if_off()
