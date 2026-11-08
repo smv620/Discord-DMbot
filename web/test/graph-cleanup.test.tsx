@@ -2,15 +2,16 @@
 // @vitest-environment happy-dom
 // The Story Graph's clean-up (#3740, behind GRAPH_CLEANUP_LIVE): the groups no chain links to the party, each with its
 // scene, Add a connection and (for an unnamed person) the Names page's own panel; the empty, no-player-character, cut-off,
-// failed and switched-off states; and nothing for anyone who can't edit.
+// failed and switched-off states; sign-in when the read or an add says the session ended; the stalled wait after a
+// minute with nothing moving; the running review line; and nothing for anyone who can't edit.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
-import { cleanupWords as w } from "../src/content/graph-cleanup-words";
 import { QUIET_SECONDS } from "../src/account/useObservedWait";
+import { cleanupWords as w } from "../src/content/graph-cleanup-words";
 import { namePlaceWords } from "../src/content/name-places";
 import { webPage } from "../src/content/web-words";
 
@@ -232,7 +233,10 @@ describe("the clean-up's sign-in, stalled wait and review line (#3785)", () => {
       await open("cleanup", api);
       await screen.findByText(w.stage);
       expect(screen.queryByText(w.quiet)).toBeNull();
-      await vi.advanceTimersByTimeAsync(QUIET_SECONDS * 1000 + 1000);
+      // Just short of the minute it is not yet quiet, so the threshold itself is what is tested.
+      await vi.advanceTimersByTimeAsync(QUIET_SECONDS * 1000 - 5000);
+      expect(screen.queryByText(w.quiet)).toBeNull();
+      await vi.advanceTimersByTimeAsync(6000);
       expect(await screen.findByText(w.quiet)).toBeTruthy();
     } finally {
       vi.useRealTimers();
