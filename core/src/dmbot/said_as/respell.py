@@ -11,8 +11,9 @@ How it reads the sounds:
   rather than guessed, and a clip with no vowel at all gives "" (the page then says DMbot couldn't
   tell, and the DM types it).
 - Syllables follow the vowels. Between two vowels a single consonant starts the next syllable
-  ("kah-zeth"); two or more split after the first, except a pair that can start a word in English
-  ("s" or a stop before "l"/"r", "s" before a stop), which stay together ("ah-tree").
+  ("kah-zeth"); two or more split after the first, except a last pair that can start an English
+  word (`_ONSET_PAIRS`: a stop or "f" before "l"/"r", "t"/"d" before "r", "s" before a stop,
+  "m", "n", "l" or "w", "tw", "kw"), which stays together ("ah-tree").
 - The stressed syllable is written in capitals ("kah-ZETH"). The model's output usually has no
   stress marks; when none are given the first syllable of a word of two or more is stressed, the
   usual English choice for a name, and a one-syllable name has no capitals. The DM can change it.
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 from itertools import pairwise
 
+INPUT_MAX = 1000  # characters read: more than the limit below could ever use
 MAX_LENGTH = 80  # the limit on a spelling everywhere (web/names.py SAID_AS_MAX)
 
 # Longest first within each start, so "tʃ" is read before "t" and "aɪ" before "a".
@@ -60,6 +62,12 @@ _VOWELS = {
     "ɝ": "er",
     "ɚ": "er",
     "y": "ew",
+    "ø": "er",
+    "œ": "er",
+    "ɨ": "ih",
+    "ɯ": "oo",
+    "ʉ": "oo",
+    "ɵ": "uh",
 }
 _CONSONANTS = {
     "p": "p",
@@ -90,20 +98,30 @@ _CONSONANTS = {
     "j": "y",
     "w": "w",
     "ʔ": "",
+    "ʁ": "r",
+    "ɲ": "ny",
+    "ç": "h",
+    "ɬ": "l",
+    "ɣ": "g",
+    "ɸ": "f",
+    "β": "v",
 }
 SOUNDS = {**_TWO, **_VOWELS, **_CONSONANTS}
 # Short vowels read better without the trailing h when a consonant closes the syllable: "zeth",
 # "brin" (but "zeh" and "ih" where the syllable ends on the vowel). Spelled as plain English readers
 # would say them.
-_CLOSED = {"ɛ": "e", "ɪ": "i", "æ": "a", "ʌ": "u", "ɑ": "ah", "ɔ": "aw"}
+_CLOSED = {"ɛ": "e", "ɪ": "i", "æ": "a", "ʌ": "u"}
 _OPEN_END = {"aɪ": "y", "oʊ": "oh", "əʊ": "oh", "eɪ": "ay"}  # "my", "kay"
 _DIPHTHONGS = frozenset({"aɪ", "aʊ", "ɔɪ", "eɪ", "oʊ", "əʊ", "ɪə", "ɛə", "ʊə"})
 _STRESS = {"ˈ": True, "ˌ": False}  # primary is stress; secondary is read as unstressed
 _SKIP = set("ːˑ̩̯̃ʰʲʷ˞ .‿|-‖")  # lengthening, tie and other marks that change no letter
+_TIE = "\u0361\u035c"  # the tie bar of "t͡ʃ": it joins the two sounds either side of it
 # Pairs that can begin an English word, so they stay together as the next syllable's start.
 _ONSET_PAIRS = frozenset(
-    f"{a}{b}" for a in ("p", "b", "t", "d", "k", "g", "f", "ɡ") for b in ("l", "ɹ", "r")
-) | frozenset({"sp", "st", "sk", "sm", "sn", "sl", "sw", "tw", "kw", "θɹ", "ʃɹ"})
+    f"{a}{b}" for a in ("p", "b", "k", "g", "ɡ", "f") for b in ("l", "ɹ", "r")
+) | frozenset(
+    {"tɹ", "dɹ", "tr", "dr", "θɹ", "ʃɹ", "sp", "st", "sk", "sm", "sn", "sl", "sw", "tw", "kw"}
+)
 
 
 def _sounds(ipa: str) -> list[tuple[str, bool, bool]]:
@@ -122,12 +140,21 @@ def _sounds(ipa: str) -> list[tuple[str, bool, bool]]:
             i += 1
             continue
         pair = ipa[i : i + 2]
+        if len(ipa) > i + 2 and ipa[i + 1] in _TIE:
+            pair = ch + ipa[i + 2]  # "t͡ʃ" is read as "tʃ"
+            if pair in _TWO:
+                out.append((pair, False, False))
+                i += 3
+                continue
         if pair in _TWO:
             sym, step = pair, 2
         elif ch in SOUNDS:
             sym, step = ch, 1
         else:
             i += 1  # not a sound DMbot knows: leave it out
+            continue
+        if sym in ("ɹ", "r") and out and out[-1][0] in ("ɪə", "ɛə", "ʊə"):
+            i += step  # "ɛə" already says "air": the r after it would double
             continue
         vowel = sym in _VOWELS or sym in _DIPHTHONGS
         out.append((sym, vowel, stressed and vowel))
@@ -145,10 +172,8 @@ def _syllables(sounds: list[tuple[str, bool, bool]]) -> list[tuple[list[str], bo
     cuts = [0]
     for left, right in pairwise(nuclei):
         between = [sounds[k][0] for k in range(left + 1, right)]
-        if len(between) <= 1:
-            cut = left + 1  # one consonant (or none): it starts the next syllable
-        elif "".join(between[-2:]) in _ONSET_PAIRS and len(between) == 2:
-            cut = left + 1
+        if len(between) <= 1 or (len(between) == 2 and "".join(between) in _ONSET_PAIRS):
+            cut = left + 1  # one consonant, or a pair that starts a word: all start the next one
         elif "".join(between[-2:]) in _ONSET_PAIRS:
             cut = right - 2
         else:
@@ -182,7 +207,7 @@ def respell(ipa: str) -> str:
     """The respelling for one word's speech sounds, or "" when no vowel was heard. Words are split
     on spaces and joined by a space, each respelled alone."""
     words = []
-    for word in ipa.split():
+    for word in ipa[:INPUT_MAX].split():
         sylls = _syllables(_sounds(word))
         if not sylls:
             continue
@@ -193,4 +218,9 @@ def respell(ipa: str) -> str:
             text = _letters(symbols)
             parts.append(text.upper() if n == loud else text)
         words.append("-".join(p for p in parts if p))
-    return " ".join(words)[:MAX_LENGTH].rstrip("- ")
+    text = " ".join(words)
+    if len(text) <= MAX_LENGTH:
+        return text
+    # Cut at the last whole syllable that fits, never mid-syllable.
+    cut = max(text.rfind("-", 0, MAX_LENGTH + 1), text.rfind(" ", 0, MAX_LENGTH + 1))
+    return text[: cut if cut > 0 else MAX_LENGTH].rstrip("- ")

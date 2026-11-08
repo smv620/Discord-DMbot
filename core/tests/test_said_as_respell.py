@@ -6,7 +6,7 @@ from __future__ import annotations
 import unittest
 
 from dmbot.said_as.respell import MAX_LENGTH, respell
-from dmbot.web.names import _SPELLING
+from dmbot.web.names import _SPELLING, SAID_AS_MAX
 
 # (the sounds a recogniser might write, the respelling). All names are invented.
 NAMES = [
@@ -78,4 +78,38 @@ class Respelling(unittest.TestCase):
 
     def test_a_hostile_string_is_harmless(self) -> None:
         self.assertEqual(respell("\x00\x07<#>kɑ</#>"), "kah")
-        self.assertEqual(respell("ɑ" * 10_000)[:3], "AH-")
+        self.assertTrue(respell("ɑ" * 10_000).startswith("AH-"))
+
+    def test_a_diphthong_that_already_says_r_is_not_doubled(self) -> None:
+        self.assertEqual(respell("ˈkɛəɹ"), "KAIR")
+        self.assertEqual(respell("ˈbɪəɹ"), "BEER")
+
+    def test_the_tie_bar_joins_ch_and_j(self) -> None:
+        self.assertEqual(respell("ɑt͡ʃɑ"), "AH-chah")
+        self.assertEqual(respell("ɑd͡ʒɑ"), "AH-jah")
+
+    def test_clusters_split_or_stay_together_as_english_does(self) -> None:
+        self.assertEqual(respell("ɑstɹɑ"), "AHS-trah")  # three: "s" stays behind, "tr" goes on
+        self.assertEqual(respell("ɑtlɑ"), "AHT-lah")  # "tl" cannot start an English word
+        self.assertEqual(respell("ɑdwɑ"), "AHD-wah")
+        for sounds, expected in (("ɑsmɑ", "AH-smah"), ("ɑkwɑ", "AH-kwah"), ("ɑslɑ", "AH-slah")):
+            self.assertEqual(respell(sounds), expected)
+
+    def test_sounds_foreign_to_english_get_a_near_letter(self) -> None:
+        self.assertEqual(respell("ɑʁɑ"), "AH-rah")
+        self.assertEqual(respell("ɑɲɑ"), "AH-nyah")
+
+    def test_a_stress_mark_on_one_syllable_and_several_marks(self) -> None:
+        self.assertEqual(respell("ˈkɑt"), "KAHT")  # a mark is the model's word; it is capitalised
+        self.assertEqual(respell("ˈkɑˈzɛθ"), "KAH-zeth")  # the first mark wins
+
+    def test_the_cut_is_at_a_whole_syllable_and_the_input_is_capped(self) -> None:
+        long = " ".join(["ˈkɑzɛθ"] * 30)
+        self.assertEqual(respell(long), " ".join(["KAH-zeth"] * 9))  # 80 characters
+        huge = "ɑ" * 1_000_000
+        answer = respell(huge)
+        self.assertLessEqual(len(answer), MAX_LENGTH)
+        self.assertTrue(_SPELLING.fullmatch(answer), answer)
+
+    def test_the_limit_matches_the_names_page(self) -> None:
+        self.assertEqual(MAX_LENGTH, SAID_AS_MAX)
