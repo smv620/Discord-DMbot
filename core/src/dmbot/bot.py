@@ -1882,6 +1882,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task.cancel()
         # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
         clips = list(self._voice_tasks.values())
+        if self._listening is not None:  # 🎤 Say it (#2316): stop the round, then the worker
+            clips.append(self._listening)
         for task in clips:
             task.cancel()
         await asyncio.gather(
@@ -1892,6 +1894,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *clips,
             return_exceptions=True,
         )
+        if self._speech_sounds is not None:
+            await self._speech_sounds.close()  # the child holds about a gigabyte of weights
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()

@@ -12,9 +12,10 @@ from dmbot.migrations._shared import _isolate
 # result and clears the clip in the same statement, a failure clears it too, and a row goes within
 # an hour (the door and the bot both sweep). The website's container does no listening (the model
 # runs in a worker the bot starts), so a press queues a row and the page polls it. Nothing here is
-# logged, kept in a transcript or put in a backup. The door checks the caller is a DM of the
-# campaign and holds the campaign to 6 clips a minute and 3 waiting: a clip costs the bot some
-# seconds of one processor.
+# logged, kept in a transcript or put in a campaign backup (the clip does sit in the database for
+# the minute or two it takes, and its dead row until the database tidies up). The door checks the
+# caller is a DM of the campaign and holds the campaign to 6 clips a minute and 3 waiting: a clip
+# costs the bot some seconds of one processor.
 SQL = (
     r"""
     CREATE TABLE said_as_listens (

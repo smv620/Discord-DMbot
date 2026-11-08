@@ -32,7 +32,7 @@ from dmbot.said_as.respell import respell
 log = logging.getLogger(__name__)
 
 PER_ROUND = 3  # clips worked in one round for one server
-RETAKE_AFTER_S = 180  # a claim this old belongs to a bot that stopped
+RETAKE_AFTER_S = 300  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 TRIES_MAX = 2  # a clip is worked at most twice: a stalled claim is retaken once, then fails
 MAX_CLIP_BYTES = 1_000_000

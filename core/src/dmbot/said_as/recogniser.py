@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 IDLE_S = 600  # the model is unloaded after ten minutes without a clip
 LOAD_S = 180.0  # the longest the first clip waits for the weights to load
 CLIP_S = 60.0  # the longest one clip may take once the model is loaded
+THREADS = 2  # processors the model may use: the rest is the live table's
 NICE = 10  # the child's priority is lowered by this much: live recording first
 MAX_REPLY = 4096  # a reply line longer than this is not an answer
 
@@ -54,9 +55,10 @@ class Recogniser(Protocol):
     async def unload_if_idle(self) -> None: ...
 
 
-def frame(pcm: bytes) -> bytes:
-    """One request to the worker: the length in four bytes, then the audio."""
-    return struct.pack(">I", len(pcm)) + pcm
+def frame(number: int, pcm: bytes) -> bytes:
+    """One request to the worker: its number and the length (four bytes each), then the audio.
+    The worker answers with the same number, so a reply to another request is never taken."""
+    return struct.pack(">II", number, len(pcm)) + pcm
 
 
 class WorkerRecogniser:
@@ -78,6 +80,7 @@ class WorkerRecogniser:
         self._now = clock
         self._proc: asyncio.subprocess.Process | None = None
         self._used = 0.0
+        self._number = 0  # the last request's number
         self._lock = asyncio.Lock()  # one clip at a time
 
     @property
@@ -91,13 +94,19 @@ class WorkerRecogniser:
             try:
                 proc = await self._start()
                 assert proc.stdin is not None and proc.stdout is not None
-                proc.stdin.write(frame(pcm))
+                self._number += 1
+                proc.stdin.write(frame(self._number, pcm))
                 await proc.stdin.drain()
                 line = await asyncio.wait_for(proc.stdout.readline(), CLIP_S)
                 reply = json.loads(line[:MAX_REPLY])
                 ipa = reply["ipa"]
-                if not isinstance(ipa, str):
-                    raise ValueError("ipa")
+                if not isinstance(ipa, str) or reply.get("n") != self._number:
+                    raise ValueError("reply")
+            except asyncio.CancelledError:
+                # A clip stopped half way leaves its reply unread in the pipe, where the next
+                # clip would take it as its own: the worker goes, whatever was running.
+                await asyncio.shield(self._stop())
+                raise
             except RecogniserError:
                 await self._stop()
                 raise
@@ -118,13 +127,26 @@ class WorkerRecogniser:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,  # its messages could quote the audio's sounds
-            preexec_fn=lambda: os.nice(NICE),
+            # Not the bot's environment: it holds the Discord token and the API keys, and this
+            # child runs third-party model code. Offline, so it can only read the folder given.
+            env={
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "OMP_NUM_THREADS": str(THREADS),
+            },
+            cwd="/",
         )
         assert proc.stdout is not None
         self._proc = proc
+        with contextlib.suppress(OSError, AttributeError):  # lower priority: live recording first
+            os.setpriority(os.PRIO_PROCESS, proc.pid, NICE)
         try:
             line = await asyncio.wait_for(proc.stdout.readline(), LOAD_S)
             ready = json.loads(line[:MAX_REPLY])
+        except asyncio.CancelledError:
+            await asyncio.shield(self._stop())  # never leave a half-started worker as "ready"
+            raise
         except Exception as exc:
             log.warning("The speech-sound model did not load: %s", type(exc).__name__)
             await self._stop()

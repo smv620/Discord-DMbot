@@ -29,6 +29,7 @@ from dmbot.web.sessions import Session
 MAX_CLIP_BYTES = 1_000_000  # the issue's 1 MB (the column allows 1 MiB)
 WAIT_S = 20.0  # how long the route waits for the bot before handing back an id to poll
 POLL_S = 0.5
+POLL_MAX_S = 2.0  # the poll slows down while the bot is busy: fewer reads of the same row
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
 # The page's recorder gives webm or ogg; a wav file is read too. The type's parameters
@@ -145,3 +146,4 @@ async def wait_for_answer(
         if loop.time() >= until:
             return None
         await asyncio.sleep(poll_s)
+        poll_s = min(poll_s * 1.5, max(poll_s, POLL_MAX_S))
