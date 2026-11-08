@@ -609,6 +609,16 @@ class UnnamedPeople(unittest.TestCase):
         (row,) = report.entries
         self.assertEqual(row.status, gkc.FOUND)
         self.assertEqual(report.violations, [])  # (a description is no must-not name)
+        old = backup([("u2", "maul barbarian (name unknown)", "character")], [])
+        old["sections"]["memory"][0]["unnamed"] = True  # (an older backup's form)
+        report = gkc.check(old, self.raider_key())
+        self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
+
+    def test_other_must_not_names_still_count_as_descriptions(self) -> None:
+        key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
+        data = backup([("u1", "unnamed - the attackers", "character")], [])
+        data["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(data, key).violations, ["the attackers"])
 
 
 if __name__ == "__main__":

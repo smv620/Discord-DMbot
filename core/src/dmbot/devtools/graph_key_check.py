@@ -209,12 +209,8 @@ class Graph:
         return found
 
     def ids(self, names: Sequence[str]) -> set[str]:
-        found: set[str] = set()
-        for n in names:
-            found |= self.by_key.get(name_key(n), set())
-            # (a key's own other names may still be in the old form)
-            found |= self.by_description.get(_plain(_OLD_SUFFIX.sub("", n)), set())
-        return found
+        """Entries by name or other name, and people the story never named by description."""
+        return self.named(names) | self.described(names)
 
     def between(self, a: set[str], b: set[str]) -> list[tuple[Mapping[str, Any], bool]]:
         """Connections between two sets of entries, each with whether it runs a to b."""
@@ -403,10 +399,15 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     kind_of_key = {n["name"]: n["kind"] for n in nodes}
     matched_ids: set[str] = set()
     used_relations: set[str] = set()
+    strict = {n["name"] for n in nodes if n.get("unnamed")}
+
+    def lookup(name: str) -> set[str]:
+        # (a key entry the story never names, marked `unnamed`, is found by an unnamed entry's
+        # description only, so a description stored as a name, "maul barbarian", is never it)
+        return graph.described(names[name]) if name in strict else graph.ids(names[name])
+
     for n in nodes:
-        # (a key entry the story never names is found by an unnamed entry's description only, so
-        # a description stored as a name, "maul barbarian", is never taken for it)
-        ids = graph.described(names[n["name"]]) if n.get("unnamed") else graph.ids(names[n["name"]])
+        ids = lookup(n["name"])
         matched_ids |= ids
         if not ids:
             status = BY_DESIGN if n.get("by_design") else MISSING
@@ -429,7 +430,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         if t["a"] not in names or t["b"] not in names:
             continue
-        a, b = graph.ids(names[t["a"]]), graph.ids(names[t["b"]])
+        a, b = lookup(t["a"]), lookup(t["b"])
         if not a or not b:
             status, why, used_here = MISSING, "no entry", set[str]()
         else:
@@ -464,7 +465,10 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
-        if graph.named([name]):
+        # (a must-not name is still found in a description too, as before; only one that is a
+        # key `unnamed` entry's own description is right as a description, #3545)
+        right_as_description = any(_plain(name) in {_plain(x) for x in names[s]} for s in strict)
+        if graph.named([name]) or (not right_as_description and graph.described([name])):
             report.violations.append(name)
     for r in graph.relations:
         if (

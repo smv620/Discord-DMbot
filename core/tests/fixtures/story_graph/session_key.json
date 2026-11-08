@@ -667,5 +667,11 @@
   "'you elves all look alike to me' is a joke, not a relationship",
   "distances, speeds and times (the map context below) are travel facts, not ties between people",
   "'she' and 'the lady' are never a new person: they are Keegan Velryn, and 'he' in Jebidiah's lines is Jebidiah"
+ ],
+ "must_not_names": [
+  "morningstar barbarian",
+  "maul barbarian",
+  "barbarians",
+  "the attackers"
  ]
 }

@@ -206,7 +206,7 @@ These are the ties the check should find most surely: the session repeats or sha
 
 ## Entries
 
-### People (35)
+### People (37)
 
 | name | also called | in | note |
 |---|---|---|---|
@@ -245,6 +245,8 @@ These are the ties the check should find most surely: the session repeats or sha
 | Brewner's daughter | Brewner's daughter (name unknown) | lore | Unnamed. Leads Brewner home. |
 | The minotaur captain | Minotaur captain of the first ship, Minotaur captain | lore | Unnamed. Captain of the first ship. |
 | The beggar woman | beggar woman | lore | Unnamed. Gives a prophecy. |
+| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
+| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 
 ### Creatures (8)
 
@@ -276,8 +278,6 @@ These are the ties the check should find most surely: the session repeats or sha
 | The circus |  | lore | Unnamed travelling circus that held Claude |
 | The Brotherhood |  | lore | Unnamed. Named in the note in the tome |
 | Garret's clients |  | session | Unnamed. Hired Garret as a guide; Keegan never met them. |
-| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
-| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 | Clan Battlehammer |  | session | Dwarves Belleros wants to ask what happened. |
 
 ### Places (29)

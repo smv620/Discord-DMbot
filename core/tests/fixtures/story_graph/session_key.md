@@ -77,7 +77,7 @@ What the graph should hold after the sample session is read: [the session transc
 
 ## Entries
 
-### People (9)
+### People (11)
 
 | name | also called | note |
 |---|---|---|
@@ -90,6 +90,8 @@ What the graph should hold after the sample session is read: [the session transc
 | Jebidiah | Jebediah | Kennel master the DM voices. |
 | Vaelrith |  | Okthandom's brother, named by Belleros and confirmed by Okthandom. |
 | Nyssara |  | Okthandom's sister: 'my sister' first, her name 48 lines later. |
+| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
+| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 
 ### Creatures (3)
 
@@ -105,8 +107,6 @@ What the graph should hold after the sample session is read: [the session transc
 |---|---|---|
 | The party | the party, the four of you, my friends | The four player characters. |
 | Garret's clients |  | Unnamed. Hired Garret as a guide; Keegan never met them. |
-| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
-| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 | Explorer's League | the Explorers' League | Guild of explorers. |
 | Clan Battlehammer |  | Dwarves Belleros wants to ask what happened. |
 
