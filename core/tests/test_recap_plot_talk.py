@@ -11,7 +11,13 @@ from typing import Any
 
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.store import MemoryStore
-from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
+from dmbot.recaps.plot_talk_run import (
+    GIVE_UP_S,
+    NOT_ANSWERED,
+    NOT_SAVED,
+    TalkRunner,
+    TalkStore,
+)
 from tests.test_recap_plot import PlotBase
 from tests.test_web_api import THURSDAY
 
@@ -188,6 +194,40 @@ class Answering(TalkBase):
         late = TalkStore(self.db, clock=lambda: float(t + 700))
         self.assertIsNone(await late.claim_next(THURSDAY.id))  # but not forever
 
+    async def test_a_message_past_the_give_up_time_is_failed_in_plain_words_and_never_answered(
+        self,
+    ) -> None:
+        await self.say()
+        t = await self.created_at()
+        late = TalkStore(self.db, clock=lambda: float(t + GIVE_UP_S + 60))
+        self.assertIsNone(await late.claim_next(THURSDAY.id))  # a waiting one is not answered late
+        self.assertEqual(await late.expire(THURSDAY.id), 1)
+        [dm] = [m for m in await self.messages() if m["role"] == "dm"]
+        self.assertEqual((dm["state"], dm["error"]), ("failed", NOT_ANSWERED))
+        self.assertEqual(await late.expire(THURSDAY.id), 0)  # once
+
+    async def test_a_stalled_claim_past_the_give_up_time_is_failed_too(self) -> None:
+        await self.say()
+        self.assertIsNotNone(await self.talk.claim_next(THURSDAY.id))  # taken, then the bot died
+        t = await self.created_at()
+        late = TalkStore(self.db, clock=lambda: float(t + GIVE_UP_S + 60))
+        self.assertEqual(await late.expire(THURSDAY.id), 1)
+        [dm] = [m for m in await self.messages() if m["role"] == "dm"]
+        self.assertEqual((dm["state"], dm["error"]), ("failed", NOT_ANSWERED))
+
+    async def test_a_fresh_message_is_left_alone_by_the_expiry(self) -> None:
+        await self.say()
+        self.assertEqual(await self.talk.expire(THURSDAY.id), 0)
+        self.assertIsNotNone(await self.talk.claim_next(THURSDAY.id))
+
+    async def test_the_round_gives_up_before_it_answers(self) -> None:
+        await self.say()
+        t = await self.created_at()
+        late = TalkStore(self.db, clock=lambda: float(t + GIVE_UP_S + 60))
+        ai = Ai(good())
+        self.assertEqual(await TalkRunner(late, self.memory, ai).round(THURSDAY.id), 0)
+        self.assertEqual(ai.calls, 0)  # nothing was asked of the AI for a message that is gone
+
     async def test_the_sweep_deletes_old_talks_in_its_own_server_only(self) -> None:
         from dmbot.campaigns.store import CampaignStore
         from dmbot.recaps.plot_talk_run import KEEP_S
@@ -323,6 +363,22 @@ class Saving(TalkBase):
         # and the bot, back at last, has nothing to make for it
         self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
         self.assertEqual(await self.condition(), "dead")
+
+    async def test_the_bot_gives_up_a_stale_save_itself_and_never_makes_it_late(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.move_saving_back(31 * 60)  # the bot was off; nobody has looked at the page
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
+        self.assertEqual(await self.condition(), "dead")  # not made after its half hour
+        [late] = (await self.messages())[-1]["proposals"]
+        self.assertEqual((late["state"], late["error"]), ("failed", NOT_SAVED))
+
+    async def test_a_save_inside_its_half_hour_is_made(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.move_saving_back(29 * 60)
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 1)
+        self.assertEqual(await self.condition(), "alive")
 
     async def test_a_save_from_before_the_stamp_is_judged_by_its_message(self) -> None:
         p = await self.reply_with_proposal()

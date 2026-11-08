@@ -152,6 +152,26 @@ class Quoting(unittest.TestCase):
         got = pt.parse(raw("It's the party's call, and the players' too."), ctx())
         self.assertIsNotNone(got)
 
+    def test_an_apostrophe_closes_only_a_span_an_apostrophe_opened(self) -> None:
+        # a possessive inside a double-quoted span is not the end of it (#2545)
+        said = ctx(message="He found the dwarves' hall empty.")
+        got = pt.parse(raw('You said "He found the dwarves\' hall empty" so noted.'), said)
+        self.assertIsNotNone(got)
+        # and an apostrophe-opened span still closes on an apostrophe, and is still checked
+        line = "Gorrak swung the axe at dawn"
+        self.assertIsNone(pt.parse(raw(f"Someone said '{line}' there."), ctx()))
+        ok = ctx(message="He came back as a ghost.")
+        self.assertIsNotNone(pt.parse(raw("You said 'He came back as a ghost' to me."), ok))
+
+    def test_a_double_prime_after_a_digit_is_inches_not_a_quotation_mark(self) -> None:
+        text = 'The wall is 10″ thick, and you said "He came back as a ghost".'
+        self.assertIsNotNone(pt.parse(raw(text), ctx()))
+        text = "Seconds are 5‶ long, and you said “He came back as a ghost”."
+        self.assertIsNotNone(pt.parse(raw(text), ctx()))
+        # not after a digit it is still a mark, so a quotation in it is still checked
+        line = "Gorrak swung the axe at dawn"
+        self.assertIsNone(pt.parse(raw(f"Someone said ″{line}″ there."), ctx()))
+
     def test_words_are_compared_whole_and_in_order_not_as_a_substring(self) -> None:
         self.assertIsNone(pt.parse(raw('You said "he came back as a gho".'), ctx()))
         self.assertIsNone(pt.parse(raw('You said "ghost a as back came he".'), ctx()))

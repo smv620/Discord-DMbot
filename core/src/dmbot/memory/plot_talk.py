@@ -156,6 +156,7 @@ def message(ctx: Context) -> str:
 
 _OPEN_CLOSE = '"“”„‟«»‹›「」『』`'  # marks that always quote
 _ALSO_MARKS = "″‶〝〞〟❝❞"  # quotation marks Unicode files under other categories
+_UNIT_MARKS = "″‶"  # double primes: after a digit they are inches or seconds (10″), not a mark
 _APOSTROPHES = "'‘’‚‛"  # quote only when not inside a word (it's, players')
 MAX_QUOTED_SPANS = 4  # more than this many quotations in one reply is a line strung together
 
@@ -174,10 +175,14 @@ def _spans(reply: str) -> list[str] | None:
     not pair up (an unbalanced mark would hide a quotation from the check). An apostrophe inside
     a word is not a mark. A closing mark may be the same character as the opening one."""
     for mark in _ALSO_MARKS:  # before NFKC, which would turn ″ into two primes
-        reply = reply.replace(mark, '"')
+        if mark in _UNIT_MARKS:
+            reply = re.sub(rf"(?<![0-9]){mark}", '"', reply)
+        else:
+            reply = reply.replace(mark, '"')
     reply = unicodedata.normalize("NFKC", reply)  # fullwidth marks become the plain ones
     spans: list[str] = []
     opened: int | None = None
+    opened_by_apostrophe = False
     for n, ch in enumerate(reply):
         # every initial/final quotation mark (Pi, Pf) quotes, whatever script it comes from
         quoting = ch in _OPEN_CLOSE or ch in _ALSO_MARKS or unicodedata.category(ch) in ("Pi", "Pf")
@@ -188,10 +193,15 @@ def _spans(reply: str) -> list[str] | None:
             # a possessive plural (players') ends a word: not a mark either, unless one is open
             if quoting and opened is None and before.isalnum():
                 quoting = False
+            # an apostrophe closes only a span an apostrophe opened: inside a "double-quoted"
+            # span it is a possessive ("the dwarves' hall"), not the end of the quotation
+            if quoting and opened is not None and not opened_by_apostrophe:
+                quoting = False
         if not quoting:
             continue
         if opened is None:
             opened = n + 1
+            opened_by_apostrophe = ch in _APOSTROPHES
         else:
             spans.append(reply[opened:n])
             opened = None
