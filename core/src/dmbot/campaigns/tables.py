@@ -171,6 +171,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
+    "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,
