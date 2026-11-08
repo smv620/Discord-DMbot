@@ -104,6 +104,7 @@ from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
+from dmbot.web.hear import queue_hear, read_hear
 from dmbot.web.improvement import read_choice as read_improvement
 from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.kind_offers import read_kind_offers
@@ -2833,6 +2834,49 @@ def create_app(
             raise HTTPException(status_code=404, detail="not_found")
         status, detail = recap_refusals["voice_off"]
         raise HTTPException(status_code=status, detail=detail)
+
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/hear")
+    async def me_campaign_name_hear(
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """🔊 Hear it (#3807): queue the box's words, possibly unsaved, to be said in the recap
+        narrator's voice: `{"text": "Kah-zeth"}` answers `{"id": ...}` to poll. The key stays with
+        the bot, so this only queues. `voice_off` when narration is not set up or the owner's plan
+        has none (the page falls back to the browser's voice); 429 `slow_down` past 20 a minute."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("text") if isinstance(body, dict) else None
+        try:
+            press = await queue_hear(
+                db,
+                session,
+                ref,
+                alias_id,
+                words,
+                audio_on=settings.recap_audio_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"id": press}
+
+    @app.get("/me/campaigns/{ref}/names/{alias_id}/said-as/hear/{press}")
+    async def me_campaign_name_hear_read(
+        ref: str, alias_id: str, press: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where one press of Hear it stands, and the clip once it is done (base64 WAV, handed
+        over once). Only the DM who pressed can read it."""
+        session, _token = signed
+        try:
+            return await read_hear(db, session, ref, press)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/recap-choices")
     async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:
