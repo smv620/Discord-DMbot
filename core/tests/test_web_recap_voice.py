@@ -563,6 +563,8 @@ class TheLoop(WithClips):
         stub: Any = bot
         for name, value in {
             "_closing": False,
+            "_listening": None,
+            "_speech_sounds": None,
             "ai_watch": SimpleNamespace(wait=AsyncMock()),
             "plan_reads": {},
             "_eleven_http": None,
