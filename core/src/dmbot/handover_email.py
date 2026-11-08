@@ -14,9 +14,11 @@ email could not be sent. At most one offer is open for a campaign; a new one tak
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import secrets
+import weakref
 from typing import Literal
 
 from dmbot.campaigns import CampaignError, CampaignStore
@@ -45,6 +47,23 @@ NOT_ALLOWED = (
     "⚙️ Manage DMbot → 🗂️ Campaign management."
 )
 FAILED = "DMbot couldn't send that email, so nothing was offered. Try again in a minute."
+
+
+# One owner's offers go one at a time in this process, from the day's count to the sent email, so
+# two sends that arrive together cannot both read "four" and make a sixth (#2547). A lock per owner,
+# forgotten when nobody holds it. The bot and the website's API are separate processes; the limit
+# is a courtesy to the mail service and the recipient, and two presses in different processes in
+# the same second is the one case this does not close. (A database lock would need a connection
+# held across the send, and a small pool of them waiting would starve the send's own queries.)
+_OWNER_LOCKS: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def _owner_lock(owner_id: int) -> asyncio.Lock:
+    lock = _OWNER_LOCKS.get(owner_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _OWNER_LOCKS[owner_id] = lock
+    return lock
 
 
 def hash_token(token: str) -> str:
@@ -112,6 +131,38 @@ async def offer_by_email(
         return "bad_email"
     if mailer is None or not site_url:
         return "email_failed"
+    async with _owner_lock(owner_id):  # held to the end: the count must see the earlier send
+        return await _offer_locked(
+            db,
+            store,
+            mailer,
+            owner_id=owner_id,
+            owner_name=owner_name,
+            guild_id=guild_id,
+            campaign_id=campaign_id,
+            campaign_name=campaign_name,
+            server_name=server_name,
+            email=email,
+            site_url=site_url,
+            now=now,
+        )
+
+
+async def _offer_locked(
+    db: Database,
+    store: CampaignStore,
+    mailer: Mailer,
+    *,
+    owner_id: int,
+    owner_name: str,
+    guild_id: int,
+    campaign_id: str,
+    campaign_name: str,
+    server_name: str,
+    email: str,
+    site_url: str,
+    now: int,
+) -> Outcome:
     if await offers_today(db, owner_id, now) >= OFFERS_PER_DAY:
         return "too_soon"
     token = secrets.token_urlsafe(32)

@@ -166,6 +166,26 @@ class Offering(OfferBase):
         self.now += 120  # (past the per-minute limit; the offer's time must stay near real time)
         self.assertEqual((await self.offer("late@example.org")).status_code, 200)
 
+    async def test_offers_that_arrive_together_cannot_make_a_sixth(self) -> None:
+        import asyncio
+
+        async with self.db.unscoped() as conn:
+            await conn.execute("DELETE FROM sent_emails")
+        store = CampaignStore(self.db, clock=lambda: self.now)
+
+        async def send(n: int) -> str:
+            return await handover_email.offer_by_email(
+                self.db, store, self.sender, owner_id=ALICE.id, owner_name="Alice",
+                guild_id=THURSDAY.id, campaign_id=self.campaign.id, campaign_name="One",
+                server_name="Thursday", raw_email=f"together{n}@example.org",
+                site_url=SITE, now=self.now,
+            )  # fmt: skip
+
+        answers = await asyncio.gather(*(send(n) for n in range(8)))
+        self.assertEqual(answers.count("emailed"), handover_email.OFFERS_PER_DAY)
+        self.assertEqual(answers.count("too_soon"), 8 - handover_email.OFFERS_PER_DAY)
+        self.assertEqual(len(self.transport.sent), handover_email.OFFERS_PER_DAY)
+
     async def test_a_bad_address_is_refused_and_nothing_is_offered(self) -> None:
         for bad in ("", "nobody", "a b@example.org", "two@@example.org", 5):
             got = await self.alice.post(f"/me/campaigns/{self.ref}/handover", json={"email": bad})
