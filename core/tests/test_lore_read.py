@@ -142,7 +142,9 @@ class TheExamples(unittest.TestCase):
             self.assertIn(rule, prompt)
         self.assertIn("person, player, place, group, god, item, event, idea", prompt)
         self.assertIn("patron_of", prompt)
-        self.assertIn(lr.EXAMPLES, prompt)
+        self.assertIn(
+            lr._ABOUT_PART.sub("", lr.EXAMPLES), prompt
+        )  # (no about: unless asked, #2967)
 
     def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
         prompt = lr.read_instructions()

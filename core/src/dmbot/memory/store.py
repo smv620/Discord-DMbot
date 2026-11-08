@@ -2239,6 +2239,10 @@ class MemoryStore:
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
                         "hidden_from_players": not n.shown,
+                        # (the players' line only for a name the world knows, never cut, #2967)
+                        "players_text": n.players_text
+                        if n.shown and 0 < len(n.players_text) <= PLAYERS_TEXT_MAX
+                        else None,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
