@@ -147,3 +147,5 @@ turns on the private notice and the backed-off reminders. Counts for the website
 written either way. Turn it on only after the Questions message the notices point to is deployed
 and dev1 has seen a notice, a reminder replace the one before, and 🔕 Not now stop them; it goes with the
 site's Questions switch.
+
+The site search bar's short answer (#3856) is `DMBOT_SITE_ASK` (off by default, `.env.example`), with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_AI_TOKEN` (a token with only the Workers AI permission). Turn it on only after the web API is deployed with the three mounts of DMbot's public words (`docker-compose.yml`, web-api) and dev1 has asked it three questions the public words answer and one that is off topic, and seen: a short plain answer with one page link for each of the three, the off-topic line for the fourth, "Too many requests to process" after a limit, and no question, answer or address in `docker logs` (counts only). The token must be one made for this and nothing else.
