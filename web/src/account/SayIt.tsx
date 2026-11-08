@@ -57,6 +57,8 @@ export default function SayIt({
   const ticker = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const mounted = useRef(true);
   const sending = useRef(false);
+  // A ref, not the state: two presses in one tick would both see hearing=false.
+  const hearingRef = useRef(false);
   // The narrator's clip being played, kept so it can be stopped and its address let go.
   const playing = useRef<HTMLAudioElement | null>(null);
   const playingUrl = useRef<string | null>(null);
@@ -160,6 +162,7 @@ export default function SayIt({
     setSaid(null);
     // A voice still reading the box aloud would be heard by the microphone.
     if (canBrowserHear) window.speechSynthesis.cancel();
+    playing.current?.pause();
     setPhase("asking");
     let got: MediaStream;
     try {
@@ -284,9 +287,14 @@ export default function SayIt({
   };
 
   const hear = async (): Promise<void> => {
-    if (!canHear || value.trim() === "" || hearing) return;
+    if (!canHear || value.trim() === "" || hearing || hearingRef.current) return;
     setProblem(null);
-    if (!narrator || browserOnly || !api.hearSaidAs) return hearWithBrowser();
+    if (!narrator || browserOnly || !api.hearSaidAs) {
+      // With the narrator's voice in play, a robot voice must never pass for it: say so every time, not once.
+      if (HEAR_NARRATOR_LIVE) setSaid(words.browserVoice);
+      return hearWithBrowser();
+    }
+    hearingRef.current = true;
     setHearing(true);
     try {
       const clipBlob = await api.hearSaidAs(campaignRef, nameId, value);
@@ -301,7 +309,14 @@ export default function SayIt({
         URL.revokeObjectURL(url);
         if (playingUrl.current === url) playingUrl.current = null;
       };
-      await audio.play();
+      try {
+        await audio.play();
+      } catch {
+        // The clip is made, but the browser refused to start it (no press any more on Safari/iOS).
+        URL.revokeObjectURL(url);
+        if (playingUrl.current === url) playingUrl.current = null;
+        setProblem(words.problem["play-refused"]!);
+      }
     } catch (error) {
       if (!mounted.current) return;
       // Narration is not set up (or the plan has none): the browser's voice reads it, and the page says so once.
@@ -311,6 +326,7 @@ export default function SayIt({
         hearWithBrowser();
       } else fail(error);
     } finally {
+      hearingRef.current = false;
       if (mounted.current) setHearing(false);
     }
   };
@@ -327,7 +343,7 @@ export default function SayIt({
 
   if (!canSuggest && !canRecord && !canHear) return null;
 
-  const busy = disabled || suggesting || phase === "asking" || phase === "sending";
+  const busy = disabled || suggesting || hearing || phase === "asking" || phase === "sending";
   // What a screen reader is told as things change; the region is always on the page, so it is heard.
   const spoken =
     phase === "recording"

@@ -157,4 +157,29 @@ describe("🔊 Hear it in the narrator's voice", () => {
     press();
     expect((await screen.findAllByText(w.problem["not-found"] as string)).length).toBeGreaterThan(0);
   });
+  it("asks once when pressed twice in the same tick", async () => {
+    const api = mockApi("table");
+    render(<Box api={api} />);
+    const b = screen.getByRole("button", { name: w.hear });
+    fireEvent.click(b);
+    fireEvent.click(b);
+    await waitFor(() => expect(played).toHaveLength(1));
+    expect(api.calls.filter((c) => c.startsWith("hearSaidAs"))).toHaveLength(1);
+  });
+
+  it("says so when the browser refuses to play a clip that was made", async () => {
+    vi.stubGlobal(
+      "Audio",
+      class {
+        onended = null;
+        pause(): void {}
+        async play(): Promise<void> {
+          throw new Error("NotAllowedError");
+        }
+      },
+    );
+    render(<Box api={mockApi("table")} />);
+    press();
+    expect((await screen.findAllByText(w.problem["play-refused"] as string)).length).toBeGreaterThan(0);
+  });
 });

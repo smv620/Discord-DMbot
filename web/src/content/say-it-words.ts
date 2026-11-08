@@ -25,10 +25,10 @@ export const sayIt = {
   hear: "🔊 Hear it",
   // Hear it in the recap narrator's voice (#3807): the words go to DMbot's voice service, so it is said once, and the
   // wait shows DMbot is working. With no narration set up the browser's own voice reads it, and that is said too.
-  hearPrivacy: "🔊 Hear it sends these letters to DMbot's voice service, which makes the sound in your recap narrator's voice.",
-  hearStage: "Waiting for DMbot to make the sound.",
-  hearQuiet: "DMbot is slow to answer. Press Hear it again in a minute, or carry on without it.",
-  browserVoice: "This is your browser's voice, not the narrator's.",
+  hearPrivacy: "Pressing 🔊 Hear it sends what's in the box to DMbot's voice service. It plays the sound in your recap narrator's voice.",
+  hearStage: "Making the sound in the narrator's voice…",
+  hearQuiet: "Still working. You can keep going: your spelling stays in the box. If no sound comes, press 🔊 Hear it again.",
+  browserVoice: "This is your browser's voice, not the narrator's. Recaps will sound different.",
   // Said once, near the buttons.
   how: "DMbot only listens while you press 🎤 Say it. DMbot turns what you say into letters. Check them before you save. Your recording is deleted once it's turned into letters.",
   filled: "Here is what DMbot heard, as letters. Change them if they're not right, then save.",
@@ -36,8 +36,9 @@ export const sayIt = {
   playbackLabel: (name: string): string => `Your recording of ${name}`,
   problem: {
     "voice-off": "Saying it isn't available right now. You can type how to say it instead.",
-    "too-soon": "Please wait a moment, then press Hear it again.",
-    "still-waiting": "DMbot hasn't made the sound yet. Press Hear it again in a minute.",
+    "too-soon": "That was pressed a moment ago. Wait a few seconds, then press 🔊 Hear it again.",
+    "play-refused": "The sound is ready but your browser would not play it. Press 🔊 Hear it again.",
+    "still-waiting": "No sound yet. Wait a minute, then press 🔊 Hear it again.",
     busy: "Finish the other recording first.",
     "mic-refused": "DMbot can't use the microphone. Allow it in your browser, or type how to say it instead.",
     "bad-clip": "DMbot couldn't make that out. Try again somewhere quieter, or type it.",
