@@ -62,7 +62,7 @@ export default function SayIt({
   // A ref, not the state: two presses in one tick would both see hearing=false.
   const hearingRef = useRef(false);
   // Set by "Type it instead": the poll for the bot's answer stops at its next look.
-  const gaveUp = useRef(false);
+  const requestId = useRef(0);
   // The narrator's clip being played, kept so it can be stopped and its address let go.
   const playing = useRef<HTMLAudioElement | null>(null);
   const playingUrl = useRef<string | null>(null);
@@ -265,16 +265,16 @@ export default function SayIt({
     const made = clip.current;
     if (!made || !api.respellFromVoice || sending.current) return;
     sending.current = true;
-    gaveUp.current = false;
+    const mine = (requestId.current += 1);
     setLook({ state: "waiting", progress: null });
     setPhase("sending");
     setProblem(null);
     try {
       const text = await api.respellFromVoice(campaignRef, nameId, made, {
         onLook: (got) => mounted.current && setLook(got),
-        cancelled: () => gaveUp.current || !mounted.current,
+        cancelled: () => requestId.current !== mine || !mounted.current,
       });
-      if (!mounted.current || gaveUp.current) return;
+      if (!mounted.current || requestId.current !== mine) return;
       onValue(text, "heard");
       setSaid(words.filled);
       dropClip();
@@ -282,12 +282,14 @@ export default function SayIt({
       // The words are in the box: the keyboard goes there, to check and save them.
       if (fieldId) setTimeout(() => document.getElementById(fieldId)?.focus(), 0);
     } catch (error) {
-      if (!mounted.current || gaveUp.current) return;
-      fail(error);
+      if (!mounted.current || requestId.current !== mine) return;
+      if (error instanceof ApiError && error.kind === "still-waiting") setProblem(words.problem["voice-late"]!);
+      else if (error instanceof ApiError && error.kind === "too-soon") setProblem(words.problem["voice-too-soon"]!);
+      else fail(error);
       // The clip is still here: the DM may try again or record it again.
       setPhase("recorded");
     } finally {
-      sending.current = false;
+      if (requestId.current === mine) sending.current = false;
     }
   };
 
@@ -343,13 +345,14 @@ export default function SayIt({
   };
 
   const waiting = suggesting || phase === "sending";
-  const voiceSeen = useObservedWait(phase === "sending", "");
+  const voiceSeen = useObservedWait(phase === "sending", `${look?.state ?? ""}:${look?.progress?.updatedAt ?? ""}`);
   // "Type it instead": stop waiting, drop the clip and leave the keyboard in the box. Nothing is lost: the clip is deleted by the bot.
   const typeInstead = (): void => {
-    gaveUp.current = true;
+    requestId.current += 1;
     sending.current = false;
     dropClip();
     setPhase("idle");
+    setSaid(words.typing);
     if (fieldId) setTimeout(() => document.getElementById(fieldId)?.focus(), 0);
   };
   useEffect(() => {
@@ -373,7 +376,9 @@ export default function SayIt({
         : phase === "asking"
           ? words.askingHint
           : phase === "sending"
-            ? words.sending
+            ? look?.state === "working"
+              ? words.voiceWorking
+              : words.voiceWaiting
             : (said ?? "");
   return (
     <div class="say-it">
@@ -434,10 +439,10 @@ export default function SayIt({
             serverNow={look?.progress?.serverNow}
             state={voiceSeen.quiet ? "stalled" : "running"}
             progressUnknown={!look?.progress}
-            whatToDo={words.problem["still-waiting"]}
+            whatToDo={words.voiceQuiet}
           />
-          {look?.state !== "working" && waited >= 30 && <p class="small muted">{words.voiceBusy}</p>}
-          {(waited >= 30 || voiceSeen.quiet) && (
+          {look?.state !== "working" && waited >= 15 && <p class="small muted">{words.voiceBusy}</p>}
+          {(waited >= 15 || voiceSeen.quiet) && (
             <div class="row">
               <button type="button" class="button secondary" onClick={typeInstead}>
                 {words.typeInstead}

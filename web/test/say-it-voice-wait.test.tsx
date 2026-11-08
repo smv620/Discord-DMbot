@@ -66,24 +66,24 @@ describe("🎤 Say it, waiting for the bot", () => {
     const api = mockApi("table");
     render(<Box api={api} campaign="100.cmp1.voice-slow" />);
     await sendClip();
-    expect(await screen.findByText(w.voiceWaiting)).toBeTruthy();
-    expect(await screen.findByText(w.voiceWorking)).toBeTruthy();
+    expect((await screen.findAllByText(w.voiceWaiting)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(w.voiceWorking)).length).toBeGreaterThan(0);
     await waitFor(() => expect((screen.getByLabelText("said as") as HTMLInputElement).value).not.toBe(""), { timeout: 4000 });
   });
 
-  it("says the bot is busy at the table after 30 seconds, and Type it instead stops the wait", async () => {
+  it("says the bot is busy at the table after 15 seconds, and Type it instead stops the wait", async () => {
     const api = mockApi("table");
     render(<Box api={api} campaign="100.cmp1.voice-busy" />);
     vi.useFakeTimers({ shouldAdvanceTime: true });
     await sendClip();
-    expect(await screen.findByText(w.voiceWaiting)).toBeTruthy();
+    expect((await screen.findAllByText(w.voiceWaiting)).length).toBeGreaterThan(0);
     expect(screen.queryByText(w.voiceBusy)).toBeNull();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(31000);
+      await vi.advanceTimersByTimeAsync(16000);
     });
     expect(screen.getByText(w.voiceBusy)).toBeTruthy();
     press(w.typeInstead);
-    expect(screen.queryByText(w.voiceWaiting)).toBeNull();
+    expect(screen.queryAllByText(w.voiceWaiting)).toHaveLength(0);
     expect(document.activeElement).toBe(screen.getByLabelText("said as"));
   });
 
@@ -96,5 +96,25 @@ describe("🎤 Say it, waiting for the bot", () => {
     await sendClip();
     expect((await screen.findAllByText(w.problem["voice-off"] as string)).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: w.useThis })).toBeTruthy();
+  });
+  it("after Type it instead, a second clip is not overwritten by the first one's late answer", async () => {
+    const api = mockApi("table");
+    const answers: Array<(t: string) => void> = [];
+    api.respellFromVoice = () => new Promise<string>((r) => answers.push(r));
+    render(<Box api={api} campaign="100.cmp1" />);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await sendClip();
+    await waitFor(() => expect(answers).toHaveLength(1));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16000);
+    });
+    press(w.typeInstead);
+    await sendClip();
+    await waitFor(() => expect(answers).toHaveLength(2));
+    await act(async () => {
+      answers[0]!("OLD-one");
+      answers[1]!("NEW-one");
+    });
+    await waitFor(() => expect((screen.getByLabelText("said as") as HTMLInputElement).value).toBe("NEW-one"));
   });
 });

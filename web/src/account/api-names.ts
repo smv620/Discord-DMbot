@@ -100,6 +100,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const first = (await call("POST", base, undefined, false, clip)) as { respelling?: string; id?: string };
       if (first?.respelling) return first.respelling;
       if (!first?.id) throw new ApiError("server");
+      let misses = 0;
       for (let i = 0; i < 120; i++) {
         if (watch?.cancelled?.()) throw new ApiError("server");
         await new Promise((r) => setTimeout(r, 1500));
@@ -107,8 +108,11 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         let got = null as { state?: string; error?: string; respelling?: string; progress?: unknown } | null;
         try {
           got = (await call("GET", `${base}/${encodeURIComponent(first.id)}`)) as NonNullable<typeof got>;
+          misses = 0;
         } catch (error) {
-          if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed", "bad-clip", "voice-off", "too-soon", "too-big"].includes(error.kind)) throw error;
+          // A server that stays down says so after a few looks, not after three silent minutes.
+          if ((misses += 1) >= 5) throw new ApiError("server");
         }
         if (got?.state === "done") {
           if (!got.respelling) throw new ApiError("server");
