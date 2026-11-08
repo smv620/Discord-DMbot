@@ -115,9 +115,9 @@ describe("the clean-up", () => {
   it("offers Where was it said? only for an entry with no scene, and shows the lines it is given", async () => {
     const api = mockApi("table");
     const asked: string[] = [];
-    api.clarifyName = async (_ref, id) => {
+    api.cleanupPlaces = async (_ref, id) => {
       asked.push(id);
-      return { id, name: "Brewner", note: "", places: [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "Brewner paid for the rope." }] }], morePlaces: 0, kinds: [], answering: false };
+      return { places: [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "Brewner paid for the rope." }] }], morePlaces: 0 };
     };
     await open("cleanup", api);
     await screen.findByText(w.count(6));
@@ -128,9 +128,18 @@ describe("the clean-up", () => {
     expect(asked).toEqual(["e5"]);
   });
 
+  it("reads the lines from the clean-up's own places call, with the pretend API's answer", async () => {
+    const api = await open();
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: `${namePlaceWords.button}: Brewner` }));
+    expect(await screen.findByText(/They talked about it by the fire\./)).toBeTruthy();
+    expect(api.calls).toContain("cleanupPlaces:100.cmp1.cleanup:e5");
+    expect(api.calls.some((c) => c.startsWith("clarifyName"))).toBe(false);
+  });
+
   it("says plainly when there are no lines for an entry", async () => {
     const api = mockApi("table");
-    api.clarifyName = async () => {
+    api.cleanupPlaces = async () => {
       throw new ApiError("not-found");
     };
     await open("cleanup", api);
