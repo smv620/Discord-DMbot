@@ -24,8 +24,9 @@ from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
 from dmbot.memory import notify, roles
-from dmbot.memory.importance_rank import MAX_LINES, ROLE_REASONS
+from dmbot.memory.importance_rank import MAX_LINES, ROLE_REASONS, roots
 from dmbot.memory.models import new_id
+from dmbot.memory.roles_backed import backed_roles
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,17 @@ class NewRole:
     reason: str
     session_started_at: int | None = None
     lines: tuple[int, ...] = field(default=())
+
+
+@dataclass(frozen=True, slots=True)
+class WhyRole:
+    """One role an entry holds, for the DM's "why" on a node: backed by connections (their ids,
+    to open with their lines) or stored from a reading (its session), or both."""
+
+    role: str
+    relation_ids: tuple[str, ...] = ()
+    stored_reason: str | None = None
+    session_started_at: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,5 +255,52 @@ class RoleStore:
                 for r in await cur.fetchall()
             ]  # fmt: skip
 
+    async def why(self, guild_id: int, campaign_id: str, entity_id: str) -> list[WhyRole]:
+        """Every role the entry holds, for the DM's "why": those its connections show, worked out
+        now (`roles_backed`), and those a reading stored, open ones only. A merged name's roles
+        count for the entry it ended up as, the way the importance rank counts them. Empty for an
+        entry that is gone. DM only: never handed to a player's screen."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, type, role, status, merged_into FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND type <> 'person'"
+                " AND status IN ('proposed', 'confirmed', 'merged')",
+                (guild_id, campaign_id),
+            )
+            entities = {str(r["id"]): r for r in await cur.fetchall()}
+            ended = roots(entities)
+            if ended.get(entity_id) != entity_id:
+                return []  # (gone, or merged into another: ask about the one that stayed)
+            cur = await conn.execute(
+                "SELECT id, subject_id, predicate, object_id, detail, status, to_session_at"
+                " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed' AND to_session_at IS NULL",
+                (guild_id, campaign_id),
+            )
+            relations = await cur.fetchall()
+            group = [e for e, root in ended.items() if root == entity_id]
+            cur = await conn.execute(
+                "SELECT role, reason, session_started_at FROM memory_roles"
+                " WHERE guild_id = %s AND campaign_id = %s AND ended_at IS NULL"
+                " AND entity_id = ANY(%s) ORDER BY recorded_at",
+                (guild_id, campaign_id, group),
+            )
+            # (one per role: when two names of a merged group each hold it, the newest wins)
+            stored = {str(r["role"]): r for r in await cur.fetchall()}
+        backed = backed_roles(entities, relations).get(entity_id, {})
+        out = []
+        for role in sorted(set(backed) | set(stored)):
+            row = stored.get(role)
+            out.append(
+                WhyRole(
+                    role,
+                    tuple(sorted(backed.get(role, ()))),
+                    None if row is None else str(row["reason"]),
+                    None if row is None or row["session_started_at"] is None
+                    else int(row["session_started_at"]),
+                )
+            )  # fmt: skip
+        return out
 
-__all__ = ["HeldRole", "NewRole", "RoleStore", "ensure_role_codes"]
+
+__all__ = ["HeldRole", "NewRole", "RoleStore", "WhyRole", "ensure_role_codes"]
