@@ -12,6 +12,7 @@ import type {
   CampaignSpeaker,
   SpeakerRemoval,
   HouseFileState,
+  AiFeedRead,
   LoreUpload,
   CampaignPage,
   CampaignSettingAnswer,
@@ -25,6 +26,7 @@ import type {
   HouseRuleCampaign,
   HouseRules,
   OptionalRules,
+  RuleDecision,
   RuleSharing,
   RuleSharingAnswer,
   SharedRulesCampaign,
@@ -235,6 +237,8 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
       )) as HouseRules,
+    ruleDecisions: async (campaignRef) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
     ruleSharing: async (campaignRef) =>
       (await call(
         "GET",
@@ -306,6 +310,8 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/house-file${id ? `/${encodeURIComponent(id)}` : ""}`)) as HouseFileState,
     houseFileAdd: async (ref, input) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/house-file`, input)) as HouseFileState,
+    aiFeed: async (ref, kind, job, after) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/ai-feed/${kind}/${encodeURIComponent(job)}?after=${after}`)) as AiFeedRead,
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };

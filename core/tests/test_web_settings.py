@@ -109,6 +109,10 @@ class FakeBot:
         await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
         return self.live
 
+    async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
+        self.calls.append(("share_improve", f"{on}"))
+        await self.store.set_share_improve(campaign.guild_id, campaign.id, on)
+
     async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
         return await self.store.optional_rule_overrides(campaign.guild_id, campaign.id)
 
@@ -170,6 +174,48 @@ class Settings(Base):
         found = await self.campaigns.get(self.g, (which or self.one).id)
         assert found is not None
         return found
+
+
+class ShareToImprove(Settings):
+    """ "Share this campaign's story to improve DMbot" (#3741): off by default, queued like every
+    setting, and off deletes every waiting check and every report not yet posted."""
+
+    async def page_says(self) -> bool:
+        from dmbot.web import campaign_page
+
+        got = await campaign_page.read_campaign(self.web, self.session, self.cref)
+        return bool(got["settings"]["shareImprove"])
+
+    async def test_off_by_default_on_from_the_website_and_off_deletes_what_waits(self) -> None:
+        self.assertFalse(await self.page_says())
+        await self.queue(setting="share_improve", value="on")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertTrue(await self.page_says())
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO graph_review_pending (guild_id, campaign_id, fixes, first_fix_at,"
+                " last_fix_at) VALUES (%s, %s, '[]'::jsonb, 1, 1)",
+                (self.g, self.one.id),
+            )
+            for rid, posted in (("a" * 32, None), ("b" * 32, 5)):
+                await conn.execute(
+                    "INSERT INTO graph_reviews (guild_id, campaign_id, id, created_at, checked,"
+                    " missed, report, prompt_version, model, posted_at)"
+                    " VALUES (%s, %s, %s, 1, 1, 1, 'r', 'p', 'm', %s)",
+                    (self.g, self.one.id, rid, posted),
+                )
+        await self.queue(setting="share_improve", value="off")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertFalse(await self.page_says())
+        self.assertEqual(self.bot.calls, [("share_improve", "True"), ("share_improve", "False")])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM graph_review_pending")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+            cur = await conn.execute("SELECT id FROM graph_reviews")
+            self.assertEqual([r["id"] for r in await cur.fetchall()], ["b" * 32])  # (posted)
+
+    async def test_only_on_or_off(self) -> None:
+        self.assertEqual(await self.refused(setting="share_improve", value="yes"), "bad_value")
 
 
 class TheChoices(Settings):
@@ -691,7 +737,11 @@ class TheDoor(Settings):
         }
         # (the Shared story switch, #2985, is checked below: its three choices would fill the
         # campaign's ten open places together with these nine)
-        self.assertEqual(campaign_settings.CHOICES, {**offered, "story_mode": STORY_MODES})
+        # (and "share to improve DMbot", on or off, #3741: the website's own switch)
+        self.assertEqual(
+            campaign_settings.CHOICES,
+            {**offered, "story_mode": STORY_MODES, "share_improve": ("on", "off")},
+        )
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             for setting, values in offered.items():

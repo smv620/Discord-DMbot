@@ -11,10 +11,10 @@
   "line": "the line of the document's plain-text export that supports it (blank lines count)"
  },
  "players": {
-  "Cerric Vanya'elen": "user_ist",
-  "Belleros Stormgrace": "user_jac",
-  "Okthandom Korran": "user_eri",
-  "Claude Ambere": "user_owe"
+  "Cerric Vanya'elen": "player_ist",
+  "Belleros Stormgrace": "player_jac",
+  "Okthandom Korran": "player_eri",
+  "Claude Ambere": "player_owe"
  },
  "nodes": [
   {
@@ -248,7 +248,8 @@
    "name": "The minotaur captain",
    "kind": "person",
    "aliases": [
-    "Minotaur captain of the first ship"
+    "Minotaur captain of the first ship",
+    "Minotaur captain"
    ],
    "note": "Unnamed. Captain of the first ship."
   },
@@ -302,18 +303,21 @@
   {
    "name": "Yeti",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "evaded on the road"
   },
   {
    "name": "Ice troll",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "ate the first ship's captain"
   },
   {
    "name": "Mind flayer",
    "kind": "creature",
+   "by_design": true,
    "aliases": [],
    "note": "petrified skull in the mine"
   },
@@ -1765,6 +1769,26 @@
    "must_find": false,
    "line": 96,
    "note": "a kennel master the party met there"
+  },
+  {
+   "id": "l120",
+   "a": "Cerric Vanya'elen",
+   "relation": "comes_from",
+   "b": "Temple of the Seldarine",
+   "tier": "stated",
+   "must_find": false,
+   "line": 18,
+   "note": "born in the Temple of the Seldarine (the more exact place; l019 says the city)"
+  },
+  {
+   "id": "l121",
+   "a": "Syllar Sparkwalker",
+   "relation": "mentor_of",
+   "b": "Cerric Vanya'elen",
+   "tier": "stated",
+   "must_find": false,
+   "line": 18,
+   "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (l011 says works_for)"
   }
  ],
  "events": [

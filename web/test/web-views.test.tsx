@@ -24,11 +24,14 @@ afterEach(() => {
   named.on = false;
 });
 
+// A line's panel loads when the line is chosen, and these tests look through several lines for a revealable one.
+vi.setConfig({ testTimeout: 30000 });
+
 const at = (suffix = ""): string => `/account/web/100.cmp1${suffix}`;
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 async function open(suffix = "", api = mockApi("table")) {
   render(<Web api={api} path={at(suffix)} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 const notRevealed = () => screen.queryAllByText(`(${w.notRevealed})`, { exact: false });
@@ -115,10 +118,11 @@ describe("a DM's Full View and Players View", () => {
       throw new ApiError("not-found");
     };
     // Open each pair's connections until one that isn't revealed shows its Reveal button.
+    // (the line panel loads when a line is chosen, so each is waited for)
     let button: HTMLButtonElement | undefined;
     for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
       fireEvent.click(see);
-      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      button = (await screen.findAllByRole("button", { name: /^Reveal connection \d+ to the players$/ }, { timeout: 600 }).catch(() => []))[0] as HTMLButtonElement | undefined;
       if (button) break;
     }
     expect(button).toBeTruthy();
@@ -128,15 +132,25 @@ describe("a DM's Full View and Players View", () => {
 });
 
 describe("a connection that can't be shown until its names are (#3426)", () => {
-  async function pressRevealOnAConnection(kind: "names-not-shown" | "name-unnamed") {
-    const api = await open();
+  async function pressRevealOnAConnection(kind: "names-not-shown" | "name-unnamed", rename?: (name: string) => string) {
+    const api = mockApi("table");
+    if (rename) {
+      // Every name the page is given is renamed, so the connection whose Reveal is pressed has the name asked about at an end.
+      const real = api.webGraph!.bind(api);
+      api.webGraph = async (ref, query) => {
+        const graph = await real(ref, query);
+        return { ...graph, nodes: graph.nodes.map((n) => ({ ...n, name: rename(n.name) })) };
+      };
+    }
+    await open("", api);
     api.webReveal = async () => {
       throw new ApiError(kind);
     };
+    // (the line panel loads when a line is chosen, so each is waited for)
     let button: HTMLButtonElement | undefined;
     for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
       fireEvent.click(see);
-      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      button = (await screen.findAllByRole("button", { name: /^Reveal connection \d+ to the players$/ }, { timeout: 600 }).catch(() => []))[0] as HTMLButtonElement | undefined;
       if (button) break;
     }
     expect(button).toBeTruthy();
@@ -168,10 +182,24 @@ describe("a connection that can't be shown until its names are (#3426)", () => {
     expect(screen.getByRole("link", { name: w.openNames })).toBeTruthy();
   });
 
+  it("names the person the story never named by the words after the 'unnamed - ' prefix (#3747)", async () => {
+    named.on = true;
+    const alert = await pressRevealOnAConnection("name-unnamed", () => "unnamed - Ken's sister");
+    expect(alert.textContent).toContain("This connection needs a name first: Ken's sister has none yet.");
+  });
+
+  it("falls back to the generic words when no end carries the prefix (#3747)", async () => {
+    named.on = true;
+    const alert = await pressRevealOnAConnection("name-unnamed");
+    expect(alert.textContent).toContain("One end of this connection has no name yet. Add one on the Names page.");
+  });
+
   it("builds each sentence from the names that are held back", () => {
     expect(w.showNamesFirst(["Brannoch"])).toBe("Brannoch isn't shown to the players yet. Show that name first, on the Names page.");
     expect(w.showNamesFirst(["Brannoch", "Veshla"])).toContain("Brannoch and Veshla aren't shown");
     expect(w.nameThemFirst("someone's sister", true)).toBe("This connection needs a name first: someone's sister has none yet. Add one on the Names page.");
+    expect(w.nameThemFirst(null, true)).toBe("One end of this connection has no name yet. Add one on the Names page.");
+    expect(w.nameThemFirst(null, false)).toBe("One end of this connection has no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.");
     expect(w.nameThemFirst("someone's sister", false)).toBe("someone's sister has no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.");
   });
 });
@@ -219,7 +247,7 @@ describe("Find a name in the players' view (#2989)", () => {
     const graph = await api.webGraph!("100.cmp1", { center: null, hops: 8 });
     const hidden = graph.nodes.find((n) => n.revealed === false)!.name;
     render(<Web api={api} path={at()} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: hidden } });
     expect(await screen.findByRole("button", { name: hidden })).toBeTruthy(); // Full View: offered
     fireEvent.click(screen.getByLabelText(w.playersView));
@@ -244,7 +272,7 @@ describe("Find a name in the players' view (#2989)", () => {
     const old = mockApi("table");
     delete (old as { webFind?: unknown }).webFind;
     render(<Web api={old} path={at(".web-player")} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: "a" } });
     await act(async () => {});
     expect(calls(old, "allNames")).toHaveLength(0);
@@ -282,7 +310,7 @@ describe("theories", () => {
   it("does not tell a player the party is wrong", async () => {
     const api = mockApi("table");
     render(<Web api={api} path={at(".web-player")} />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     const buttons = screen
       .getAllByRole("listitem")
       .filter((x) => x.textContent?.startsWith(w.theoryMark))

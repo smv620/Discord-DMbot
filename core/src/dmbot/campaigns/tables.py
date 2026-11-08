@@ -40,6 +40,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     ),
     "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
+    "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
+    "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
@@ -69,6 +71,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "memory_heard": ("memory_heard",),
     # The DM's answers to the after-session report's items, which cannot be made again (#2661)
     "report_answers": ("report_answers",),
+    # carries no table of its own: the build stamps of the others' rows (#3751)
+    "lineage": (),
 }
 
 # The extra files of a backup (#2552): the tables each one carries. Not registered sections: they
@@ -108,9 +112,24 @@ NOT_IN_BACKUP: dict[str, str] = {
     "pressing the button again makes it (#3244)",
     "theatre_lines": "the theatrical transcript of a session (DM-only): made from the cleaned "
     "lines by an AI and made again on request, never carries content of its own (#3244)",
+    "import_clock_offers": "the game minute an imported session ended at and what became of the "
+    "offer to set the clock there: a minute and a state code, made again by the next import; a "
+    "pending offer means nothing after a restore (#3199)",
     "memory_link_sources": "the upload label a kept connection came from, for the line panel: "
-    "provenance of working data, never a word of the upload; a restored campaign's connections "
-    "read as added by hand (#2946)",
+    "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
+    "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
+    "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
+    "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
+    "session and swept once the name is answered (#3602)",
+    "graph_review_pending": "the DM's graph clean-up fixes waiting 15 minutes for DMbot's "
+    "careful check (DM-only, ids only): bookkeeping that is gone within the hour (#3741)",
+    "graph_reviews": "DMbot's reports of what it missed, behind the campaign's \"share to improve "
+    "DMbot\" switch (DM-only): about DMbot, not the campaign's story, deleted by Stop recording me "
+    "and when the switch goes off (#3741)",
+    "ai_feed": "the first 500 characters of each AI prompt and reply of a lore read or an import, "
+    "for the DM's live windows (DM-only): kept 24 hours at most, deleted by Stop recording me, "
+    "and a short-lived view of a job that is gone when a backup is restored (#3710)",
     "rel_ties": "the relationship reader's ties for a session (DM-only, read only by the "
     "comparison against the old reader): made by an AI from the script and made again on request, "
     "never carries content of its own (#3244)",

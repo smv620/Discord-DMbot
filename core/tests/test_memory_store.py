@@ -38,6 +38,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.who_answers import NEW, StoredAnswer, WhoAnswers
 from dmbot.schema import ISOLATED_TABLES
 from tests import speed
 from tests.pg import DatabaseTest
@@ -157,10 +158,32 @@ class Isolation(MemoryTest):
         await importance_rank.ImportanceStore(self.db).add(
             GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
         )
+        # and the AI's scene of a waiting question (#3596)
+        from dmbot.memory.scenes import ENTITY, Scene, Scenes
+
+        await Scenes(self.memory).keep(
+            GUILD_A, self.c, [Scene(ENTITY, a, "A scene.", 2, (DM,), 1)], opted_in={DM},
+            prompt_version="scenes-1", model="m",
+        )  # fmt: skip
+        # and the AI's ranked answers for a name waiting on "Who is this?" (#3602)
+        await WhoAnswers(self.memory).keep(
+            GUILD_A, self.c, a, [StoredAnswer(NEW, "maybe", new_kind="character")],
+            speaker_ids=(DM,), opted_in={DM}, session_started_at=1, prompt_version="who-1",
+            model="m",
+        )  # fmt: skip
         # and the DM's answer about turning some words into a kind (#3033)
         await self.memory.answer_kind_offer(
             GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
         )
+        # and a deed the session reader proposed, waiting for the DM (#3175)
+        from dmbot.memory.deed_proposals import DeedProposals
+        from dmbot.memory.deed_reading import DeedProposal
+
+        proposal = DeedProposal("Cerric", "Saved the mill", ("Brindle",), "Helped them", ("1",))
+        await DeedProposals(self.memory).store(
+            GUILD_A, self.c, [(proposal, (DM,))], opted_in={DM}, session_started_at=1,
+            prompt_version="deeds-1", model="m",
+        )  # fmt: skip
         # and a character who knows an entry exists (#2995)
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place

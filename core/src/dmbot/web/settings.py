@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from dmbot import imports_switch
 from dmbot.config import MODEL_NAME, ConfigError
-from dmbot.entitlements import parse_free_users
+from dmbot.entitlements import parse_free_guilds, parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
 from dmbot.transcription.config import OUTSIDE_ENGINES
 from dmbot.web.admin_hash import decode_hash
@@ -77,6 +77,10 @@ class WebSettings:
     # made with. Off until the switch is 1 and a key is set.
     meaning_search: bool = False
     voyage_key: str = field(default="", repr=False)
+    # The admin Costs page (#3671): read-only keys for the two services that let one be scoped
+    # to costs. Empty: that row says "Not connected". Never an Anthropic Admin key.
+    costs_deepgram_key: str = field(default="", repr=False)
+    costs_elevenlabs_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
@@ -85,6 +89,9 @@ class WebSettings:
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # Where the bot writes its finished feature list, read here only (#3693). Empty: the campaign
+    # settings show no list.
+    status_dir: str = ""
     # Kept pictures (#3274). The campaign's picture storage, in MB, as the bot reads it
     # (DMBOT_PICTURE_STORAGE_MB), for the gallery's usage line. And the read-only key to the one
     # private bucket the open link signs short-lived addresses with (WEB_PICTURES_R2_*): all four
@@ -121,6 +128,7 @@ class WebSettings:
     session_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
+    free_guilds: frozenset[int] = field(default=frozenset(), repr=False)
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
@@ -138,6 +146,10 @@ class WebSettings:
     # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
     # until the bot's half, which applies and sweeps staged restores (#2746), is live.
     web_restore_on: bool = False
+    # The lore and import pages' live windows on what DMbot asked the AI (#3710; DMBOT_WEB_AI_FEED):
+    # off, the route says 404. The owner decides whether customers' DMs get it; the bot's own
+    # capture (DMBOT_AI_FEED) must be on and deployed first.
+    ai_feed_on: bool = False
     # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
     # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
     co_dms_on: bool = False
@@ -363,6 +375,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         )
     try:
         free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+        free_guilds = parse_free_guilds(get("DMBOT_FREE_GUILDS"))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
     enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
@@ -394,6 +407,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
     if restore_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
+    ai_feed_raw = (get("DMBOT_WEB_AI_FEED") or "0").lower()
+    if ai_feed_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_AI_FEED must be 1 (on) or 0 (off), got "{ai_feed_raw}".')
     co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
     if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
@@ -447,6 +463,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         line_fix_on=line_fix_raw in ("1", "true", "on"),
         line_delete_on=line_delete_raw in ("1", "true", "on"),
         web_restore_on=restore_raw in ("1", "true", "on"),
+        ai_feed_on=ai_feed_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
         lore_on=lore_raw in ("1", "true", "on"),
@@ -477,11 +494,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         port=port,
         session_days=session_days,
         free_users=free_users,
+        free_guilds=free_guilds,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         stripe=stripe,
         any_db_role=any_db_role,
         feedback_token=feedback_token,
+        costs_deepgram_key=get("DEEPGRAM_API_KEY_READ_ONLY"),
+        costs_elevenlabs_key=get("ELEVENLABS_API_KEY_READ_ONLY"),
         link_token_secret=link_secret.encode("utf-8"),
         mail=mail,
         feedback_repo=feedback_repo,
@@ -497,6 +517,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        status_dir=get("WEB_STATUS_DIR"),
         picture_storage_mb=(
             int(get("DMBOT_PICTURE_STORAGE_MB"))
             if get("DMBOT_PICTURE_STORAGE_MB").isascii()

@@ -44,6 +44,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
+from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places, player_id
 from dmbot.ui.dmbot_commands import (
@@ -215,6 +216,7 @@ class Reviews:
     people: int = 0  # 🧑 who is who
     claims: int = 0  # 🗣️ what was said (only when the story extractor is on)
     said: int = 0  # 🔊 how the narrator should say a name (#2171)
+    joined: int = 0  # 🤖 names DMbot joined by itself that wait for the DM's word (#3602)
 
 
 def review_line(reviews: Reviews) -> str | None:
@@ -224,6 +226,7 @@ def review_line(reviews: Reviews) -> str | None:
         f"{_plural(reviews.people, 'question')} about who is who" if reviews.people else "",
         f"{_plural(reviews.claims, 'thing')} said to check" if reviews.claims else "",
         f"{_plural(reviews.said, 'name')} to say out loud" if reviews.said else "",
+        f"{_plural(reviews.joined, 'name')} DMbot matched on its own" if reviews.joined else "",
     ]
     parts = [p for p in parts if p]
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
@@ -349,16 +352,18 @@ class NamesHome(_Menu):
         # The reviews the after-session posts open, one button each, only while something waits
         # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
         if reviews:
-            for count, label, handler in (
-                (reviews.heard, "❓ Check names", self._check_heard),
-                (reviews.people, "🧑 Check who is who", self._check_people),
-                (reviews.claims, "🗣️ Check what was said", self._check_claims),
-                (reviews.said, "🔊 Check how to say", self._check_said),
+            # (the joins' button sits on row 3: row 4 already holds five with the connections)
+            for count, label, handler, row in (
+                (reviews.heard, "❓ Check names", self._check_heard, 4),
+                (reviews.people, "🧑 Check who is who", self._check_people, 4),
+                (reviews.claims, "🗣️ Check what was said", self._check_claims, 4),
+                (reviews.said, "🔊 Check how to say", self._check_said, 4),
+                (reviews.joined, "🤖 Check guesses", self._check_joined, 3),
             ):
                 if count:
                     shown_count = str(count) if count < 100 else "99+"  # keeps the label short
                     self.add_item(
-                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=4)
+                        _Button(handler, label=f"{label} ({shown_count})", style=grey, row=row)
                     )
         if connections:  # a backstory's connections still wait for the DM (#2380)
             shown_links = str(connections) if connections < 100 else "99+"
@@ -483,6 +488,11 @@ class NamesHome(_Menu):
 
         await start_said_as_review(interaction, self.campaign_id)
 
+    async def _check_joined(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.joined_review import start_joined_review
+
+        await start_joined_review(interaction, self.campaign_id)
+
     async def _check_claims(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
@@ -501,7 +511,7 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
     that can't be read is left out (zero), never an error on the home card."""
     bot: Any = _bot(interaction)
     guild_id = campaign.guild_id
-    heard = people = claims = said = 0
+    heard = people = claims = said = joined = 0
     try:
         if bot.heard_questions is not None:
             heard = await bot.heard_questions.count(guild_id, campaign.id)
@@ -528,7 +538,12 @@ async def waiting_reviews(interaction: discord.Interaction, campaign: Campaign) 
             said = len(await memory.said_as_suggestions(guild_id, campaign.id))
     except Exception:
         log.exception("Couldn't count the ways to say names")
-    return Reviews(heard=heard, people=people, claims=claims, said=said)
+    try:
+        if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only
+            joined = len(await memory.waiting_joins(guild_id, campaign.id))
+    except Exception:
+        log.exception("Couldn't count the names DMbot joined itself")
+    return Reviews(heard=heard, people=people, claims=claims, said=said, joined=joined)
 
 
 async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -1098,6 +1113,7 @@ def suggestion_text(
     places: str = "",
     context: str = "",
     tagged: str = "",
+    scene: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1134,9 +1150,44 @@ def suggestion_text(
     # (links kept as plain text too: a masked link in the DM's text must not become clickable)
     shown = discord.utils.escape_markdown(context, ignore_links=False)
     around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
+    seen = scene_line(scene)  # (DMbot's summary of the scene, #3596, above the places)
     # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
     title = _md(tagged or entity.name)
-    return f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
+    text = f"📝 **{title}**{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
+    if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
+        text = f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
+    return text
+
+
+# a question's text stays under this (Discord's limit, with the group line after)
+SUGGESTION_MAX = MESSAGE_MAX - 300
+SCENE_TITLE = "📍 *DMbot's summary of the scene:*"
+
+
+def scene_line(scene: str) -> str:
+    """The scene as a card line ("" for none), as DMbot's own telling: escaped so the table's words
+    in it cannot format or ping."""
+    if not scene:
+        return ""
+    return f"\n{SCENE_TITLE} {_md(discord.utils.escape_mentions(scene))}"
+
+
+async def scene_of(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
+    """The stored scene of this open question, or "" (none yet, answered, or a speaker stopped).
+    Never raises: a card without its scene is still a card. DM-only, checked here: a review can be
+    opened by a server manager who is not a DM."""
+    memory = _memory(interaction)
+    if memory is None or not sees_secrets(campaign, interaction.user.id):
+        return ""  # (a server manager who is not a DM can open a review: they are not shown it)
+    try:
+        agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
+        found = await Scenes(memory).of(
+            campaign.guild_id, campaign.id, ENTITY, [entity.id], opted_in=agreed
+        )
+    except Exception:
+        log.exception("Couldn't read the scene of a question")
+        return ""
+    return found.get(entity.id, "")
 
 
 async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -> str:
@@ -1218,6 +1269,7 @@ async def _offer_add_all(
     from dmbot.ui.name_background import BulkConfirm  # (it imports this module)
 
     by_kind: dict[str, list[str]] = {}
+    looks_alike = 0  # guessed a kind, but sounds like a known name: counted, never added in bulk
     for entity in waiting:
         kind = background_kind(entity)
         if (
@@ -1226,17 +1278,28 @@ async def _offer_add_all(
             or entity.source != "scan"
             or entity.description.startswith(SPELLED_OUT)
             or spelled_fix(entity)
-            or await _review_match(memory, campaign, entity) is not None
         ):
             continue
+        if await _review_match(memory, campaign, entity) is not None:
+            looks_alike += 1  # (#3683: it used to hide the whole button, so a DM with a few such
+            continue  # names had to click through every one; it just stays out of "Add all")
         by_kind.setdefault(kind, []).append(entity.id)
-    if not any(len(ids) > 1 for ids in by_kind.values()):  # one name is one press on its card
-        return False
     count = sum(len(ids) for ids in by_kind.values())
+    # Two or more names that qualify, of any kinds, make the button (one name is one press on its
+    # card). It used to need two of the SAME kind, which a mixed list of places and people never
+    # has.
+    if count < 2:
+        return False
+    left = (
+        f" {_plural(looks_alike, 'name')} that sound{'s' if looks_alike == 1 else ''} like one "
+        f"you know stay{'s' if looks_alike == 1 else ''} for you to check one by one."
+        if looks_alike
+        else ""
+    )
     await _send(
         interaction,
         f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
-        "are. Nothing is added until you press a button.",
+        f"are. Nothing is added until you press a button.{left}",
         BulkConfirm(campaign.id, by_kind),
     )
     return True
@@ -1403,6 +1466,7 @@ class SuggestionReview(_Menu):
             places=self.places.text(),
             context=self._context(interaction, campaign, entity),
             tagged=await tagged_name(memory, campaign, entity),
+            scene=await scene_of(interaction, campaign, entity),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])

@@ -26,7 +26,7 @@ SIGMAS = 3.0
 class Verdict(Enum):
     ACCEPT = "accept"
     ASK = "ask"  # flagged to the DM as a question
-    UNNAMED = "unnamed"  # kept as "Ken's sister (name unknown)"
+    UNNAMED = "unnamed"  # kept as "unnamed - Ken's sister"
 
 
 @dataclass(frozen=True, slots=True)

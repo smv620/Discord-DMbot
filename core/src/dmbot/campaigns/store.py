@@ -76,6 +76,7 @@ from dmbot.campaigns.parts import (
 )
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
+from dmbot.memory import graph_review
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +87,10 @@ EXPORT_FORMAT = "dmbot-campaign"
 # works them out from the old flags; a file of this version keeps the lists it holds, however few.
 # 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
 # simply has none; a DMbot that predates the section refuses a file of this version as too new.
-EXPORT_VERSION = 4
+# 5: story-memory rows carry `made_by`, the build that made them (#3739). Optional on load, so an
+# older file restores with none (read as "made before versions were recorded"). The bump is needed
+# so a DMbot that knows no `made_by` refuses the file instead of failing its strict row check.
+EXPORT_VERSION = 5
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -651,6 +655,18 @@ class CampaignStore:
                 sql.SQL("target_ruleset = %s, fallback_ruleset = %s"),
                 (target, fallback),
             )
+
+    async def set_share_improve(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Share this campaign's story to improve DMbot" (#3741), the DM's switch. Off deletes
+        every waiting graph check and every report not yet posted, in the same transaction
+        (Supervisor's ruling: "off means off")."""
+        async with self._db.guild(guild_id) as conn:
+            saved = await self._update(
+                conn, guild_id, campaign_id, sql.SQL("share_improve = %s"), (on,)
+            )
+            if not on:
+                await graph_review.drop_all(conn, guild_id, campaign_id)
+            return saved
 
     async def set_optional_rules_default(
         self, guild_id: int, campaign_id: str, enabled: bool
@@ -1865,7 +1881,12 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
-            for name, rows in sections.items():
+            # A restore keeps the stamp each row was made with, NULL included, and never stamps a
+            # row with the build that loaded it (#3739, `dmbot.lineage`).
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
+            # The build stamps go back last whatever the order of the file's sections: they are
+            # put on rows the other sections have just made (#3751).
+            for name, rows in sorted(sections.items(), key=lambda item: item[0] == "lineage"):
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)
                 except CampaignError:
@@ -1873,6 +1894,9 @@ class CampaignStore:
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
                 await tell(step)
+            # What follows is DMbot working the old file out (`move_flags`): the running build made
+            # those rows, so the restore's keep-the-stamp setting ends with the loads.
+            await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             if _has_no_lists(sections, data):
                 from dmbot.memory import knowers
 
@@ -1881,6 +1905,8 @@ class CampaignStore:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
                 await tell(progress, 0, len(order))
+                # (the transcript parts carry every column, the stamp included: keep it as it is)
+                await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
                 for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
@@ -1890,6 +1916,8 @@ class CampaignStore:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
                     await tell(progress, done, len(order))
+                # (the stamps end with the loads, as after the sections: what runs next is DMbot's)
+                await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(

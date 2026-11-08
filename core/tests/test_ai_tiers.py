@@ -175,6 +175,7 @@ class Tiers(unittest.TestCase):
                 Feature.IMAGE_MAP: AIModelTier.CAREFUL,  # a map read again for its layout (#2450)
                 Feature.PLOT_CHECK: AIModelTier.CAREFUL,  # advice for the DM (#2122)
                 Feature.PLOT_TALK: AIModelTier.CAREFUL,  # talking an issue through (#2123)
+                Feature.GRAPH_REVIEW: AIModelTier.CAREFUL,  # the owner's careful check (#3741)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out

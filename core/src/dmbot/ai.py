@@ -36,6 +36,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
+from dmbot import ai_feed
 from dmbot.alerts import Problem, raise_alert
 
 log = logging.getLogger(__name__)
@@ -132,6 +133,7 @@ class Feature(enum.StrEnum):
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
     PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
     PLOT_TALK = "plot_talk"  # the DM talks an issue of that check through with PlotBot (#2123)
+    GRAPH_REVIEW = "graph_review"  # did DMbot miss what the DM fixed on the clean-up page (#3741)
     # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
     NAME_PASS = "name_pass"
     # Who "he", "the king" or "his sister" is in a lore or story read (#2790): scored candidates
@@ -201,6 +203,7 @@ FEATURE_TIERS = {
     Feature.PLOT_CHECK: AIModelTier.CAREFUL,
     # Short advice and proposals the DM saves or declines; code checks every quotation (#2123).
     Feature.PLOT_TALK: AIModelTier.CAREFUL,
+    Feature.GRAPH_REVIEW: AIModelTier.CAREFUL,  # the owner's "careful" call (#3741)
     # Written into the transcript the whole server reads, but only a sure answer naming one of the
     # offered list names, and the DM can Undo (#2628).
     Feature.NAME_PASS: AIModelTier.CAREFUL,
@@ -759,6 +762,46 @@ class AnthropicClient:
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
+        # A lore read or an import also notes the first 500 characters of the prompt and the reply
+        # for the DM's live window (#3710). `begin`, `done` and `failed` only schedule a short write
+        # on a connection of their own and never raise, so the call is exactly what it was.
+        entry = ai_feed.begin(text, tier.value, images)
+        try:
+            reply = await self._complete(
+                system,
+                text,
+                tier=tier,
+                max_tokens=max_tokens,
+                feature=feature,
+                cache_system=cache_system,
+                schema=schema,
+                images=images,
+            )
+        except BaseException as exc:
+            ai_feed.failed(
+                entry,
+                str(exc)  # (an AIError's words are fixed plain sentences, never the service's text)
+                if isinstance(exc, AIError)
+                else "Stopped before it answered."
+                if isinstance(exc, asyncio.CancelledError)
+                else FAILED,
+            )
+            raise
+        ai_feed.done(entry, reply.text)
+        return reply
+
+    async def _complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        tier: AIModelTier,
+        max_tokens: int = 8000,
+        feature: str | None = None,
+        cache_system: bool = False,
+        schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
+    ) -> Reply:
         chain = self._chain(tier)
         unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
         live = feature in LIVE_FEATURES

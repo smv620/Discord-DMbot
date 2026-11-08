@@ -29,7 +29,7 @@ class TheEvidence(unittest.TestCase):
         self.assertEqual((offer.unnamed_id, offer.named_id, offer.reasons), ("u1", "n2", (STATED,)))
 
     def test_shared_words_are_a_reason_and_filler_is_not(self) -> None:
-        self.assertEqual(meaningful("the guard at the gate (name unknown)"), {"guard", "gate"})
+        self.assertEqual(meaningful("unnamed - the guard at the gate"), {"guard", "gate"})
         (offer,) = offers([GUARD], [OTHER, KEN])
         self.assertEqual((offer.named_id, offer.reasons), ("n1", (WORDS,)))
 

@@ -73,6 +73,30 @@ def step_of(score: float) -> str:
     return DEVOTED
 
 
+# How the DM's step reads on a "knows" line (#3642): in the readers' own words, so the line keeps
+# the shape "knows (wary)" whoever set it.
+LINE_WORD = {
+    HOSTILE: "hostile",
+    UNFRIENDLY: "distrusts",
+    WARY: "wary",
+    FRIENDLY: "friendly",
+    DEVOTED: "devoted",
+}
+
+
+def dm_line_word(dm_scores: Mapping[tuple[str, str], int], a: str, b: str) -> str | None:
+    """The word a `knows` line between `a` and `b` shows a DM when the DM set a standing for the
+    pair (#3642): `dm_scores` holds the DM's open impressions, (viewer, subject) to score. The DM's
+    word always wins over a reader's, so it replaces the line's own; a's view of b is preferred,
+    else b's of a: the pair has one line, so the other way's standing stands in for it (the issue
+    asks for either direction). None when the DM set neither, and the line keeps its own word.
+    DM-only: a player's screen never calls this."""
+    score = dm_scores.get((a, b))
+    if score is None:
+        score = dm_scores.get((b, a))
+    return None if score is None else LINE_WORD[step_of(score)]
+
+
 @dataclass(frozen=True, slots=True)
 class Node:
     """An entry as the rule needs it."""
@@ -248,6 +272,7 @@ __all__ = [
     "FEELING_WEIGHT",
     "FRIENDLY",
     "HOSTILE",
+    "LINE_WORD",
     "NO_OPINION",
     "REMINDER",
     "SCORE_OF",
@@ -259,5 +284,6 @@ __all__ = [
     "Node",
     "Row",
     "Standing",
+    "dm_line_word",
     "step_of",
 ]

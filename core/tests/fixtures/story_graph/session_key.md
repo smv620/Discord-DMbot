@@ -6,15 +6,15 @@ What the graph should hold after the sample session is read: [the session transc
 
 | Speaker in the transcript | Player character | Username |
 |---|---|---|
-| Cerric | Cerric Vanya'elen | `user_ist` |
-| Belleros | Belleros Stormgrace | `user_jac` |
-| Okthandom | Okthandom Korran | `user_eri` |
-| Claude | Claude Ambere | `user_owe` |
+| Cerric | Cerric Vanya'elen | `player_ist` |
+| Belleros | Belleros Stormgrace | `player_jac` |
+| Okthandom | Okthandom Korran | `player_eri` |
+| Claude | Claude Ambere | `player_owe` |
 | DM | (no player character; voices Keegan and Jebidiah) | a DM account |
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered to the DM and never extracted · `needs_context` only readable with the lore or the recap ('she' is Keegan) · `recap_only` only in the 'Previously' recap on line 1: background, never this session's event · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history: true earlier in the session, not at its end.
 
-**Totals:** 28 entries, 33 connections (18 must-find), 6 events.
+**Totals:** 30 entries, 33 connections (18 must-find), 6 events.
 
 ## Connections
 
@@ -77,7 +77,7 @@ What the graph should hold after the sample session is read: [the session transc
 
 ## Entries
 
-### People (9)
+### People (11)
 
 | name | also called | note |
 |---|---|---|
@@ -90,6 +90,8 @@ What the graph should hold after the sample session is read: [the session transc
 | Jebidiah | Jebediah | Kennel master the DM voices. |
 | Vaelrith |  | Okthandom's brother, named by Belleros and confirmed by Okthandom. |
 | Nyssara |  | Okthandom's sister: 'my sister' first, her name 48 lines later. |
+| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
+| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 
 ### Creatures (3)
 
@@ -133,7 +135,7 @@ What the graph should hold after the sample session is read: [the session transc
 ## Must not find
 
 - line 1, the DM's long 'Previously...' speech, is the recap of the earlier session: none of its events (the Rime sacrifices, the wolf figurine sale, the ferry, the ice troll, Fizzlebomb overboard, the owlbears, Boy found, Keegan's plea) may be dated to this session or retold as this session's events; its ties are background only
-- the two barbarians are 'the attackers' and nothing more: no entry for them or for 'the morningstar barbarian' and 'the maul barbarian' (#3244 rule 3), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
+- the two barbarians are 'the attackers' and nothing more: no entry named 'the morningstar barbarian' or 'the maul barbarian' (#3244 rule 3); since the owner's #3736 and #3740 rule each is kept as a person the story never names (the two unnamed entries, a good find, not a must), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
 - a plan is not a fact: 'we go to Easthaven then circle back through the dwarven city', and 'the caravan from Easthaven will likely go to Goodmead, Bryn Shander or Caer-Konig' (a prediction, rule 5)
 - any link made from dice rolls, hit points, saves, initiative, spell slots, Goodberry or other spells and rules talk
 - only unique items are tracked (#3373): no entry or tie for the two sleds and eight dogs, rations, the spear, the heavy crossbow, the greatsword, the shortsword, the wineskin, the tarps and tents, the spellbook or the chardalyn weapons the attackers hold

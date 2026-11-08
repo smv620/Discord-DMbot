@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import UTC, datetime
 
+from dmbot import lineage
 from dmbot.discord_limits import OPTION_LABEL_MAX, shorten
 
 UNKNOWN_COMMIT = "unknown"
@@ -17,8 +17,7 @@ def build_commit() -> str:
     """The commit the running build was made from (the image gets it as GIT_COMMIT): the full
     40 characters, or "unknown" when the build has none. A backup says which build made it, so the
     data's lineage survives a renamed file (#3391)."""
-    value = (os.environ.get("GIT_COMMIT") or "").strip().casefold()
-    return value if re.fullmatch(r"[0-9a-f]{40}", value) else UNKNOWN_COMMIT
+    return lineage.running_commit() or UNKNOWN_COMMIT
 
 
 def backup_filename(campaign_name: str, now: int, commit: str | None = None) -> str:

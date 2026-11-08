@@ -23,6 +23,7 @@ from dmbot.memory.models import (
     PROPOSED,
     Entity,
     MemoryRuleError,
+    NewName,
     Relation,
     looks_named,
 )
@@ -458,6 +459,31 @@ class Storage(MemoryTest):
         await self.memory.set_unique(GUILD_A, self.c, plain, True, source="dm")
         await self.two_carry(plain)
         self.assertEqual(len(await self.flags(HELD_TWICE)), 1)
+
+    async def test_an_item_the_judge_kept_is_stored_unique_and_two_holders_are_flagged(
+        self,
+    ) -> None:
+        # (#3618) "wolf figurine" has no capital, so the old name guess says "not unique"; the
+        # judge's yes is what makes it one particular thing
+        written = await self.memory.add_names(
+            GUILD_A, self.c,
+            [
+                NewName("wolf figurine", "item", PROPOSED, unique=True),
+                NewName("a sled", "item", PROPOSED),
+                NewName("Garret", "character", PROPOSED, unique=True),
+            ],
+            source="dm",
+        )  # fmt: skip
+        figurine, sled, garret = written.value
+        assert figurine is not None and sled is not None and garret is not None
+        found = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertTrue(found[figurine].is_unique)
+        self.assertFalse(found[sled].is_unique)
+        self.assertIsNone(found[garret].unique_item)  # (only an item is ever stored unique)
+        await self.two_carry(figurine)
+        self.assertEqual(len(await self.flags(HELD_TWICE)), 1)  # a flag, never a refusal
+        await self.memory.set_unique(GUILD_A, self.c, figurine, False, source="dm")
+        self.assertEqual(await self.flags(), [])  # the DM's switch still has the last word
 
     async def test_switching_unique_on_flags_what_two_already_carry(self) -> None:
         item = await self.add("a longbow", type="item")

@@ -853,7 +853,9 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
+            # (kept lines, corrected or widened: logged as drops they are not, #3780)
+            if k not in ("quote_widened", "quote_reach", "feeling_demoted")
+            and not k.startswith("kind_")
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
@@ -1101,6 +1103,8 @@ async def store(
                 # DM confirms it, at the hook's 1.0: only a connection's certainty is lowered for
                 # a smart guess, #2959)
                 shown=known,
+                # only an item the unique-item judge kept reaches this point (#3618)
+                unique=True if item.kind == "item" else None,
             )
         )
         items.append(item)
@@ -1664,10 +1668,15 @@ async def _unnamed_rows(
                 campaign.id,
                 what=u.what,
                 anchor_id=fixed if u.anchored else None,
-                role=u.role[: unnamed_mod.MAX_ROLE],
+                # (a role is what a person is to their anchor: a group gets none, #3736)
+                role=None
+                if descriptions.is_described_group(u.what)
+                else u.role[: unnamed_mod.MAX_ROLE],
                 # ("someone" is never joined to another "someone": two pronouns for nobody
                 # are two people unless the story gives a real shared descriptor)
                 read=None if u.what == who_resolve.SOMEONE else read,
+                # a particular group the story never names is a group (#3736)
+                kind="faction" if descriptions.is_described_group(u.what) else "character",
             )
         except MemoryRuleError:  # an anchor that went away meanwhile, or no word: counted
             if dropped is not None:
@@ -1883,7 +1892,7 @@ class WhichOffer(_Menu):
                 f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
                 "check once their names are confirmed (press 📜 Check the connections)."
             )
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         asked = _md(bare(c.word))  # (the end as written stays in the quote line)
@@ -2105,7 +2114,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2122,7 +2131,7 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (

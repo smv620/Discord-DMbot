@@ -47,6 +47,7 @@ STORY_MODE = "story_mode"  # the Shared story switch (#3078)
 DNDBEYOND_INVITE = "dndbeyond_invite"  # the DM's D&D Beyond invite link (#3095)
 PAUSE = "pause"  # pause or unpause the campaign, owner only (#3062)
 RULESETS = "rulesets"  # the main rules and what to use if they miss, "2024/2014" (#3112)
+SHARE_IMPROVE = "share_improve"  # "Share this campaign's story to improve DMbot", on/off (#3741)
 PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
@@ -144,6 +145,12 @@ class Host(Protocol):
         then get the new pair ready for lookups (a failure there costs only speed). Raises
         `CampaignError` with the store's words. True when a session of this campaign is live: it
         keeps the pair it started with, so the change applies from the next one."""
+        ...
+
+    async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
+        """ "Share this campaign's story to improve DMbot" on or off (#3741). Off deletes every
+        waiting graph check and every report not yet posted. Raises `CampaignError` when the
+        campaign is gone."""
         ...
 
     async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
@@ -251,6 +258,14 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return await _invite(host, campaign, item)
     if item.setting == PAUSE:
         return await _pause(host, campaign, item)
+    if item.setting == SHARE_IMPROVE:
+        if item.value not in ("on", "off"):
+            return Outcome(BAD_VALUE)
+        try:
+            await host.apply_share_improve(campaign, item.value == "on")
+        except CampaignError:
+            return Outcome(NOT_FOUND)  # the campaign went while the choice was being saved
+        return Outcome()  # (the page shows the switch as it now is; WebDev words any note)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:

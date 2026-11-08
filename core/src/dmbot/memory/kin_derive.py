@@ -74,11 +74,36 @@ class Derived:
     source_ids: tuple[str, str]
 
 
+def _cyclic_people(parents: list[tuple[str, str, str]]) -> set[str]:
+    """The people who are their own ancestor through stated parent links (a cycle). A walk from
+    each person is enough: a family's stated links are a few hundred at most."""
+    children: dict[str, list[str]] = {}
+    for parent_id, child_id, _ in parents:
+        children.setdefault(parent_id, []).append(child_id)
+    cyclic: set[str] = set()
+    for start in children:
+        stack = list(children[start])
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == start:
+                cyclic.add(start)
+                break
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(children.get(node, []))
+    return cyclic
+
+
 def derive(stated: Sequence[Stated]) -> list[Derived]:
     """The links that follow from the stated ones, sorted by (a_id, role, b_id) so the result does
     not depend on the order of the input. A link that follows two different ways keeps the pair of
     sources whose ids sort first as strings. Roles outside the lists above are dropped, and so is a
-    stated link from a name to itself, which says nothing about family."""
+    stated link from a name to itself, which says nothing about family.
+
+    A parent cycle (A parent B, B parent C, C parent A) derives nothing through any of its people:
+    no link is raised for them, and their stated links are left for the DM to correct."""
     parents: list[tuple[str, str, str]] = []  # (parent_id, child_id, link_id)
     siblings: list[tuple[str, str, str]] = []  # (a_id, b_id, link_id), read both ways below
     known: set[tuple[str, str, str]] = set()  # (a_id, neutral role, b_id) as stated, both readings
@@ -110,7 +135,16 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
             known.add((link.b_id, "aunt or uncle", link.a_id))
             aunts.append((link.b_id, link.a_id, link.link_id))
 
+    cyclic = _cyclic_people(parents)
     found: dict[tuple[str, DerivedRole, str], tuple[str, str]] = {}
+
+    # The two people each stated link joins, by link id, so a derivation sees every person it runs
+    # through (the middle one of a chain included)
+    joined: dict[str, tuple[str, str]] = {}
+    for parent_id, child_id, link_id in parents:
+        joined[link_id] = (parent_id, child_id)
+    for a_id, b_id, link_id in siblings + aunts + grandparents:
+        joined[link_id] = (a_id, b_id)
 
     def offer(a_id: str, role: DerivedRole, b_id: str, sources: tuple[str, str]) -> None:
         # A self-link is never a family link. A link already stated in either reading is not worked
@@ -118,6 +152,11 @@ def derive(stated: Sequence[Stated]) -> list[Derived]:
         # parent of A): the derived link is dropped rather than guessing which statement is wrong.
         if a_id == b_id or (a_id, role, b_id) in known or (b_id, role, a_id) in known:
             return
+        through = {a_id, b_id}
+        for link_id in sources:
+            through.update(joined[link_id])
+        if through & cyclic:
+            return  # nothing through a parent cycle: the DM states those links
         if role == "sibling" and b_id < a_id:
             a_id, b_id = b_id, a_id  # (a two-way link is stored once, the smaller id first)
         key = (a_id, role, b_id)
