@@ -4632,7 +4632,13 @@ hour and 200 a day per visitor, and 300 an hour for the whole site. Over a limit
 try again in about an hour." (after the daily limit: "Too many requests to process, try again tomorrow."); line 1 still
 works. A visitor is a keyed hash of their address, its key changed daily, kept only as counts for 24 hours and never logged.
 Answers are cached for a day (a cached answer doesn't count against the site's limit), and logs hold counts only.
-Website-only on purpose (it searches the site).
+**The answer engine is free** (owner, 2026-11-08: "a free tier api call"; Supervisor, #3856): Cloudflare Workers AI's free
+daily allowance (10,000 Neurons, reset 00:00 UTC), a small model (Llama 3.2 3B, about 6 Neurons a question), called from
+core's `/site/ask` with a Cloudflare API token kept on the server like the other keys. Cloudflare doesn't train on or keep
+what is asked. Google's free tier was ruled out because it trains on questions and people may read them. The free allowance
+is the real daily ceiling: core stops at 1,500 answers a day (headroom under the allowance), and then line 2 says the daily
+words above. It never moves to a paid service on its own; paying past the allowance (about $0.50 a day at 300 an hour) is the
+owner's call. Website-only on purpose (it searches the site).
 
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
