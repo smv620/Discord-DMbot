@@ -98,7 +98,6 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
-  hiddenMark: "(hidden)",
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
@@ -241,7 +240,7 @@ export const webPage = {
   knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
-  legendTheory: "Lighter line with ?: something the party suspects",
+  legendTheory: "Light line with ?: the party only suspects it",
   legendKnow: { all: "Solid: every player knows it", some: "Dash-dot: some players know part of it", dm: "Dotted: hidden from every player" } as Record<"all" | "some" | "dm", string>,
   theoryMark: "?",
   // 📌 100% truth (#2448): the DM pins a connection as certainly true. Players never see it.

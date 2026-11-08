@@ -210,6 +210,8 @@ body:has(.account-wide) .wrap {
 .account .web-legend .web-know-dm .web-line { stroke-dasharray: 2 5; stroke-linecap: round; }
 /* A theory keeps its 🤔 mark and is drawn lighter, with no dash of its own, so dotted only ever means hidden from every player. */
 .account .web-edge.web-theory .web-line { opacity: 0.6; }
+/* A theory the players have not learned yet is both: lighter than either alone, explicit so file order never decides. */
+.account .web-edge.web-theory.web-dim .web-line { opacity: 0.35; }
 
 /* The steps box is a - [n] + row (the page's wide boxes had pushed the buttons onto their own lines), and
    the search and the steps share a row on a wide page, so the map is near the top of the screen. */

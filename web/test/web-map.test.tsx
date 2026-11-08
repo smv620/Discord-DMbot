@@ -735,6 +735,14 @@ describe("who knows a line (#3809)", () => {
     expect(document.querySelector(".web-legend")!.textContent).not.toContain("Dotted: hidden from every player");
   });
 
+  it("draws every line solid in a view that is not the DM's, for a mixed line too", () => {
+    drawWho(withWho("all", "dm"), false);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+    cleanup();
+    drawWho(withWho("some"), false);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+  });
+
   it("explains the three styles in the DM's legend, with the owner's words", () => {
     drawWho(withWho("all"));
     const legend = document.querySelector(".web-legend")!.textContent ?? "";
