@@ -1550,6 +1550,15 @@ gods and royalty, even while their name is hidden), 5 player character.
   a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
   Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
   character's companion (`travels_with`) has a floor of Significant.
+- **Why a rank changed is not what an entry is (owner, 2026-11-01).** Each assessment says why the rank
+  moved: `reading`, `dm_corrected`, `revealed`, `demoted` or `rule`. What the entry IS in the story is
+  its **roles**, several at once, from the owner's 30 (`memory/roles.py`: quest giver, mentor, minion,
+  god, plot artifact…, each with a description and examples the embedding match reads, and the role it
+  is not, which is never embedded). A role a connection shows is worked out on read (a mentor of a
+  player character, a ruler who leads a place); the rest are stored in `memory_roles` with the session
+  and line numbers that showed it. Each campaign has its own list of codes (`memory_role_codes`), so a
+  role its reading adds (at most 40) never crosses campaigns. Roles are for the DM only, like the rank,
+  and never add to it; `commoner` is the default and never stored.
 - **Companions (`travels_with`, #3176, owner 2026-11-01, Supervisor's ruling):** a companion (a familiar,
   a hired guide, a rescued prisoner) is linked by the kind `travels_with` to a player character or to the
   party group entry. **The party stays the players' point of view and only they are its members**: a
