@@ -174,8 +174,11 @@ def _spans(reply: str) -> list[str] | None:
     """The quoted spans of a reply, whatever quotation marks it uses, or None when the marks do
     not pair up (an unbalanced mark would hide a quotation from the check). An apostrophe inside
     a word is not a mark. A closing mark may be the same character as the opening one."""
+    # One double prime right after a digit is a measure (10″). Two or more could hide a quotation
+    # behind digits (1″words2″), so then none is exempt and they pair up like any other mark.
+    units = len(re.findall(rf"(?<=[0-9])[{_UNIT_MARKS}]", reply))
     for mark in _ALSO_MARKS:  # before NFKC, which would turn ″ into two primes
-        if mark in _UNIT_MARKS:
+        if mark in _UNIT_MARKS and units <= 1:
             reply = re.sub(rf"(?<![0-9]){mark}", '"', reply)
         else:
             reply = reply.replace(mark, '"')

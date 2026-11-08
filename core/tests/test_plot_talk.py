@@ -168,6 +168,9 @@ class Quoting(unittest.TestCase):
         self.assertIsNotNone(pt.parse(raw(text), ctx()))
         text = "Seconds are 5‶ long, and you said “He came back as a ghost”."
         self.assertIsNotNone(pt.parse(raw(text), ctx()))
+        # two of them could hide a quotation behind digits: then they pair up like any other mark
+        hidden = "He said 1″Gorrak swung the axe at dawn2″ and left."
+        self.assertIsNone(pt.parse(raw(hidden), ctx()))
         # not after a digit it is still a mark, so a quotation in it is still checked
         line = "Gorrak swung the axe at dawn"
         self.assertIsNone(pt.parse(raw(f"Someone said ″{line}″ there."), ctx()))

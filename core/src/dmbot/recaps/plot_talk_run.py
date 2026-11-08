@@ -133,7 +133,7 @@ class TalkStore:
                 "UPDATE plot_chat SET state = 'working', claimed_at = %s"
                 " WHERE (guild_id, campaign_id, id) = (SELECT guild_id, campaign_id, id"
                 " FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
-                " created_at > %s AND (state = 'waiting' OR (state = 'working'"
+                " created_at >= %s AND (state = 'waiting' OR (state = 'working'"
                 " AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, session_at, issue_id, user_id, body",

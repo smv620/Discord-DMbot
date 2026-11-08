@@ -227,6 +227,8 @@ class Answering(TalkBase):
         ai = Ai(good())
         self.assertEqual(await TalkRunner(late, self.memory, ai).round(THURSDAY.id), 0)
         self.assertEqual(ai.calls, 0)  # nothing was asked of the AI for a message that is gone
+        [dm] = [m for m in await self.messages() if m["role"] == "dm"]
+        self.assertEqual((dm["state"], dm["error"]), ("failed", NOT_ANSWERED))
 
     async def test_the_sweep_deletes_old_talks_in_its_own_server_only(self) -> None:
         from dmbot.campaigns.store import CampaignStore
@@ -372,6 +374,23 @@ class Saving(TalkBase):
         self.assertEqual(await self.condition(), "dead")  # not made after its half hour
         [late] = (await self.messages())[-1]["proposals"]
         self.assertEqual((late["state"], late["error"]), ("failed", NOT_SAVED))
+
+    async def test_a_save_with_no_stamp_is_judged_by_its_message_by_the_bot_too(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.move_saving_back(0, stamped=False)
+        async with self.db.guild(THURSDAY.id) as conn:  # the message itself is an hour old
+            await conn.execute("UPDATE plot_chat SET created_at = created_at - 3600")
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
+        self.assertEqual(await self.condition(), "dead")
+
+    async def test_a_saved_proposal_is_left_saved_by_the_expiry(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 1)
+        await self.move_saving_back(40 * 60)
+        self.assertEqual(await self.talk.expire(THURSDAY.id), 0)
+        self.assertEqual((await self.messages())[-1]["proposals"][0]["state"], "saved")
 
     async def test_a_save_inside_its_half_hour_is_made(self) -> None:
         p = await self.reply_with_proposal()
