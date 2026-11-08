@@ -1,5 +1,6 @@
 """The one rule for "the table's chat" (#3212), pinned directly: a campaign's and a table's chat
-channel, with the voice channel as the fallback (#3279)."""
+channel, with the last voice channel (a campaign) or the voice channel (a table) as the fallback
+(#3279)."""
 
 from __future__ import annotations
 
@@ -47,8 +48,11 @@ class TheTablesChat(unittest.TestCase):
     def test_the_picked_channel_wins_for_a_campaign(self) -> None:
         self.assertEqual(campaign(last_voice=LAST, picked=PICKED).table_chat_id, PICKED)
 
-    def test_the_voice_channel_is_the_fallback_for_a_campaign(self) -> None:
+    def test_the_last_voice_channel_is_the_fallback_for_a_campaign(self) -> None:
         self.assertEqual(campaign(last_voice=LAST, picked=None).table_chat_id, LAST)
+
+    def test_a_picked_channel_wins_before_any_session_has_started(self) -> None:
+        self.assertEqual(campaign(last_voice=None, picked=PICKED).table_chat_id, PICKED)
 
     def test_a_campaign_with_neither_has_no_chat(self) -> None:
         self.assertIsNone(campaign(last_voice=None, picked=None).table_chat_id)
