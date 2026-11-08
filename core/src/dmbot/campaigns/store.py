@@ -1890,6 +1890,8 @@ class CampaignStore:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
                 await tell(progress, 0, len(order))
+                # (the transcript parts carry every column, the stamp included: keep it as it is)
+                await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
                 for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
@@ -1899,6 +1901,8 @@ class CampaignStore:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
                     await tell(progress, done, len(order))
+                # (the stamps end with the loads, as after the sections: what runs next is DMbot's)
+                await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(

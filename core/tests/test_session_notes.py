@@ -379,7 +379,10 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
             TEST_URL,
             schema=self.schema,
             max_size=2,
-            migrations=tuple(m for m in MIGRATIONS if m[0] != self.name),
+            # (a later migration that adds a column to session_notes needs the table: left out too)
+            migrations=tuple(
+                m for m in MIGRATIONS if m[0] not in (self.name, "0381_made_by_commit_transcripts")
+            ),
         )
 
     async def asyncTearDown(self) -> None:
