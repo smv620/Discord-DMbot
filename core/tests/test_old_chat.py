@@ -142,7 +142,7 @@ class TheWords(unittest.TestCase):
 
     def test_both_are_short(self) -> None:
         self.assertLess(len(old_chat.notice_text(555)), 600)
-        self.assertLess(len(old_chat.confirm_text("x" * 100)), 600)
+        self.assertLess(len(old_chat.confirm_text("*" * 100)), 600)
 
 
 if __name__ == "__main__":
