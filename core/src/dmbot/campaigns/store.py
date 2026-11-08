@@ -2089,14 +2089,13 @@ class CampaignStore:
         if not await self._has_accounts(conn):
             return user_id
         cur = await conn.execute(
-            "SELECT dmbot_account_of(%s) AS account,"
-            " %s = ANY (ARRAY(SELECT dmbot_account_logins(%s))) AS own",
-            (user_id, user_id, user_id),
+            "SELECT dmbot_account_of(%s) AS account, dmbot_account_taken_off(%s) AS gone",
+            (user_id, user_id),
         )
         row = await cur.fetchone()
         if row is not None and row["account"] is not None:
             return int(row["account"])
-        return user_id if row is not None and row["own"] else None
+        return None if row is not None and row["gone"] else user_id
 
     async def _has_accounts(self, conn: Conn) -> bool:
         if self._accounts is None:

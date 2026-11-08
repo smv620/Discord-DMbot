@@ -186,3 +186,32 @@ class TakenOffIdsStayOff(DatabaseTest):
         self.assertEqual(again.dm_accounts, frozenset({OWNER}))
         self.assertFalse(again.is_owner(OWNER))
         self.assertFalse(again.is_dm(OWNER))
+
+
+class WebsiteRole(DatabaseTest):
+    async def web(self) -> object:
+        from dmbot.db import Database
+        from tests.pg import REQUIRE_DB, SUPERUSER_URL
+        from tests.test_web_role import ensure_web_role, web_url
+
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.addAsyncCleanup(web.close)
+        return web
+
+    async def test_the_website_cannot_list_a_strangers_discord_ids(self) -> None:
+        web = await self.web()
+        await add_user(self.db, OWNER)
+        await link(self.db, OWNER, OWNER_2)
+        async with web.user(CO_DM) as conn:  # type: ignore[attr-defined]
+            cur = await conn.execute("SELECT * FROM dmbot_account_logins(%s)", (OWNER,))
+            self.assertEqual(await cur.fetchall(), [])
+        async with web.user(OWNER) as conn:  # type: ignore[attr-defined]
+            cur = await conn.execute("SELECT * FROM dmbot_account_logins(%s)", (OWNER,))
+            self.assertEqual(
+                {int(r["dmbot_account_logins"]) for r in await cur.fetchall()}, {OWNER, OWNER_2}
+            )
