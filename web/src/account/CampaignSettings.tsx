@@ -10,6 +10,7 @@ import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
+import { SHARE_STORY_LIVE } from "../content/share-story-switch";
 import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
 import { KIND_OFFERS_LIVE } from "../content/kind-offers-switch";
@@ -276,6 +277,9 @@ export default function CampaignSettings({
       </ul>
       {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
         <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
+      )}
+      {SHARE_STORY_LIVE && s && s.shareStory !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareStory }} />
       )}
       {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
