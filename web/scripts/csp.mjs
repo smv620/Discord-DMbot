@@ -22,6 +22,25 @@ export function inlineScriptHashes(html) {
   return hashes;
 }
 
+/**
+ * What a page that is not on the list of pages with scripts may still carry while the search bar is on (#3855): the search
+ * bar's one island, and Astro's own two start-up scripts for it (the island element and the idle hook). Returns the problems:
+ * a script with a src, an island of anything else, or an inline script that is not one of Astro's two. A page with no script
+ * at all has none. The inline scripts' hashes are checked separately, against dist/_headers.
+ */
+export function strayScriptProblems(html) {
+  const problems = [];
+  for (const [, attrs = "", body] of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+    if (/\stype\s*=\s*["']?application\/(ld\+)?json/i.test(attrs)) continue;
+    if (/\ssrc\s*=/i.test(attrs)) problems.push("a script with a src");
+    else if (!(body.includes("astro-island") || body.includes("requestIdleCallback"))) problems.push("an inline script that is not Astro's start-up");
+  }
+  for (const [, url] of html.matchAll(/<astro-island\b[^>]*\scomponent-url="([^"]*)"/gi)) {
+    if (!/\/_astro\/SearchBar\.[^/"]+\.js$/.test(url ?? "")) problems.push(`an island that is not the search bar (${url})`);
+  }
+  return problems;
+}
+
 /** Marks the pretend API (src/account/mock.ts, MOCK_MARKER); a test keeps the two equal. */
 export const MOCK_MARKER = "dmbot-pretend-api-7f3c";
 

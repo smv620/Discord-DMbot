@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_ORIGIN } from "./csp.mjs";
+import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, strayScriptProblems, TURNSTILE_ORIGIN } from "./csp.mjs";
 
 // pricing.html: the greeting for a personal link (#1231), the only script on that page.
 // account/recaps.html: the DM's recap pages (#1386).
@@ -44,8 +44,9 @@ const SCRIPTED = new Set([
   "pricing.html",
   "unsubscribe.html",
 ]);
-// The search bar in the header (#3855) puts its island, and so a script, on every page while SEARCH_LIVE is on, so then the
-// list above is not the limit; every inline script still has to be allowed by its hash below.
+// The search bar in the header (#3855) puts its island, and so a script, on every page while SEARCH_LIVE is on. A page not on
+// the list above may then carry only that island and Astro's start-up scripts for it (strayScriptProblems); anything else is
+// still a problem, and every inline script still has to be allowed by its hash below.
 const SEARCH_ON = /SEARCH_LIVE\s*=\s*true/.test(
   readFileSync(new URL("../src/content/search-switch.ts", import.meta.url), "utf8"),
 );
@@ -59,8 +60,9 @@ if (!policy) problems.push("dist/_headers has no script-src");
 for (const page of htmlFiles(dist)) {
   const name = relative(dist, page);
   const html = readFileSync(page, "utf8");
-  if (!SEARCH_ON && !SCRIPTED.has(name) && /<script/i.test(html)) {
-    problems.push(`${name} has a script; only ${[...SCRIPTED].join(" and ")} should`);
+  if (!SCRIPTED.has(name) && /<script|<astro-island/i.test(html)) {
+    const stray = SEARCH_ON ? strayScriptProblems(html) : ["a script"];
+    for (const why of stray) problems.push(`${name} has ${why}; only ${[...SCRIPTED].join(" and ")} should have scripts${SEARCH_ON ? ", and every other page only the search bar" : ""}`);
   }
   for (const hash of inlineScriptHashes(html)) {
     if (!policy?.split(" ").includes(hash)) problems.push(`${name}: inline script ${hash} not allowed`);
