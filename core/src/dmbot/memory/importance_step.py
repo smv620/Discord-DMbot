@@ -18,6 +18,9 @@ Held here, not trusted:
   step; a cut or unreadable answer is asked again in two halves (down to one entry), never read as
   "nothing found" (#2596).
 - A role a connection already shows is not stored a second time.
+- **A new role that means one the campaign has** is not added (`role_match`, only with
+  `DMBOT_ROLE_MATCH` on): the existing role is used instead. A weak or close match, or a failed
+  call, adds it as before (counted).
 Counts only leave this module.
 """
 
@@ -35,6 +38,7 @@ from dmbot.db import Database
 from dmbot.memory import importance_read as ir
 from dmbot.memory import roles
 from dmbot.memory.importance_rank import DM_CORRECTED, Assessment, ImportanceStore, roots
+from dmbot.memory.role_match import Placed, RoleMatcher
 from dmbot.memory.role_store import NewRole, RoleStore
 from dmbot.memory.roles_backed import backed_roles
 from dmbot.memory.scene_step import parse_ref
@@ -59,6 +63,8 @@ class Report:
     roles_added: int = 0
     roles_ended: int = 0
     codes_added: int = 0
+    codes_matched: int = 0  # new roles that meant one the campaign has: that one was used
+    match_failed: int = 0  # the match couldn't be asked: the new roles were added as before
     dropped_for_consent: int = 0
     unsent: int = 0  # entries not read this time: the call limit, or the run stopped
     stopped: str = ""
@@ -69,6 +75,7 @@ class Report:
         return (
             f"Importance: {self.entries} entr(ies), {self.ranked} ranked, {self.roles_added} "
             f"role(s) added, {self.roles_ended} ended, {self.codes_added} new code(s), "
+            f"{self.codes_matched} matched to one held, {self.match_failed} match(es) failed, "
             f"{self.calls} call(s), {self.failed} failed, {self.split} split, "
             f"{self.dropped_for_consent} dropped for consent, {self.unsent} not read"
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -214,8 +221,10 @@ async def run(
     count_call: Callable[[], Awaitable[None]] | None = None,
     renew: Callable[[], Awaitable[object]] | None = None,
     report: Report | None = None,
+    matcher: RoleMatcher | None = None,
 ) -> Report:
-    """Ask about `items` in parts and write what comes back."""
+    """Ask about `items` in parts and write what comes back. With `matcher`, a proposed role is
+    matched to the campaign's own first (`role_match`)."""
     report = report if report is not None else Report()
     report.entries += len(items)
     ranks, role_store = ImportanceStore(db), RoleStore(db)
@@ -300,7 +309,7 @@ async def run(
                 report.dropped_for_consent += 1
         await _write(
             ranks, role_store, guild_id, campaign_id, session_started_at, verdicts, got,
-            sendable, known, added, report,
+            sendable, known, added, report, matcher,
         )  # fmt: skip
     return report
 
@@ -317,10 +326,15 @@ async def _write(
     known: dict[str, str],
     added: dict[str, str],
     report: Report,
+    matcher: RoleMatcher | None = None,
 ) -> None:
     """The ranks, the new codes, the roles and the ended roles of one answer. Never fatal."""
     try:
+        placed = await _place(matcher, guild_id, campaign_id, got.new_codes, known, report)
         for new_code in got.new_codes:
+            if new_code.code in placed.matched:
+                report.codes_matched += 1
+                continue
             why = await role_store.add_code(
                 guild_id, campaign_id, new_code.code, new_code.label, new_code.description,
                 new_code.examples, new_code.not_this,
@@ -329,6 +343,12 @@ async def _write(
                 report.codes_added += 1
                 known[new_code.code] = "reading"
                 added[new_code.code] = new_code.label
+                vector = placed.vectors.get(new_code.code)
+                if matcher is not None and vector is not None:
+                    await matcher.remember(
+                        guild_id, campaign_id, new_code.code,
+                        roles.embed_text(new_code.description, new_code.examples), vector,
+                    )  # fmt: skip
             else:
                 report.lost["new_role_" + why] += 1
         report.ranked += await ranks.add(
@@ -341,16 +361,22 @@ async def _write(
             ],
         )
         holding = {i.entity_id: set(i.roles) for i in items}
+        swap = placed.matched  # (a proposed role that meant one held is stored as that one)
         new = [
             NewRole(v.entity_id, code, "reading", session_started_at)
             for v in verdicts
-            for code in v.roles
+            for code in dict.fromkeys(swap.get(c, c) for c in v.roles)
             if code not in holding[v.entity_id] and code in known
         ]
         report.roles_added += await role_store.add(guild_id, campaign_id, new, report.lost)
         groups = {i.entity_id: i.group for i in items}
         for v in verdicts:
-            for code in v.ended:
+            kept = {swap.get(c, c) for c in v.roles}
+            # (a role ended here is read through the same swap, and one the answer also holds
+            # after it, such as "henchman" swapped to `minion` beside ended `minion`, stays)
+            for code in dict.fromkeys(swap.get(c, c) for c in v.ended):
+                if code in kept:
+                    continue
                 report.roles_ended += await role_store.end(
                     guild_id, campaign_id, v.entity_id, code, also=groups[v.entity_id],
                     keep_dm=True,
@@ -358,6 +384,27 @@ async def _write(
     except Exception as exc:  # only the type: never a word of the answer
         log.warning("Importance: storing failed (%s)", type(exc).__name__)
         report.failed += 1
+
+
+async def _place(
+    matcher: RoleMatcher | None,
+    guild_id: int,
+    campaign_id: str,
+    new_codes: Sequence[ir.NewCode],
+    known: Mapping[str, str],
+    report: Report,
+) -> Placed:
+    """The proposed roles matched to the campaign's own. Any trouble (the call, the vectors) adds
+    every one as before and is counted: a failed match never blocks a role."""
+    if matcher is None or not new_codes:
+        return Placed()
+    texts = [(c.code, roles.embed_text(c.description, c.examples)) for c in new_codes]
+    try:
+        return await matcher.place(guild_id, campaign_id, texts, known, report.lost)
+    except Exception as exc:  # only the type: never a word of the roles
+        log.warning("Importance: the role match failed (%s)", type(exc).__name__)
+        report.match_failed += 1
+        return Placed()
 
 
 class _Client(Protocol):

@@ -11,6 +11,7 @@ reach a log line.
 from __future__ import annotations
 
 import base64
+import calendar
 import io
 import json
 import logging
@@ -61,12 +62,21 @@ class FakeHost:
     ) -> None:
         self.campaign, self.plan, self.on = campaign, plan, narrator
         self.voice = voice or FakeVoice()
+        self.used: dict[str, int] = {}  # this month's credits by campaign
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Any:
         return self.campaign
 
     async def plan_allows_narration(self, guild_id: int, campaign: Any) -> bool:
         return self.plan
+
+    hear_limit = 5000
+
+    async def hear_used(self, guild_id: int, campaign_id: str) -> int:
+        return self.used.get(campaign_id, 0)
+
+    async def hear_spent(self, guild_id: int, campaign_id: str, credits: int) -> None:
+        self.used[campaign_id] = self.used.get(campaign_id, 0) + credits
 
     def narrator(self) -> ElevenLabs | None:
         if not self.on:
@@ -254,6 +264,84 @@ class Hearing(Base):
         self.assertEqual(base64.b64decode(seen["audio"]), b"clip")
         stale = bot.HearStore(self.db, clock=lambda: NOW + bot.KEEP_FOR_S + 1000)
         self.assertEqual(await stale.sweep(THURSDAY.id), 1)
+
+    async def test_a_made_clip_adds_its_credits_once_and_a_cache_hit_adds_nothing(self) -> None:
+        voice, cache = FakeVoice(), bot.HearCache()
+        host = FakeHost(self.campaign(), voice)
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        first = await bot.apply(host, cache, THURSDAY.id, item)
+        self.assertEqual((host.used, first.credits), ({self.one.id: len(WORDS)}, len(WORDS)))
+        await bot.apply(host, cache, THURSDAY.id, item)  # the same words: the cache answers
+        self.assertEqual((host.used, voice.calls), ({self.one.id: len(WORDS)}, 1))
+
+    async def test_a_count_that_cannot_be_added_does_not_lose_the_paid_clip(self) -> None:
+        host = FakeHost(self.campaign(), FakeVoice())
+
+        async def broken(guild_id: int, campaign_id: str, credits: int) -> None:
+            raise RuntimeError("the database blinked")
+
+        host.hear_spent = broken  # type: ignore[method-assign]
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        done = await bot.apply(host, bot.HearCache(), THURSDAY.id, item)
+        self.assertEqual((done.error, done.audio is not None), ("", True))  # still served
+
+    async def test_a_reply_the_voice_company_charged_for_but_we_could_not_read_is_counted(
+        self,
+    ) -> None:
+        voice = FakeVoice()
+        host = FakeHost(self.campaign(), voice)
+        real = host.narrator
+
+        def charged() -> Any:
+            found = real()
+            assert found is not None
+            found.credits = 40  # what it charged before the reply turned out unreadable
+
+            async def unreadable(*_a: Any, **_k: Any) -> Any:
+                from dmbot.recaps.audio.eleven import ProviderError
+
+                raise ProviderError("reply")
+
+            found.speech = unreadable  # type: ignore[method-assign]
+            return found
+
+        host.narrator = charged  # type: ignore[method-assign]
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        done = await bot.apply(host, bot.HearCache(), THURSDAY.id, item)
+        self.assertEqual((done.error, host.used.get(self.one.id)), (bot.FAILED, 40))
+
+    async def test_an_used_up_month_says_voice_off_and_makes_no_call(self) -> None:
+        voice = FakeVoice()
+        host = FakeHost(self.campaign(), voice)
+        host.used[self.one.id] = host.hear_limit
+        item = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        done = await bot.apply(host, bot.HearCache(), THURSDAY.id, item)
+        self.assertEqual((done.error, voice.calls), (bot.VOICE_OFF, 0))
+        other = bot.Hear("b" * 32, self.two.id, ALICE.id, WORDS, 1)  # another campaign's month
+        again = await bot.apply(host, bot.HearCache(), THURSDAY.id, other)
+        self.assertEqual((again.error, voice.calls), ("", 1))
+
+    async def test_the_months_count_is_per_campaign_and_resets_with_the_month(self) -> None:
+        now = [float(calendar.timegm((2026, 11, 8, 12, 0, 0)))]
+        store = bot.HearStore(self.db, clock=lambda: now[0])
+        await store.spent(THURSDAY.id, self.one.id, 40)
+        await store.spent(THURSDAY.id, self.one.id, 25)
+        self.assertEqual(await store.used(THURSDAY.id, self.one.id), 65)
+        self.assertEqual(await store.used(THURSDAY.id, self.two.id), 0)  # not another campaign's
+        now[0] += 30 * 86400  # December
+        self.assertEqual(await store.used(THURSDAY.id, self.one.id), 0)
+        await store.spent(THURSDAY.id, self.one.id, 7)
+        self.assertEqual(await store.used(THURSDAY.id, self.one.id), 7)
+        async with self.db.guild(THURSDAY.id) as conn:  # November's row was cleared with it
+            cur = await conn.execute(
+                "SELECT month FROM hear_use WHERE campaign_id = %s", (self.one.id,)
+            )
+            self.assertEqual([r["month"] for r in await cur.fetchall()], [202612])
+
+    async def test_the_month_is_the_utc_calendar_month(self) -> None:
+        edge = calendar.timegm((2026, 12, 1, 0, 0, 0))
+        self.assertEqual(bot.month_of(edge - 1), 202611)  # 30 Nov 23:59:59
+        self.assertEqual(bot.month_of(edge), 202612)  # 1 Dec 00:00:00
 
     async def test_the_cache_is_one_campaigns_own(self) -> None:
         voice, cache = FakeVoice(), bot.HearCache()

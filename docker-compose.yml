@@ -125,6 +125,9 @@ services:
       # The bot's setting for mood tags in the narration, so the page can tell which paragraphs a
       # change would speak again (#2630). It changes nothing the bot does.
       DMBOT_RECAP_VOICE_TAGS: ${DMBOT_RECAP_VOICE_TAGS:-1}
+      # The bot's switch for "🎤 Say it" (#2316), so the route can say it is off. The model's
+      # folder (SAID_AS_MODEL) stays with the bot.
+      SAID_AS_VOICE: ${SAID_AS_VOICE:-0}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its

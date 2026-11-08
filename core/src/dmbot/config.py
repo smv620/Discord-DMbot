@@ -122,6 +122,9 @@ class Settings:
     theatre_on: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
+    # A story role the importance reading proposes is matched to one the campaign has, by meaning
+    # (#3172): needs meaning search and the Voyage key too. Off until dev1's golden-set counts.
+    role_match: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -178,9 +181,20 @@ class Settings:
     # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
     # pauses, so dev1 can compare the two narrations by ear.
     recap_voice_tags: bool = True
+    # "🎤 Say it" (#2316): a clip of the DM saying a name, turned into a respelling by a
+    # speech-sound model on this server. Off until SAID_AS_VOICE=1 and SAID_AS_MODEL names a
+    # folder with the model (dev1 installs it, #2318); never committed. Off or missing: the
+    # website says to type it.
+    said_as_voice: bool = False
+    said_as_model: str = ""
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
+    # The most credits Hear it (the website's 🔊 on a name) may spend for one campaign in a
+    # calendar month (UTC): about a dollar at 5,000, some sixty clips of a name. It stops at or just
+    # past this (the press that crosses it is made). Past it a press
+    # says the voice is off and the page falls back to the browser's (#3818).
+    hear_credits_per_month: int = 5000
 
     @property
     def pictures_ready(self) -> bool:
@@ -195,6 +209,11 @@ class Settings:
     @property
     def meaning_search_on(self) -> bool:
         return self.meaning_search and bool(self.voyage_key)
+
+    @property
+    def role_match_on(self) -> bool:
+        """New story roles are matched by meaning (#3172): its own switch, inside meaning search."""
+        return self.role_match and self.meaning_search_on
 
     @property
     def recap_audio_on(self) -> bool:
@@ -383,6 +402,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_REL_READ_ON must be 1 (on) or 0 (off), got "' + rel_read_raw + '".'
         )
+    role_match_raw = (get("DMBOT_ROLE_MATCH") or "0").lower()
+    if role_match_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_ROLE_MATCH must be 1 (on) or 0 (off), got "' + role_match_raw + '".'
+        )
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -463,6 +487,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_RECAP_VOICE_TAGS must be 1 (on) or 0 (off), got "' + voice_tags_raw + '".'
         )
+    said_as_raw = (get("SAID_AS_VOICE") or "0").lower()
+    if said_as_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('SAID_AS_VOICE must be 1 (on) or 0 (off), got "' + said_as_raw + '".')
     audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "15000"
     if not (audio_credits_raw.isascii() and audio_credits_raw.isdigit()) or not (
         1000 <= int(audio_credits_raw) <= 200000
@@ -470,6 +497,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_RECAP_AUDIO_MAX_CREDITS must be a whole number from 1000 to 200000, got "'
             + audio_credits_raw
+            + '".'
+        )
+    hear_raw = get("DMBOT_HEAR_CREDITS_PER_MONTH") or "5000"
+    if not (hear_raw.isascii() and hear_raw.isdigit()) or not 100 <= int(hear_raw) <= 200000:
+        raise ConfigError(
+            'DMBOT_HEAR_CREDITS_PER_MONTH must be a whole number from 100 to 200000, got "'
+            + hear_raw
             + '".'
         )
     monthly = {}
@@ -588,6 +622,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
+        role_match=role_match_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
@@ -615,8 +650,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         elevenlabs_speech_model=speech_model,
         recap_audio_max_credits=int(audio_credits_raw),
         recap_voice_tags=voice_tags_raw in ("1", "true", "on"),
+        said_as_voice=said_as_raw in ("1", "true", "on"),
+        said_as_model=get("SAID_AS_MODEL"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
+        hear_credits_per_month=int(hear_raw),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),
