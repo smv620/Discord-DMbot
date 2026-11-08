@@ -78,6 +78,7 @@ from dmbot.campaigns import (
     web_line_delete,
     web_restore,
 )
+from dmbot.campaigns.lineage_section import LineageSection
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -14129,6 +14130,7 @@ def register_backup_sections(
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
+    campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 
 
 async def run(settings: Settings) -> None:

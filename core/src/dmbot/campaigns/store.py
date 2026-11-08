@@ -1884,7 +1884,9 @@ class CampaignStore:
             # A restore keeps the stamp each row was made with, NULL included, and never stamps a
             # row with the build that loaded it (#3739, `dmbot.lineage`).
             await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
-            for name, rows in sections.items():
+            # The build stamps go back last whatever the order of the file's sections: they are
+            # put on rows the other sections have just made (#3751).
+            for name, rows in sorted(sections.items(), key=lambda item: item[0] == "lineage"):
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)
                 except CampaignError:

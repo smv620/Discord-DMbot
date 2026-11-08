@@ -70,6 +70,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "memory_heard": ("memory_heard",),
     # The DM's answers to the after-session report's items, which cannot be made again (#2661)
     "report_answers": ("report_answers",),
+    # carries no table of its own: the build stamps of the others' rows (#3751)
+    "lineage": (),
 }
 
 # The extra files of a backup (#2552): the tables each one carries. Not registered sections: they
