@@ -1892,11 +1892,13 @@ class ClaimStore:
         words produced goes with what it made. Returns how many claims, readings, deeds and scenes
         went."""
 
-        from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
+        # (imported here: they need this module's names)
+        from dmbot.memory import deed_proposals, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)
