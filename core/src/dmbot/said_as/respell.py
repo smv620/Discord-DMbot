@@ -1,3 +1,4 @@
+# ruff: noqa: RUF002, RUF003  (IPA letters look like Latin ones; they are the point here)
 """Speech sounds (IPA) in, a plain respelling out: "kɑzɛθ" becomes "kah-zeth" (#2316).
 
 Pure code with no model and no network, so a table of made-up names can test it. The recogniser
@@ -20,6 +21,8 @@ How it reads the sounds:
 """
 
 from __future__ import annotations
+
+from itertools import pairwise
 
 MAX_LENGTH = 80  # the limit on a spelling everywhere (web/names.py SAID_AS_MAX)
 
@@ -140,7 +143,7 @@ def _syllables(sounds: list[tuple[str, bool, bool]]) -> list[tuple[list[str], bo
     if not nuclei:
         return []
     cuts = [0]
-    for left, right in zip(nuclei, nuclei[1:], strict=False):
+    for left, right in pairwise(nuclei):
         between = [sounds[k][0] for k in range(left + 1, right)]
         if len(between) <= 1:
             cut = left + 1  # one consonant (or none): it starts the next syllable
@@ -153,7 +156,7 @@ def _syllables(sounds: list[tuple[str, bool, bool]]) -> list[tuple[list[str], bo
         cuts.append(cut)
     cuts.append(len(sounds))
     result = []
-    for a, b in zip(cuts, cuts[1:], strict=False):
+    for a, b in pairwise(cuts):
         part = sounds[a:b]
         result.append(([s[0] for s in part], any(s[2] for s in part)))
     return result
