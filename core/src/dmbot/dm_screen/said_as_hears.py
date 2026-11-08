@@ -34,7 +34,9 @@ PER_ROUND = 5  # presses answered in one round for one server
 RETAKE_AFTER_S = 60  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 CACHE_FOR_S = 86_400  # a clip made once is reused for a day
-CACHE_MAX = 100  # about 100 KB each: a bound on memory, oldest out first
+CACHE_MAX = 40  # a clip of 80 letters is up to ~400 KB: about 16 MB at most, oldest out first
+CLIP_MAX = 1_500_000  # a clip bigger than this is refused (the column allows 2 MB)
+TRIES_MAX = 2  # a press is spoken at most twice: a stalled claim is retaken once, then fails
 
 # What a failed press says, as one word for the page.
 NOT_ALLOWED = "not_allowed"  # the sender is not a DM of the campaign any more
@@ -51,6 +53,7 @@ class Hear:
     user_id: int
     text: str  # the DM's words: never logged
     claimed_at: int
+    tries: int = 1  # how many times it has been taken; a press is spoken at most TRIES_MAX times
 
 
 class Host(Protocol):
@@ -76,8 +79,12 @@ class HearCache:
         self._clips: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
 
     @staticmethod
-    def key(voice: str, model: str, text: str) -> str:
-        return hashlib.sha256(f"{voice}\0{model}\0{text}".encode()).hexdigest()
+    def key(guild_id: int, campaign_id: str, voice: str, model: str, text: str) -> str:
+        """One campaign's own clips: the same words in another campaign or server are a new call,
+        so nothing one table's presses decide reaches another's."""
+        return hashlib.sha256(
+            f"{guild_id}\0{campaign_id}\0{voice}\0{model}\0{text}".encode()
+        ).hexdigest()
 
     def get(self, key: str) -> bytes | None:
         found = self._clips.get(key)
@@ -123,17 +130,19 @@ class HearStore:
         now = int(self._now() * 1000)  # milliseconds, so two claims of one row never match
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE said_as_hears SET state = 'working', claimed_at = %s"
+                "UPDATE said_as_hears SET state = 'working', claimed_at = %s, tries = tries + 1"
                 " WHERE (guild_id, id) = (SELECT guild_id, id FROM said_as_hears"
                 " WHERE guild_id = %s AND (state = 'waiting' OR (state = 'working'"
                 " AND claimed_at < %s)) ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, user_id, text",
+                " RETURNING id, campaign_id, user_id, text, tries",
                 (now, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
         if row is None:
             return None
-        return Hear(row["id"], row["campaign_id"], int(row["user_id"]), row["text"], now)
+        return Hear(
+            row["id"], row["campaign_id"], int(row["user_id"]), row["text"], now, int(row["tries"])
+        )
 
     async def finish(self, guild_id: int, item: Hear, outcome: Outcome) -> bool:
         """Done with the clip, or failed with why. Only the worker holding the current claim can
@@ -165,6 +174,8 @@ class HearStore:
 
 async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outcome:
     """Make the clip for one press. Never raises for a refusal: the outcome carries the word."""
+    if item.tries > TRIES_MAX:  # taken again after a stall: spoken once already, never again
+        return Outcome(FAILED)
     campaign = await host.get_campaign(guild_id, item.campaign_id)
     if campaign is None:
         return Outcome(NOT_FOUND)
@@ -173,7 +184,7 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
     voice = host.narrator()
     if voice is None or not await host.plan_allows_narration(guild_id, campaign):
         return Outcome(VOICE_OFF)
-    key = HearCache.key(voice.voice_id, voice.speech_model, item.text)
+    key = HearCache.key(guild_id, item.campaign_id, voice.voice_id, voice.speech_model, item.text)
     clip = cache.get(key)
     if clip is not None:
         return Outcome(audio=clip)  # the second press of the same words costs nothing
@@ -187,6 +198,8 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
             VOICE_OFF if exc.kind == "auth" else BUSY if exc.kind in ("busy", "plan") else FAILED
         )
     clip = wav(speech.pcm)
+    if len(clip) > CLIP_MAX:
+        return Outcome(FAILED)
     cache.put(key, clip)
     return Outcome(audio=clip, credits=voice.credits)
 

@@ -28,6 +28,7 @@ SQL = (
         audio       BYTEA CHECK (audio IS NULL OR octet_length(audio) <= 2000000),
         created_at  BIGINT NOT NULL,
         claimed_at  BIGINT NOT NULL DEFAULT 0,
+        tries       INT NOT NULL DEFAULT 0,
         PRIMARY KEY (guild_id, id),
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE

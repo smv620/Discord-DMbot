@@ -255,6 +255,68 @@ class Hearing(Base):
         stale = bot.HearStore(self.db, clock=lambda: NOW + bot.KEEP_FOR_S + 1000)
         self.assertEqual(await stale.sweep(THURSDAY.id), 1)
 
+    async def test_the_cache_is_one_campaigns_own(self) -> None:
+        voice, cache = FakeVoice(), bot.HearCache()
+        host = FakeHost(self.campaign(), voice)
+        for campaign in (self.one.id, self.two.id):
+            item = bot.Hear("a" * 32, campaign, ALICE.id, WORDS, 1)
+            await bot.apply(host, cache, THURSDAY.id, item)
+            await bot.apply(host, cache, THURSDAY.id, item)
+        self.assertEqual(voice.calls, 2)  # one call each, the repeat in each is free
+        other = bot.Hear("a" * 32, self.one.id, ALICE.id, WORDS, 1)
+        await bot.apply(host, cache, THURSDAY.id + 1, other)  # another server
+        self.assertEqual(voice.calls, 3)
+
+    async def test_the_cache_forgets_by_age_and_by_count(self) -> None:
+        now = [1000.0]
+        cache = bot.HearCache(clock=lambda: now[0])
+        cache.put("a", b"x")
+        now[0] += bot.CACHE_FOR_S + 1
+        self.assertIsNone(cache.get("a"))
+        for n in range(bot.CACHE_MAX + 5):
+            cache.put(str(n), b"x")
+        self.assertIsNone(cache.get("0"))
+        self.assertEqual(cache.get(str(bot.CACHE_MAX + 4)), b"x")
+
+    async def test_a_stalled_press_is_retaken_once_and_then_fails(self) -> None:
+        clock = [float(NOW)]
+        store = bot.HearStore(self.db, clock=lambda: clock[0])
+        await self.press()
+        first = await store.claim_next(THURSDAY.id)
+        assert first is not None
+        clock[0] += bot.RETAKE_AFTER_S + 5  # the first worker stopped
+        second = await store.claim_next(THURSDAY.id)
+        assert second is not None
+        self.assertEqual((first.tries, second.tries), (1, 2))
+        self.assertFalse(await store.finish(THURSDAY.id, first, bot.Outcome(audio=b"late")))
+        clock[0] += bot.RETAKE_AFTER_S + 5
+        third = await store.claim_next(THURSDAY.id)
+        assert third is not None
+        voice = FakeVoice()
+        done = await bot.apply(
+            FakeHost(self.campaign(), voice), bot.HearCache(), THURSDAY.id, third
+        )
+        self.assertEqual((done.error, voice.calls), (bot.FAILED, 0))  # not spoken a third time
+
+    async def test_ten_waiting_at_once_is_the_most(self) -> None:
+        for _ in range(10):
+            await self.press()
+        with self.assertRaises(RecapError) as caught:
+            await self.press()
+        self.assertEqual(caught.exception.code, "too_soon")
+
+    async def test_the_doors_answer_only_a_dm_of_that_campaign(self) -> None:
+        async with self.web.user(BOB.id, session=self.bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_hear_add(%s, %s, 'x') AS a, dmbot_web_hear_read(%s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, THURSDAY.id, self.one.id, "0" * 32),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["a"], row["r"]), (None, None))
+        self.assertEqual(await self.rows(), [])
+
     async def test_the_words_never_reach_a_log_line(self) -> None:
         secret = "Zorblaxx"
         store = bot.HearStore(self.db)

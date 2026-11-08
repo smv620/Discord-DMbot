@@ -2842,7 +2842,7 @@ def create_app(
         """🔊 Hear it (#3807): queue the box's words, possibly unsaved, to be said in the recap
         narrator's voice: `{"text": "Kah-zeth"}` answers `{"id": ...}` to poll. The key stays with
         the bot, so this only queues. `voice_off` when narration is not set up or the owner's plan
-        has none (the page falls back to the browser's voice); 429 `slow_down` past 20 a minute."""
+        has none (the page falls back to the browser's voice); 429 `too_soon` past 20 a minute."""
         session, _token = signed
         try:
             body = await request.json()
