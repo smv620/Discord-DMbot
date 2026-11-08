@@ -76,13 +76,15 @@ export default function ShareStoryPanel({ api, campaignRef, on }: { api: Account
       <p>{isOn ? words.onState : words.offState}</p>
       {problem && <p role="alert">{problem}</p>}
       {wait && wait.state === "timed_out" && <p role="status">{words.quiet}</p>}
-      {wait && wait.state !== "timed_out" && (
+      {/* The done line is the panel's own words: the shared wait panel would show its generic "Done" instead. */}
+      {wait && wait.state === "done" && <p role="status">{wait.on ? words.doneOn : words.doneOff}</p>}
+      {wait && wait.state !== "timed_out" && wait.state !== "done" && (
         <WorkProgress
           stage={stage}
           startedAt={wait.progress?.startedAt ?? wait.since}
           updatedAt={wait.progress?.updatedAt}
           serverNow={wait.progress?.serverNow}
-          state={wait.progress?.state ?? (wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running")}
+          state={wait.progress?.state ?? (wait.state === "failed" ? "failed" : "running")}
           reason={wait.state === "failed" ? words.failed : null}
         />
       )}
