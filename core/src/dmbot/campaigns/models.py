@@ -132,6 +132,10 @@ class CampaignError(ValueError):
     """A problem the DM can fix. The message is safe to show them as-is."""
 
 
+# "Not given": compared by identity, never by value, so a real empty set is told apart from it.
+_UNSET: frozenset[int] = frozenset({-1})
+
+
 @dataclass(frozen=True, slots=True)
 class Campaign:
     id: str
@@ -213,16 +217,22 @@ class Campaign:
     # ID) until the account can choose another. `owner_ids` is the owner's Discord IDs, for
     # membership only. Left empty they follow `dm_user_ids` and `owner_user_id`, which is exact for
     # every campaign whose people have one Discord account.
-    dm_accounts: frozenset[int] = frozenset()
-    owner_ids: frozenset[int] = frozenset()
+    dm_accounts: frozenset[int] = _UNSET
+    owner_ids: frozenset[int] = _UNSET
     # Which DM account each Discord ID in `dm_user_ids` acts as (an ID with no entry is its own).
     login_accounts: Mapping[int, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.dm_accounts:
+        # Only a campaign built by hand leaves them out. One the store loaded always passes both,
+        # and an empty one then means "nobody can act" (an owner whose only Discord ID was taken
+        # off its account), which must not fall back to the account number.
+        if self.dm_accounts is _UNSET:
             object.__setattr__(self, "dm_accounts", self.dm_user_ids)
-        if not self.owner_ids and self.owner_user_id is not None:
-            object.__setattr__(self, "owner_ids", frozenset({self.owner_user_id}))
+        if self.owner_ids is _UNSET:
+            owner = self.owner_user_id
+            object.__setattr__(
+                self, "owner_ids", frozenset() if owner is None else frozenset({owner})
+            )
 
     def is_dm(self, user_id: int) -> bool:
         """This Discord user is a DM of the campaign, through any Discord account of a DM."""

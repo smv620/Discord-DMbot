@@ -165,3 +165,24 @@ class Guards(DatabaseTest):
         self.assertEqual(by_id[first.id].dm_accounts, frozenset({OWNER}))
         self.assertEqual(by_id[second.id].dm_user_ids, frozenset({CO_DM}))
         self.assertTrue(by_id[second.id].is_owner(CO_DM))
+
+
+class TakenOffIdsStayOff(DatabaseTest):
+    async def test_an_owner_whose_only_login_is_taken_off_has_nobody_acting(self) -> None:
+        # (reached by removing the first ID after the others were removed first is refused, so the
+        # store's answer is built here: the account has a taken-off first ID and no other login)
+        store = CampaignStore(self.db)
+        campaign = await store.create(GUILD, "Frostmaiden", OWNER)
+        await add_user(self.db, OWNER)
+        await link(self.db, OWNER, OWNER_2)
+        await unlink(self.db, OWNER, OWNER)
+        async with self.db.unscoped() as conn:  # the other login goes without the door's rule
+            await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+            await conn.execute("DELETE FROM account_discord_ids WHERE discord_id = %s", (OWNER_2,))
+        again = await store.get(GUILD, campaign.id)
+        assert again is not None
+        self.assertEqual(again.owner_ids, frozenset())
+        self.assertEqual(again.dm_user_ids, frozenset())
+        self.assertEqual(again.dm_accounts, frozenset({OWNER}))
+        self.assertFalse(again.is_owner(OWNER))
+        self.assertFalse(again.is_dm(OWNER))

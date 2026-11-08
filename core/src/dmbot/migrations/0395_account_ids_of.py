@@ -21,6 +21,8 @@ SQL = r"""
     DECLARE
         before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
     BEGIN
+        -- 'move' opens account_discord_ids and account_reserved to this function alone (their
+        -- policy, 0392); the previous value is put back before it returns.
         PERFORM set_config('dmbot.owner_sync', 'move', true);
         RETURN QUERY
             SELECT acct WHERE NOT EXISTS (SELECT 1 FROM account_reserved r
