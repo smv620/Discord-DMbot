@@ -90,10 +90,10 @@ class ThePersonWithoutAName(MemoryTest):
         self.claims = ClaimStore(self.memory)
         self.bram = await self.add("Bram", type="character", status=CONFIRMED)
 
-    async def propose(self, *found: Extracted) -> claims.Proposed:
+    async def propose(self, *found: Extracted, **kw: object) -> claims.Proposed:
         return await self.claims.propose(
             GUILD_A, self.c, list(found), {"1": 7}, opted_in={7},
-            prompt_version="p1", model="m1", session_started_at=500,
+            prompt_version="p1", model="m1", session_started_at=500, **kw,  # type: ignore[arg-type]
         )  # fmt: skip
 
     async def waiting(self) -> list[claims.Claim]:
@@ -106,10 +106,71 @@ class ThePersonWithoutAName(MemoryTest):
         self.assertEqual(claim.reason, claims.DESCRIBED_REASON)
         self.assertEqual(await self.memory.described_entries(GUILD_A, self.c), [])
 
-    async def test_a_described_person_at_both_ends_is_not_kept(self) -> None:
+    async def test_a_chain_of_two_unnamed_people_is_kept_and_keep_makes_both(self) -> None:
+        """Nothing is dropped early (owner, #3736): the two may be tied to the story later."""
         got = await self.propose(said("the beggar woman", "knows", "the old man"))
         counts = (got.waiting, got.described, got.described_dropped, got.named)
-        self.assertEqual(counts, (0, 0, 1, 0))
+        self.assertEqual(counts, (1, 1, 0, 0))
+        (claim,) = await self.waiting()
+        self.assertEqual(claim.reason, claims.DESCRIBED_REASON)
+        done = await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        people = {label: e.id for e, label in await self.memory.unnamed(GUILD_A, self.c)}
+        self.assertEqual(sorted(people), ["unnamed - the beggar woman", "unnamed - the old man"])
+        (fact,) = [
+            r for r in await self.memory.relations(GUILD_A, self.c) if r.id == done.claim.fact_id
+        ]
+        self.assertEqual(
+            {fact.subject_id, fact.object_id},
+            {people["unnamed - the beggar woman"], people["unnamed - the old man"]},
+        )
+
+    async def test_a_fact_about_one_alone_is_kept_and_keep_makes_them(self) -> None:
+        got = await self.propose(said("the beggar woman", "is", "dead"))
+        self.assertEqual((got.waiting, got.described), (1, 1))
+        (claim,) = await self.waiting()
+        await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        (person, label) = (await self.memory.unnamed(GUILD_A, self.c))[0]
+        self.assertEqual((label, person.status), ("unnamed - the beggar woman", CONFIRMED))
+        state = (await self.memory.states(GUILD_A, self.c, [person.id]))[person.id]
+        self.assertEqual(state.condition, "dead")  # (the fact is written on her)
+
+    async def test_one_woman_in_one_session_after_a_fact_about_her(self) -> None:
+        await self.propose(said("the beggar woman", "is", "dead"))
+        (first,) = await self.waiting()
+        await self.claims.confirm(GUILD_A, self.c, first.id, opted_in={7})
+        await self.propose(said("Bram", "knows", "the beggar woman"))
+        (second,) = await self.waiting()
+        await self.claims.confirm(GUILD_A, self.c, second.id, opted_in={7})
+        self.assertEqual(len(await self.memory.unnamed(GUILD_A, self.c)), 1)
+
+    async def test_the_same_words_at_both_ends_is_not_kept(self) -> None:
+        for subject in ("the woman", "The woman"):
+            with self.subTest(subject):
+                got = await self.propose(said(subject, "knows", "the woman"))
+                self.assertEqual((got.waiting, got.described), (0, 0))
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_one_beside_a_new_name_waits_on_the_name_then_keep_makes_the_person(
+        self,
+    ) -> None:
+        got = await self.propose(said("Corwin Hale", "knows", "the old man"))
+        self.assertEqual(got.new, ("Corwin Hale",))  # (the name goes to the names to check)
+        self.assertEqual(got.described, 1)  # (kept now, for when the name is answered)
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])  # (no one made yet)
+        self.assertEqual(await self.waiting(), [])  # (not asked while Corwin is only proposed)
+        (corwin,) = [
+            e.id
+            for e in (await self.memory.lookup_data(GUILD_A, self.c)).entities
+            if e.name == "Corwin Hale"
+        ]
+        await self.memory.set_entity_status(GUILD_A, self.c, corwin, CONFIRMED, source="dm")
+        (claim,) = await self.waiting()  # (asked once the name is answered)
+        self.assertEqual(claim.reason, claims.DESCRIBED_REASON)
+        await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        self.assertEqual(
+            [label for _, label in await self.memory.unnamed(GUILD_A, self.c)],
+            ["unnamed - the old man"],
+        )
 
     async def test_a_described_thing_is_not_a_person(self) -> None:
         got = await self.propose(said("Bram", "is in", "the cave"))
@@ -176,3 +237,34 @@ class ThePersonWithoutAName(MemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
         self.assertEqual(done.claim.status, CLAIM_CONFIRMED)
         self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+
+    async def test_held_for_its_name_past_the_limit_then_asked(self) -> None:
+        """Past the new-name limit the claim waits for its name; the described end is never made
+        into a name to check meanwhile."""
+        got = await self.propose(said("Corwin Hale", "knows", "the old man"), new_names=0)
+        self.assertEqual((got.new, got.described), ((), 0))
+        await self.propose(new_names=5)  # (a later read with room: the name is proposed now)
+        names = [e.name for e in (await self.memory.lookup_data(GUILD_A, self.c)).entities]
+        self.assertIn("Corwin Hale", names)
+        self.assertNotIn("the old man", names)
+        (corwin,) = [
+            e.id
+            for e in (await self.memory.lookup_data(GUILD_A, self.c)).entities
+            if e.name == "Corwin Hale"
+        ]
+        await self.memory.set_entity_status(GUILD_A, self.c, corwin, CONFIRMED, source="dm")
+        await self.propose(new_names=5)  # (the read after the answer asks it)
+        (claim,) = await self.waiting()
+        self.assertEqual(claim.reason, claims.DESCRIBED_REASON)
+
+    async def test_a_chain_after_the_dm_named_one_end(self) -> None:
+        await self.propose(said("the beggar woman", "knows", "the old man"))
+        (claim,) = await self.waiting()
+        hesta = await self.add("the beggar woman", type="character", status=CONFIRMED)
+        done = await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        people = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual([label for _, label in people], ["unnamed - the old man"])
+        (fact,) = [
+            r for r in await self.memory.relations(GUILD_A, self.c) if r.id == done.claim.fact_id
+        ]
+        self.assertEqual({fact.subject_id, fact.object_id}, {hesta, people[0][0].id})
