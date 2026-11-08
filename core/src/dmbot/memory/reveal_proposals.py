@@ -27,6 +27,7 @@ Counts only leave this module.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -44,10 +45,15 @@ if TYPE_CHECKING:
     from dmbot.memory.ontology import Ontology
     from dmbot.memory.store import MemoryStore
 
+log = logging.getLogger(__name__)
+
 PROPOSED, KEPT, DISMISSED = "proposed", "kept", "dismissed"
 ENTRY, CONNECTION = gate.ENTRY, gate.CONNECTION
 GONE = "That one is no longer waiting."
-STATEMENT_GONE = "What they learned is no longer in DMbot's memory, so there is nothing to keep."
+STATEMENT_GONE = (
+    "That character or what they learned is no longer in DMbot's memory, so there is nothing "
+    "to keep."
+)
 ONLY_THE_DM = "Only the DM can answer this."
 WAITING_MAX = 50  # one page for the DM; far more than anyone answers in a sitting
 
@@ -275,48 +281,56 @@ class RevealProposals:
             return [_waiting(r) for r in await cur.fetchall()]
 
     async def describe(self, guild_id: int, campaign_id: str, proposal: Waiting) -> Shown | None:
-        """The proposal in words for the DM's card, read now (names change): None when the
-        character or the statement is gone (the card then moves on)."""
+        """The proposal in words for the DM's card, read now (names change). None when there is
+        nothing left to keep: the character or the statement is no longer a confirmed, live one
+        (the same test `knowers.learn` makes), or the character is sure of it by now. A teller
+        gone since does not matter: the card says "another character told them"."""
         from dmbot.memory._changes import ENTITIES, RELATIONS
         from dmbot.memory.continuity import _predicate_words
         from dmbot.memory.store import _load_ontology
 
         async with self._store._read(guild_id, campaign_id) as scope:
-            ids = [proposal.character_id, *([proposal.teller_id] if proposal.teller_id else [])]
+            needed = [proposal.character_id]
+            relation = None
             if proposal.kind == CONNECTION:
                 relation = await scope.get(RELATIONS, proposal.statement_id)
                 if relation is None or relation["status"] != CONFIRMED:
                     return None
-                ids += [str(relation["subject_id"]), str(relation["object_id"])]
+                needed += [str(relation["subject_id"]), str(relation["object_id"])]
             else:
-                relation = None
-                ids.append(proposal.statement_id)
-            rows = await scope.select(ENTITIES, " AND id = ANY(%s)", [ids])
-            entities = {str(e["id"]): e for e in rows if e["merged_into"] is None}
-            if any(i not in entities for i in ids):
+                needed.append(proposal.statement_id)
+            asked = [*needed, *([proposal.teller_id] if proposal.teller_id else [])]
+            rows = await scope.select(
+                ENTITIES, " AND id = ANY(%s) AND status = %s AND merged_into IS NULL",
+                [asked, CONFIRMED],
+            )  # fmt: skip
+            entities = {str(e["id"]): e for e in rows}
+            if any(i not in entities for i in needed):
                 return None
+            if entities[proposal.character_id]["type"] != "character":
+                return None  # (made a group since: only a character learns, `knowers.learn`)
             name = {i: str(e["name"]) for i, e in entities.items()}
             if relation is not None:
                 onto = await _load_ontology(scope)
                 key, detail = str(relation["predicate"]), str(relation["detail"] or "")
                 words = _predicate_words(onto, key, detail, bool(relation.get("directional")))
-                if key == "knows" and detail:
-                    words = f"{words} ({detail})"
                 a, b = name[str(relation["subject_id"])], name[str(relation["object_id"])]
-                what = f"{a} {words} {b}"
+                # (a feeling word reads after the names: "Bruno knows Shela (distrusts)")
+                what = f"{a} {words} {b}" + (f" ({detail})" if key == "knows" and detail else "")
             else:
-                what = f"that {name[proposal.statement_id]} exists"
+                what = f"{name[proposal.statement_id]} exists"
             data = await gate.load(scope)
         sure = gate.visible(gate.Viewer.character(proposal.character_id), data).how_sure(
             proposal.kind, proposal.statement_id
         )
-        how = (
-            f"a successful {proposal.check_name} check"
-            if proposal.teller_id is None
-            else f"{name[proposal.teller_id]} told them"
-        )
+        if sure is not None and sure >= KNOWN:
+            return None  # (sure of it by now: nothing to learn)
+        if proposal.teller_id is None:
+            how = f"a successful {proposal.check_name} check"
+        else:
+            how = f"{name.get(proposal.teller_id, 'another character')} told them"
         player = entities[proposal.character_id]["role"] == "player_character"
-        guessing = sure is not None and sure < KNOWN
+        guessing = sure is not None
         return Shown(name[proposal.character_id], what, how, player, guessing)
 
     async def dismiss(
@@ -372,8 +386,12 @@ class RevealProposals:
             await self._set(guild_id, campaign_id, proposal_id, DISMISSED)
             raise MemoryRuleError(STATEMENT_GONE) from exc
         except BaseException:
-            # (the store failed): it waits again, so the DM can press again
-            await self._set(guild_id, campaign_id, proposal_id, PROPOSED)
+            # (the store failed): it waits again, so the DM can press again. If putting it back
+            # fails too (the database is down), the original error is the one that is raised.
+            try:
+                await self._set(guild_id, campaign_id, proposal_id, PROPOSED)
+            except Exception as again:
+                log.warning("Reveals: couldn't put a proposal back (%s)", type(again).__name__)
             raise
         return written.batch if written.value else None
 
@@ -421,7 +439,7 @@ class Shown:
     """A proposal in words, for the DM's card only (never a player's screen, never logged)."""
 
     who: str  # the character who learned it
-    what: str  # "Bruno knows Shela", or "that The Sword exists"
+    what: str  # "Bruno knows Shela", or "The Sword exists" (the card says "learned that ...")
     how: str  # "a successful Insight check" or "Clyde told them"
     player: bool  # the character is a player's: keeping it lets that player see it
     guessing: bool  # they hold it only as a guess now: keeping it makes it sure

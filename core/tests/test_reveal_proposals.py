@@ -361,3 +361,52 @@ class Answering(Base):
         self.assertEqual((await self.put((check(), (DM_ID,)))).stored, 0)
         with self.assertRaisesRegex(MemoryRuleError, "no longer waiting"):
             await self.reveals.dismiss(GUILD_A, self.c, waiting.id, source="dm")
+
+    async def test_a_store_failure_puts_it_back_to_wait(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        waiting = await self.one()
+        with (
+            patch.object(self.memory, "learn_statement", AsyncMock(side_effect=RuntimeError("x"))),
+            self.assertRaises(RuntimeError),
+        ):
+            await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        (row,) = await self.rows()
+        self.assertEqual(row["status"], "proposed")
+
+    async def test_keep_that_changes_nothing_returns_no_batch(self) -> None:
+        waiting = await self.one()
+        await self.memory.learn_statement(
+            GUILD_A, self.c, CONNECTION, self.rel, self.tran, source="dm"
+        )
+        batch = await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        self.assertIsNone(batch)
+
+    async def test_the_card_for_an_entry_and_for_a_teller_gone_since(self) -> None:
+        await self.know(CONNECTION, self.rel, [self.clyde])
+        await self.put((check(subject="The Sword", rel="", obj=""), (DM_ID,)), (tell(), (DM_ID,)))
+        both = await self.reveals.waiting(GUILD_A, self.c, opted_in=RECORDED)
+        entry = next(w for w in both if w.kind == "entry")
+        told = next(w for w in both if w.how == "tell")
+        shown = await self.reveals.describe(GUILD_A, self.c, entry)
+        assert shown is not None
+        self.assertEqual(shown.what, "The Sword exists")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE id = %s", (self.clyde,)
+            )
+        gone_teller = await self.reveals.describe(GUILD_A, self.c, told)
+        assert gone_teller is not None
+        self.assertEqual(gone_teller.how, "another character told them")
+
+    async def test_nothing_to_show_once_the_character_is_gone_or_sure_of_it(self) -> None:
+        waiting = await self.one()
+        await self.memory.learn_statement(
+            GUILD_A, self.c, CONNECTION, self.rel, self.tran, source="dm"
+        )
+        self.assertIsNone(await self.reveals.describe(GUILD_A, self.c, waiting))  # (sure now)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE id = %s", (self.tran,)
+            )
+        self.assertIsNone(await self.reveals.describe(GUILD_A, self.c, waiting))

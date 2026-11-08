@@ -20,6 +20,7 @@ from dmbot.ui import reveal_card as dc
 
 BOT: Any = DMBot
 DM, PLAYER, GUILD, CAMPAIGN = 7, 8, 5, "c" * 32
+BIG_GUILD = 10**19 + 1  # (a real server's id is 19 or 20 digits: the ids must still fit)
 PID = "d" * 32
 DEED = Waiting(PID, "t" * 32, "connection", "r" * 32, "check", "Insight", None)
 SHOWN = Shown("Tran", "Bruno knows Shela", "a successful Insight check", False, False)
@@ -106,10 +107,10 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
 
     def test_button_ids_fit_and_match_their_templates(self) -> None:
         for item, template in (
-            (dc.OpenButton(GUILD, CAMPAIGN), dc.OpenButton),
-            (dc.KeepButton(GUILD, CAMPAIGN, PID), dc.KeepButton),
-            (dc.NotButton(GUILD, CAMPAIGN, PID), dc.NotButton),
-            (dc.UndoButton(GUILD, CAMPAIGN, 123456789), dc.UndoButton),
+            (dc.OpenButton(BIG_GUILD, CAMPAIGN), dc.OpenButton),
+            (dc.KeepButton(BIG_GUILD, CAMPAIGN, PID), dc.KeepButton),
+            (dc.NotButton(BIG_GUILD, CAMPAIGN, PID), dc.NotButton),
+            (dc.UndoButton(BIG_GUILD, CAMPAIGN, 10**18 - 1), dc.UndoButton),
         ):
             custom_id = str(item.item.custom_id)
             self.assertLessEqual(len(custom_id), 100)
@@ -117,9 +118,11 @@ class TheQuestion(unittest.IsolatedAsyncioTestCase):
 
     def test_the_card_says_who_learned_what_and_how(self) -> None:
         text = dc.card(SHOWN, 3)
-        self.assertIn("**Tran** learned: “Bruno knows Shela” (a successful Insight check)", text)
+        self.assertIn(
+            "**Tran** learned that Bruno knows Shela. How: a successful Insight check.", text
+        )
         self.assertIn("2 more after this one.", text)
-        self.assertIn("Nothing is saved until you press Keep.", text)
+        self.assertTrue(text.endswith("Keep it? Nothing is saved until you press Keep."))
         self.assertNotIn("player see it", text)  # (an NPC: no player)
         self.assertNotIn("guessing", text)
 
@@ -158,15 +161,16 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         me, double = bot(), reveals_double(waiting=[], batch=None)
         it = await self.answer(me, DM, double, keep=True)
         it.followup.send.assert_not_awaited()
-        self.assertIn(
-            "They already knew it.", it.edit_original_response.await_args.kwargs["content"]
-        )
+        shown = it.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("they already knew it for sure", shown)
 
     async def test_a_statement_gone_since_says_so_in_plain_words(self) -> None:
         me, double = bot(), reveals_double()
         double.keep = AsyncMock(side_effect=MemoryRuleError(STATEMENT_GONE))
         it = await self.answer(me, DM, double, keep=True)
-        self.assertIn("nothing to keep", it.followup.send.await_args.args[0])
+        shown = it.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("nothing to keep", shown)
+        self.assertIn("Bruno knows Shela", shown)  # (and the next one, with its buttons)
 
     async def test_one_that_can_no_longer_be_shown_is_turned_down_and_skipped(self) -> None:
         later = Waiting("e" * 32, "t" * 32, "entry", "s" * 32, "tell", "", "c" * 32)
@@ -183,7 +187,7 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         double.waiting = AsyncMock(side_effect=RuntimeError("down"))
         it = await self.answer(me, DM, double, keep=True)
         it.followup.send.assert_awaited_once()  # (the kept one can still be taken back)
-        self.assertIn(dc.FAILED, it.edit_original_response.await_args.kwargs["content"])
+        self.assertIn(dc.NEXT_FAILED, it.edit_original_response.await_args.kwargs["content"])
 
     async def test_an_already_answered_card_moves_on_to_the_next_one(self) -> None:
         me, double = bot(), reveals_double()
@@ -223,11 +227,11 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         me = bot()
         refused = reveals_double()
         refused.record = AsyncMock(
-            side_effect=MemoryRuleError("Only a character can learn something this way.")
-        )
+            side_effect=MemoryRuleError("Only the DM can answer this.")
+        )  # (the one other refusal `keep` passes on)
         refused.keep = refused.record
         it = await self.answer(me, DM, refused, keep=True)
-        self.assertIn("Only a character", it.followup.send.await_args.args[0])
+        self.assertIn("Only the DM", it.followup.send.await_args.args[0])
         broken = reveals_double()
         broken.record = AsyncMock(side_effect=RuntimeError("down"))
         broken.keep = broken.record
@@ -247,6 +251,13 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
     async def test_undo_is_the_dms_and_takes_the_change_back(self) -> None:
         me = bot()
         me.memory = SimpleNamespace(undo=AsyncMock())
+        await dc.undo(pressed(me, DM), GUILD, CAMPAIGN, 42)
+        it = pressed(me, DM)
+        await dc.undo(it, GUILD, CAMPAIGN, 42)
+        self.assertIn(
+            "Back to how it was before you pressed Keep", it.followup.send.await_args.args[0]
+        )
+        me.memory.undo.reset_mock()
         await dc.undo(pressed(me, DM), GUILD, CAMPAIGN, 42)
         me.memory.undo.assert_awaited_once_with(GUILD, CAMPAIGN, 42, source=DM_SOURCE)
         me.memory.undo.reset_mock()

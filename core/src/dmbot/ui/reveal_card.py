@@ -24,7 +24,7 @@ import discord
 
 from dmbot.dm_questions import REVEALS, Ask
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
-from dmbot.memory.reveal_proposals import GONE, RevealProposals, Shown, Waiting
+from dmbot.memory.reveal_proposals import GONE, STATEMENT_GONE, RevealProposals, Shown, Waiting
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
 
@@ -32,8 +32,10 @@ log = logging.getLogger(__name__)
 
 ONLY_DMS = "Only a DM of this campaign can answer this."
 NOT_AVAILABLE = "DMbot can't do that right now. Try again in a minute."
-FAILED = "Couldn't do that. Try again in a minute."
-NONE_LEFT = "Nothing else is waiting. DMbot will ask after a later session if it notices more."
+FAILED = "Couldn't save that. Try again in a minute."
+NEXT_FAILED = "Couldn't show the next one. Press Look at them again in a minute."
+UNDO_FAILED = "Couldn't undo that. Try again in a minute."
+NONE_LEFT = "Nothing is waiting. DMbot will ask after a later session if it notices more."
 
 
 def ask_for(guild_id: int, campaign_id: str, count: int) -> Ask:
@@ -59,14 +61,14 @@ def card(shown: Shown, left: int) -> str:
     who = discord.utils.escape_markdown(shown.who)
     what = discord.utils.escape_markdown(shown.what)
     how = discord.utils.escape_markdown(shown.how)
-    lines = [f"💡 **{who}** learned: “{what}” ({how}). Keep it?"]
-    if shown.guessing:
+    lines = [f"💡 **{who}** learned that {what}. How: {how}."]
+    if shown.guessing:  # (Supervisor's wording, #2996)
         lines.append(f"{who} was only guessing; keeping this makes it sure.")
     if shown.player:
         lines.append(f"Keeping this lets {who}'s player see it.")
     if left > 1:
         lines.append(f"_{left - 1} more after this one._")
-    lines.append("Nothing is saved until you press Keep.")
+    lines.append("Keep it? Nothing is saved until you press Keep.")  # (by the buttons)
     return "\n".join(lines)
 
 
@@ -79,7 +81,7 @@ def _view(guild_id: int, campaign_id: str, proposal: Waiting) -> discord.ui.View
 
 class OpenButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:revealask:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32})",
+    template=r"dmbot:rvask:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32})",
 ):
     """In the collected question: opens the first waiting proposal."""
 
@@ -89,7 +91,7 @@ class OpenButton(
                 label="Look at them",
                 emoji="💡",
                 style=discord.ButtonStyle.primary,
-                custom_id=f"dmbot:revealask:{guild_id}:{campaign_id}",
+                custom_id=f"dmbot:rvask:{guild_id}:{campaign_id}",
             )
         )
         self.guild_id, self.campaign_id = guild_id, campaign_id
@@ -107,7 +109,7 @@ class OpenButton(
 class KeepButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
-        r"dmbot:revealyes:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})"
+        r"dmbot:rvyes:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})"
     ),
 ):
     def __init__(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
@@ -116,7 +118,7 @@ class KeepButton(
                 label="Keep",
                 emoji="✅",
                 style=discord.ButtonStyle.success,
-                custom_id=f"dmbot:revealyes:{guild_id}:{campaign_id}:{proposal_id}",
+                custom_id=f"dmbot:rvyes:{guild_id}:{campaign_id}:{proposal_id}",
             )
         )
         self.guild_id, self.campaign_id, self.proposal_id = guild_id, campaign_id, proposal_id
@@ -133,16 +135,14 @@ class KeepButton(
 
 class NotButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=(
-        r"dmbot:revealno:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})"
-    ),
+    template=(r"dmbot:rvno:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})"),
 ):
     def __init__(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         super().__init__(
             discord.ui.Button(
                 label="Not this",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:revealno:{guild_id}:{campaign_id}:{proposal_id}",
+                custom_id=f"dmbot:rvno:{guild_id}:{campaign_id}:{proposal_id}",
             )
         )
         self.guild_id, self.campaign_id, self.proposal_id = guild_id, campaign_id, proposal_id
@@ -160,7 +160,7 @@ class NotButton(
 class UndoButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
-        r"dmbot:revealundo:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
+        r"dmbot:rvundo:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
     ),
 ):
     """Takes the kept one back (the change log's one Undo)."""
@@ -171,7 +171,7 @@ class UndoButton(
                 label="Undo",
                 emoji="↩️",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:revealundo:{guild_id}:{campaign_id}:{batch}",
+                custom_id=f"dmbot:rvundo:{guild_id}:{campaign_id}:{batch}",
             )
         )
         self.guild_id, self.campaign_id, self.batch = guild_id, campaign_id, batch
@@ -257,16 +257,25 @@ async def answer(
                 guild_id, campaign_id, proposal_id, opted_in=agreed, source=DM
             )
             log.info("Reveals: one kept by the DM")
-            note = "✅ Kept." if batch is not None else "✅ Kept. They already knew it."
+            note = (
+                "✅ Kept."
+                if batch is not None
+                else "Nothing to change: they already knew it for sure."
+            )
         else:
             await reveals.dismiss(guild_id, campaign_id, proposal_id, source=DM)
             log.info("Reveals: one turned down by the DM")
             note = "Okay, not this one."
     except MemoryRuleError as exc:
-        if str(exc) != GONE:
+        if str(exc) == STATEMENT_GONE:  # (already turned down: say so and move on)
+            note = "That one is no longer in DMbot's memory, so there was nothing to keep."
+        elif str(exc) == GONE:
+            note = (
+                "That one was already answered, or someone it came from has stopped being recorded."
+            )
+        else:
             await _tell(interaction, f"Couldn't do that. {exc}")
             return
-        note = "That one was already answered, or someone it came from has stopped being recorded."
     except Exception:  # (the database was unreachable, say): the reply must not hang
         log.exception("Reveals: the answer could not be saved")
         await _tell(interaction, FAILED)
@@ -285,7 +294,7 @@ async def answer(
     except Exception:
         log.exception("Reveals: the next one could not be loaded")
         await interaction.edit_original_response(
-            content=f"{note}\n{FAILED}", view=None, allowed_mentions=NO_PINGS
+            content=f"{note}\n{NEXT_FAILED}", view=None, allowed_mentions=NO_PINGS
         )
         return
     if found is None:
@@ -310,9 +319,10 @@ async def undo(
         return
     except Exception:
         log.exception("Reveals: the undo failed")
-        await _tell(interaction, FAILED)
+        await _tell(interaction, UNDO_FAILED)
         return
-    await _tell(interaction, "↩️ Undone. They don't know it any more.")
+    # (back to before the Keep: a character who was guessing is guessing again, not unaware)
+    await _tell(interaction, "↩️ Undone. Back to how it was before you pressed Keep.")
 
 
 __all__ = ["KeepButton", "NotButton", "OpenButton", "UndoButton", "ask_for", "card"]
