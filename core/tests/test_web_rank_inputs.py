@@ -46,8 +46,8 @@ class RankInputs(Web):
         async with self.db.guild(self.g) as conn:
             for rank in (1, 3):
                 await conn.execute(
-                    "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
-                    " source, recorded_at) VALUES (%s, %s, %s, %s, 'recurring', 'rule', 1)",
+                    "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
+                    " source, recorded_at) VALUES (%s, %s, %s, %s, 'rule', 'rule', 1)",
                     (self.g, self.one.id, self.mira, rank),
                 )
             for session_at in (100, 100, 200):
