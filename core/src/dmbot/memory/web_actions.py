@@ -992,6 +992,7 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 predicate,
                 detail,
                 first=other_end if swapped else entity_id,
+                dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
         else:
             return _failed(FAILED)
