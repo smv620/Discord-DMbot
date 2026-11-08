@@ -126,6 +126,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   job and file usually name the PR, which goes back to its author), and never fall back to one at a
   time. Merge the PRs with the merge method, in the batch's order, so the last merge's tree is the
   batch branch's tree and CI reuses its green run (#3703).
+  **Refresh a batch's members together** (Supervisor, 2026-11-08, after batch 1's merges were refused one by one):
+  GitHub's branch protection needs each PR's own head checks green, so a PR whose last run is on an older
+  `development` can't merge on the batch's run alone. Every member of a batch counts as "merges next": refresh
+  them all onto `development` at once, so their own CI runs in parallel, check each one's net diff, then merge
+  them in the batch's order as each goes green.
   RepoManager pushes that branch itself as `batch/<date>-<n>` (Supervisor, 2026-10-18: the rule
   had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
   only carries the CI run, and the PRs then merge as themselves.
