@@ -56,6 +56,12 @@ class Hear:
     tries: int = 1  # how many times it has been taken; a press is spoken at most TRIES_MAX times
 
 
+def month_of(now: float) -> int:
+    """The calendar month in UTC as 202611 for November 2026: the key of a month's use."""
+    moment = time.gmtime(now)
+    return moment.tm_year * 100 + moment.tm_mon
+
+
 class Host(Protocol):
     """What a press needs from the running bot, so tests can stand in for it."""
 
@@ -67,6 +73,19 @@ class Host(Protocol):
 
     def narrator(self) -> ElevenLabs | None:
         """A fresh voice client, or None when the voice is not set up."""
+        ...
+
+    async def hear_used(self, guild_id: int, campaign_id: str) -> int:
+        """The credits this campaign's Hear it has spent this month."""
+        ...
+
+    async def hear_spent(self, guild_id: int, campaign_id: str, credits: int) -> None:
+        """Add what a made clip cost to this month's count."""
+        ...
+
+    @property
+    def hear_limit(self) -> int:
+        """The most credits a campaign's Hear it may spend in a month."""
         ...
 
 
@@ -162,6 +181,33 @@ class HearStore:
             )
             return bool(cur.rowcount)
 
+    async def used(self, guild_id: int, campaign_id: str) -> int:
+        """The credits this campaign has spent on Hear it this calendar month (UTC)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT credits FROM hear_use WHERE guild_id = %s AND campaign_id = %s"
+                " AND month = %s",
+                (guild_id, campaign_id, month_of(self._now())),
+            )
+            row = await cur.fetchone()
+            return int(row["credits"]) if row else 0
+
+    async def spent(self, guild_id: int, campaign_id: str, credits: int) -> None:
+        """Add a made clip's credits (and the clip) to this month; older months are cleared as the
+        new one is counted. One statement, so two presses at once both count."""
+        month = month_of(self._now())
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO hear_use AS u (guild_id, campaign_id, month, credits, clips)"
+                " VALUES (%s, %s, %s, %s, 1) ON CONFLICT (guild_id, campaign_id, month)"
+                " DO UPDATE SET credits = u.credits + EXCLUDED.credits, clips = u.clips + 1",
+                (guild_id, campaign_id, month, credits),
+            )
+            await conn.execute(
+                "DELETE FROM hear_use WHERE guild_id = %s AND campaign_id = %s AND month < %s",
+                (guild_id, campaign_id, month),
+            )
+
     async def sweep(self, guild_id: int) -> int:
         """Delete presses older than `KEEP_FOR_S`, whatever their state."""
         async with self._db.guild(guild_id) as conn:
@@ -188,6 +234,10 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
     clip = cache.get(key)
     if clip is not None:
         return Outcome(audio=clip)  # the second press of the same words costs nothing
+    # The month's allowance: past it a press says the voice is off (the page then falls back to
+    # the browser's), and no call is made. A cache hit above never reaches this.
+    if await host.hear_used(guild_id, item.campaign_id) >= host.hear_limit:
+        return Outcome(VOICE_OFF)
     try:
         # The seed comes from the words, so the same words sound the same each time.
         seed = int.from_bytes(hashlib.sha256(item.text.encode()).digest()[:4], "big")
@@ -197,6 +247,7 @@ async def apply(host: Host, cache: HearCache, guild_id: int, item: Hear) -> Outc
         return Outcome(
             VOICE_OFF if exc.kind == "auth" else BUSY if exc.kind in ("busy", "plan") else FAILED
         )
+    await host.hear_spent(guild_id, item.campaign_id, voice.credits)  # paid for, even if refused
     clip = wav(speech.pcm)
     if len(clip) > CLIP_MAX:
         return Outcome(FAILED)

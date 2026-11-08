@@ -11940,6 +11940,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             speech_model=settings.elevenlabs_speech_model,
         )
 
+    async def hear_used(self, guild_id: int, campaign_id: str) -> int:
+        return await self.said_as_hears.used(guild_id, campaign_id) if self.said_as_hears else 0
+
+    async def hear_spent(self, guild_id: int, campaign_id: str, credits: int) -> None:
+        if self.said_as_hears is not None:
+            await self.said_as_hears.spent(guild_id, campaign_id, credits)
+
+    @property
+    def hear_limit(self) -> int:
+        return self.settings.hear_credits_per_month
+
     async def plan_allows_narration(self, guild_id: int, campaign: Campaign) -> bool:
         return await self.plan_allows("recap_audio", guild_id, campaign, fail_open=False)
 
