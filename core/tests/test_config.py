@@ -226,6 +226,14 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):
             load_settings({**BASE, "ELEVENLABS_VOICE_ID": "../x"})
 
+    def test_the_hear_it_allowance_has_a_default_and_is_checked(self) -> None:
+        self.assertEqual(load_settings(BASE).hear_credits_per_month, 5000)
+        got = load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": "9000"})
+        self.assertEqual(got.hear_credits_per_month, 9000)
+        for bad in ("99", "200001", "lots", "-5", "1.5"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ConfigError, "HEAR_CREDITS"):
+                load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": bad})
+
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)
         self.assertEqual(load_settings({**BASE, "DMBOT_RECALL_BUDGET": "9000"}).recall_budget, 9000)

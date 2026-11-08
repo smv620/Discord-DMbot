@@ -183,6 +183,7 @@ NOT_STAMPED: dict[str, str] = {
             "game_clock_group_log",
             "game_clock_log",
             "image_day_use",
+            "hear_use",
             "npcs_channel_messages",
             "owner_campaigns",
             "pack_suggestions_sent",

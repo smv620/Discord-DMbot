@@ -187,6 +187,11 @@ class Settings:
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
+    # The most credits Hear it (the website's 🔊 on a name) may spend for one campaign in a
+    # calendar month (UTC): about a dollar at 5,000, some sixty clips of a name. It stops at or just
+    # past this (the press that crosses it is made). Past it a press
+    # says the voice is off and the page falls back to the browser's (#3818).
+    hear_credits_per_month: int = 5000
 
     @property
     def pictures_ready(self) -> bool:
@@ -481,6 +486,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + audio_credits_raw
             + '".'
         )
+    hear_raw = get("DMBOT_HEAR_CREDITS_PER_MONTH") or "5000"
+    if not (hear_raw.isascii() and hear_raw.isdigit()) or not 100 <= int(hear_raw) <= 200000:
+        raise ConfigError(
+            'DMBOT_HEAR_CREDITS_PER_MONTH must be a whole number from 100 to 200000, got "'
+            + hear_raw
+            + '".'
+        )
     monthly = {}
     for name, default in (("DMBOT_RECAPS_PER_MONTH", "10"), ("DMBOT_RECAP_AUDIO_PER_MONTH", "8")):
         raw = get(name) or default
@@ -628,6 +640,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         said_as_model=get("SAID_AS_MODEL"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
+        hear_credits_per_month=int(hear_raw),
         story_extractor_tier=extractor_tier,
         story_extractor_max_calls=int(extractor_calls_raw),
         story_extractor_max_calls_day=int(extractor_day_raw),

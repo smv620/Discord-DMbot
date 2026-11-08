@@ -271,6 +271,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",
     "database_pool_max": "a number",
+    "hear_credits_per_month": "a number: how many credits Hear it may spend a month",
     "data_dir": "a folder",
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",

@@ -142,6 +142,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
+    "hear_use": _RUNTIME,
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
