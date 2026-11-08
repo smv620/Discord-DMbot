@@ -302,7 +302,7 @@ class GraphReviews:
         still = await self._people(guild_id) if any(v.in_story for v in verdicts) else set()
         for v in verdicts:  # (someone may have stopped during the call: their quotes go)
             if v.in_story and not v.speaker_ids <= still:
-                v.in_story, v.quote, v.speaker_ids = False, "", set()
+                v.in_story, v.quote, v.speaker_ids, v.sources = False, "", set(), ()
         missed = [v for v in verdicts if v.in_story]
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:

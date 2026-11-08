@@ -141,7 +141,7 @@ class TheCheck(Base):
         self.assertEqual((report["checked"], report["missed"], report["speaker_ids"]), (1, 1, []))
         self.assertIn(f"`{self.one.id}`", report["report"])
         self.assertNotIn(self.one.name, report["report"])
-        self.assertIn('"owes Rook a debt"', report["report"])
+        self.assertIn('In the story (description): "owes Rook a debt"', report["report"])
         await self.ended(1, 1)
         self.assertEqual(await self.runner(ai, at=later).round(self.g), 0)
         self.assertEqual(len(ai.calls), 1)

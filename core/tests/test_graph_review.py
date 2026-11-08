@@ -103,11 +103,12 @@ class TheAnswerIsHeldToTheText(unittest.TestCase):
             gr.parse(answer({"fix": 1, "in_story": True, "quote": "drank with Rook"}), [FIX]) or []
         )
         self.assertEqual((v.in_story, v.quote, v.speaker_ids), (True, "drank with Rook", {7}))
+        self.assertEqual(v.sources, (gr.LINE,))
 
     def test_a_lore_quote_counts_with_no_speaker(self) -> None:
         raw = answer({"fix": 1, "in_story": True, "quote": "served on the same ship"})
         (v,) = gr.parse(raw, [FIX]) or []
-        self.assertEqual((v.in_story, v.speaker_ids), (True, set()))
+        self.assertEqual((v.in_story, v.speaker_ids, v.sources), (True, set(), (gr.LORE,)))
 
     def test_a_quote_not_in_the_text_or_missing_or_only_part_of_a_word_is_not_in_the_story(
         self,
@@ -150,11 +151,11 @@ class ThePromptAndTheReport(unittest.TestCase):
 
     def test_the_report_names_the_campaign_by_id_and_only_what_was_missed(self) -> None:
         other = gr.Fix(2, gr.NAMED, "named someone the story never named: Pell", (FENN,))
-        verdicts = [gr.Verdict(1, True, "drank with Rook", {7}), gr.Verdict(2, False)]
+        verdicts = [gr.Verdict(1, True, "drank with Rook", {7}, (gr.LINE,)), gr.Verdict(2, False)]
         text = gr.report("c" * 32, [FIX, other], verdicts, now=86400, review_commit=None)
         self.assertIn(f"`{'c' * 32}`", text)
         self.assertIn("1970-01-02 00:00 UTC", text)
-        self.assertIn('"drank with Rook"', text)
+        self.assertIn('In the story (line): "drank with Rook"', text)
         self.assertIn(gr.OLD_BUILD, text)  # (an entry made before builds were recorded)
         self.assertNotIn("Pell", text)
         self.assertIn("Fixes checked: 2; DMbot missed: 1", text)

@@ -198,6 +198,7 @@ class Verdict:
     in_story: bool
     quote: str = ""
     speaker_ids: set[int] = field(default_factory=set)
+    sources: tuple[str, ...] = ()  # LINE, LORE, DESCRIPTION: where the quote was found
 
 
 def system() -> str:
@@ -237,14 +238,18 @@ def _norm(text: str) -> str:
     return " ".join(re.sub(r"[^\w']+", " ", text.lower()).split())
 
 
-def _quotable(fix: Fix) -> list[tuple[str, int | None]]:
-    """The texts a quote may come from, each with its speaker (None for lore and descriptions)."""
-    out: list[tuple[str, int | None]] = []
+LINE, LORE, DESCRIPTION = "line", "lore", "description"  # where a verdict's quote came from
+
+
+def _quotable(fix: Fix) -> list[tuple[str, int | None, str]]:
+    """The texts a quote may come from, each with its speaker (None for lore and descriptions) and
+    its source, so #3742 can keep anything from shared material out of what it posts."""
+    out: list[tuple[str, int | None, str]] = []
     for side in fix.sides:
-        out += [(s.text, s.user_id) for s in side.lines]
-        out += [(t, None) for t in side.lore]
+        out += [(s.text, s.user_id, LINE) for s in side.lines]
+        out += [(t, None, LORE) for t in side.lore]
         if side.description:
-            out.append((side.description, None))
+            out.append((side.description, None, DESCRIPTION))
     return out
 
 
@@ -273,10 +278,11 @@ def parse(raw: str, fixes: Sequence[Fix]) -> list[Verdict] | None:
         wanted = f" {_norm(quote or '')} "
         if item.get("in_story") is True and wanted.strip():
             # (padded, so a quote matches whole words only: "ran" is not found in "Fran")
-            hits = [who for text, who in _quotable(fix) if wanted in f" {_norm(text)} "]
+            hits = [(who, src) for text, who, src in _quotable(fix) if wanted in f" {_norm(text)} "]
             if hits:
                 verdict = Verdict(fix.number, True, " ".join(str(quote).split()))
-                verdict.speaker_ids = {who for who in hits if who is not None}
+                verdict.speaker_ids = {who for who, _ in hits if who is not None}
+                verdict.sources = tuple(sorted({src for _, src in hits}))
         out.append(verdict)
     return out
 
@@ -320,7 +326,7 @@ def report(
                 f"- Entry `{side.id}` ({side.kind}): {side.label[:LABEL_MAX]}, made by build "
                 f"{side.made_by or OLD_BUILD}"
             )
-        section += [f'- In the story: "{v.quote}"', ""]
+        section += [f'- In the story ({", ".join(v.sources) or "unknown"}): "{v.quote}"', ""]
         if sum(len(x) + 1 for x in lines + section) > REPORT_MAX:
             # (the column's own limit: the rest are counted, so the report still fits and is kept)
             lines.append(f"{left} more not shown: the report reached its size limit.")
