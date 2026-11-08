@@ -29,7 +29,7 @@ async def read(conn: Any, guild_id: int, campaign_id: str, ids: list[str]) -> di
         got = (await cur.fetchone() or {}).get("r")
         lines = got.get("lines") if isinstance(got, dict) else None
         if not isinstance(lines, dict):
-            return {}
+            return {}  # (not a DM: the check is the same for every slice, so nothing is kept)
         found.update({str(k): str(v) for k, v in lines.items() if isinstance(v, str) and v.strip()})
     return found
 
