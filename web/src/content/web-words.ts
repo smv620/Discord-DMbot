@@ -6,6 +6,9 @@ import type { KnowWord } from "../account/api";
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
+/** The Graph settings kind for people the story never named (#3732): not a kind of name, a way to filter. */
+export const UNNAMED_KIND = "~unnamed";
+
 export const webPage = {
   heading: "Story Graph",
   lead: "How the names in this campaign are connected. Tap a name to see what is known about it. Double tap it, or use the button in its panel, to put it in the middle. Tap a line to read its connections.",
@@ -305,7 +308,7 @@ export const webPage = {
       : held.length === 1
         ? `${held[0]} isn't shown to the players yet. Show that name first, on the Names page.`
         : `${held.join(" and ")} aren't shown to the players yet. Show those names first, on the Names page.`,
-  // `who` is how the page calls the person ("someone's sister"), without the "(name unknown)" label.
+  // `who` is how the page calls the person ("someone's sister"), without the "unnamed - " prefix.
   nameThemFirst: (who: string | null, onWeb: boolean): string =>
     onWeb
       ? who === null
@@ -314,10 +317,19 @@ export const webPage = {
       : // While the Names page can't name anyone (NOT_NAMED_LIVE), the way is Discord's, and there is no link.
         `${who === null ? "One end of this connection has" : `${who} has`} no name yet. In Discord, press 📚 Browse and choose Give them a name, then show this connection.`,
   openNames: "Open Names page",
+  // People the story never named (#3732): a kind in Graph settings, the line above the map and the panel's heading.
+  cleanupOpen: "Clean up the map",
+  cleanupClose: "Close the clean-up",
+  notNamedKind: "People not named yet",
+  waitingUnnamed: (n: number): string => `${n} ${n === 1 ? "person the story described is" : "people the story described are"} not named yet and waiting.`,
+  reading: "DMbot is reading the map again.",
+  waitingUnnamedLink: "Name them on the Names page",
+  unnamedHeading: (label: string): string => `${label} has no name yet`,
 } as const;
 
 /** The words for a kind: the API's key if no words are known. */
 export function kindWords(key: string): string {
+  if (key === UNNAMED_KIND) return webPage.notNamedKind;
   return webPage.kinds[key] ?? key;
 }
 

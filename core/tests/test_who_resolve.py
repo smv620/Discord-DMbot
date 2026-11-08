@@ -447,7 +447,7 @@ class ThePath(NamesTest):
         queued, lost = await self.run_links(Scripted([(NOT_LISTED, 95)], NOT_LISTED))
         self.assertEqual((queued, lost["not_in_text"]), (1, 0))
         ((entity, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "someone (name unknown)")
+        self.assertEqual(label, "unnamed - someone")
         self.assertFalse(entity.hidden_from_players)
 
     async def test_two_pronouns_for_nobody_are_two_people_never_one_invented_one(self) -> None:
@@ -557,7 +557,7 @@ class ThePath(NamesTest):
             known_by="everyone",
         )  # fmt: skip
         ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "Ken's stern mother (name unknown)")
+        self.assertEqual(label, "unnamed - Ken's stern mother")
         self.assertEqual((person.unnamed_what, person.unnamed_role), ("stern mother", "parent"))
         self.assertEqual(person.unnamed_anchor, self.ken)
         self.assertTrue(person.unseen_by_players)
@@ -565,6 +565,38 @@ class ThePath(NamesTest):
         # (she is the parent: first end; Ken is the second)
         self.assertEqual((w.subject_id, w.object_id), (person.id, self.ken))
         self.assertEqual((w.predicate, w.detail), ("kin_of", "parent"))
+
+    async def test_someone_on_their_own_with_two_ties_is_one_person(self) -> None:
+        """Owner's rule (#3736): a barmaid who warned Ken and works at the inn is kept, named on
+        her own (not hung off either), and the two lines of one read are one person (the lore
+        read gives someone on their own no role, `unnamed_read`)."""
+        await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Three Flags Sailing", "place", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        links = [
+            who_resolve.UnnamedLink(
+                "Ken", False, "knows", "a barmaid with red hair warned Ken", "friendly",
+                "barmaid with red hair", False, "",
+            ),
+            who_resolve.UnnamedLink(
+                "Three Flags Sailing", False, "located_in",
+                "At the Three Flags Sailing, a barmaid with red hair", "works in",
+                "barmaid with red hair", False, "",
+            ),
+        ]  # fmt: skip
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), unnamed=links
+        )  # fmt: skip
+        ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
+        self.assertEqual(label, "unnamed - barmaid with red hair")
+        self.assertEqual((person.unnamed_anchor, person.unnamed_role), (None, None))
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(
+            sorted((w.predicate, w.detail) for w in waiting),
+            [("knows", "friendly"), ("located_in", "works in")],
+        )
+        self.assertTrue(all(w.subject_id == person.id for w in waiting))  # (she reads first)
 
     async def test_a_secret_spelling_as_the_named_end_keeps_the_link_secret(self) -> None:
         await self.memory.add_names(

@@ -4,6 +4,8 @@ Pure: no Discord, no database."""
 
 from __future__ import annotations
 
+import re
+
 from dmbot.memory import kin, place_words, reputation_words
 from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
@@ -81,6 +83,9 @@ def reads_both_ways(predicate: str, detail: str = "", directional: bool = False)
     )
 
 
+_KNOWS_FEELING = re.compile(r"knows\s*\(\s*([^()]+?)\s*\)", re.IGNORECASE)
+
+
 def predicate_for(words: str) -> tuple[str, str]:
     """(predicate, detail) for connection words a DM typed or picked on the website: the words of a
     fixed connection ("is a member of") give that connection; family words ("is the niece of") give
@@ -96,6 +101,11 @@ def predicate_for(words: str) -> tuple[str, str]:
         return KIN, parsed[0]
     if SYNONYMS.get("_".join(clean.casefold().split())) == DISGUISED_AS:
         return DISGUISED_AS, ""  # "is posing as" and the like (#3091): never the public catch-all
+    # "knows (wary)": the words `link_words` writes for a feeling read back as that feeling, not as
+    # a catch-all labelled with them (#3606). A word outside the nine stays the catch-all.
+    said = _KNOWS_FEELING.fullmatch(clean)
+    if said is not None and (word := reputation_words.word_of(said.group(1))) is not None:
+        return "knows", ("" if word == reputation_words.NEUTRAL else word)  # (neutral stores none)
     return FALLBACK_PREDICATE, clean
 
 

@@ -97,12 +97,13 @@ class Parsing(unittest.TestCase):
     def test_nothing_else_is_kept(self) -> None:
         stored = json.dumps(self.snapshot)
         self.assertNotIn("LEAK", stored)  # descriptions, notes, snippets, custom values
-        self.assertNotIn("avatar", stored)
+        self.assertNotIn("example.invalid", stored)  # a link off D&D Beyond's hosts is not kept
+        self.assertIsNone(self.snapshot["portrait"])
         self.assertEqual(
             set(self.snapshot),
             {
-                "v", "source", "name", "species", "classes", "level", "abilities", "max_hp",
-                "ac", "speed", "proficiency_bonus", "saves", "skills", "senses",
+                "v", "source", "name", "portrait", "species", "classes", "level", "abilities",
+                "max_hp", "ac", "speed", "proficiency_bonus", "saves", "skills", "senses",
                 "languages", "spells", "features", "feats", "items",
                 # the full part (#1124)
                 "hp", "temp_hp", "conditions", "exhaustion", "resistances", "immunities",
@@ -181,6 +182,58 @@ class Parsing(unittest.TestCase):
         self.assertEqual(names[:3], ["Test Spell", "Other Test Spell", "Species Test Spell"])
         self.assertIn("Test Feat", names)
         self.assertEqual(sheets.who(self.snapshot), "Test Species · Test Class 3 / Second Class 2")
+
+
+class Portrait(unittest.TestCase):
+    """The Story Graph's icon for a character (#3621): a link on D&D Beyond's own picture hosts,
+    and nothing else, whatever the character data or a hand-edited backup says."""
+
+    GOOD = (
+        "https://www.dndbeyond.com/avatars/12/345/637000000000000000.jpeg",
+        "https://media-waterdeep.cursecdn.com/avatars/thumbnails/1/2/200/200/6370.png",
+    )
+    BAD: tuple[Any, ...] = (
+        "http://www.dndbeyond.com/avatars/1/2/3.png",  # not https
+        "https://www.dndbeyond.com/avatars/1/2/3.png?x=1",  # a query
+        "https://www.dndbeyond.com.evil.example/avatars/1/2/3.png",
+        "https://evil.example/avatars/1/2/3.png",
+        "https://www.dndbeyond.com/characters/1",  # not a picture path
+        "https://example.invalid/avatar.png",
+        "javascript:alert(1)",
+        "",
+        None,
+        5,
+    )
+
+    def test_only_the_picture_hosts_are_kept(self) -> None:
+        for link in self.GOOD:
+            self.assertEqual(sheets.portrait_url(link), link)
+        for link in self.BAD:
+            self.assertIsNone(sheets.portrait_url(link), link)
+
+    def test_the_portrait_is_read_from_the_character_data_and_survives_cleaning(self) -> None:
+        data = answer()
+        data["data"]["decorations"] = {"avatarUrl": self.GOOD[0]}
+        snapshot = sheets.parse(data)
+        self.assertEqual(snapshot["portrait"], self.GOOD[0])
+        cleaned = sheets.clean(json.loads(json.dumps(snapshot)))
+        assert cleaned is not None
+        self.assertEqual(cleaned["portrait"], self.GOOD[0])
+
+    def test_a_hand_edited_backup_cannot_smuggle_a_link(self) -> None:
+        snapshot = sheets.parse(answer())
+        for link in self.BAD:
+            snapshot["portrait"] = link
+            cleaned = sheets.clean(snapshot)
+            assert cleaned is not None
+            self.assertIsNone(cleaned["portrait"], link)
+
+    def test_a_snapshot_kept_before_this_has_none(self) -> None:
+        snapshot = sheets.parse(answer())
+        del snapshot["portrait"]
+        cleaned = sheets.clean(snapshot)
+        assert cleaned is not None
+        self.assertIsNone(cleaned["portrait"])
 
 
 class Cleaning(unittest.TestCase):

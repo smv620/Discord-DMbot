@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dmbot.db import Conn
+from dmbot.memory import isolated
 from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.store import isolated_rows_in
 
 if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
@@ -85,18 +87,42 @@ class Scenes:
     async def sweep(self, guild_id: int, campaign_id: str) -> int:
         """Delete the scenes whose question is answered. An entry's question is open while it is
         a suggestion (`proposed`) or a person the story never named (confirmed and `unnamed`), and
-        it has not been merged away; a claim's while it waits. Returns how many went."""
+        it has not been merged away; a claim's while it waits. An entry no chain links to the party
+        keeps its scene too, for the graph clean-up page, until it is linked (#3740), and so does
+        an entry the DM fixed until the careful check has read it (#3741). Returns how many
+        went."""
         async with self._store._read(guild_id, campaign_id) as scope:
+            # (the graph is read only when an entry's scene is up for deletion, since the DM
+            # opens scene cards often and a lore campaign's graph is large; and inside this one
+            # transaction, so a link rejected meanwhile cannot cost a newly isolated entry its
+            # scene)
+            cur = await scope.conn.execute(
+                "SELECT 1 FROM memory_scenes s WHERE s.guild_id = %s AND s.campaign_id = %s"
+                " AND s.subject_kind = 'entity' AND NOT EXISTS (SELECT 1 FROM memory_entities e"
+                "  WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                "  AND e.id = s.subject_id AND e.merged_into IS NULL"
+                "  AND (e.status = 'proposed' OR (e.status = 'confirmed' AND e.unnamed)))"
+                " LIMIT 1",
+                scope.ids,
+            )
+            keep: list[str] = []
+            if await cur.fetchone() is not None:
+                keep = sorted(isolated.isolated_ids(*await isolated_rows_in(scope)))
             cur = await scope.conn.execute(
                 "DELETE FROM memory_scenes s WHERE s.guild_id = %s AND s.campaign_id = %s AND ("
-                " (s.subject_kind = 'entity' AND NOT EXISTS (SELECT 1 FROM memory_entities e"
+                " (s.subject_kind = 'entity' AND NOT s.subject_id = ANY(%s::text[])"
+                # (a fixed entry waiting for the careful check keeps its scene for it, #3741)
+                "  AND NOT EXISTS (SELECT 1 FROM graph_review_pending p"
+                "   WHERE p.guild_id = s.guild_id AND p.campaign_id = s.campaign_id"
+                "   AND s.subject_id = ANY(p.entity_ids))"
+                "  AND NOT EXISTS (SELECT 1 FROM memory_entities e"
                 "   WHERE e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
                 "   AND e.id = s.subject_id AND e.merged_into IS NULL"
                 "   AND (e.status = 'proposed' OR (e.status = 'confirmed' AND e.unnamed))))"
                 " OR (s.subject_kind = 'claim' AND NOT EXISTS (SELECT 1 FROM memory_claims c"
                 "   WHERE c.guild_id = s.guild_id AND c.campaign_id = s.campaign_id"
                 "   AND c.id = s.subject_id AND c.status = 'proposed')))",
-                scope.ids,
+                (*scope.ids, keep),
             )
             return cur.rowcount
 

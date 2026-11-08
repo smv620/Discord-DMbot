@@ -78,6 +78,7 @@ from dmbot.campaigns import (
     web_line_delete,
     web_restore,
 )
+from dmbot.campaigns.lineage_section import LineageSection
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -288,6 +289,7 @@ from dmbot.memory import (
     plan_reader,
     report_make,
     scan_kinds,
+    scene_step,
     voyage,
     web_actions,
     web_report_requests,
@@ -306,6 +308,8 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
+from dmbot.memory.deed_proposals import DeedProposals
+from dmbot.memory.deed_proposals_backup import DeedProposalsSection
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
@@ -313,6 +317,7 @@ from dmbot.memory.exposures import (
     find_exposures,
     secret_connections,
 )
+from dmbot.memory.graph_review_run import GraphReviews
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.importance_backup import ImportanceSection
@@ -340,6 +345,7 @@ from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.scenes_backup import ScenesSection
 from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
 from dmbot.memory.secret_reveal import revealed_in
@@ -431,6 +437,7 @@ from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import (
     fix_notes,
+    import_clock,
     left_out,
     lookback,
     name_pass_run,
@@ -462,6 +469,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.import_clock import ImportClockOffers
 from dmbot.transcript.import_consent import (
     ImportConsentsSection,
     SpeakerErasuresSection,
@@ -509,6 +517,7 @@ from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import (
     contradiction_notes,
+    deed_card,
     dm_links,
     image_fix,
     kept_pictures,
@@ -614,6 +623,7 @@ log = logging.getLogger(__name__)
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
 WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
+SCENES_PER_SESSION = 120  # questions given a scene in one session's step: about three calls
 
 SUMMARY_INTERVAL_S = 15
 # Lines for the transcript channel are grouped and posted this often (#124): well inside
@@ -667,6 +677,8 @@ MOVED_CHECKED_MAX = 100_000  # people remembered as checked; cleared past this
 FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a recording
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
+AVATAR_SWEEP_EVERY_S = 24 * 3600.0  # linked players' Discord avatars are read again this often
+AVATARS_PER_ROUND = 25  # ... a few at a time, so a big server never holds up the round
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
 SECRET_QUESTION_WAITING = (
@@ -942,6 +954,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.memory = memory
         # Secrets said at the table, recorded for the DM's summary; nothing applies them yet (#2410)
         self.exposures = ExposureStore(memory._db) if memory is not None else None
+        # The offers to set the clock from an imported session, read by the website too (#3199).
+        self.import_clock_offers = ImportClockOffers(memory._db) if memory is not None else None
         self.lookup = (
             LookupCache(memory, in_use=self._campaign_has_a_table) if memory is not None else None
         )
@@ -1012,6 +1026,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # The website's Recap style choices (#3060), applied with the stores above.
         self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
         self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        self._avatars_swept: dict[int, float] = {}  # server -> when its avatars were last read
+        self._avatar_queue: dict[int, list[int]] = {}  # server -> players left in this sweep
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
@@ -1490,6 +1506,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.test_voice = test_voice  # the second yes, for test servers (#1019)
         # Who chose not to have their words used to improve DMbot (#1609): the recorder asks.
         self.improvement = improvement
+        # The careful check of the DM's graph clean-up fixes (#3741): built only with a key, the
+        # story memory, transcripts and the improvement opt-outs to ask; it runs only for the
+        # campaigns whose DM shares their story to improve DMbot.
+        self.graph_reviews: GraphReviews | None = (
+            GraphReviews(
+                memory,
+                transcripts,
+                self.ai_client.tier(FEATURE_TIERS[Feature.GRAPH_REVIEW], Feature.GRAPH_REVIEW),
+                consenting=self.consent.consenting,
+                improvement_allowed=improvement.allowed,
+                clock=time.time,
+            )
+            if self.ai_client
+            and memory is not None
+            and transcripts is not None
+            and improvement is not None
+            else None
+        )
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -1580,6 +1614,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
         log.info(features.features_line(self.settings))  # what is switched on (#1831)
+        # The DM-visible list for the web (#3693). It never raises: a failed write is logged once
+        # inside it and start-up goes on. An empty DMBOT_STATUS_DIR means the default, not ".".
+        await asyncio.to_thread(
+            features.write_snapshot,
+            self.settings,
+            os.environ.get("DMBOT_STATUS_DIR") or "/data/status",
+            time.time(),
+        )
         # DMbot's knowledge of itself (#1195): read its documents now, not on the first question.
         await asyncio.to_thread(knowledge.load)
         register_commands(self.tree)
@@ -1681,6 +1723,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
+        self.add_dynamic_items(  # deeds the party did, for the DM to record (#3175)
+            deed_card.OpenButton, deed_card.RecordButton, deed_card.NotButton, deed_card.UndoButton
+        )
         self.add_dynamic_items(  # make the table's repeated words a kind of connection (#3033)
             kind_offer.OpenButton, kind_offer.AnswerButton, kind_offer.UndoButton
         )
@@ -1739,6 +1784,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [self._watched(self._plot_talk_loop(), "plot-talk")]
                 if self.plot_talk is not None
+                else []
+            ),
+            *(
+                [self._watched(self._graph_review_loop(), "graph-review")]
+                if self.graph_reviews is not None
                 else []
             ),
             *(
@@ -1931,6 +1981,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await directory.remember(
                     guild_id, member.id, getattr(member, "global_name", None), member.name
                 )
+                avatar = getattr(member, "avatar", None)  # None: Discord's default picture
+                await directory.set_avatar(guild_id, member.id, getattr(avatar, "key", None))
         except Exception as exc:  # the type only: a database error's text can quote a name
             log.warning("Could not keep a member in the directory: %s", type(exc).__name__)
 
@@ -3089,6 +3141,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # The scene of each waiting question, from the lines it came from (#3596): after the
+            # extractor, so the questions it made are there, and inside the same call limit.
+            ("scenes", lambda: self.write_scenes(table)),
             # Who each name to check could be (#3602): after the extractor made them, inside the
             # same call limit; off unless its switch is on.
             ("who is this", lambda: self.write_who(table)),
@@ -3110,6 +3165,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("script offer", lambda: self.offer_script(table)),
             # Words the table keeps using for a connection can become a kind (#3033).
             ("kind offer", lambda: self.offer_kind(table)),
+            # Deeds the party did, noticed in the session, for the DM to record (#3175).
+            ("deeds to record", lambda: self.offer_deeds(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -8833,6 +8890,77 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "Story-plan reader: couldn't post the finish notice (%s)", type(exc).__name__
             )
 
+    async def write_scenes(self, table: Table) -> None:
+        """After a live session (#3596), only with DMBOT_STORY_SCENES and the extractor on: write
+        the scene of each waiting question that has none (see `memory.scene_step`). Inside the
+        extractor's session and daily call limits, only lines of people who agree, counts only in
+        the log."""
+        if (
+            not self.settings.story_scenes_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return  # (off means off: nothing is read or asked)
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            session = await transcripts.session(gid, sid)
+            _after_ms, used = await transcripts.extraction(gid, sid)
+            now = int(time.time())
+            allowed = extractor.calls_left(
+                self.settings.story_extractor_max_calls,
+                used,
+                self.settings.story_extractor_max_calls_day,
+                await transcripts.extractor_calls_since(gid, cid, now - 86400),
+            )
+            scenes = Scenes(memory)
+            await scenes.sweep(gid, cid)  # (a scene stays only while its question is open)
+            open_names = [
+                e
+                for e in await memory.entities(gid, cid, statuses=("proposed", "confirmed"))
+                if scene_step.is_open_name(e)
+            ]
+            missing = set(await scenes.missing(gid, cid, ENTITY, [e.id for e in open_names]))
+            waiting = [e for e in open_names if e.id in missing][:SCENES_PER_SESSION]
+            if not waiting:
+                return
+            agreed = await self.consent.consenting(gid)
+            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            items, empty = await scene_step.items_for(
+                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, dm_ids, agreed
+            )
+            report = scene_step.Report(no_lines=empty)
+
+            async def count_call() -> None:
+                await transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                )
+
+            await scene_step.run(
+                ai,
+                scenes,
+                items,
+                guild_id=gid,
+                campaign_id=cid,
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: ai.model,
+                session_started_at=session.started_at if session else None,
+                max_calls=allowed,
+                count_call=count_call,
+                report=report,
+            )
+            report.questions += empty  # (the questions asked about, with and without lines)
+            log.info(report.line())
+
     async def write_who(self, table: Table) -> None:
         """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
         each waiting name could be (see `memory.who_step`). It only ranks, unless
@@ -9078,6 +9206,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=after_ms,
                 readings=self.settings.story_readings_on,
                 deeds=self.settings.story_deeds_on,
+                deed_store=DeedProposals(self.memory)
+                if self.settings.story_deeds_on and self.memory is not None
+                else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9248,6 +9379,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=0,
                 readings=self.settings.story_readings_on,
                 deeds=self.settings.story_deeds_on,
+                deed_store=DeedProposals(self.memory)
+                if self.settings.story_deeds_on and self.memory is not None
+                else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
@@ -9926,6 +10060,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         links_ready.family_notice(waiting),
                     ),
                 )
+
+    async def offer_deeds(self, table: Table) -> None:
+        """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
+        the session reader noticed deeds the party did that mattered to someone and they wait to
+        be recorded. Counts only; the DM looks at each one and presses Record (the DM's own
+        `add_deed`). Only for a campaign whose plan has story memory."""
+        if not self.settings.story_deeds_on or self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            count = await DeedProposals(self.memory).count_waiting(
+                gid, cid, opted_in=await self.consent.consenting(gid)
+            )
+            if count:
+                log.info("Deeds: %d waiting for the DM", count)
+                await self.ask_dm(table, deed_card.ask_for(gid, cid, count))
 
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
@@ -11386,7 +11541,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.clocks is None or self.transcripts is None:
             return
         campaign = await self.campaigns.get(gid, ready.campaign_id)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if campaign is None:
+            return
+        # (the website's page reads the offer too, so it is made whether or not the campaign has a
+        # DM screen to post it on; only the Discord post needs the channel)
+        screen = campaign.dm_screen_channel_id
+        if screen is None and self.import_clock_offers is None:
             return
         stored = await self.clocks.get(gid, campaign.id)
         if stored is None:
@@ -11418,14 +11578,64 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # fmt: skip
         if target <= stored.clock.minute:
             return
+        await self._keep_import_clock_offer(
+            gid, campaign.id, ready.session_id, target, split=stored.split
+        )
+        if screen is None:
+            return
         if stored.split:
-            await self.post(campaign.dm_screen_channel_id, import_time_screen.SPLIT_WHY)
+            await self.post(screen, import_time_screen.SPLIT_WHY)
             return
         await self.post(
-            campaign.dm_screen_channel_id,
+            screen,
             import_time.offer_text(target),
             view=import_time_screen.offer_view(campaign.id, target),
         )
+
+    async def _keep_import_clock_offer(
+        self, gid: int, campaign_id: str, session_id: str, minute: int, *, split: bool
+    ) -> None:
+        """Write the offer where the website's page reads it (#3199): a failure is logged by its
+        type and never stops the Discord post."""
+        if self.import_clock_offers is None:
+            return
+        try:
+            await self.import_clock_offers.offer(
+                gid,
+                campaign_id,
+                session_id,
+                minute,
+                import_clock.SPLIT if split else import_clock.OFFERED,
+            )
+        except Exception as exc:
+            log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
+
+    def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
+        """The website's answer to an import clock offer (#3199), applied the way Discord's two
+        buttons do it: the offer is held for this answer (a second answer, from either place,
+        finds it taken), the clock is set by the one `set_clock` function, and the offer's row
+        says how it ended. Counts and codes only in the log."""
+
+        async def choose(campaign_id: str, session_id: str, want_set: bool, user_id: int) -> None:
+            offers = self.import_clock_offers
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if offers is None or campaign is None or user_id not in campaign.dm_user_ids:
+                return
+            if not want_set:
+                await offers.dismiss(guild_id, campaign_id, session_id)
+                return
+            offer = await offers.take(guild_id, campaign_id, session_id)
+            if offer is None:
+                return  # answered already (in Discord, say) or replaced: the row is the truth
+            try:
+                done = await import_time_screen.set_clock(self, campaign, offer.minute, user_id)
+            except Exception:
+                await offers.finish(guild_id, campaign_id, session_id, import_clock.OFFERED)
+                raise
+            await offers.finish(guild_id, campaign_id, session_id, done.state)
+            log.info("Import time: a website answer, %s", done.code)
+
+        return choose
 
     async def _import_time_total(self, cues: tuple[str, ...], start: int) -> int | None:
         """The one question over an imported session's cue lines: the minutes they pass in all,
@@ -11918,6 +12128,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 named_batch=self._named_batch_for(guild.id),
                                 look_up=self._player_lookup(guild.id),
                                 actions=store,
+                                clock=self._import_clock_choice(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -11939,6 +12150,56 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    async def run_member_avatars(self) -> None:
+        """Once a day, read each linked player's Discord avatar again (#3621): the hash only, for
+        the Story Graph's player character icons. Only players who have agreed (the directory
+        holds no one else). A member who has left (Discord says unknown) loses it. A few players
+        a round (`AVATARS_PER_ROUND`), so many servers or players never hold up the rounds'
+        other work; one player's failure does not stop the rest. Counts only."""
+        directory = self.members
+        if directory is None:
+            return
+        now = time.monotonic()
+        for guild in list(self.guilds):
+            if self._closing:
+                return
+            queue = self._avatar_queue.get(guild.id)
+            if queue is None:  # not part way through a sweep: is it due?
+                if now - self._avatars_swept.get(guild.id, -AVATAR_SWEEP_EVERY_S) < (
+                    AVATAR_SWEEP_EVERY_S
+                ):
+                    continue
+                queue = await directory.linked_players(guild.id)
+                self._avatars_swept[guild.id] = now
+            batch, rest = queue[:AVATARS_PER_ROUND], queue[AVATARS_PER_ROUND:]
+            if rest:
+                self._avatar_queue[guild.id] = rest
+            else:
+                self._avatar_queue.pop(guild.id, None)
+            kept = cleared = failed = 0
+            for user_id in batch:
+                if self._closing:
+                    return
+                try:
+                    member = await guild.fetch_member(user_id)
+                    key = getattr(member.avatar, "key", None)
+                except discord.NotFound:
+                    key = None
+                    cleared += 1
+                except Exception:  # Discord or the database: tried again at the next sweep
+                    failed += 1
+                    continue
+                try:
+                    await directory.set_avatar(guild.id, user_id, key)
+                except Exception:
+                    failed += 1
+                    continue
+                kept += key is not None
+            log.info(
+                "Avatar sweep: %d kept, %d cleared, %d failed, %d to go",
+                kept, cleared, failed, len(rest),
+            )  # fmt: skip
 
     async def run_web_recap_style(self) -> None:
         """The Recap style choices DMs made on the website (#3060): for each server, sweep its
@@ -12077,6 +12338,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Pause or unpause chosen on the website (#3062): `set_paused` itself, under the session
         lock like Discord's button, so a running session is never paused under its feet."""
         return await self.set_paused(campaign.guild_id, campaign.id, user_id, paused)
+
+    async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
+        """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
+        await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
 
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
@@ -12543,6 +12808,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_line_fixes.run_one(self, store, guild_id, item)
+
+    async def _graph_review_loop(self) -> None:
+        """Every minute: the careful check of the DM's graph clean-up fixes that have waited 15
+        minutes since the last one (#3741). One server at a time, each in its own try, counts
+        and error types only in the log."""
+        await asyncio.sleep(90)
+        while True:
+            if self.graph_reviews is not None:
+                for guild in list(self.guilds):
+                    try:
+                        with log_context(guild_id=guild.id):
+                            await self.graph_reviews.round(guild.id)
+                    except Exception as exc:  # the type only: a database error can quote a row
+                        log.warning("Graph checks failed for a server: %s", type(exc).__name__)
+            await asyncio.sleep(60)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
@@ -13847,12 +14127,15 @@ def register_backup_sections(
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
+    campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
+    campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     alerter = alerts.Alerter(settings.mail)
     alerts.install(alerter)
     alerter.say_if_off()

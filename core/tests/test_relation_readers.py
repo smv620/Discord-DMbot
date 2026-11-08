@@ -19,6 +19,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 CONFIRMED_ONLY = "reads confirmed connections only (and, for players, only those the party holds)"
 DM_ONLY = "DM-side by design"
 READERS = {
+    "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
     "memory/importance_rank.py": CONFIRMED_ONLY
@@ -58,6 +59,9 @@ READERS = {
     + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
     " confirmed, because the DM chooses what to change",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
+    "memory/graph_review_run.py": DM_ONLY
+    + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
+    "the report is DM-only and never shown to players",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
     "memory/set_definitions.py": "is a relationship word in use: any status, on purpose",
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
@@ -127,6 +131,8 @@ STORE = {
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
     "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
+    "isolated_rows_in": "kept and waiting links, no guess connections, for the DM's graph "
+    "clean-up (#3740); ids and words only, never shown to a player",
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
 }
 

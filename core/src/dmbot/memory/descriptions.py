@@ -74,13 +74,108 @@ PERSON_WORDS = frozenset(
         "brother",
         "son",
         "daughter",
+        "sibling",
+        "patron",
+        "attacker",
     ]
 )
+# A class word names a person only with a word before it that says which one ("maul barbarian": the
+# one with the maul, #3634); alone it is a kind of person ("barbarians"), not someone.
+PERSON_WORDS_WITH_A_MODIFIER = frozenset(
+    ["barbarian", "raider", "bandit", "cultist", "assassin",
+     # (#3736) a job names one person only when the description says which one: "the guard at the
+     # gate", "the red-haired barmaid"; alone ("a guard") it says what someone is, not who
+     "barmaid", "guard", "innkeeper", "sailor", "soldier", "merchant", "priest", "priestess",
+     "monk", "knight", "hunter", "miner", "fisherman", "smith", "blacksmith", "bard", "cook",
+     "farmer", "shopkeeper", "trader", "guide", "driver", "rider", "captain", "sergeant",
+     "dockhand", "smuggler", "thug", "mercenary", "noble", "nobleman", "noblewoman", "drunk",
+     "elder", "healer", "acolyte", "pilgrim", "warrior", "worker", "clerk", "scribe"]
+)  # fmt: skip
+
+
+# The words that start the tail of a description: "the barmaid with red hair", "the guard at the
+# gate", "the sailors sitting in the corner". What the description is about is the word before the
+# tail (its head), so "hair" never makes "the barmaid with red hair" a thing (#3736).
+_TAIL_STARTS = frozenset(
+    ["with", "at", "in", "on", "by", "near", "from", "of", "who", "whom", "that", "sitting",
+     "standing", "wearing", "carrying", "holding"]
+)  # fmt: skip
+
+
+# Words before a head that say how many or which share, never which ones ("all the guards", "these
+# people", "the other men"): a crowd, not a particular group (#3736).
+_NOT_WHICH = frozenset(
+    ["all", "some", "most", "many", "few", "several", "other", "others", "these", "those", "both",
+     "every", "each", "any", "no", "more", "local", "two", "three", "four", "five", "six", "seven",
+     "eight", "nine", "ten", "dozen", "hundred", "half"]
+)  # fmt: skip
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in text.replace("'s", " ").split() if w[:1].isalpha()]
+
+
+def _split(text: str) -> tuple[list[str], list[str]]:
+    """(the head phrase, the tail) of a description: "the barmaid" and "with red hair". The tail
+    may hold a name ("at the Three Flags"): only the head phrase must be a description."""
+    words = _words(text)
+    tail = next((i for i, w in enumerate(words) if i and w.casefold() in _TAIL_STARTS), None)
+    return (words, []) if tail is None else (words[:tail], words[tail:])
+
+
+def _head(head: list[str], tail: list[str], *, group: bool = False) -> tuple[str, bool] | None:
+    """The head word ("barmaid" in "the barmaid with red hair") and whether something says which
+    one: a word before it that is not an article, owner or a word of how many ("red-haired
+    barmaid"), or a tail ("with red hair"; for a group, never "of": "the women of the town" is a
+    crowd). None when the head phrase is no description: a capital in it ("Mira's sister Ren"), or
+    an article in its middle ("bram the guard": a name and a job, never a description)."""
+    if not head or not is_description(" ".join(head)):
+        return None
+    if any(w.casefold() in ("the", "a", "an") for w in head[1:]):
+        return None
+    before = [w for w in head[:-1] if w.casefold() not in _LEADING]
+    which = any(w.casefold() not in _NOT_WHICH for w in before) if group else bool(before)
+    told = bool(tail) and not (group and tail[0].casefold() == "of")
+    return head[-1].casefold(), which or told
 
 
 def is_described_person(text: str) -> bool:
-    """A description whose last word is a person word: someone the story never names (#3431)."""
-    if not is_description(text):
+    """A description whose head word is a person word: someone the story never names (#3431).
+    The head is the word before a tail, so "the barmaid with red hair" is a person (#3736)."""
+    found = _head(*_split(text))
+    if found is None:
         return False
-    words = [w for w in text.replace("'s", " ").split() if w[:1].isalpha()]
-    return bool(words) and words[-1].casefold() in PERSON_WORDS
+    last, which = found
+    return last in PERSON_WORDS or (last in PERSON_WORDS_WITH_A_MODIFIER and which)
+
+
+# The head words of a particular group the story never names ("the loud sailors in the corner",
+# owner, #3736): people in the plural ("people" and "folk" are too general to be one). A group word
+# alone ("the sailors", "men"), or with only a word of how many ("all the guards"), is a crowd or a
+# kind of people, not one group: it needs a word or a tail that says which ones.
+GROUP_WORDS = frozenset(
+    ["men", "women", "strangers", "figures", "travelers", "travellers",
+     "villagers", "peasants", "children", "sailors", "soldiers", "guards", "riders", "pilgrims",
+     "bandits", "raiders", "cultists", "thugs", "mercenaries", "hunters", "miners", "fishermen",
+     "merchants", "traders", "drinkers", "gamblers", "dancers", "musicians", "monks", "priests",
+     "acolytes", "knights", "warriors", "workers", "dockhands", "smugglers", "brothers",
+     "sisters", "twins"]
+)  # fmt: skip
+
+
+def is_described_group(text: str) -> bool:
+    """A description of one particular group of people the story never names (#3736): its head
+    word is people in the plural, with a word before it or a tail that says which ones ("the loud
+    sailors in the corner", "three hooded figures"), never the word alone ("the sailors")."""
+    found = _head(*_split(text), group=True)
+    return found is not None and found[0] in GROUP_WORDS and found[1]
+
+
+def head_phrase(text: str) -> str:
+    """The words before a description's tail: "the barmaid" of "the barmaid with red hair"."""
+    return " ".join(_split(text)[0])
+
+
+def is_described(text: str) -> bool:
+    """A person or a particular group the story describes but never names (#3431, #3736)."""
+    return is_described_person(text) or is_described_group(text)

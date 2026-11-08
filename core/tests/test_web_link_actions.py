@@ -13,6 +13,7 @@ from unittest.mock import patch
 import httpx
 
 from dmbot.memory import backstory_keep
+from dmbot.memory import claims as claims_mod
 from dmbot.memory import web_actions as wa
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
@@ -228,6 +229,63 @@ class TheEdits(Editing):
         }
         self.assertEqual(pair, {"knows"})  # ONE Undo puts the old words back and ends the new ones
         self.assertEqual(len({r["batch"] for r in log}), 1)  # one change: one batch, one Undo
+
+    async def test_a_picked_feeling_keeps_it_a_knows_and_undo_takes_it_back(self) -> None:
+        link = self.links["mira-keep"]
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.edit(link, action="feeling", feeling="Wary")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(answer), self.mira, self.keep)
+        self.assertEqual([x["words"] for x in edge["links"]], ["knows (wary)"])
+        log = await self.log_since(before)
+        self.assertEqual(len({r["batch"] for r in log}), 1)  # one change, one Undo
+        await self.memory.undo(self.g, self.one.id, log[-1]["batch"], source=DM_SOURCE)
+        mine = await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+        pair = [r for r in mine if self.keep in (r.subject_id, r.object_id)]
+        self.assertEqual([(r.predicate, r.detail) for r in pair], [("knows", "")])
+
+    async def test_a_picked_feeling_never_turns_another_kind_of_connection_into_a_knows(
+        self,
+    ) -> None:
+        made = await self.add_link(self.mira, self.hall, "is a member of")
+        await self.apply_all()
+        edge = self.edge_of(await self.poll(made), self.mira, self.hall)
+        link = str(edge["links"][0]["id"])
+        answer = await self.edit(link, action="feeling", feeling="hostile")
+        await self.apply_all()
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "failed")
+        again = await relationships.read_web(self.web, self.session, self.cref, center=self.mira)
+        words = [
+            x["words"]
+            for e in again["edges"]
+            for x in e["links"]
+            if {e["a"], e["b"]} == {self.mira, self.hall}
+        ]
+        self.assertEqual(words, ["is a member of"])  # untouched
+
+    async def test_a_neutral_pick_stores_no_word_and_a_secret_line_stays_secret(self) -> None:
+        link = self.links["mira-keep"]
+        await self.edit(link, action="secret", secret=True)
+        await self.apply_all()
+        await self.edit(link, action="feeling", feeling="neutral")
+        await self.apply_all()
+        mine = await self.memory.relations(
+            self.g, self.one.id, entity_id=self.mira, include_secret=True
+        )
+        (pair,) = [
+            r for r in mine if self.keep in (r.subject_id, r.object_id) and r.status == "confirmed"
+        ]
+        self.assertEqual((pair.predicate, pair.detail, pair.secret), ("knows", "", True))
+
+    async def test_a_word_off_the_nine_is_refused_before_anything_is_queued(self) -> None:
+        link = self.links["mira-keep"]
+        for bad in ("adores", "", None, 7):
+            with self.subTest(bad):
+                self.assertEqual(
+                    await self.refused_edit(link=link, action="feeling", feeling=bad),
+                    "bad_action",
+                )
 
     async def test_the_cards_undo_takes_a_reworded_connection_back_whole(self) -> None:
         link = self.links["mira-keep"]
@@ -2345,6 +2403,22 @@ class WhichOneFromTheWebsite(Editing):
         self.assertEqual((picked.object_picked, picked.reason), (entry, ""))
         self.assertEqual(await self.claims.unplaced_count(self.g, self.one.id), 0)
         self.assertEqual((await self.press("claim-pick", claim, text)).error, "")  # sent twice
+
+    async def test_a_held_claim_cannot_be_kept_or_turned_down_from_the_website(self) -> None:
+        """A held claim (#3749) is in no list the DM sees; an id that reaches the queue anyway is
+        not found, and the claim stays held."""
+        claim = await self.kept()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_claims SET reason = %s WHERE id = %s",
+                (claims_mod.WAITING_NAME_REASON, claim),
+            )
+        for action in ("claim-confirm", "claim-reject"):
+            with self.subTest(action):
+                self.assertEqual((await self.press(action, claim)).error, wa.NOT_FOUND)
+        held = await self.claims.get(self.g, self.one.id, claim)
+        assert held is not None
+        self.assertEqual(held.status, "proposed")
 
     async def test_a_pick_of_something_that_is_not_a_choice_is_gone(self) -> None:
         claim = await self.kept()

@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin
+from dmbot.memory import gate, kin, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -33,6 +33,8 @@ from dmbot.memory.link_words import (
     quoted,
     reads_both_ways,
 )
+from dmbot.memory.standing import dm_line_word
+from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names, graph_view, link_sources, which_choices
@@ -88,6 +90,7 @@ def edges_from(
     can_edit: bool,
     is_dm: bool = False,
     kinds: Mapping[str, str] | None = None,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
@@ -97,7 +100,9 @@ def edges_from(
     to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942).
     `kinds` maps a name's id to its kind (from the same answer's `nodes`), so a place tie reads
     "lives in" or "was last seen in" for a character and keeps "is in" for a place (#3363). A
-    subject missing from it (a kind the gate left out) reads the old, safe "is in"."""
+    subject missing from it (a kind the gate left out) reads the old, safe "is in". `standing`: the
+    DM's own Reputation for pairs (`dmbot_web_dm_standings`), whose word wins on a `knows` line and
+    is sent as the link's `standing` (#3642); read only when `is_dm`, so no one else is given it."""
     kinds = kinds or {}
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
@@ -109,6 +114,13 @@ def edges_from(
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
         own = own_words(str(row["predicate"]), str(row["detail"] or ""))
+        # the DM's own word for the pair wins over the reader's on a `knows` line (#3642; the same
+        # function as the Discord card), and only the words change: the stored detail stays
+        dm_word = (
+            dm_line_word(standing, str(row["a"]), str(row["b"]))
+            if is_dm and standing and row["predicate"] == "knows"
+            else None
+        )
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
@@ -119,12 +131,13 @@ def edges_from(
                 if own
                 else link_words(
                     str(row["predicate"]),
-                    str(row["detail"] or ""),
+                    dm_word or str(row["detail"] or ""),
                     directional,
                     subject_kind,
                     feeling=is_dm,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
+                "standing": dm_word,
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
                 # so the page can write each line from the name in the middle
@@ -182,6 +195,7 @@ def edges_from(
                         "direction": x["direction"],
                         "kind": x["kind"],
                         **(who_knows(x) if is_dm else {}),
+                        **({"standing": x["standing"]} if is_dm and x["standing"] else {}),
                     }
                     for x in links
                 ],
@@ -348,8 +362,9 @@ async def read_web(
         got, known = await _door(
             db, session, ref, center, hops, size_only=False, view=view, with_knowers=True
         )
-    page = page_of(got)
     own_view = got["canEdit"] and got["seesAll"]
+    # the DM's own Reputation wins on a `knows` line, in the DM's own Full View only (#3642)
+    page = page_of(got, await dm_standings(db, session, ref) if own_view else None)
     if own_view:
         await with_know_words(db, session, ref, page, known)
     # where each connection came from (#2946): the DM's own view gets the full value, any other
@@ -451,7 +466,9 @@ async def with_know_words(
                 link["knownBy"] = now if held and now else []
 
 
-def page_of(got: dict[str, Any]) -> dict[str, Any]:
+def page_of(
+    got: dict[str, Any], standing: Mapping[tuple[str, str], int] | None = None
+) -> dict[str, Any]:
     """A graph answer (the door's, or the gate's in the door's shape) as the page gets it: each
     name with whether it has an NPC page, and the connections between two names grouped into one
     edge with its words. `pageIds` is dropped."""
@@ -463,6 +480,14 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         }
         for n in got["nodes"]
     ]
+    for node in nodes:
+        # every door node carries `unnamed` (true only for a DM's person the story never named,
+        # #3732); a node worked out by the gate has none and is left as the gate named it. An
+        # unnamed one is labelled from the anchor's present name, as the All names page and Discord
+        if "unnamed" in node:
+            all_names._label_unnamed(node)
+    waiting = got.get("waitingUnnamed")
+    extra = {} if waiting is None else {"waitingUnnamed": int(waiting)}  # (a DM's only, #3732)
     return {
         "center": got["center"],
         "nodes": nodes,
@@ -473,6 +498,7 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
             # everything the DM screen shows, but not which characters know what (#2935)
             is_dm=bool(got["canEdit"]) and bool(got["seesAll"]),
             kinds={str(n["id"]): str(n.get("kind") or "") for n in got["nodes"]},
+            standing=standing,
         ),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,
@@ -480,7 +506,24 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         "view": got["view"],
         "visibility": got["visibility"],
         "canPeek": bool(got["canPeek"]),
+        **extra,
     }
+
+
+async def dm_standings(db: Database, session: Session, ref: str) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for each pair, (viewer, subject) to score (#3642), from a door that
+    answers only a DM of the campaign (anyone else: nothing). Ids and scores only; they go to
+    `edges_from` and no further."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_dm_standings(%s, %s) AS s", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    rows = found["s"] if found is not None and found["s"] is not None else []
+    return {(str(v), str(s)): int(score) for v, s, score in rows}
 
 
 async def read_size(
@@ -813,9 +856,10 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
-    """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
-    `{action: "remove", confirm: true}`. Returns the answer's id."""
+    """Queue a change to one connection: `{action: "words", words}`, `{action: "feeling", feeling}`
+    (one of the nine words, #3606), `{action: "secret", secret}`, `{action: "who", who,
+    characters}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -825,6 +869,17 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-words", target=link_id,
             text=_words(body.get("words")), flag=False,
+        )  # fmt: skip
+    if action == "feeling":  # a feeling picked for a `knows` line (#3606): one of the nine words
+        feeling = reputation_words.word_of(body.get("feeling"))
+        if feeling is None:
+            raise RecapError("bad_action")
+        # the same change as typing "knows (wary)" into the words box (`predicate_for` reads it
+        # back as a feeling) but only on a `knows` connection (checked when it is applied), so the
+        # connection stays a "knows" and Undo is the words' own
+        return await _queue(
+            db, session, ref, entity=None, action="link-words", target=link_id,
+            text=f"{web_actions.FEELING_TEXT}{feeling}", flag=False,
         )  # fmt: skip
     if action == "secret":
         if not isinstance(body.get("secret"), bool):
@@ -1178,7 +1233,7 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     screen's own rule (`claims.condition_of`), so both read it the same way."""
     said = Extracted(
         str(row["subject"]), str(row["relationship"]), str(row["object"]),
-        str(row.get("details") or ""), (), str(row["how"]),
+        split_effect_note(str(row.get("details") or ""))[0], (), str(row["how"]),
     )  # fmt: skip
     return condition_of(said) is None
 
@@ -1187,7 +1242,8 @@ def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
     base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
-    details = str(row.get("details") or "").strip()
+    details, _ = split_effect_note(str(row.get("details") or ""))  # (the note is not a detail)
+    details = details.strip()
     return f"{base} ({details})" if details else base
 
 
@@ -1227,6 +1283,7 @@ async def read_waiting(
     claims = [
         {
             **c,
+            "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),

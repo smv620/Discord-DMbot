@@ -18,48 +18,42 @@ DM = 7
 
 class TheLabel(unittest.TestCase):
     def test_a_label_hangs_off_its_anchor_or_stands_alone(self) -> None:
-        self.assertEqual(unnamed.label("sister", "Ken"), "Ken's sister (name unknown)")
-        self.assertEqual(unnamed.label("king", "Kesh Arn"), "Kesh Arn's king (name unknown)")
-        self.assertEqual(unnamed.label("a hooded figure"), "a hooded figure (name unknown)")
-        self.assertEqual(unnamed.label("the merchant"), "the merchant (name unknown)")
+        self.assertEqual(unnamed.label("sister", "Ken"), "unnamed - Ken's sister")
+        self.assertEqual(unnamed.label("king", "Kesh Arn"), "unnamed - Kesh Arn's king")
+        self.assertEqual(unnamed.label("a hooded figure"), "unnamed - a hooded figure")
+        self.assertEqual(unnamed.label("the merchant"), "unnamed - the merchant")
         self.assertEqual(
             unnamed.label("elf archer with long blue hair"),
-            "elf archer with long blue hair (name unknown)",
+            "unnamed - elf archer with long blue hair",
         )
 
     def test_a_description_that_already_says_whose_is_not_owned_twice(self) -> None:
-        self.assertEqual(unnamed.label("his child", "Ivo"), "Ivo's child (name unknown)")
-        self.assertEqual(unnamed.label("her sister", "Ken"), "Ken's sister (name unknown)")
-        self.assertEqual(unnamed.label("Hobb's daughter", "Hobb"), "Hobb's daughter (name unknown)")
+        self.assertEqual(unnamed.label("his child", "Ivo"), "unnamed - Ivo's child")
+        self.assertEqual(unnamed.label("her sister", "Ken"), "unnamed - Ken's sister")
+        self.assertEqual(unnamed.label("Hobb's daughter", "Hobb"), "unnamed - Hobb's daughter")
         self.assertEqual(
             unnamed.label("Ivo's child", "Ivo Rand"),
-            "Ivo Rand's child (name unknown)",
+            "unnamed - Ivo Rand's child",
         )
-        self.assertEqual(unnamed.label("Hollis' king", "Hollis"), "Hollis' king (name unknown)")
-        self.assertEqual(unnamed.label("His child", "Ivo"), "Ivo's child (name unknown)")
-        self.assertEqual(unnamed.label("Ken’s sister", "Ken"), "Ken's sister (name unknown)")
-        self.assertEqual(
-            unnamed.label("O'Brien's child", "O'Brien"), "O'Brien's child (name unknown)"
-        )
+        self.assertEqual(unnamed.label("Hollis' king", "Hollis"), "unnamed - Hollis' king")
+        self.assertEqual(unnamed.label("His child", "Ivo"), "unnamed - Ivo's child")
+        self.assertEqual(unnamed.label("Ken’s sister", "Ken"), "unnamed - Ken's sister")
+        self.assertEqual(unnamed.label("O'Brien's child", "O'Brien"), "unnamed - O'Brien's child")
         # a short first word is not an owner, and a bare owner is left alone
-        self.assertEqual(
-            unnamed.label("Old's heir", "Old Tom"), "Old Tom's Old's heir (name unknown)"
-        )
-        self.assertEqual(unnamed.label("Ken's", "Ken"), "Ken's Ken's (name unknown)")
+        self.assertEqual(unnamed.label("Old's heir", "Old Tom"), "unnamed - Old Tom's Old's heir")
+        self.assertEqual(unnamed.label("Ken's", "Ken"), "unnamed - Ken's Ken's")
         # another owner stays, and a lone word is never emptied
-        self.assertEqual(
-            unnamed.label("the king's guard", "Ken"), "Ken's king's guard (name unknown)"
-        )
-        self.assertEqual(unnamed.label("his", "Ken"), "Ken's his (name unknown)")
+        self.assertEqual(unnamed.label("the king's guard", "Ken"), "unnamed - Ken's king's guard")
+        self.assertEqual(unnamed.label("his", "Ken"), "unnamed - Ken's his")
 
     def test_a_name_ending_in_s_takes_only_an_apostrophe_and_an_article_is_dropped(self) -> None:
-        self.assertEqual(unnamed.label("the king", "Hollis"), "Hollis' king (name unknown)")
+        self.assertEqual(unnamed.label("the king", "Hollis"), "unnamed - Hollis' king")
 
     def test_the_label_follows_the_anchors_present_name(self) -> None:
         self.assertEqual(
-            unnamed.shown("sister", "k1", {"k1": "Kenneth"}), "Kenneth's sister (name unknown)"
+            unnamed.shown("sister", "k1", {"k1": "Kenneth"}), "unnamed - Kenneth's sister"
         )
-        self.assertEqual(unnamed.shown("sister", "gone", {}), "sister (name unknown)")
+        self.assertEqual(unnamed.shown("sister", "gone", {}), "unnamed - sister")
 
     def test_the_same_person_is_the_same_relationship_and_word_other_is_another(self) -> None:
         key = unnamed.same_person_key
@@ -69,14 +63,14 @@ class TheLabel(unittest.TestCase):
 
 
 class TheStoredCopy(unittest.TestCase):
-    def test_the_stored_label_fits_and_still_ends_in_the_suffix(self) -> None:
+    def test_the_stored_label_fits_and_keeps_its_prefix(self) -> None:
         long_anchor = "A" * 100
         for what in ("sister", "w" * 100):
             got = unnamed.stored(what, long_anchor)
             with self.subTest(what=what[:5]):
                 self.assertLessEqual(len(got), 100)
-                self.assertTrue(got.endswith(unnamed.SUFFIX))
-        self.assertEqual(unnamed.stored("sister", "Ken"), "Ken's sister (name unknown)")
+                self.assertTrue(got.startswith(unnamed.PREFIX))
+        self.assertEqual(unnamed.stored("sister", "Ken"), "unnamed - Ken's sister")
 
 
 class MakingThem(MemoryTest):
@@ -101,7 +95,7 @@ class MakingThem(MemoryTest):
         )
         self.assertEqual(e.unnamed_what, "sister")
         self.assertEqual(e.description, "lives by the lake")
-        self.assertEqual(e.name, "Ken's sister (name unknown)")
+        self.assertEqual(e.name, "unnamed - Ken's sister")
         self.assertEqual(await self.memory.aliases(GUILD_A, self.c, entity_id=e.id), [])
 
     async def test_a_second_kens_sister_is_the_first_but_his_other_sister_is_another(self) -> None:
@@ -149,7 +143,7 @@ class MakingThem(MemoryTest):
         await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken, role="sibling")
         await self.memory.rename_entity(GUILD_A, self.c, ken, "Kenneth", source="dm")
         [(_, shown)] = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual(shown, "Kenneth's sister (name unknown)")
+        self.assertEqual(shown, "unnamed - Kenneth's sister")
 
     async def test_the_stored_name_follows_a_rename_and_a_merge_in_the_same_change(self) -> None:
         ken = await self.ken()
@@ -158,18 +152,18 @@ class MakingThem(MemoryTest):
         )
         renamed = await self.memory.rename_entity(GUILD_A, self.c, ken, "Kenneth", source="dm")
         stored = {e.id: e.name for e in await self.memory.entities(GUILD_A, self.c)}
-        self.assertEqual(stored[made.entity.id], "Kenneth's sister (name unknown)")
+        self.assertEqual(stored[made.entity.id], "unnamed - Kenneth's sister")
         assert renamed.batch is not None
         await self.memory.undo(GUILD_A, self.c, renamed.batch, source="dm")  # one undo, both back
         stored = {e.id: e.name for e in await self.memory.entities(GUILD_A, self.c)}
-        self.assertEqual(stored[made.entity.id], "Ken's sister (name unknown)")
+        self.assertEqual(stored[made.entity.id], "unnamed - Ken's sister")
 
     async def test_one_unnamed_person_may_hang_off_another(self) -> None:
         ken = await self.ken()
         sis = await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)
         kid = await self.memory.add_unnamed(GUILD_A, self.c, what="son", anchor_id=sis.entity.id)
         shown = {e.id: label for e, label in await self.memory.unnamed(GUILD_A, self.c)}
-        self.assertEqual(shown[kid.entity.id], "Ken's sister (name unknown)'s son (name unknown)")
+        self.assertEqual(shown[kid.entity.id], "unnamed - Ken's sister's son")
 
     async def test_she_follows_the_anchor_when_two_entries_are_one(self) -> None:
         ken = await self.ken()
@@ -180,7 +174,7 @@ class MakingThem(MemoryTest):
         await self.memory.merge(GUILD_A, self.c, ken, kenneth, source="dm", dm_said_same=True)
         [(entity, shown)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual((entity.id, entity.unnamed_anchor), (made.entity.id, ken))
-        self.assertEqual(shown, "Ken's sister (name unknown)")
+        self.assertEqual(shown, "unnamed - Ken's sister")
 
 
 class MoreRules(MemoryTest):
@@ -210,14 +204,14 @@ class MoreRules(MemoryTest):
         rows = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
         self.assertEqual(
             (rows[other.entity.id].unnamed_anchor, rows[other.entity.id].name),
-            (ken, "Ken's aunt (name unknown)"),
+            (ken, "unnamed - Ken's aunt"),
         )
         assert merged.batch is not None
         await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
         rows = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
         self.assertEqual(
             (rows[other.entity.id].unnamed_anchor, rows[other.entity.id].name),
-            (kenneth, "Kenneth's aunt (name unknown)"),
+            (kenneth, "unnamed - Kenneth's aunt"),
         )
 
     async def test_undo_of_giving_a_name_makes_them_unnamed_again_with_no_alias(self) -> None:
@@ -226,9 +220,7 @@ class MoreRules(MemoryTest):
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
         [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual(
-            (e.id, e.unnamed_what, shown), (sis, "sister", "Ken's sister (name unknown)")
-        )
+        self.assertEqual((e.id, e.unnamed_what, shown), (sis, "sister", "unnamed - Ken's sister"))
         self.assertEqual(await self.memory.aliases(GUILD_A, self.c, entity_id=sis), [])
 
     async def test_merge_many_keeps_the_named_one_even_when_the_first_pick_was_unnamed(
@@ -264,7 +256,7 @@ class WhenTheAnchorLeavesTheStory(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, rejected.batch, source="dm")
         [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual((e.id, e.status, e.unnamed_anchor), (sis.id, PROPOSED, ken))
-        self.assertEqual(shown, "Ken's sister (name unknown)")
+        self.assertEqual(shown, "unnamed - Ken's sister")
 
     async def test_one_with_other_connections_stays_with_no_anchor_and_undo_restores_it(
         self,
@@ -279,12 +271,12 @@ class WhenTheAnchorLeavesTheStory(MemoryTest):
         )
         [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual((e.id, e.unnamed_anchor, e.status), (sis.id, None, PROPOSED))
-        self.assertEqual(shown, "sister (name unknown)")
-        self.assertEqual(e.name, "sister (name unknown)")
+        self.assertEqual(shown, "unnamed - sister")
+        self.assertEqual(e.name, "unnamed - sister")
         assert rejected.batch is not None
         await self.memory.undo(GUILD_A, self.c, rejected.batch, source="dm")
         [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual((e.unnamed_anchor, e.name), (ken, "Ken's sister (name unknown)"))
+        self.assertEqual((e.unnamed_anchor, e.name), (ken, "unnamed - Ken's sister"))
 
     async def test_a_person_with_no_connection_at_all_goes_with_it(self) -> None:
         ken = await self.add("Ken", status=CONFIRMED)
@@ -305,7 +297,7 @@ class NoLookupMatchesThem(MemoryTest):
                 "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (made.id,)
             )
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
-        for heard in ("sister", "Ken's sister", "Ken's sister (name unknown)", "name unknown"):
+        for heard in ("sister", "Ken's sister", "unnamed - Ken's sister", "unnamed"):
             with self.subTest(heard=heard):
                 self.assertEqual(lookup.exact(heard), ())
                 self.assertEqual(lookup.sounds_like(heard), ())
@@ -341,7 +333,7 @@ class EveryMatchingPathSkipsThem(MemoryTest):
 
     async def test_no_alias_no_sound_no_confirmed_name_no_lookup_name(self) -> None:
         eid = await self.make()
-        label = "Ken's sister (name unknown)"
+        label = "unnamed - Ken's sister"
         self.assertEqual(
             [a for a in await self.memory.aliases(GUILD_A, self.c) if a.entity_id == eid], []
         )
@@ -373,7 +365,7 @@ class EveryMatchingPathSkipsThem(MemoryTest):
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_said_as(GUILD_A, self.c, eid, "Soo-sta", source="dm")
         kept = await self.memory.add_said_as_suggestions(
-            GUILD_A, self.c, [(eid, "sistah", "Ken's sister (name unknown)", 3)]
+            GUILD_A, self.c, [(eid, "sistah", "unnamed - Ken's sister", 3)]
         )
         self.assertEqual(kept, 0)
 

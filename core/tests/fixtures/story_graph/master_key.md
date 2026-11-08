@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 95 entries, 133 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 97 entries, 135 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
 
 ## Ties both documents say
 
@@ -157,6 +157,8 @@ These are the ties the check should find most surely: the session repeats or sha
 | m117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | yes | yes | lore+session | L96, S192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it |
 | m118 | The party | works_for | Keegan Velryn | stated | yes | yes | lore+session | L96, S135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
 | m119 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L96 | a kennel master the party met there |
+| m134 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | lore | L18 | born in the Temple of the Seldarine (the more exact place; m019 says the city) |
+| m135 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | lore | L18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (m011 says works_for) |
 | m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
 | m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
 | m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
@@ -204,7 +206,7 @@ These are the ties the check should find most surely: the session repeats or sha
 
 ## Entries
 
-### People (35)
+### People (37)
 
 | name | also called | in | note |
 |---|---|---|---|
@@ -241,8 +243,10 @@ These are the ties the check should find most surely: the session repeats or sha
 | Cerric's paternal grandfather |  | lore | Unnamed. Died in a storm. |
 | Okthandom's child | Okthandom Korran's child (name unknown) | lore | Unnamed. Mentioned once. |
 | Brewner's daughter | Brewner's daughter (name unknown) | lore | Unnamed. Leads Brewner home. |
-| The minotaur captain | Minotaur captain of the first ship | lore | Unnamed. Captain of the first ship. |
+| The minotaur captain | Minotaur captain of the first ship, Minotaur captain | lore | Unnamed. Captain of the first ship. |
 | The beggar woman | beggar woman | lore | Unnamed. Gives a prophecy. |
+| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
+| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 
 ### Creatures (8)
 
@@ -345,7 +349,7 @@ These are the ties the check should find most surely: the session repeats or sha
 - 'Eashaven' is Easthaven spelled wrongly (one place, not two)
 - the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear
 - line 1, the DM's long 'Previously...' speech, is the recap of the earlier session: none of its events (the Rime sacrifices, the wolf figurine sale, the ferry, the ice troll, Fizzlebomb overboard, the owlbears, Boy found, Keegan's plea) may be dated to this session or retold as this session's events; its ties are background only
-- the two barbarians are 'the attackers' and nothing more: no entry for them or for 'the morningstar barbarian' and 'the maul barbarian' (#3244 rule 3), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
+- the two barbarians are 'the attackers' and nothing more: no entry named 'the morningstar barbarian' or 'the maul barbarian' (#3244 rule 3); since the owner's #3736 and #3740 rule each is kept as a person the story never names (the two unnamed entries, a good find, not a must), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
 - a plan is not a fact: 'we go to Easthaven then circle back through the dwarven city', and 'the caravan from Easthaven will likely go to Goodmead, Bryn Shander or Caer-Konig' (a prediction, rule 5)
 - any link made from dice rolls, hit points, saves, initiative, spell slots, Goodberry or other spells and rules talk
 - only unique items are tracked (#3373): no entry or tie for the two sleds and eight dogs, rations, the spear, the heavy crossbow, the greatsword, the shortsword, the wineskin, the tarps and tents, the spellbook or the chardalyn weapons the attackers hold

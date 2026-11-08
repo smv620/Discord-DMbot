@@ -72,7 +72,7 @@ class VectorStore:
         """Keep these vectors for the campaign's own text (every kind but a line). One for a kind
         and owner already kept replaces it. How many were kept."""
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for item in items:
                 if item.kind == LINE or item.kind not in KINDS or not _fits(item.vector):
                     continue
@@ -99,7 +99,7 @@ class VectorStore:
         this campaign's sessions, is skipped: the statement selects the line, so a line deleted
         while its text was being embedded leaves nothing behind. How many were kept."""
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for item in items:
                 line_id = item.owner_id.split("#", 1)[0]  # "12" or "12#2": a long line in parts
                 if item.kind != LINE or not line_id.isdecimal() or not _fits(item.vector):

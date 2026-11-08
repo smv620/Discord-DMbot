@@ -150,7 +150,7 @@ async def read_page(
 
 def _label_unnamed(row: dict[str, Any]) -> None:
     """A person the story never named: their name is the label built from the parts with the
-    anchor's name as it is now ("Ken's sister (name unknown)"), as Discord builds it; the anchor
+    anchor's name as it is now ("unnamed - Ken's sister"), as Discord builds it; the anchor
     goes to the page as a plain name, and the raw parts stay out of the row. An anchor that is
     itself unnamed is built the same way ("the king's sister")."""
     anchor = row.pop("unnamedAnchor", None)
@@ -205,6 +205,7 @@ async def _add_scenes(
 # ---- the DM's actions: queued for the bot, read back by polling ----------------------------------
 
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
+OFFER_WORDS_MAX = 300  # the words of a kind offer: the table's own limit (memory_kind_offers)
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 PLAYER_ID = re.compile(r"^[1-9][0-9]{14,18}$")  # a Discord user ID (a snowflake)
@@ -229,6 +230,7 @@ ACTIONS = (
     "told-add",  # tell one character a secret other name is this entry (#3542): {alias, character}
     "told-remove",  # ... or take that telling back: {alias, character}
     "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
+    "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
 )
 
 KIND_WORD = re.compile(
@@ -340,6 +342,17 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             if len(set(kinds)) != len(kinds):
                 raise RecapError("bad_target")
             text = " ".join(kinds)
+    elif (
+        action == "offer-clear"
+    ):  # the words exactly as the list sent them; the door checks the row
+        words_ = body.get("words")
+        if not isinstance(words_, str):
+            raise RecapError("bad_name")
+        text = " ".join(words_.split())
+        if not text or not text.isprintable():
+            raise RecapError("bad_name")
+        if len(text) > OFFER_WORDS_MAX:
+            raise RecapError("too_long")
     elif action == "players-line":  # the column's own limit; over it is refused, never cut
         line = body.get("line")
         if not isinstance(line, str):
@@ -402,8 +415,12 @@ async def queue_action(
 async def queue_confirm(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue "Add all" for the names an upload found, or the Undo of one press (#3207), for the
     signed-in DM: the same door and the same answer as any name action, with no name to file it
-    under. Only the two actions are taken here."""
-    if not isinstance(body, dict) or body.get("action") not in ("confirm-kinds", "confirm-undo"):
+    under. Only these actions are taken here: "Add all", its Undo, and lifting a kind offer."""
+    if not isinstance(body, dict) or body.get("action") not in (
+        "confirm-kinds",
+        "confirm-undo",
+        "offer-clear",
+    ):
         raise RecapError("bad_action")
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
@@ -420,6 +437,31 @@ async def queue_confirm(db: Database, session: Session, ref: str, body: object) 
         raise RecapError("not_allowed")
     if got["status"] != "ok":
         raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
+async def queue_clock(
+    db: Database, session: Session, ref: str, session_id: str, action: str
+) -> str:
+    """Queue the DM's answer to an imported session's clock offer (`clock-set`, `clock-skip`;
+    #3199): the same door and the same answer as any name action, with no name to file it under
+    and the imported session as the target. The door checks again that the offer is waiting."""
+    if action not in ("clock-set", "clock-skip"):
+        raise RecapError("bad_action")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, action, "", session_id, "", False),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
     return str(got["id"])
 
 

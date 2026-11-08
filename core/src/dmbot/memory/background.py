@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, place_words, unique_item
+from dmbot.memory import kin, place_words, quote_kind, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -933,6 +933,7 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        stepped = False  # a strong feeling word was brought down to fit its quote (#3606)
         if how == "located_in":
             # The place tie keeps the word the text used, as one wording ("lives in"), or none for
             # a place inside a place (#3363); anything else the AI wrote there is dropped.
@@ -953,6 +954,8 @@ def read_connections(
             ):
                 lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
             said_feeling = said_feeling or old_feeling
+            if said_feeling is not None:  # a strong word needs a cue in the quote (#3606)
+                said_feeling, stepped = feeling_words.held_to_the_quote(said_feeling, str(quote))
             label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
@@ -1012,6 +1015,7 @@ def read_connections(
         words = _quote_window(spoken, seen[0], seen[1], holds)
         said = " ".join(words)
         said_squashed = _squash(said)
+        kept_before = len(out) + len(unsettled or ())
         made = Connection(
             a,
             how,
@@ -1041,10 +1045,25 @@ def read_connections(
         elif unsettled is not None and (
             open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
-            unsettled.append(open_)
+            # (held to its quote before it waits for the who-is-it check, as the kept ones are;
+            # `missing_is_a` follows the ends when an apprentice's are turned round, and an end the
+            # check moved is left where it was, since the missing end is not settled yet)
+            seen_kind: Counter[str] = Counter()  # (counted only when the change is applied)
+            kind = quote_kind.held(open_.made, seen_kind, waiting=True) or open_.made
+            if (kind.a, kind.b) == (open_.made.b, open_.made.a):
+                unsettled.append(replace(open_, made=kind, missing_is_a=not open_.missing_is_a))
+                lost.update(seen_kind)
+            elif (kind.a, kind.b) == (open_.made.a, open_.made.b):
+                unsettled.append(replace(open_, made=kind))
+                lost.update(seen_kind)
+            else:
+                unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
-    return out
+        if stepped and len(out) + len(unsettled or ()) > kept_before:
+            lost["feeling_demoted"] += 1  # (counted only for a line that was kept or is waiting)
+    # (the kind held to the quote's own words, the same way on every read, #3780)
+    return [held for made in out if (held := quote_kind.held(made, lost)) is not None]
 
 
 def _own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
