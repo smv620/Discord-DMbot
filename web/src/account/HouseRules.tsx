@@ -179,7 +179,7 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
             <LazyPanel
               load={() => import("./RuleSharing")}
               what="sharing"
-              props={{ api, campaignRef }}
+              props={{ api, campaignRef, rules: found.rules }}
             />
           )}
           {found.sets.length > 0 && (
