@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, place_words, unique_item
+from dmbot.memory import kin, place_words, quote_kind, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -1045,12 +1045,23 @@ def read_connections(
         elif unsettled is not None and (
             open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
-            unsettled.append(open_)
+            # (held to its quote before it waits for the who-is-it check, as the kept ones are;
+            # `missing_is_a` follows the ends when an apprentice's are turned round, and an end the
+            # check moved is left where it was, since the missing end is not settled yet)
+            if (kind := quote_kind.held(open_.made, lost)) is not None:
+                swapped = (kind.a, kind.b) == (open_.made.b, open_.made.a)
+                if swapped:
+                    unsettled.append(replace(open_, made=kind, missing_is_a=not open_.missing_is_a))
+                elif (kind.a, kind.b) == (open_.made.a, open_.made.b):
+                    unsettled.append(replace(open_, made=kind))
+                else:
+                    unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
         if stepped and len(out) + len(unsettled or ()) > kept_before:
             lost["feeling_demoted"] += 1  # (counted only for a line that was kept or is waiting)
-    return out
+    # (the kind held to the quote's own words, the same way on every read, #3780)
+    return [held for made in out if (held := quote_kind.held(made, lost)) is not None]
 
 
 def _own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
