@@ -148,6 +148,7 @@ from dmbot.dm_screen import (
     private_note,
     rules_cards,
     said_as_hears,
+    said_as_listens,
     secret_posts,
     set_suggestion,
     set_update,
@@ -420,6 +421,7 @@ from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
+from dmbot.said_as.recogniser import WorkerRecogniser
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar import rule_clash as sidebar_rule_clash
@@ -1022,6 +1024,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # 🔊 Hear it on the website's Names page (#3807): a name said in the narrator's voice.
         self.said_as_hears = said_as_hears.HearStore(recaps.db) if recaps is not None else None
         self._hear_cache = said_as_hears.HearCache()
+        # 🎤 Say it (#2316): a clip of a name turned into a respelling by a worker process.
+        self.said_as_listens = (
+            said_as_listens.ListenStore(recaps.db) if recaps is not None else None
+        )
+        self._listening: asyncio.Task[None] | None = None
+        self._speech_sounds: WorkerRecogniser | None = None
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -1881,6 +1889,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task.cancel()
         # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
         clips = list(self._voice_tasks.values())
+        if self._listening is not None:  # 🎤 Say it (#2316): stop the round, then the worker
+            clips.append(self._listening)
         for task in clips:
             task.cancel()
         await asyncio.gather(
@@ -1891,6 +1901,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *clips,
             return_exceptions=True,
         )
+        if self._speech_sounds is not None:
+            await self._speech_sounds.close()  # the child holds about a gigabyte of weights
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()
@@ -12026,6 +12038,44 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.info("Website line deletion: %s", why or "done")  # the word only
             except Exception as exc:
                 log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
+
+    def recogniser(self) -> WorkerRecogniser | None:
+        """The speech-sound recogniser for 🎤 Say it, or None when it is switched off here. The
+        model loads on the first clip and is unloaded after ten quiet minutes."""
+        if not self.settings.said_as_voice:
+            return None
+        if self._speech_sounds is None:
+            self._speech_sounds = WorkerRecogniser(self.settings.said_as_model)
+        return self._speech_sounds
+
+    async def run_said_as_listens(self) -> None:
+        """Start a round of 🎤 Say it clips as a task of its own (a first clip loads the model
+        and takes seconds, and the quick website queues must not wait behind it), never while a
+        table is listening: live recording comes first, and the clip waits. Unloads the model
+        when it has been idle."""
+        store = self.said_as_listens
+        if store is None or not self.settings.said_as_voice:
+            return
+        if self._speech_sounds is not None:
+            await self._speech_sounds.unload_if_idle()
+        if self.tables or (self._listening is not None and not self._listening.done()):
+            return
+        self._listening = asyncio.create_task(self._listen_round(store), name="say-it")
+
+    async def _listen_round(self, store: said_as_listens.ListenStore) -> None:
+        try:
+            for guild in list(self.guilds):
+                for _ in range(said_as_listens.PER_ROUND):
+                    if self._closing or self.tables:  # a table started: stop at once
+                        return
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                        if not await said_as_listens.run_one(self, store, guild.id, item):
+                            return
+        except Exception as exc:
+            log.warning("The Say it clips failed: %s", type(exc).__name__)
 
     def narrator(self) -> ElevenLabs | None:
         """A voice client for the website's Hear it, with the recaps' voice and speech model; None

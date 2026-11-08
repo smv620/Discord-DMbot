@@ -116,9 +116,18 @@ class TheDMsListTest(unittest.TestCase):
             story_extractor_on=True,
             live_heads_up=True,
             plot_check_on=True,
+            said_as_voice=True,
+            said_as_model="/models/phonemes",
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)
+
+    def test_the_say_a_name_switch_needs_the_model_folder_as_well(self) -> None:
+        say = next(f for f in features.FEATURES if f.log_name == "say a name")
+        self.assertFalse(say.is_on(settings()))
+        self.assertFalse(say.is_on(settings(said_as_voice=True)))  # no model folder named
+        self.assertTrue(say.is_on(settings(said_as_voice=True, said_as_model="/m")))
+        self.assertNotIn("/m", features.features_line(settings(said_as_model="/m")))  # no value
 
     def test_no_value_is_shown(self) -> None:
         text = features.whats_on_text(settings(ai_key="sk-secret", site_url="https://example.org"))

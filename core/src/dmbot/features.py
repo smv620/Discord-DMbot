@@ -92,6 +92,13 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
     ),
     Feature(
+        "say a name",
+        "Say a name to spell it",
+        "Say a name into the microphone on the website and DMbot writes how to say it.",
+        lambda s: s.said_as_voice and bool(s.said_as_model),
+        ("said_as_voice", "said_as_model"),
+    ),
+    Feature(
         "recap audio",
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
