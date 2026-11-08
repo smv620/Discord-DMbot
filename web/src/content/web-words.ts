@@ -98,10 +98,7 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
-  kindLabel: "Kinds of connection",
-  kindHint: "Tap a kind to hide or show it. A line through it means hidden.",
   hiddenMark: "(hidden)",
-  linkKind: { family: "Family", ally: "Friends and allies", group: "Clubs and groups", work: "Work", other: "Something else" } as Record<string, string>,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
@@ -244,7 +241,8 @@ export const webPage = {
   knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",
   legendNotRevealed: "Faded: players don't know this yet",
-  legendTheory: "Dotted line with ?: something the party suspects",
+  legendTheory: "Lighter line with ?: something the party suspects",
+  legendKnow: { all: "Solid: every player knows it", some: "Dash-dot: some players know part of it", dm: "Dotted: hidden from every player" } as Record<"all" | "some" | "dm", string>,
   theoryMark: "?",
   // 📌 100% truth (#2448): the DM pins a connection as certainly true. Players never see it.
   pinMark: "📌",
