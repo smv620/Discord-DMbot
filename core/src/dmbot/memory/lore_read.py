@@ -177,6 +177,19 @@ RELATIONSHIPS
 UNNAMED
 - Garrick Pell | mother | stern ropemaker mother | quote: "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father"
 - Garrick Pell | father | absent father | quote: "Garrick Pell was born in Ashmere, the son of a stern ropemaker mother and an absent father"
+
+Example 8. Input (someone the text describes but never names, who meets a named person):
+<document>
+At the Three Flags Sailing, a barmaid with red hair warned Tavin about the smugglers.
+</document>
+Output:
+NAMES
+- Tavin | person | quote: "warned Tavin about"
+- Three Flags Sailing | place | quote: "At the Three Flags Sailing"
+
+UNNAMED
+- Tavin | knows (neutral) | barmaid with red hair | quote: "a barmaid with red hair warned Tavin about the smugglers"
+- Three Flags Sailing | works in | barmaid with red hair | quote: "At the Three Flags Sailing, a barmaid with red hair warned Tavin"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -273,16 +286,27 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
-        "- UNNAMED PEOPLE: a person the text describes by what they are to a NAMED person, and "
-        "never names anywhere (a mother, a sister, an uncle), goes under a fourth heading, "
-        "UNNAMED, one line each: the named person | what the described person is to them "
-        "(mother, father, sister, brother, son, daughter, aunt, uncle, niece, nephew, cousin, "
-        "husband, wife, grandmother, grandfather; or the neutral parent, child, sibling, spouse, "
-        "grandparent, grandchild: use the neutral word when the text does not say which, as for "
-        "'his child') | the text's words for them | quote. Family "
-        "only. If the text names the person anywhere, write them under NAMES and RELATIONSHIPS "
-        "instead and not here. Never a crowd, 'the party', a kind of creature or anyone already "
-        "listed. Leave the heading out when there is no such person.\n"
+        "- UNNAMED PEOPLE: a person the text describes but never names anywhere, who has to do "
+        "with a NAMED person, group or place (family, work, a meeting, a deal, anything the text "
+        "says they did together), goes under a fourth heading, UNNAMED, one line each, once for "
+        "each named one they have to do with: the named one | "
+        "what the described person is to them or did with them | the text's words for the "
+        "person | quote. For family, the second part is one word: mother, father, sister, "
+        "brother, son, daughter, aunt, uncle, niece, nephew, cousin, husband, wife, grandmother, "
+        "grandfather; or the neutral parent, child, sibling, spouse, grandparent, grandchild "
+        "(use the neutral word when the text does not say which, as for 'his child'). Otherwise "
+        "it says, from the described person to the named one, how they are connected, in the "
+        "words of the RELATIONSHIPS kinds (works for, serves, mentors, is an apprentice of, is a "
+        "member of, leads, is a rival of, knows with its feeling in brackets, or for a place: "
+        "lives in, works in, comes from, was last seen in) or "
+        "the text's own few words from the quote ('gave a pouch to'). The text's words for the "
+        "person are the "
+        "description that best tells them apart from anyone else, copied from the text: where "
+        "they are, what they do, how they look (a barmaid with red hair), at most 12 words. "
+        "If the text names the person anywhere, write them under NAMES "
+        "and RELATIONSHIPS instead and not here. Never a crowd, 'the party', a kind of creature "
+        "in general or anyone already listed. Leave the heading out when there is no such "
+        "person.\n"
         "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
         + EXAMPLES
     )
@@ -1173,9 +1197,11 @@ async def read_lore(
     people = bg.reach_names(
         {name_key(x) for f in names if f.kind in PEOPLE_KINDS for x in (f.name, *f.also)}
     )
+    places = {name_key(x) for f in names if f.kind == "place" for x in (f.name, *f.also)}
     unnamed = read_unnamed(
-        listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people
-    )
+        listed.unnamed, text, here, links, [*known_keys, *here], third, stats.dropped, people,
+        places,
+    )  # fmt: skip
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
         "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
