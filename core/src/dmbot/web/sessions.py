@@ -69,6 +69,11 @@ class AccountMoved(Exception):
     """This Discord account's DMbot account moved to a new Discord account (#1230)."""
 
 
+class AccountRemoved(Exception):
+    """This Discord account was removed from a DMbot account, or belongs to one as an added
+    Discord account (#2533). It cannot make a DMbot account of its own."""
+
+
 async def sign_in(
     db: Database,
     user: DiscordUser,
@@ -108,6 +113,8 @@ async def sign_in(
             # The database refuses a new account for an ID that moved away.
             if exc.diag.message_hint == "account_moved":
                 raise AccountMoved from exc
+            if exc.diag.message_hint in ("account_removed", "account_linked"):
+                raise AccountRemoved from exc
             raise
         await conn.execute(
             "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
