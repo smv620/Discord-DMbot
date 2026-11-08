@@ -3668,6 +3668,26 @@
     }
    ],
    "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (m011 says works_for)"
+  },
+  {
+   "id": "m136",
+   "a": "Brewner",
+   "relation": "knows",
+   "b": "Belleros Stormgrace",
+   "tier": "stated",
+   "must_find": false,
+   "feeling": "wary",
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l122",
+     "line": 67
+    }
+   ],
+   "note": "the other side of the heated debate on mithril smelting (m081 is Belleros toward Brewner)"
   }
  ],
  "events": [
