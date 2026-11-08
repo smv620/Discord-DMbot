@@ -34,6 +34,7 @@ import {
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
+import DraftPreview from "./DraftPreview";
 import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
@@ -863,9 +864,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           <>
             <section class="panel">
               <h3>{text.textHeading}</h3>
-              {recap.text.split(/\n{2,}/).map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
+              <DraftPreview checking={recap.working && recap.status === "draft"}>
+                {recap.text.split(/\n{2,}/).map((p, i) => (
+                  <p key={i}>{p}</p>
+                ))}
+              </DraftPreview>
             </section>
             {RECAP_AUDIO_LIVE && recap.audio && hasCues(recap.summary) && (
               <section class="panel" aria-labelledby="recap-cues">
