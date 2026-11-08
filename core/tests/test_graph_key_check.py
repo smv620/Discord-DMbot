@@ -587,6 +587,29 @@ class UnnamedPeople(unittest.TestCase):
         self.assertEqual(report.unnamed_extras, 3)
         self.assertEqual(sum(report.extra_entries.values()), 0)
 
+    def raider_key(self) -> dict[str, Any]:
+        return {
+            "nodes": [{"name": "The barbarian with the maul", "kind": "person",
+                       "aliases": ["maul barbarian"], "unnamed": True, "must_find": False}],
+            "pairs": [], "must_not_names": ["maul barbarian"],
+        }  # fmt: skip
+
+    def test_an_unnamed_key_entry_is_found_by_description_never_by_a_name(self) -> None:
+        # (Supervisor's ruling on #3545: the raider is right as a person the story never names,
+        # and still a miss when his description is stored as a name)
+        named = backup([("n1", "maul barbarian", "character")], [])
+        report = gkc.check(named, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.MISSING)
+        self.assertFalse(row.must)  # (a good find, not a must)
+        self.assertEqual(report.violations, ["maul barbarian"])
+        unnamed = backup([("u1", "unnamed - maul barbarian", "character")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        report = gkc.check(unnamed, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.FOUND)
+        self.assertEqual(report.violations, [])  # (a description is no must-not name)
+
 
 if __name__ == "__main__":
     unittest.main()

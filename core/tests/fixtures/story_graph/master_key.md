@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 95 entries, 135 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 97 entries, 135 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
 
 ## Ties both documents say
 
@@ -276,6 +276,8 @@ These are the ties the check should find most surely: the session repeats or sha
 | The circus |  | lore | Unnamed travelling circus that held Claude |
 | The Brotherhood |  | lore | Unnamed. Named in the note in the tome |
 | Garret's clients |  | session | Unnamed. Hired Garret as a guide; Keegan never met them. |
+| The barbarian with the maul | barbarian with the maul, barbarian with a maul, maul barbarian, barbarian wielding a maul, maul-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 330); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
+| The barbarian with the morningstar | barbarian with the morningstar, barbarian with a morningstar, morningstar barbarian, barbarian wielding a morningstar, morningstar-wielding barbarian | session | Unnamed. One of the two raiders who ambush the sleds (session line 326); kept as a person the story never names (owner, #3736, #3740), a good find, not a must; never as a name. |
 | Clan Battlehammer |  | session | Dwarves Belleros wants to ask what happened. |
 
 ### Places (29)
@@ -347,7 +349,7 @@ These are the ties the check should find most surely: the session repeats or sha
 - 'Eashaven' is Easthaven spelled wrongly (one place, not two)
 - the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear
 - line 1, the DM's long 'Previously...' speech, is the recap of the earlier session: none of its events (the Rime sacrifices, the wolf figurine sale, the ferry, the ice troll, Fizzlebomb overboard, the owlbears, Boy found, Keegan's plea) may be dated to this session or retold as this session's events; its ties are background only
-- the two barbarians are 'the attackers' and nothing more: no entry for them or for 'the morningstar barbarian' and 'the maul barbarian' (#3244 rule 3), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
+- the two barbarians are 'the attackers' and nothing more: no entry named 'the morningstar barbarian' or 'the maul barbarian' (#3244 rule 3); since the owner's #3736 and #3740 rule each is kept as a person the story never names (the two unnamed entries, a good find, not a must), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
 - a plan is not a fact: 'we go to Easthaven then circle back through the dwarven city', and 'the caravan from Easthaven will likely go to Goodmead, Bryn Shander or Caer-Konig' (a prediction, rule 5)
 - any link made from dice rolls, hit points, saves, initiative, spell slots, Goodberry or other spells and rules talk
 - only unique items are tracked (#3373): no entry or tie for the two sleds and eight dogs, rations, the spear, the heavy crossbow, the greatsword, the shortsword, the wineskin, the tarps and tents, the spellbook or the chardalyn weapons the attackers hold

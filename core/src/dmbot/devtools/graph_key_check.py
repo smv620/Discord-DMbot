@@ -191,6 +191,23 @@ class Graph:
                 self.by_description.setdefault(_plain(said), set()).add(str(e["id"]))
         self.relations = [r for r in tables.get("relation", ()) if _live(r)]
 
+    def named(self, names: Sequence[str]) -> set[str]:
+        """The entries one of `names` is the name or other name of, never a description: a
+        must-not name is a name stored as a name (#3545: "maul barbarian" as a person's name is a
+        miss; "unnamed - maul barbarian" is the person the story never named, which is right)."""
+        found: set[str] = set()
+        for n in names:
+            found |= self.by_key.get(name_key(n), set())
+        return found
+
+    def described(self, names: Sequence[str]) -> set[str]:
+        """The people the story never named whose description is one of `names`, never a named
+        entry: a key entry marked `unnamed` is found only this way (#3545)."""
+        found: set[str] = set()
+        for n in names:
+            found |= self.by_description.get(_plain(_OLD_SUFFIX.sub("", n)), set())
+        return found
+
     def ids(self, names: Sequence[str]) -> set[str]:
         found: set[str] = set()
         for n in names:
@@ -387,7 +404,9 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     matched_ids: set[str] = set()
     used_relations: set[str] = set()
     for n in nodes:
-        ids = graph.ids(names[n["name"]])
+        # (a key entry the story never names is found by an unnamed entry's description only, so
+        # a description stored as a name, "maul barbarian", is never taken for it)
+        ids = graph.described(names[n["name"]]) if n.get("unnamed") else graph.ids(names[n["name"]])
         matched_ids |= ids
         if not ids:
             status = BY_DESIGN if n.get("by_design") else MISSING
@@ -396,7 +415,14 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         else:
             status = WRONG
         report.entries.append(
-            Row(n["name"], n["name"], status, n["kind"], not n.get("by_design", False))
+            # (an entry is must-find unless the key marks it a good find only, as ties can be)
+            Row(
+                n["name"],
+                n["name"],
+                status,
+                n["kind"],
+                not n.get("by_design", False) and n.get("must_find", True) is not False,
+            )
         )
     for t in key["pairs"]:
         if not wanted & set(t.get("in", ["lore", "session"])):
@@ -438,7 +464,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
-        if graph.ids([name]):
+        if graph.named([name]):
             report.violations.append(name)
     for r in graph.relations:
         if (
