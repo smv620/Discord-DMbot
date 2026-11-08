@@ -13,21 +13,22 @@ A campaign is named by `<server>.<campaign>` (the recap's address without its la
 from __future__ import annotations
 
 import logging
-import re
-import unicodedata
 from typing import Any
 
 from dmbot import plan_rules
 from dmbot.ai import TierClient
 from dmbot.db import Database
-from dmbot.memory.link_words import quoted
 from dmbot.recaps.notify import parse_ref
+from dmbot.said_as.suggest import SPELLING, SuggestFailed, suggest
 from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
 log = logging.getLogger(__name__)
 
+# The suggestion's spelling check moved to `said_as.suggest`; tests written against this module
+# (the respelling's) still read it here under its old name.
+_SPELLING = SPELLING
 SAID_AS_MAX = 80  # the same limit as the bot's MemoryStore.set_said_as and the database's check
 ALIAS_ID_LENGTH = 32
 
@@ -88,18 +89,6 @@ async def set_said_as(
     raise RecapError("bad_text" if outcome == "too_long" else "not_found")
 
 
-# What a suggestion may be made of (#3806): letters, then more letters joined by a hyphen, a space
-# or an apostrophe ("Kah-zeth", "Ka'zeth"). The AI's answer is only ever shown to the DM,
-# who presses Save or doesn't, but a sentence, a number or a refusal is not a spelling.
-_SPELLING = re.compile(r"[^\W\d_]+(?:[-' \u2019][^\W\d_]+)*")
-_SAID_AS_SYSTEM = (
-    "You help a Dungeon Master tell a text-to-speech narrator how to say a name from a fantasy "
-    "story. Reply with only the name respelled the way it sounds, in plain letters, with hyphens "
-    "between the parts to say (for example Ka'zeth -> Kah-zeth). No quotes, no explanation. If the "
-    "name is already easy to say, reply with the name unchanged."
-)
-
-
 async def suggest_said_as(
     db: Database,
     session: Session,
@@ -127,18 +116,7 @@ async def suggest_said_as(
         access = await owner_access(db, session, guild_id, campaign_id, now)
         if not plan_rules.can_use_ai(access):
             return ""
-    name = " ".join(str(found["text"]).split())  # one line, so a name can't forge the next
-    text = f"Name: {quoted(name)}\nKind: {found['kind']}"
     try:
-        reply = await ai.complete(_SAID_AS_SYSTEM, text, max_tokens=200)
-    except Exception as err:
-        # The type only: a provider's message may echo the request, which holds the name.
-        log.warning("said-as suggestion failed: %s", type(err).__name__)
+        return await suggest(ai, str(found["text"]), str(found["kind"]))
+    except SuggestFailed:
         raise RecapError("server") from None  # not "no suggestion": the AI did not answer
-    if reply.cut:  # a cut answer is never read as "no suggestion" (the AI-limits rule)
-        log.warning("said-as suggestion was cut off")
-        raise RecapError("server")
-    answer = unicodedata.normalize("NFC", " ".join(reply.text.split()))
-    if reply.refused or len(answer) > SAID_AS_MAX or not _SPELLING.fullmatch(answer):
-        return ""
-    return answer

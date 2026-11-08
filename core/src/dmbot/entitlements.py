@@ -469,7 +469,10 @@ async def owned_campaigns(conn: Conn, user_id: int) -> int:
     `owner_campaigns`, through a function that returns only a count (dmbot_owned_campaigns,
     schema 0034), so the website's role can ask it too. Needs an open transaction."""
     async with _as_person(conn, user_id):
-        cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+        # Campaigns in a listed free server take no slot of the owner's cap (#3792).
+        cur = await conn.execute(
+            "SELECT dmbot_owned_campaigns_outside(%s::bigint[]) AS n", (sorted(free_guilds()),)
+        )
         row = await cur.fetchone()
     assert row is not None  # a function call always gives a row
     return int(row["n"])

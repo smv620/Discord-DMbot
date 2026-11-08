@@ -148,6 +148,7 @@ from dmbot.dm_screen import (
     private_note,
     rules_cards,
     said_as_hears,
+    said_as_listens,
     secret_posts,
     set_suggestion,
     set_update,
@@ -290,6 +291,7 @@ from dmbot.memory import (
     meaning,
     plan_reader,
     report_make,
+    role_match,
     scan_kinds,
     scene_step,
     voyage,
@@ -346,6 +348,7 @@ from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
+from dmbot.memory.role_store import RoleStore
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -420,6 +423,7 @@ from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
+from dmbot.said_as.recogniser import WorkerRecogniser
 from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar import rule_clash as sidebar_rule_clash
@@ -1022,6 +1026,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # 🔊 Hear it on the website's Names page (#3807): a name said in the narrator's voice.
         self.said_as_hears = said_as_hears.HearStore(recaps.db) if recaps is not None else None
         self._hear_cache = said_as_hears.HearCache()
+        # 🎤 Say it (#2316): a clip of a name turned into a respelling by a worker process.
+        self.said_as_listens = (
+            said_as_listens.ListenStore(recaps.db) if recaps is not None else None
+        )
+        self._listening: asyncio.Task[None] | None = None
+        self._speech_sounds: WorkerRecogniser | None = None
         # Copies restored from the website, waiting for the bot to apply them (#2746).
         self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
@@ -1397,6 +1407,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # Which disagreeing house rule wins, as the DM decided; set where the database is known.
         self.house_wins: WinsStore | None = None
+        self.said_as_ai = (  # how to say a name, suggested on the name card (#2316)
+            self.ai_client.tier(FEATURE_TIERS[Feature.SAID_AS], Feature.SAID_AS)
+            if self.ai_client
+            else None
+        )
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
@@ -1451,6 +1466,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.voyage: voyage.Voyage | None = None
         self.meaning_seeds: meaning.MeaningSeeds | None = None
         self.meaning_calls = meaning.CallCounter(time.time)
+        self.role_seeds = role_match.SeededVectors()  # (the seeded roles' vectors, #3172)
         if memory is not None and settings.meaning_search_on:
             self._voyage_http = voyage.HttpTransport(settings.voyage_key)
             self.voyage = voyage.Voyage(
@@ -1876,6 +1892,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task.cancel()
         # After the loops are cancelled, so a clip one of them started meanwhile is stopped too.
         clips = list(self._voice_tasks.values())
+        if self._listening is not None:  # 🎤 Say it (#2316): stop the round, then the worker
+            clips.append(self._listening)
         for task in clips:
             task.cancel()
         await asyncio.gather(
@@ -1886,6 +1904,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *clips,
             return_exceptions=True,
         )
+        if self._speech_sounds is not None:
+            await self._speech_sounds.close()  # the child holds about a gigabyte of weights
         await self.pipeline.transcriber.close()
         if self.ai_client is not None:
             await self.ai_client.close()
@@ -9038,6 +9058,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         gid, sid, through_ms=0, calls=1, now=int(time.time())
                     )
 
+                matcher = (
+                    role_match.RoleMatcher(
+                        self.voyage, VectorStore.of(memory), RoleStore(memory._db),
+                        self.settings.voyage_embed_model, self.role_seeds,
+                        count_call=self.meaning_calls.count,
+                    )
+                    if self.settings.role_match_on and self.voyage is not None
+                    else None
+                )  # fmt: skip
                 report = await importance_step.run(
                     ai,
                     memory._db,
@@ -9051,6 +9080,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     max_calls=allowed,
                     count_call=count_call,
                     renew=renew,
+                    matcher=matcher,
                 )
                 log.info(report.line())
             except Exception as exc:  # the type only: never fatal, never a word of the story
@@ -12022,6 +12052,44 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception as exc:
                 log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
 
+    def recogniser(self) -> WorkerRecogniser | None:
+        """The speech-sound recogniser for 🎤 Say it, or None when it is switched off here. The
+        model loads on the first clip and is unloaded after ten quiet minutes."""
+        if not self.settings.said_as_voice:
+            return None
+        if self._speech_sounds is None:
+            self._speech_sounds = WorkerRecogniser(self.settings.said_as_model)
+        return self._speech_sounds
+
+    async def run_said_as_listens(self) -> None:
+        """Start a round of 🎤 Say it clips as a task of its own (a first clip loads the model
+        and takes seconds, and the quick website queues must not wait behind it), never while a
+        table is listening: live recording comes first, and the clip waits. Unloads the model
+        when it has been idle."""
+        store = self.said_as_listens
+        if store is None or not self.settings.said_as_voice:
+            return
+        if self._speech_sounds is not None:
+            await self._speech_sounds.unload_if_idle()
+        if self.tables or (self._listening is not None and not self._listening.done()):
+            return
+        self._listening = asyncio.create_task(self._listen_round(store), name="say-it")
+
+    async def _listen_round(self, store: said_as_listens.ListenStore) -> None:
+        try:
+            for guild in list(self.guilds):
+                for _ in range(said_as_listens.PER_ROUND):
+                    if self._closing or self.tables:  # a table started: stop at once
+                        return
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                        if not await said_as_listens.run_one(self, store, guild.id, item):
+                            return
+        except Exception as exc:
+            log.warning("The Say it clips failed: %s", type(exc).__name__)
+
     def narrator(self) -> ElevenLabs | None:
         """A voice client for the website's Hear it, with the recaps' voice and speech model; None
         when narration is not set up here. It shares the recap audio's one connection."""
@@ -12035,6 +12103,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             voice_id=settings.elevenlabs_voice_id,
             speech_model=settings.elevenlabs_speech_model,
         )
+
+    async def hear_used(self, guild_id: int, campaign_id: str) -> int:
+        return await self.said_as_hears.used(guild_id, campaign_id) if self.said_as_hears else 0
+
+    async def hear_spent(self, guild_id: int, campaign_id: str, credits: int) -> None:
+        if self.said_as_hears is not None:
+            await self.said_as_hears.spent(guild_id, campaign_id, credits)
+
+    @property
+    def hear_limit(self) -> int:
+        return self.settings.hear_credits_per_month
 
     async def plan_allows_narration(self, guild_id: int, campaign: Campaign) -> bool:
         return await self.plan_allows("recap_audio", guild_id, campaign, fail_open=False)

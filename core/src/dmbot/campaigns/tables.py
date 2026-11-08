@@ -142,6 +142,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
+    "hear_use": _RUNTIME,
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
@@ -172,6 +173,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
+    "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
@@ -189,7 +191,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
-    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words): "
+    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words, "
+    "and added story roles' texts): "
     "made again from the text, and never carried, so a person's words leave no copy (#2664)",
     "name_pass_reports": "the name pass's report and Undo record: a run's history, the fixes "
     "themselves are in the transcript (#2684)",
