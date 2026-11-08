@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { publicPaths } from "../src/content/site";
 import { searchIndex } from "../src/content/search-index";
-import { bestMatch } from "../src/search/match";
+import { bestMatch, distance } from "../src/search/match";
 
 const pick = (q: string): string | undefined => bestMatch(q)?.path;
 
@@ -23,6 +23,11 @@ describe("which page fits", () => {
     ["house rules", "/account/house-rules"],
     ["who knows who", "/account/web"],
     ["refund", "/legal/refunds"],
+    ["pricng", "/pricing"],
+    ["recpas", "/account/recaps"],
+    ["transcrpt", "/account/transcripts"],
+    ["stop recordng me", "/help#player-heading"],
+    ["names", "/account/names"],
   ])("%s -> %s", (query, path) => expect(pick(query)).toBe(path));
 
   it("says nothing fits for gibberish, an empty box, or only little words", () => {
@@ -30,6 +35,27 @@ describe("which page fits", () => {
     expect(pick("")).toBeUndefined();
     expect(pick("   ")).toBeUndefined();
     expect(pick("the of a")).toBeUndefined();
+  });
+
+  it("does not match a short word by distance", () => {
+    expect(pick("cots")).toBeUndefined(); // (4 letters: one change from "cost", but too many real words sit that close)
+    expect(distance("cots", "cost", 1)).toBe(1); // (an exact swap is one change; it is the length rule that refuses it)
+  });
+
+  it("counts a swapped pair as one change and gives up past the limit", () => {
+    expect(distance("recpas", "recaps", 1)).toBe(1);
+    expect(distance("recap", "recap", 1)).toBe(0);
+    expect(distance("pricing", "pricng", 1)).toBe(1);
+    expect(distance("transcripts", "transcrpt", 2)).toBe(2);
+    expect(distance("abcdefgh", "zzzzzzzz", 2)).toBe(3);
+    expect(distance("abc", "abcdefgh", 2)).toBe(3);
+  });
+
+  it("scores a typo below the right spelling, so a correctly spelled page wins a tie", () => {
+    const a = { path: "/typo", title: "Zzz", about: "Zzz.", words: ["recap"] };
+    const b = { path: "/right", title: "Zzz", about: "Zzz.", words: ["recpa"] };
+    expect(bestMatch("recpa", [a, b])?.path).toBe("/right");
+    expect(bestMatch("recpa", [b, a])?.path).toBe("/right");
   });
 
   it("is the same whatever the capitals or spaces", () => {

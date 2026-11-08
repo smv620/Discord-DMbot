@@ -17,7 +17,7 @@ export interface SearchEntry {
 export const searchIndex: SearchEntry[] = [
   { path: "/", title: "DMbot", about: "A quiet helper for the game master of a tabletop game.", words: ["home", "start", "what is dmbot", "about", "front page", "welcome"] },
   { path: "/how-it-works", title: "How it works", about: "What DMbot does at the table, step by step.", words: ["how does it work", "explain", "what does it do", "listen", "voice channel", "advice", "dm screen", "overview"] },
-  { path: "/pricing", title: "Prices", about: "The plans and what each one costs.", words: ["price", "prices", "cost", "how much", "pay", "payment", "plan", "plans", "free", "trial", "subscription", "subscribe", "billing", "refund", "cheap"] },
+  { path: "/pricing", title: "Prices", about: "The plans and what each one costs.", words: ["price", "prices", "pricing", "cost", "how much", "pay", "payment", "plan", "plans", "free", "trial", "subscription", "subscribe", "billing", "refund", "cheap"] },
   { path: "/pricing#questions", title: "Questions and answers", about: "Short answers to what people ask before they start.", words: ["faq", "q&a", "questions", "common questions", "can i", "do i need"] },
   { path: "/install", title: "Add to Discord", about: "Add DMbot to your Discord server.", words: ["install", "add", "add to discord", "invite", "get started", "set up", "setup", "begin", "bot link"] },
   { path: "/help", title: "How to use DMbot", about: "Every step for game masters and players, in plain words.", words: ["help", "how to", "guide", "instructions", "manual", "tutorial", "support", "stuck", "problem", "not working"] },
