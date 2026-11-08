@@ -28,7 +28,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Export my data; my email (add, change, confirm); support messages and replies | `/account` | live | none |
 | Add the bot to a server; link a server | `/install`, `/account` | built, switched off | `INVITE_LIVE` |
 | Campaigns list and a campaign's home page | `/account/campaigns` | live | none |
-| Campaign settings; optional rules; game masters (co-DMs); character sheets; pause; improvement sharing | campaign home | built, switched off | `OPTIONAL_RULES_LIVE`, `CO_DMS_LIVE`, `SHEETS_LIVE`, `PAUSE_LIVE` (improvement: none) |
+| Campaign settings; optional rules; game masters (co-DMs); character sheets; pause; improvement sharing | campaign home | built, switched off | `OPTIONAL_RULES_LIVE`, `CO_DMS_LIVE`, `SHEETS_LIVE`, `PAUSE_LIVE`, `SHARE_STORY_LIVE` (improvement: built and switched off, #3741, #3784) |
 | Hand a campaign over (offer, accept, decline, take back, by email too) | `/handover`, campaign home | built, switched off | `HANDOVER_LIVE` |
 | Backup download; load a backup; delete a campaign | campaign home, `/account/restore` | backup and delete live; load a backup switched off | `WEB_RESTORE_LIVE` |
 | Recaps: list, read, edit, make again, approve, approve unchecked, audio (play, make again) | `/account/recaps` | live | `RECAPS_LIVE`, `RECAP_AUDIO_LIVE` |
