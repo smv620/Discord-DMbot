@@ -41,7 +41,7 @@ BACKABLE = frozenset(
 )
 # The words of an `in_thread` part that name a quest role (the DM types the part; `involve`).
 # Whole words, case aside; a part that names neither stays a stored role, if the reading found one.
-GIVER_WORDS = ("quest giver", "giver", "patron")
+GIVER_WORDS = ("quest giver", "patron")
 TARGET_WORDS = ("quest target", "target")
 HOSTILE_WORDS = frozenset({rw.HOSTILE, rw.SWORN_ENEMY})
 FRIENDLY_WORDS = frozenset({rw.TRUSTS, rw.FRIENDLY, rw.CLOSE, rw.DEVOTED})
@@ -60,7 +60,8 @@ def backed_roles(
     """The roles each live entry holds by its connections. `entities`: id -> a row with `type`,
     `role`, `status` and `merged_into` (live and merged entries); `relations`: rows with `id`,
     `subject_id`, `predicate`, `object_id`, `detail`, `status` and `to_session_at`. Only confirmed,
-    current connections count."""
+    current connections count. One pass over the whole campaign: a view of many entries calls
+    this once, never once per entry."""
     ended = roots(entities)
     out: Backed = defaultdict(lambda: defaultdict(list))
 
@@ -90,7 +91,7 @@ def backed_roles(
         return player(eid) or eid in companions
 
     for rid, a, how, b, detail in live:
-        word = detail.casefold()
+        word = rw.word_of(detail)  # (as the other readers read it: "Sworn-Enemy" is one)
         if how == "in_thread":
             if _names(detail, GIVER_WORDS):
                 give(a, QUEST_GIVER, rid)

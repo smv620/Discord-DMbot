@@ -189,6 +189,7 @@ class TheWhy(Base):
         assert made.value is not None
         self.assertEqual(mentor.relation_ids, (made.value[0].id,))
         self.assertEqual(await self.store.why(GUILD, self.c, twin), [])  # (ask the one that stayed)
+        self.assertEqual(await self.store.why(GUILD, self.c, "f" * 32), [])  # (no such entry)
 
 
 class TheBackup(Base):

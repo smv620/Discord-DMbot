@@ -266,7 +266,8 @@ class RoleStore:
                 " AND entity_id = ANY(%s) ORDER BY recorded_at",
                 (guild_id, campaign_id, group),
             )
-            stored = {str(r["role"]): r for r in await cur.fetchall()}  # (one per role)
+            # (one per role: when two names of a merged group each hold it, the newest wins)
+            stored = {str(r["role"]): r for r in await cur.fetchall()}
         backed = backed_roles(entities, relations).get(entity_id, {})
         out = []
         for role in sorted(set(backed) | set(stored)):
