@@ -216,6 +216,9 @@ async def serve(settings: WebSettings) -> None:
         move_codes=move_codes,
         helper=helper,
         smart_names=smart_names,
+        said_as_ai=ai_client.tier(AIModelTier.FAST, Feature.SAID_AS)
+        if ai_client is not None
+        else None,
     )
     sweeper = asyncio.create_task(_sweep(db, helper))
     helping = asyncio.create_task(_help_with_tickets(helper)) if ai_client is not None else None
