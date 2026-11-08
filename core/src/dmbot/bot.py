@@ -536,6 +536,7 @@ from dmbot.ui import (
     name_pass_undo,
     player_id,
     recap_audio,
+    reveal_card,
     shared_rules_defs,
     theatre_button,
 )
@@ -1750,6 +1751,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
         self.add_dynamic_items(  # deeds the party did, for the DM to record (#3175)
             deed_card.OpenButton, deed_card.RecordButton, deed_card.NotButton, deed_card.UndoButton
+        )
+        self.add_dynamic_items(  # what the characters learned, for the DM to keep (#2996)
+            reveal_card.OpenButton,
+            reveal_card.KeepButton,
+            reveal_card.NotButton,
+            reveal_card.UndoButton,
         )
         self.add_dynamic_items(  # make the table's repeated words a kind of connection (#3033)
             kind_offer.OpenButton, kind_offer.AnswerButton, kind_offer.UndoButton
@@ -3196,6 +3203,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("kind offer", lambda: self.offer_kind(table)),
             # Deeds the party did, noticed in the session, for the DM to record (#3175).
             ("deeds to record", lambda: self.offer_deeds(table)),
+            # What the characters learned in the session, for the DM to keep (#2996).
+            ("reveals to keep", lambda: self.offer_reveals(table)),
             # How much each entry the session touched matters, and its roles (#3172): after the
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
@@ -10218,6 +10227,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if count:
                 log.info("Deeds: %d waiting for the DM", count)
                 await self.ask_dm(table, deed_card.ask_for(gid, cid, count))
+
+    async def offer_reveals(self, table: Table) -> None:
+        """After a session (#2996), only with DMBOT_STORY_REVEALS: one more question for the DM
+        when the session reader noticed things the characters learned and they wait to be kept.
+        Counts only; the DM looks at each one and presses Keep (the DM's own `learn_statement`).
+        Only for a campaign whose plan has story memory."""
+        if not self.settings.story_reveals_on or self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            count = await RevealProposals(self.memory).count_waiting(
+                gid, cid, opted_in=await self.consent.consenting(gid)
+            )
+            if count:
+                log.info("Reveals: %d waiting for the DM", count)
+                await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of

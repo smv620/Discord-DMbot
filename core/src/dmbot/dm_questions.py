@@ -26,9 +26,10 @@ NAMES, PEOPLE, CLAIMS, FAMILY = "names", "people", "claims", "family"
 SCRIPT = "script"  # a script of the session can be made (#3244)
 KINDS = "kinds"  # some words can become a kind of connection (#3033)
 DEEDS = "deeds"  # deeds the party did, waiting for the DM to record (#3175)
+REVEALS = "reveals"  # what the characters learned, waiting for the DM to keep (#2996)
 CONNECTIONS = "connections"  # backstory connections and suggested names (after an upload, #3314)
 # Always listed in this order, so the message reads the same each time.
-ORDER = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, FAMILY, KINDS, DEEDS, SCRIPT)
+ORDER = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, FAMILY, KINDS, DEEDS, REVEALS, SCRIPT)
 
 
 @dataclass(frozen=True, slots=True)

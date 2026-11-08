@@ -27,6 +27,7 @@ Counts only leave this module.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -35,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from dmbot.db import Conn
 from dmbot.memory import gate
 from dmbot.memory.link_words import reads_both_ways
-from dmbot.memory.models import CONFIRMED, KNOWN, name_key, new_id
+from dmbot.memory.models import CONFIRMED, DM, KNOWN, MemoryRuleError, name_key, new_id
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.reveal_reading import TELL, RevealProposal
 
@@ -44,8 +45,17 @@ if TYPE_CHECKING:
     from dmbot.memory.ontology import Ontology
     from dmbot.memory.store import MemoryStore
 
+log = logging.getLogger(__name__)
+
 PROPOSED, KEPT, DISMISSED = "proposed", "kept", "dismissed"
 ENTRY, CONNECTION = gate.ENTRY, gate.CONNECTION
+GONE = "That one is no longer waiting."
+STATEMENT_GONE = (
+    "That character or what they learned is no longer in DMbot's memory, so there is nothing "
+    "to keep."
+)
+ONLY_THE_DM = "Only the DM can answer this."
+WAITING_MAX = 50  # one page for the DM; far more than anyone answers in a sitting
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +266,146 @@ class RevealProposals:
             )
             return cur.rowcount
 
+    async def waiting(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> list[Waiting]:
+        """The proposals waiting for the DM, oldest first, after the consent re-check."""
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT id, character_id, statement_kind, statement_id, how, check_name, teller_id"
+                " FROM memory_reveal_proposals WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'proposed' ORDER BY created_at, id LIMIT %s",
+                (*scope.ids, WAITING_MAX),
+            )
+            return [_waiting(r) for r in await cur.fetchall()]
+
+    async def describe(self, guild_id: int, campaign_id: str, proposal: Waiting) -> Shown | None:
+        """The proposal in words for the DM's card, read now (names change). None when there is
+        nothing left to keep: the character or the statement is no longer a confirmed, live one
+        (the same test `knowers.learn` makes), or the character is sure of it by now. A teller
+        gone since does not matter: the card says "another character told them"."""
+        from dmbot.memory._changes import ENTITIES, RELATIONS
+        from dmbot.memory.continuity import _predicate_words
+        from dmbot.memory.store import _load_ontology
+
+        async with self._store._read(guild_id, campaign_id) as scope:
+            needed = [proposal.character_id]
+            relation = None
+            if proposal.kind == CONNECTION:
+                relation = await scope.get(RELATIONS, proposal.statement_id)
+                if relation is None or relation["status"] != CONFIRMED:
+                    return None
+                needed += [str(relation["subject_id"]), str(relation["object_id"])]
+            else:
+                needed.append(proposal.statement_id)
+            asked = [*needed, *([proposal.teller_id] if proposal.teller_id else [])]
+            rows = await scope.select(
+                ENTITIES, " AND id = ANY(%s) AND status = %s AND merged_into IS NULL",
+                [asked, CONFIRMED],
+            )  # fmt: skip
+            entities = {str(e["id"]): e for e in rows}
+            if any(i not in entities for i in needed):
+                return None
+            if entities[proposal.character_id]["type"] != "character":
+                return None  # (made a group since: only a character learns, `knowers.learn`)
+            name = {i: str(e["name"]) for i, e in entities.items()}
+            if relation is not None:
+                onto = await _load_ontology(scope)
+                key, detail = str(relation["predicate"]), str(relation["detail"] or "")
+                words = _predicate_words(onto, key, detail, bool(relation.get("directional")))
+                a, b = name[str(relation["subject_id"])], name[str(relation["object_id"])]
+                # (a feeling word reads after the names: "Bruno knows Shela (distrusts)")
+                what = f"{a} {words} {b}" + (f" ({detail})" if key == "knows" and detail else "")
+            else:
+                what = f"{name[proposal.statement_id]} exists"
+            data = await gate.load(scope)
+        sure = gate.visible(gate.Viewer.character(proposal.character_id), data).how_sure(
+            proposal.kind, proposal.statement_id
+        )
+        if sure is not None and sure >= KNOWN:
+            return None  # (sure of it by now: nothing to learn)
+        if proposal.teller_id is None:
+            how = f"a successful {proposal.check_name} check"
+        else:
+            how = f"{name.get(proposal.teller_id, 'another character')} told them"
+        player = entities[proposal.character_id]["role"] == "player_character"
+        guessing = sure is not None
+        return Shown(name[proposal.character_id], what, how, player, guessing)
+
+    async def dismiss(
+        self, guild_id: int, campaign_id: str, proposal_id: str, *, source: str
+    ) -> None:
+        """Not this: turned down, and not asked about again this session."""
+        if source != DM:
+            raise MemoryRuleError(ONLY_THE_DM)
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "UPDATE memory_reveal_proposals SET status = 'dismissed', decided_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'proposed'",
+                (int(self._store._clock()), *scope.ids, proposal_id),
+            )
+            if cur.rowcount == 0:
+                raise MemoryRuleError(GONE)
+
+    async def keep(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        proposal_id: str,
+        *,
+        opted_in: Collection[int],
+        source: str,
+    ) -> int | None:
+        """Keep it: the character learns the statement (`MemoryStore.learn_statement`, as the DM,
+        one Undo), then the row is marked kept. Claimed first in one statement, so two presses keep
+        it once. A speaker who stopped means it is gone; a statement deleted since is told in
+        plain words and the row is turned down. Returns the change batch (None: nothing changed,
+        they already knew it surely)."""
+        if source != DM:
+            raise MemoryRuleError(ONLY_THE_DM)
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
+        async with self._store._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "UPDATE memory_reveal_proposals SET status = 'kept', decided_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'proposed'"
+                " AND speaker_ids <@ %s::bigint[]"
+                " RETURNING character_id, statement_kind, statement_id",
+                (int(self._store._clock()), *scope.ids, proposal_id, sorted(set(opted_in))),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            raise MemoryRuleError(GONE)
+        try:
+            written = await self._store.learn_statement(
+                guild_id, campaign_id, str(row["statement_kind"]), str(row["statement_id"]),
+                str(row["character_id"]), source=source,
+            )  # fmt: skip
+        except MemoryRuleError as exc:
+            # (the statement or the character is gone: nothing to keep, never asked again)
+            await self._set(guild_id, campaign_id, proposal_id, DISMISSED)
+            raise MemoryRuleError(STATEMENT_GONE) from exc
+        except BaseException:
+            # (the store failed): it waits again, so the DM can press again. If putting it back
+            # fails too (the database is down), the original error is the one that is raised.
+            try:
+                await self._set(guild_id, campaign_id, proposal_id, PROPOSED)
+            except Exception as again:
+                log.warning("Reveals: couldn't put a proposal back (%s)", type(again).__name__)
+            raise
+        return written.batch if written.value else None
+
+    async def _set(self, guild_id: int, campaign_id: str, proposal_id: str, status: str) -> None:
+        async with self._store._read(guild_id, campaign_id) as scope:
+            await scope.conn.execute(
+                "UPDATE memory_reveal_proposals SET status = %s, decided_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (
+                    status, None if status == PROPOSED else int(self._store._clock()),
+                    *scope.ids, proposal_id,
+                ),
+            )  # fmt: skip
+
     async def count_waiting(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
     ) -> int:
@@ -269,6 +419,38 @@ class RevealProposals:
             )
             row = await cur.fetchone()
             return 0 if row is None else int(row["n"])
+
+
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """A proposal as the store holds it: ids only."""
+
+    id: str
+    character_id: str
+    kind: str
+    statement_id: str
+    how: str
+    check_name: str
+    teller_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Shown:
+    """A proposal in words, for the DM's card only (never a player's screen, never logged)."""
+
+    who: str  # the character who learned it
+    what: str  # "Bruno knows Shela", or "The Sword exists" (the card says "learned that ...")
+    how: str  # "a successful Insight check" or "Clyde told them"
+    player: bool  # the character is a player's: keeping it lets that player see it
+    guessing: bool  # they hold it only as a guess now: keeping it makes it sure
+
+
+def _waiting(r: Mapping[str, Any]) -> Waiting:
+    return Waiting(
+        str(r["id"]), str(r["character_id"]), str(r["statement_kind"]), str(r["statement_id"]),
+        str(r["how"]), str(r["check_name"]),
+        None if r["teller_id"] is None else str(r["teller_id"]),
+    )  # fmt: skip
 
 
 async def forget(conn: Conn, guild_id: int, user_id: int) -> int:
@@ -290,5 +472,6 @@ async def forget(conn: Conn, guild_id: int, user_id: int) -> int:
 
 
 __all__ = [
-    "DISMISSED", "KEPT", "PROPOSED", "Placed", "RevealProposals", "Stored", "forget", "place",
+    "DISMISSED", "GONE", "KEPT", "PROPOSED", "STATEMENT_GONE", "Placed", "RevealProposals",
+    "Shown", "Stored", "Waiting", "forget", "place",
 ]  # fmt: skip
