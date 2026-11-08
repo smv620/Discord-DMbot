@@ -47,6 +47,15 @@ python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      #
 # options: --counts-only (ids and counts, no names)  --json OUT.json  --key OTHER_KEY.json
 ```
 
+### The importance check (#3172)
+
+`core/src/dmbot/devtools/rank_key_check.py` scores a backup's importance ranks and story roles against `rank_key.json`: ranks exact, one step off and further off, and the key's roles found and missed. It works out each rank from the backup exactly as the bot does (the floor and the newest assessment). While the key is a draft, the report says "against the draft key".
+
+```bash
+cd core
+python -m dmbot.devtools.rank_key_check BACKUP.dmbot.json.gz
+```
+
 ### The one command (#3547): what dev1 runs now
 
 `sample_run` does steps 1 to 4 below by itself, with no one in Discord: it deletes the last run's sample campaign and makes a new one (only that exact name, and only when it is plainly the tool's), queues the lore the way the website's upload does and waits for the running bot to read it, accepts what was found, backs up and scores the lore **exactly as the reader left it** (the report says how many of the four player characters the read found by itself), only then sets the four itself (each to its player who is not on Discord, through the store's own "who plays" calls), imports the session file as a past session through the website import's own code, with the four players as speakers without Discord and the DM's confirmation recorded as the import records it, waits for the bot, accepts again, backs up and scores both, and writes the recap with no audio. It prints one block of counts and times to paste on #3545, where regressions are reported. Download the two documents above as plain text files first (the session in a timestamped form the import reads, such as `[0:00:05] player_ist: ...`, with the DM's lines as `DM`).
