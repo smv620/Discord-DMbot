@@ -178,6 +178,12 @@ class Settings:
     # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
     # pauses, so dev1 can compare the two narrations by ear.
     recap_voice_tags: bool = True
+    # "🎤 Say it" (#2316): a clip of the DM saying a name, turned into a respelling by a
+    # speech-sound model on this server. Off until SAID_AS_VOICE=1 and SAID_AS_MODEL names a
+    # folder with the model (dev1 installs it, #2318); never committed. Off or missing: the
+    # website says to type it.
+    said_as_voice: bool = False
+    said_as_model: str = ""
     # The most recaps, and narrated recaps, one campaign may make in a calendar month (#1428).
     recaps_per_month: int = 10
     recap_audio_per_month: int = 8
@@ -463,6 +469,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_RECAP_VOICE_TAGS must be 1 (on) or 0 (off), got "' + voice_tags_raw + '".'
         )
+    said_as_raw = (get("SAID_AS_VOICE") or "0").lower()
+    if said_as_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('SAID_AS_VOICE must be 1 (on) or 0 (off), got "' + said_as_raw + '".')
     audio_credits_raw = get("DMBOT_RECAP_AUDIO_MAX_CREDITS") or "15000"
     if not (audio_credits_raw.isascii() and audio_credits_raw.isdigit()) or not (
         1000 <= int(audio_credits_raw) <= 200000
@@ -615,6 +624,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         elevenlabs_speech_model=speech_model,
         recap_audio_max_credits=int(audio_credits_raw),
         recap_voice_tags=voice_tags_raw in ("1", "true", "on"),
+        said_as_voice=said_as_raw in ("1", "true", "on"),
+        said_as_model=get("SAID_AS_MODEL"),
         recaps_per_month=monthly["DMBOT_RECAPS_PER_MONTH"],
         recap_audio_per_month=monthly["DMBOT_RECAP_AUDIO_PER_MONTH"],
         story_extractor_tier=extractor_tier,

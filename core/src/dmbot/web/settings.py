@@ -201,6 +201,9 @@ class WebSettings:
     # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
     # bot does.
     recap_voice_tags: bool = True
+    # "🎤 Say it" (#2316): the bot's SAID_AS_VOICE switch, so the route says `voice_off` at once
+    # when it is off. The model and its folder are the bot's; this container never sees them.
+    said_as_voice_on: bool = False
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
@@ -482,6 +485,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
             and get("RECAP_AUDIO_VOICE_SET") == "1"
         ),
         recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
+        said_as_voice_on=(get("SAID_AS_VOICE") or "0").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
