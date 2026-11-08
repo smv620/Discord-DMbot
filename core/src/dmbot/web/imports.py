@@ -262,14 +262,16 @@ async def _open(conn: Conn, session: Session, ref: str, *, outside: str | None) 
     )
 
 
-async def _plan_allows(db: Database, owner: int | None, now: int, *, enforce_plans: bool) -> None:
+async def _plan_allows(
+    db: Database, owner: int | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
+) -> None:
     """Paid plans only, from the campaign owner's plan: a plan that works but has no copies is
     Try It (`try_it_campaign`); no plan, or an ended one, is `not_on_a_paid_plan`."""
     if not enforce_plans:
         return
     access = None
     if owner is not None:
-        _plan, _grant, access = await plan_grant_access(db, owner, now)
+        _plan, _grant, access = await plan_grant_access(db, owner, now, guild_id=guild_id)
     if plan_rules.allowed(plan_rules.RULE_OF["transcript"], access):
         return
     raise RecapError(
@@ -326,7 +328,7 @@ async def _recap_facts(
     if enforce_plans:
         access = None
         if c.owner is not None:  # (a campaign with no owner has no plan, as for the bot)
-            _plan, _grant, access = await plan_grant_access(db, c.owner, now)
+            _plan, _grant, access = await plan_grant_access(db, c.owner, now, guild_id=c.guild_id)
         if not plan_rules.allowed(plan_rules.RULE_OF["recap"], access):
             return {"recapsPossible": False, "recapsWhy": "plan"}
     return {"recapsPossible": True}
@@ -386,7 +388,7 @@ async def speakers(
     page), name and how many lines each has. Names and counts only. DMs only."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         cur = await conn.execute(
@@ -471,7 +473,7 @@ async def authorize(
     person who may not import never makes the API read or decode 40 MB."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
 
 
 async def search_members(
@@ -486,7 +488,7 @@ async def search_members(
 ) -> dict[str, Any]:
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
         members = await _members(conn, c, q, outside)
@@ -562,7 +564,7 @@ async def preview(
     for each, and whether a recap can be written for the campaign. Stores nothing."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
     files = await read_files_off_loop(raw_files, links)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
@@ -758,7 +760,7 @@ async def check(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     refuse(choices, c)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
     files = await read_files_off_loop(raw_files, links)
     plans = _plans(files, choices, c)
     return {
@@ -828,7 +830,7 @@ async def confirm(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         c = await _open(conn, session, ref, outside=outside)
     refuse(choices, c)
-    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans)
+    await _plan_allows(db, c.owner, now, enforce_plans=enforce_plans, guild_id=c.guild_id)
     # Asked before anything is stored: an answer that cannot be had never fails a stored import.
     facts = await recap_facts(
         db, session, ref, c, site_recaps_on=site_recaps_on, now=now, enforce_plans=enforce_plans
