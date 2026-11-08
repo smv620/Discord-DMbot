@@ -23,7 +23,7 @@ from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
-from dmbot.memory import roles
+from dmbot.memory import notify, roles
 from dmbot.memory.importance_rank import MAX_LINES, ROLE_REASONS, roots
 from dmbot.memory.models import new_id
 from dmbot.memory.roles_backed import backed_roles
@@ -85,6 +85,19 @@ async def ensure_role_codes(conn: Conn, guild_id: int, campaign_id: str, now: in
         )
 
 
+async def _bump(conn: Conn, guild_id: int, campaign_id: str) -> None:
+    """Move the Story Graph's change number in the caller's transaction (#3294): a node's "why"
+    shows its roles, so a page holding a copy must read again (Supervisor's ruling on #3821)."""
+    cur = await conn.execute(
+        "UPDATE campaigns SET memory_version = memory_version + 1"
+        " WHERE guild_id = %s AND id = %s RETURNING memory_version",
+        (guild_id, campaign_id),
+    )
+    row = await cur.fetchone()
+    if row is not None:
+        await notify.send(conn, campaign_id, int(row["memory_version"]), names_changed=False)
+
+
 class RoleStore:
     def __init__(self, db: Database, now: Callable[[], float] = time.time) -> None:
         self._db = db
@@ -142,7 +155,7 @@ class RoleStore:
                 return None
             if row is not None and int(row["n"]) >= roles.ADDED_MAX:
                 return "too_many"
-            await conn.execute(
+            cur = await conn.execute(
                 "INSERT INTO memory_role_codes (guild_id, campaign_id, code, label, description,"
                 " examples, not_this, source, created_at)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, 'reading', %s) ON CONFLICT DO NOTHING",
@@ -151,6 +164,8 @@ class RoleStore:
                     [e.strip() for e in examples], not_this.strip(), now,
                 ),
             )  # fmt: skip
+            if cur.rowcount:
+                await _bump(conn, guild_id, campaign_id)
         return None
 
     async def add(
@@ -201,6 +216,8 @@ class RoleStore:
                     ),
                 )  # fmt: skip
                 written += cur.rowcount
+            if written:
+                await _bump(conn, guild_id, campaign_id)
         return written
 
     async def end(
@@ -225,6 +242,8 @@ class RoleStore:
                 " AND ended_at IS NULL AND NOT (%s AND reason = 'dm_corrected')",
                 (int(self._now()), guild_id, campaign_id, [entity_id, *also], role, keep_dm),
             )
+            if cur.rowcount:
+                await _bump(conn, guild_id, campaign_id)
             return bool(cur.rowcount)
 
     async def held(
