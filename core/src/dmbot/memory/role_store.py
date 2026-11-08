@@ -119,6 +119,20 @@ class RoleStore:
             )
             return {str(r["code"]): str(r["source"]) for r in await cur.fetchall()}
 
+    async def added_texts(self, guild_id: int, campaign_id: str) -> dict[str, str]:
+        """The campaign's added roles (`source = 'reading'`): code -> the text it is matched by
+        (`roles.embed_text`, never `not_this`), for `role_match`."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT code, description, examples FROM memory_role_codes"
+                " WHERE guild_id = %s AND campaign_id = %s AND source = 'reading'",
+                (guild_id, campaign_id),
+            )
+            return {
+                str(r["code"]): roles.embed_text(str(r["description"]), tuple(r["examples"] or ()))
+                for r in await cur.fetchall()
+            }
+
     async def add_code(
         self,
         guild_id: int,

@@ -182,6 +182,16 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_REL_READ_ON must be 1"):
             load_settings({**BASE, "DMBOT_REL_READ_ON": "maybe"})
 
+    def test_role_match_is_its_own_switch_inside_meaning_search(self) -> None:
+        self.assertFalse(load_settings(BASE).role_match)
+        on = load_settings({**BASE, "DMBOT_ROLE_MATCH": "1"})
+        self.assertTrue(on.role_match)
+        self.assertFalse(on.role_match_on)  # (no meaning search, no key: nothing is sent)
+        both = {**BASE, "DMBOT_ROLE_MATCH": "1", "DMBOT_MEANING_SEARCH": "1", "VOYAGE_API_KEY": "k"}
+        self.assertTrue(load_settings(both).role_match_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
+            load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(
@@ -225,6 +235,14 @@ class PlanChecksSetting(unittest.TestCase):
             load_settings({**BASE, "DMBOT_RECAP_AUDIO_MAX_CREDITS": "5"})
         with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):
             load_settings({**BASE, "ELEVENLABS_VOICE_ID": "../x"})
+
+    def test_the_hear_it_allowance_has_a_default_and_is_checked(self) -> None:
+        self.assertEqual(load_settings(BASE).hear_credits_per_month, 5000)
+        got = load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": "9000"})
+        self.assertEqual(got.hear_credits_per_month, 9000)
+        for bad in ("99", "200001", "lots", "-5", "1.5"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ConfigError, "HEAR_CREDITS"):
+                load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": bad})
 
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)

@@ -159,7 +159,11 @@ async def settle_cap(
         keep = access.campaign_cap if access.works else plans.load().by_id["try-it"].campaigns
         if keep is None:  # no limit
             return None
-        cur = await conn.execute("SELECT * FROM dmbot_pause_over_cap(%s, %s)", (keep, live or []))
+        # Campaigns in a listed free server are neither counted nor paused (#3792).
+        cur = await conn.execute(
+            "SELECT * FROM dmbot_pause_over_cap(%s, %s, %s::bigint[])",
+            (keep, live or [], sorted(entitlements.free_guilds())),
+        )
         paused = [
             PausedCampaign(str(r["campaign_id"]), int(r["server_id"]), str(r["campaign_name"]))
             for r in await cur.fetchall()

@@ -109,6 +109,7 @@ from dmbot.web.improvement import read_choice as read_improvement
 from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.kind_offers import read_kind_offers
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
+from dmbot.web.listen import MAX_CLIP_BYTES, queue_listen, read_listen, wait_for_answer
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
@@ -872,6 +873,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "bad_clip": (422, "bad_clip"),  # a clip that is not audio, or cannot be made out (#2316)
         "server": (503, "server"),  # the AI did not answer (a suggestion, #3806)
         "voice_off": (
             409,
@@ -2819,21 +2821,57 @@ def create_app(
 
     @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/from-voice")
     async def me_campaign_name_said_as_from_voice(
-        ref: str, alias_id: str, signed: Signed
-    ) -> dict[str, str]:
-        """Hearing the DM say a name and spelling it (#2316) is not built yet, so this answers
-        "voice_off", which the page words as "Saying it isn't available right now". The same checks
-        as the save come first, so a stranger learns nothing from it."""
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> Any:
+        """🎤 Say it (#2316): the body is one short clip (webm, ogg or wav, at most 1 MB and 10
+        seconds). The bot turns it into a respelling on this server and clears the clip as it
+        writes the answer; this waits up to 20 seconds and answers `{respelling, ipa}`, or 202
+        `{id}` to poll. `voice_off` when it is switched off or the plan has no narration."""
         session, _token = signed
+        # Stop reading at the limit: a body bigger than a clip is refused without being kept.
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_CLIP_BYTES:
+            raise HTTPException(status_code=413, detail="too_big")
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_CLIP_BYTES:
+                raise HTTPException(status_code=413, detail="too_big")
         try:
-            names = await list_names(db, session, ref)
+            heard = await queue_listen(
+                db,
+                session,
+                ref,
+                alias_id,
+                bytes(body),
+                request.headers.get("content-type"),
+                voice_on=settings.said_as_voice_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+            answer = await wait_for_answer(lambda: read_listen(db, session, ref, heard))
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
-        if not any(n.get("id") == alias_id for n in names):
-            raise HTTPException(status_code=404, detail="not_found")
-        status, detail = recap_refusals["voice_off"]
-        raise HTTPException(status_code=status, detail=detail)
+        if answer is None:
+            return JSONResponse({"id": heard}, status_code=202)
+        if answer["state"] == "failed":
+            status, detail = recap_refusals.get(answer["error"], (503, "server"))
+            raise HTTPException(status_code=status, detail=detail)
+        return {"respelling": answer["respelling"], "ipa": answer["ipa"]}
+
+    @app.get("/me/campaigns/{ref}/names/{alias_id}/said-as/from-voice/{heard}")
+    async def me_campaign_name_said_as_heard(
+        ref: str, alias_id: str, heard: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where one clip stands (for the page, when the answer took longer than the first wait).
+        Only the DM who sent it can read it; never the clip."""
+        session, _token = signed
+        try:
+            return await read_listen(db, session, ref, heard)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/hear")
     async def me_campaign_name_hear(

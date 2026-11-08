@@ -20,7 +20,8 @@ from typing import Any
 
 from dmbot import plan_rules, progress
 from dmbot.db import Database
-from dmbot.web.names import _SPELLING, SAID_AS_MAX, _alias_id, _parse, list_names
+from dmbot.said_as.suggest import SPELLING
+from dmbot.web.names import SAID_AS_MAX, _alias_id, _parse, list_names
 from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -34,7 +35,7 @@ def clean_text(text: object) -> str:
     if not isinstance(text, str):
         raise RecapError("bad_text")
     clean = unicodedata.normalize("NFC", " ".join(text.split()))
-    if not clean or len(clean) > SAID_AS_MAX or not _SPELLING.fullmatch(clean):
+    if not clean or len(clean) > SAID_AS_MAX or not SPELLING.fullmatch(clean):
         raise RecapError("bad_text")
     return clean
 

@@ -427,6 +427,128 @@ class NameCards(NamesTest):
                 await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), typed or None
             )
 
+    def suggester(self, text: str = "Bell-air-os", **kw: Any) -> Any:
+        from dmbot.ai import Reply
+
+        class Fake:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+
+            async def complete(self, system: str, words: str, **_: Any) -> Reply:
+                self.sent.append(words)
+                if kw.get("boom"):
+                    raise RuntimeError("down")
+                return Reply(text=text, cut=bool(kw.get("cut")))
+
+        return Fake()
+
+    async def press_suggest(self, ai: Any, user: int = DM, *, spoken: bool = True) -> Any:
+        from dmbot.ui import name_card
+
+        card = name_card.NameCard(self.campaign.id, self.bell.id, say=True, suggest=True)
+        self.bot.said_as_ai = ai
+        it = self.it(user)
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=spoken)):
+            await card._suggest(it)
+        return it
+
+    async def test_suggest_offers_a_spelling_and_saves_nothing_until_used(self) -> None:
+        from dmbot.ui import name_card
+
+        ai = self.suggester("Bell-air-os")
+        it = await self.press_suggest(ai)
+        text, kw = it.response.sent[0]
+        self.assertIn("Bell-air-os", text)
+        self.assertEqual(
+            ai.sent, ["Name: \u201cBelleros\u201d\nKind: " + ai.sent[0].split("Kind: ")[1]]
+        )
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+        offer = kw["view"]
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)):
+            await offer._use(self.it())
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), "Bell-air-os"
+        )
+
+    async def test_every_button_on_a_full_card_still_builds(self) -> None:
+        from dmbot.ui import name_card
+
+        card = name_card.NameCard(
+            self.campaign.id,
+            self.bell.id,
+            say=True,
+            suggest=True,
+            led=True,
+            book=True,
+            sheet=True,
+            players_line=True,
+            others=True,
+            hide=False,
+        )
+        self.assertIn(name_card.SUGGEST_BUTTON, [getattr(c, "label", "") for c in card.children])
+
+    async def test_a_hung_ai_ends_with_the_failure_words(self) -> None:
+        import asyncio
+
+        from dmbot.ui import name_card
+
+        class Hung:
+            async def complete(self, *_: Any, **__: Any) -> Any:
+                await asyncio.sleep(60)
+
+        with patch.object(name_card, "SUGGEST_WAIT_S", 0.05):
+            it = await self.press_suggest(Hung())
+        self.assertEqual(it.response.sent[0][0], name_card.SUGGEST_FAILED)
+
+    async def test_a_stale_offer_after_the_plan_lapsed_saves_nothing(self) -> None:
+        from dmbot.ui import name_card
+
+        offer = name_card.SuggestOffer(self.campaign.id, self.bell.id, "Bell-air-os")
+        it = self.it()
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
+            await offer._use(it)
+        self.assertIn("Spoken recaps aren't on", it.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+
+    async def test_no_thanks_leaves_it_and_a_non_dm_is_refused(self) -> None:
+        from dmbot.ui import name_card
+
+        offer = name_card.SuggestOffer(self.campaign.id, self.bell.id, "Bell-air-os")
+        it = self.it()
+        await offer._no(it)
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+        ai = self.suggester()
+        refused = await self.press_suggest(ai, MANAGER)
+        self.assertIn("Only a DM", refused.response.sent[0][0])
+        self.assertEqual(ai.sent, [])  # nothing was asked of the AI
+        late = self.it(MANAGER)
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=True)):
+            await offer._use(late)  # a manager who is not a DM cannot use a stale offer either
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+
+    async def test_a_bad_answer_a_cut_one_and_a_lapsed_plan(self) -> None:
+        from dmbot.ui import name_card
+
+        none = await self.press_suggest(self.suggester("Not a spelling, sorry 42"))
+        self.assertEqual(none.response.sent[0][0], name_card.SUGGEST_NONE)
+        for ai in (self.suggester(cut=True), self.suggester(boom=True)):
+            failed = await self.press_suggest(ai)
+            self.assertEqual(failed.response.sent[0][0], name_card.SUGGEST_FAILED)
+        ai = self.suggester()
+        off = await self.press_suggest(ai, spoken=False)
+        self.assertIn("Spoken recaps aren't on", off.response.sent[0][0])
+        self.assertEqual(ai.sent, [])
+
+    async def test_the_suggest_button_comes_with_the_say_button_when_there_is_an_ai(self) -> None:
+        from dmbot.ui import name_card
+
+        self.bot.said_as_ai = None
+        self.assertNotIn(name_card.SUGGEST_BUTTON, await self.card_labels())
+        self.bot.said_as_ai = self.suggester()
+        self.assertIn(name_card.SUGGEST_BUTTON, await self.card_labels())
+        self.assertNotIn(name_card.SUGGEST_BUTTON, await self.card_labels(spoken=False))
+        self.assertNotIn(name_card.SUGGEST_BUTTON, await self.card_labels(MANAGER))
+
     async def test_the_say_form_rechecks_the_dm_and_the_plan_after_its_waits(self) -> None:
         from dmbot.ui import name_card
 
@@ -2670,6 +2792,29 @@ class Review(NamesTest):
 
     def labels_of(self, view: Any) -> list[str]:
         return [str(getattr(c, "label", "") or "") for c in view.children]
+
+    async def test_the_review_card_shows_the_players_line_to_a_dm_only(self) -> None:
+        eid = await self.scan_guess("Aldric", "character")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET players_text = %s WHERE campaign_id = %s AND id = %s",
+                ("The town smith.", self.campaign.id, eid),
+            )
+        await self.scan_guess("Greyfen", "place")  # no line: nothing extra on its card
+        view, it = await self.review()
+        self.assertIn("Players know: The town smith.", it.response.sent[0][0])
+        it = self.it(MANAGER)  # a server manager who is not a DM
+        await ui.start_review(it, self.campaign.id)
+        self.assertEqual(len(it.response.sent), 1)
+        self.assertNotIn("Players know", it.response.sent[0][0])
+        async with self.db.guild(GUILD) as conn:  # the line is the first card's only: drop it
+            await conn.execute(
+                "UPDATE memory_entities SET players_text = NULL WHERE campaign_id = %s",
+                (self.campaign.id,),
+            )
+        _view, again = await self.review()
+        self.assertNotIn("Players know", again.response.sent[0][0])
+        assert view
 
     async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
         await self.scan_guess("Greyfen", "place")

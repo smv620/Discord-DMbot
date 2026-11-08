@@ -2239,6 +2239,10 @@ class MemoryStore:
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
                         "hidden_from_players": not n.shown,
+                        # (the players' line only for a name the world knows, never cut, #2967)
+                        "players_text": n.players_text
+                        if n.shown and 0 < len(n.players_text) <= PLAYERS_TEXT_MAX
+                        else None,
                     }
                 )  # fmt: skip
                 seen = {name_key_}
@@ -5098,6 +5102,24 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             return Written(chosen, w.batch)
+
+    async def learn_statement(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_id: str,
+        character_id: str,
+        *,
+        source: str,
+    ) -> Written[bool]:
+        """One character learns one statement (#2996): the DM keeps a "who learned what"
+        proposal. One row at that character's own point of view, sure; nobody else changes. Once
+        kept, the gate shows the statement (and the entries it names) to that character's player.
+        One change, so one Undo. Only the DM. Returns whether anything changed."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            changed = await knowers.learn(w, kind, statement_id, character_id)
+            return Written(changed, w.batch)
 
     async def tell_character(
         self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str

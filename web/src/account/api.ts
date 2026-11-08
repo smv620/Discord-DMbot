@@ -1267,6 +1267,13 @@ export interface ImportPlan {
 export type ImportState = "waiting" | "working" | "done" | "failed";
 /** How far a job has got, the same shape wherever a job is shown (#2564; CloudDev). Times are Unix seconds on
  * the server's clock; `stalled` is the server's word, worked out per stage; only counts and codes. */
+/** What the Say it box hears while the bot turns a clip into letters (#3828): each look says `waiting` or `working` with the
+ * shared progress, and `cancelled()` lets the page stop waiting ("Type it instead"). */
+export interface VoiceWatch {
+  onLook?: (look: { state: "waiting" | "working"; progress: JobProgress | null }) => void;
+  cancelled?: () => boolean;
+}
+
 export interface JobProgress {
   stage: string;
   done?: number | null;
@@ -2982,7 +2989,7 @@ export interface AccountApi {
   hearSaidAs?(campaignRef: string, nameId: string, text: string, onLook?: (progress: JobProgress | null) => void): Promise<Blob>;
   /** One short recording of the DM saying the name (webm or ogg, at most 10 seconds and 1 MB); the
    * API turns it into a respelling and deletes the clip. Resolves with the respelling, unsaved. */
-  respellFromVoice?(campaignRef: string, nameId: string, clip: Blob): Promise<string>;
+  respellFromVoice?(campaignRef: string, nameId: string, clip: Blob, watch?: VoiceWatch): Promise<string>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
   /** What that would do (#2630): only the voice or the whole audio, and why. Missing from an API older

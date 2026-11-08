@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.memory import importance_read as ir
-from dmbot.memory import importance_step
+from dmbot.memory import importance_step, role_match
 
 
 class Wiring(unittest.IsolatedAsyncioTestCase):
@@ -26,7 +26,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(
             settings=SimpleNamespace(**{
                 "story_extractor_on": True, "story_extractor_max_calls": 480,
-                "story_extractor_max_calls_day": 960, **settings,
+                "story_extractor_max_calls_day": 960, "role_match_on": False,
+                "voyage_embed_model": "v", **settings,
             }),
             extractor_ai=SimpleNamespace(model="m"),
             memory=SimpleNamespace(_db=object(), mentions=AsyncMock(return_value=[])),
@@ -34,6 +35,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
             plan_allows=AsyncMock(return_value=True),
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({8}))),
+            voyage=None, role_seeds=role_match.SeededVectors(),
+            meaning_calls=SimpleNamespace(count=AsyncMock()),
         )  # fmt: skip
 
     async def test_off_means_off(self) -> None:
@@ -73,6 +76,20 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             await DMBot._read_importance(me, 1, "c", "s", renew=renew)
         assert run.await_args is not None
         self.assertIs(run.await_args.kwargs["renew"], renew)
+
+    async def test_new_roles_are_matched_only_with_the_switch_and_voyage(self) -> None:
+        items = [ir.Item(1, "e" * 32, "Vex", "character", 1)]
+        for on, voyage, wanted in ((False, object(), False), (True, None, False),
+                                   (True, object(), True)):  # fmt: skip
+            me = self.fake(role_match_on=on)
+            me.voyage = voyage
+            with patch.object(importance_step, "gather", AsyncMock(return_value=(items, {}, {}))), \
+                    patch.object(importance_step, "run", AsyncMock(
+                        return_value=importance_step.Report())) as run:  # fmt: skip
+                await DMBot._read_importance(me, 1, "c", "s")
+            assert run.await_args is not None
+            matcher = run.await_args.kwargs["matcher"]
+            self.assertEqual(isinstance(matcher, role_match.RoleMatcher), wanted, (on, voyage))
 
     async def test_a_failure_never_escapes(self) -> None:
         me = self.fake()
