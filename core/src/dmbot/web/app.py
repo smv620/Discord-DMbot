@@ -63,6 +63,7 @@ from dmbot.web import (
     offers,
     optional_rules,
     past_sessions,
+    pc_icons,
     pictures,
     recap_style,
     relationships,
@@ -881,6 +882,7 @@ def create_app(
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
         "bad_hash": (422, "bad_hash"),
         "bad_choice": (422, "bad_choice"),
+        "unavailable": (409, "unavailable"),  # the picture asked for is not there now (#3621)
         "too_big": (413, "too_big"),
         # Importing older sessions (#2105)
         "not_a_dm": (403, "not_a_dm"),
@@ -3016,6 +3018,24 @@ def create_app(
             )
         except RecapError as err:
             raise import_refusal(err) from None
+
+    @app.post("/me/campaigns/{ref}/pc-icons/{entity_id}")
+    async def me_pc_icon(
+        ref: str, entity_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Choose a player character's Story Graph icon (#3621): `{choice: "default" | "discord" |
+        "dndbeyond" | "hidden"}`. The campaign's DM or the character's own player only (decided in
+        SQL); one instant write, answered `{previous, now}` for the page's Undo."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await pc_icons.set_icon(db, session, ref, entity_id, body)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     @app.post(
         "/me/campaigns/{ref}/imports/{import_id}/clock",

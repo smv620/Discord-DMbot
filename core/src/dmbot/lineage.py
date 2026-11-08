@@ -142,6 +142,7 @@ NOT_STAMPED: dict[str, str] = {
             "report_answers",
             "secret_exposures",
             "recap_holds",
+            "pc_icons",  # the DM's or the player's own choice of a picture
             "plot_fine",
             "pack_suggestions",
             "rule_set_suggestions",

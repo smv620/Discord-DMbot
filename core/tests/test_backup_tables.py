@@ -199,6 +199,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
                 (g, c, A),
             ),
+            "pc_icons": (
+                "INSERT INTO pc_icons (guild_id, campaign_id, entity_id, choice, set_by, updated_at)"
+                " VALUES (%s, %s, %s, 'hidden', %s, 5)",
+                (g, c, A, DM),
+            ),
             "memory_deed_proposals": (
                 "INSERT INTO memory_deed_proposals (guild_id, campaign_id, id, doer, text, viewers,"
                 " effect, lines, speaker_ids, session_started_at, prompt_version, model, status,"
