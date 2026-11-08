@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from typing import Any
 
 from dmbot import plan_rules
@@ -137,13 +138,15 @@ async def suggest_said_as(
             _plan, _grant, access = await plan_grant_access(db, int(owner), now)
         if not plan_rules.can_use_ai(access):
             return ""
-    text = f"Name: {quoted(str(found['text']))}\nKind: {found['kind']}"
+    name = " ".join(str(found["text"]).split())  # one line, so a name can't forge the next
+    text = f"Name: {quoted(name)}\nKind: {found['kind']}"
     try:
         reply = await ai.complete(_SAID_AS_SYSTEM, text, max_tokens=200)
-    except Exception:
-        log.warning("said-as suggestion failed", exc_info=True)
+    except Exception as err:
+        # The type only: a provider's message may echo the request, which holds the name.
+        log.warning("said-as suggestion failed: %s", type(err).__name__)
         return ""
-    answer = " ".join(reply.text.split())
+    answer = unicodedata.normalize("NFC", " ".join(reply.text.split()))
     if reply.cut or reply.refused or len(answer) > SAID_AS_MAX or not _SPELLING.fullmatch(answer):
         return ""
     return answer

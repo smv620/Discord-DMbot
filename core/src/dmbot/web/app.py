@@ -239,6 +239,7 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    said_as_limit = RateLimit(60, count=20)
     if smart_limit is None:
         # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
         # so one person gets 20 a minute, counted by account.
@@ -2794,6 +2795,10 @@ def create_app(
         """DMbot's suggestion for how to say one name (#3806): `{"suggestion": "Kah-zeth"}`, or an
         empty one when it has none. Not saved: the DM presses Save. DM only."""
         session, _token = signed
+        # A press is a paid AI call: the same per-person limit as the meaning search.
+        taken = said_as_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
         try:
             said = await suggest_said_as(
                 db,
@@ -2805,6 +2810,7 @@ def create_app(
                 enforce_plans=settings.enforce_plans,
             )
         except RecapError as err:
+            said_as_limit.give_back(f"user-{session.user_id}")  # a refused press costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
         return {"suggestion": said}
@@ -2819,12 +2825,13 @@ def create_app(
         session, _token = signed
         try:
             names = await list_names(db, session, ref)
-            if not any(n.get("id") == alias_id for n in names):
-                raise RecapError("not_found")
-            raise RecapError("voice_off")
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+        if not any(n.get("id") == alias_id for n in names):
+            raise HTTPException(status_code=404, detail="not_found")
+        status, detail = recap_refusals["voice_off"]
+        raise HTTPException(status_code=status, detail=detail)
 
     @app.get("/me/campaigns/{ref}/recap-choices")
     async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:
