@@ -908,6 +908,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (!found) {
       webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
       // A "knows (wary)" connection with its lore line, for the feeling picker (#3607).
+      // An unnamed person (#3732): in a campaign reference ending ".unnamed" the DM's map holds Ken's sister, with a line to the first name.
+      if (/\.unnamed$/.test(ref)) {
+        found.nodes.push({ id: "u1", name: "unnamed - Ken's sister", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
+        found.links.push({ id: "lu1", a: found.nodes[0]!.id, b: "u1", words: "sister of", secret: false, direction: "a-b" });
+      }
       if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
     }
     return found;
@@ -994,8 +999,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
     const all = dm ? query.view !== "players" : query.view === "full";
     const state = web(ref);
+    // An unnamed person is the DM's alone, in the Full View: never a player's, a peek's or the players' view (#3732).
     const visible = new Set(
-      state.nodes.filter((n) => all || (!n.secret && n.revealed !== false)).map((n) => n.id),
+      state.nodes.filter((n) => (all || (!n.secret && n.revealed !== false)) && (!n.unnamed || (dm && all))).map((n) => n.id),
     );
     const usable = state.links.filter(
       (l) => visible.has(l.a) && visible.has(l.b) && (all || (!l.secret && l.revealed !== false)),
@@ -1097,6 +1103,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       maxHops: 8,
       canEdit: dm && all,
       view: all ? "full" : "players",
+      ...(dm && all && /\.unnamed$/.test(ref) ? { waitingUnnamed: 2 } : {}),
       ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),
     };
   };

@@ -41,6 +41,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
 | Names DMbot has met but not named yet (name them, remove, same as someone) | `/account/names` | live | `NOT_NAMED_LIVE` |
+| People the story never named, drawn on the map for the DM (dashed node, the same three actions, a Graph settings kind, a line for the waiting ones) | `/account/web` | built, switched off | `UNNAMED_MAP_LIVE` (#3732, #3734) |
 | Who is this? for one name (the clarify page) | `/account/clarify` | in an open PR (not yet on development), behind its own switch | `name-clarify-switch` |
 | The names waiting for a check; the recap's name checks | `/account/questions`, recap page | built, switched off | `QUESTIONS_LIVE`, `RECAP_NAME_CHECKS_LIVE` |
 | Confirm kinds of names; places written two ways | Names, Story Graph | built, switched off | `CONFIRM_KINDS_LIVE`, `NAME_PLACES_LIVE` |
@@ -106,7 +107,7 @@ match. "In Discord" says where the DM finds it today.
 | Quiet stop (stop the recording when the table is quiet) | Campaign management | Discord-only: live recording |
 | Transcript retention (how long transcripts are kept) | Campaign management | Campaign settings: how long transcripts are kept (`retention`, in `CampaignSettings`) (WebDev confirmed) |
 | Table chat on or off, and which chat | Table chat | Discord-only: the table's chat is a Discord channel |
-| Rules level (how much DMbot says) and Features on or off | Campaign management | missing ⚠ |
+| Rules level (how much DMbot says) and Features on or off | Campaign management | Rules level: Campaign settings (`level`). Features: a read-only list (`FEATURES_LIST_LIVE`, #3693, #3718); turning features on or off stays in Discord until filed |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
 | Delete this campaign | Delete this campaign | Backup and delete (delete is live) |
@@ -148,14 +149,14 @@ match. "In Discord" says where the DM finds it today.
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |
 | Session notes; after-session report | notes and report cards | `SESSION_NOTES_LIVE` (#3027), `AFTER_SESSION_REPORT_LIVE` |
-| Rule clashes (house rule vs rule); rules alerts | clash card | missing ⚠ (the House rules page shows a set's clash note, not a clash with a rule being checked); live alerts are Discord-only |
+| Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the decided pairs with Undo, and "Which wins?" after a website save; the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
 | Plot check (ask, answer an issue, decide a proposal) | plot cards | Plot check (`PLOT_CHECK_LIVE`) |
 | Continuity and contradictions | continuity card | missing ⚠ |
 | Threads (open plot threads) | threads card | missing ⚠ |
 | Live heads-up (a secret about to be said) | live card | Discord-only: live at the table |
 | Questions for you (notice, reminders, 🔕 Not now) | private notices | The Questions page; notices are Discord-only |
 | Pictures: kept pictures, looked-at pictures, image fix | picture cards | Pictures gallery (`PICTURES_LIVE`) |
-| Speaker questions (who said this?) | speaker question card | Remove a speaker (`SPEAKER_REMOVAL_LIVE`); the "who said this?" question itself: missing |
+| Speaker questions (who said this?) | speaker question card | Discord-only on purpose (Supervisor, #3698): the question is live at the table; "Fix one transcript line" covers fixing a speaker afterwards; remove a speaker is `SPEAKER_REMOVAL_LIVE` |
 | Account move notices; plan and trial messages | private messages | The account page shows the plan and ends; the notices are Discord-only (WebDev confirmed) |
 
 ### Gaps this list found
@@ -185,12 +186,11 @@ Written by WebDev-lead on 2026-11-07, after checking each ⚠ row of Section 2 a
 
 | Gap | Discord | Note |
 |---|---|---|
-| Rules level (how much DMbot says) and Features on or off | Campaign management | no website control at all |
+| Features on or off (turning them) | Campaign management | the website lists them read-only (#3693); the switches stay in Discord |
 | Guide me (what to do next) | 🧭 button | no website page |
 | Continuity and contradictions | continuity card | the website has no page for them |
 | Open plot threads | threads card | the website has no page for them |
-| Rule clash (a house rule against a rule being checked) | clash card | House rules shows a set's clash note only |
-| "Who said this?" (a speaker question) | speaker question card | the website can only remove a speaker |
+| Rule clash (a house rule against a rule being checked) | clash card | on the way: #3697 (decided pairs now; "Which wins?" at website save) |
 | Rules lookup | `/dmbot rule` | also live help at the table: the owner may rule it Discord-only |
 
 ### Switched off and waiting (counted as "on the way", already filed)

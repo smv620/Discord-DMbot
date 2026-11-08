@@ -10,7 +10,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
-import { BIG_WEB, kindWords, webPage as words } from "../content/web-words";
+import { UNNAMED_MAP_LIVE } from "../content/unnamed-map-switch";
+import { BIG_WEB, kindWords, UNNAMED_KIND, webPage as words } from "../content/web-words";
 import {
   type AccountApi,
   ApiError,
@@ -18,6 +19,7 @@ import {
   type NameChange,
   type NameRow,
   type WebGraph,
+  type WebNode,
   type WebLinkChange,
   type WebOverview,
   type WebRevealTarget,
@@ -86,7 +88,7 @@ function withTimeout<T>(work: Promise<T>): Promise<T> {
   ]);
 }
 
-const UNNAMED_SUFFIX = "(name unknown)"; // core/memory/unnamed.py: how a person the story never named is labelled
+const UNNAMED_PREFIX = "unnamed - "; // core/memory/unnamed.py: how a person the story never named is labelled, then the description
 
 function refusal(error: unknown): string | null {
   const kind = error instanceof ApiError ? error.kind : "network";
@@ -103,6 +105,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // What is typed in the steps box: it may be half-typed, so it is kept apart from the steps in use.
   const [hopsText, setHopsText] = useState(String(DEFAULT_HOPS));
   const [editing, setEditing] = useState<string | null>(null);
+  // The unnamed person whose panel is open (#3732). Kept as a copy: once they are named the node is gone from the map, and the panel (with its Undo) stays.
+  const [naming, setNaming] = useState<WebNode | null>(null);
   // The list at the bottom is closed until asked for, and each name in it opens on its own (or all together).
   const [listOpen, setListOpen] = useState(false);
   // How this viewer likes the map drawn (#3620): kept in this browser, never sent anywhere.
@@ -408,7 +412,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         // Which end needs what: the page already holds the two names, so it can say them (#3426).
         const ends = graph?.edges.find((e) => e.links.some((l) => l.id === target.id));
         const ones = ends ? graph!.nodes.filter((n) => n.id === ends.a || n.id === ends.b) : [];
-        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.endsWith(UNNAMED_SUFFIX))?.name.slice(0, -UNNAMED_SUFFIX.length).trim() ?? null, NOT_NAMED_LIVE && api.nameThem !== undefined);
+        if (error.kind === "name-unnamed") return words.nameThemFirst(ones.find((n) => n.name.startsWith(UNNAMED_PREFIX))?.name.slice(UNNAMED_PREFIX.length).trim() || null, NOT_NAMED_LIVE && api.nameThem !== undefined);
         return words.showNamesFirst(ones.filter((n) => n.revealed === false).map((n) => n.name));
       }
       const said = refusal(error);
@@ -602,9 +606,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // after a switch to the players' view, and this keeps it off the screen.
   // A kind the viewer left unticked in the graph settings drops its names, and so their lines; the middle name always stays.
   // (A kind saved from another campaign, that this one has no names of, is ignored: it would otherwise hide everything.)
-  const activeKinds = look.kinds.filter((k) => graph.nodes.some((n) => n.kind === k));
-  const kindShown = (n: { id: string; kind: string }): boolean => activeKinds.length === 0 || activeKinds.includes(n.kind) || n.id === center;
-  const nodes = graph.nodes.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
+  // A person the story never named (#3732) is filtered as a kind of its own, "People not named yet", and is never drawn
+  // while the switch is off (the door only sends them to a DM's Full View, but a page that can't edit keeps them off all the same).
+  const kindKey = (n: { kind: string; unnamed?: boolean }): string => (n.unnamed ? UNNAMED_KIND : n.kind);
+  const drawable = graph.nodes.filter((n) => !n.unnamed || (UNNAMED_MAP_LIVE && canEdit));
+  const activeKinds = look.kinds.filter((k) => drawable.some((n) => kindKey(n) === k));
+  const kindShown = (n: { id: string; kind: string; unnamed?: boolean }): boolean => activeKinds.length === 0 || activeKinds.includes(kindKey(n)) || n.id === center;
+  const nodes = drawable.filter((n) => (showAll || (!n.secret && n.revealed !== false)) && kindShown(n));
   const visible = new Set(nodes.map((n) => n.id));
   const edges = graph.edges
     .filter((e) => visible.has(e.a) && visible.has(e.b))
@@ -621,10 +629,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     })
     .filter((e) => e.links.length > 0);
   // The kinds the campaign has, with how many names of each, for the settings' tick boxes (counted before the filter).
-  const kindCounts = [...new Set(graph.nodes.filter((n) => showAll || (!n.secret && n.revealed !== false)).map((n) => n.kind))].map((key) => ({
+  const kindCounts = [...new Set(drawable.filter((n) => showAll || (!n.secret && n.revealed !== false)).map(kindKey))].map((key) => ({
     key,
     label: kindWords(key),
-    count: graph.nodes.filter((n) => n.kind === key && (showAll || (!n.secret && n.revealed !== false))).length,
+    count: drawable.filter((n) => kindKey(n) === key && (showAll || (!n.secret && n.revealed !== false))).length,
   }));
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
   const kindOf = (id: string): string => nodes.find((n) => n.id === id)?.kind ?? "";
@@ -747,6 +755,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
+      {UNNAMED_MAP_LIVE && NOT_NAMED_LIVE && canEdit && (graph.waitingUnnamed ?? 0) > 0 && (
+        <p class="small">
+          {words.waitingUnnamed(graph.waitingUnnamed ?? 0)}{" "}
+          <a href={`/account/names/${encodeURIComponent(ref)}`}>{words.waitingUnnamedLink}</a>
+        </p>
+      )}
       <p class="web-count" role="status" aria-live="polite">
         <strong>{words.howMany(nodes.length, edges.reduce((n, e) => n + e.links.length, 0))}</strong>
       </p>
@@ -784,7 +798,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               center={center}
               refId={ref}
               selected={line}
-              onCenter={(id) => void load(id, hops)}
+              onCenter={(id) => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); }}
               onLine={(a, b) => setLine({ a, b })}
               onNodePick={() => setLine(null)}
               look={look}
@@ -887,7 +901,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                   {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
                   {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
-                  <span class="tag">{kindWords(n.kind)}</span>
+                  <span class="tag">{kindWords(kindKey(n))}</span>
                   {n.id === center && <span class="small muted">{words.inMiddle}</span>}
                 </button>
                 {open && (
@@ -898,12 +912,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         <span class="visually-hidden">{words.openItsPageFor(n.name)}</span>
                       </a>
                     )}
-                    {n.id !== center && (
+                    {n.id !== center && !n.unnamed && (
                       <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
                         {words.makeMiddleShort}
                       </button>
                     )}
-                    {canEdit && n.revealed === false && api.webReveal && (
+                    {canEdit && n.revealed === false && !n.unnamed && api.webReveal && (
                       <button
                         type="button"
                         class="button secondary"
@@ -919,7 +933,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         {words.reveal}
                       </button>
                     )}
-                    {canEdit && api.changeName && (
+                    {canEdit && api.changeName && !n.unnamed && (
                       <button
                         type="button"
                         class="button secondary"
@@ -930,13 +944,34 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                         {editing === n.id ? words.doneShort : words.changeShort}
                       </button>
                     )}
-                    {canEdit && editing === n.id && <LazyPanel key={n.id} load={() => import("./WebNodePanel")} what="the name editor" props={{ node: n, act: actName, api, refId: ref }} />}
+                    {NOT_NAMED_LIVE && canEdit && api.changeName && n.unnamed && api.nameThem && (
+                      <button type="button" class="button secondary" aria-expanded={naming?.id === n.id} aria-label={words.changeFor(n.name)} onClick={() => setNaming(naming?.id === n.id ? null : n)}>
+                        {naming?.id === n.id ? words.doneShort : words.changeShort}
+                      </button>
+                    )}
+                    {canEdit && editing === n.id && !n.unnamed && <LazyPanel key={n.id} load={() => import("./WebNodePanel")} what="the name editor" props={{ node: n, act: actName, api, refId: ref }} />}
                   </div>
                 )}
               </li>
             );
           })}
         </ul>
+        {UNNAMED_MAP_LIVE && NOT_NAMED_LIVE && canEdit && naming && api.changeName && (
+          <LazyPanel
+            key={naming.id}
+            load={() => import("./WebUnnamed")}
+            what="the name editor"
+            props={{
+              node: naming,
+              api,
+              refId: ref,
+              act: (change: NameChange, ok: string) => actName(naming.id, change, ok),
+              reload: () => load(center, hops, true),
+              onSignedOut: () => setView("signed-out"),
+              onClose: () => setNaming(null),
+            }}
+          />
+        )}
         <h3 class="small">{words.linesHeading}</h3>
         <WebLines lines={own} onOpen={(a, b) => setLine({ a, b })} />
         {further.length > 0 && (
