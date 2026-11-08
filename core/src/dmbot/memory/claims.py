@@ -932,12 +932,17 @@ def which_choices(
     """The "Which one?" choices of a kept claim's row, from the campaign's live entries and other
     names (#3238): one `WhichOne` for each name in it that could mean two entries and has not been
     picked for. Pure, so the website reads the same choices from the facts a database door sends it
-    (#3463). A secret name is never used, even to tell two entries apart."""
+    (#3463). A secret name is never used, even to tell two entries apart. The entries come in a
+    fixed order (name, kind, id) and each note's other names sorted, whatever order the rows were
+    read in: the database gives none without ORDER BY, and the DM's list must not reorder itself
+    between two looks (#3776)."""
     by_id = {str(e["id"]): e for e in entities}
     others: dict[str, list[str]] = {}
     for a in aliases:
         if not a.get("secret"):  # never a secret name, even to tell two entries apart
             others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    for texts in others.values():
+        texts.sort(key=lambda t: (t.casefold(), t))
     names = names_of(entities, aliases)
     out: list[WhichOne] = []
     for side in ("subject", "object"):
@@ -956,6 +961,7 @@ def which_choices(
                 )[:80]
             )
             options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
+        options.sort(key=lambda o: (o.name.casefold(), o.kind, o.id))
         out.append(WhichOne(str(row[side]), side, tuple(options)))
     return out
 
