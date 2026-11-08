@@ -721,6 +721,7 @@ class TheFollowUp(WithImports):
         def no_dm(b: Any, c: Any) -> None:
             c.owner_user_id = 0
             c.dm_user_ids = frozenset()
+            c.dm_accounts = frozenset()
 
         cases: dict[str, Callable[[Any, Any], None]] = {
             "recaps off": recaps_off,
