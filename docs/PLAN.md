@@ -6027,6 +6027,11 @@ dozen screens, and gets the same list, words and context in both places.
   it off queues nothing and deletes any check not yet run and any report not yet posted. Fixes made in Discord count
   as well as the website's, and the clean-up page shows the DM a counts-only line ("DMbot will check your fixes in
   12 minutes").
+  **What a report may quote** (Supervisor, 2026-11-08, #3741, #3742): the session lines (from people recorded now)
+  and the DM's own lore and backstory uploads, which are the campaign's story and are what the switch shares.
+  Never a passage from material the DM shared under the Shared story switch, or from a rulebook or supplement: that
+  stays in the campaign (the IP rule), so the report names it by its kind and id only. Removals don't start a check,
+  since they add nothing the story could have shown. Every check's outcome is kept, so the page can say "missed 0".
 - **Every thing DMbot makes records the commit that made it** (owner, 2026-11-07, #3739): entries, connections,
   claims, recaps, music, voiceovers, map coordinates, pictures, transcript cleaning and anything else generated, so a
   fault is pinned to a version, and an old row from a version that's already fixed isn't taken for a new bug.
