@@ -207,11 +207,11 @@ describe("the recheck after a waiting answer (#3322)", () => {
     vi.useFakeTimers();
     fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
     await passTime(0);
-    expect(within(tileFor("A map of the Brass Ford")).getByText(w.working)).toBeTruthy();
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
     expect(api.pictures).toHaveBeenCalledTimes(2);
     await passTime(WAITING_RECHECK_MS);
     expect(api.pictures).toHaveBeenCalledTimes(3);
-    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.working)).toBeNull();
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.waitingStage)).toBeNull();
     expect(within(tileFor("A map of the Brass Ford")).getByText(w.privateTag)).toBeTruthy();
   });
 
@@ -242,6 +242,55 @@ describe("the recheck after a waiting answer (#3322)", () => {
     const atLeaving = api.pictures.mock.calls.length;
     await passTime(WAITING_RECHECK_MS);
     expect(api.pictures.mock.calls.length).toBe(atLeaving);
+  });
+
+  it("shows how long a picture action has waited, under the stage", async () => {
+    const api = waitingApi(2);
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
+    await passTime(5_000);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(/Running for/)).toBeTruthy();
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.stuck)).toBeNull();
+  });
+
+  it("says it is stuck after two minutes, with what to do", async () => {
+    const api = waitingApi(1000); // the tile never changes, so the action keeps waiting
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    await passTime(121_000);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.stuck)).toBeTruthy();
+  });
+
+  it("reads the list on one rhythm while a tile waits, and stops when none does", async () => {
+    let shown = false; // the change arrives only when the test says so
+    const api = waitingApi(1000);
+    const base = api.pictures.getMockImplementation() as unknown as () => Promise<{ pictures: PictureItem[] }>;
+    api.pictures.mockImplementation(async () => {
+      const got = await base();
+      if (shown) got.pictures = got.pictures.map((t) => ({ ...t, isPublic: false }));
+      return got;
+    });
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+    const atAction = api.pictures.mock.calls.length;
+    await passTime(3 * WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atAction + 3);
+    shown = true;
+    await passTime(WAITING_RECHECK_MS);
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.waitingStage)).toBeNull();
+    const atStop = api.pictures.mock.calls.length;
+    await passTime(3 * WAITING_RECHECK_MS);
+    expect(api.pictures.mock.calls.length).toBe(atStop);
   });
 
   it("no extra read is made while the tab is hidden", async () => {
