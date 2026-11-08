@@ -1007,6 +1007,8 @@ export interface NameCheck {
   morePlaces?: number;
   /** DMbot's short summary of the scene this name came up in (#3644). Missing when there is none, and from an older API. */
   scene?: string | null;
+  /** The line the players are told about it, when a shared lore upload filled one (#3833). Missing when there is none, and from an older API. */
+  playersText?: string | null;
   /** This waiting name is a list of names, so "These are separate names" applies (#3406). Missing from an API older than that. */
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
