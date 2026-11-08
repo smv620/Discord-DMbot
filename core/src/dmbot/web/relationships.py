@@ -117,7 +117,7 @@ def edges_from(
         # the DM's own word for the pair wins over the reader's on a `knows` line (#3642; the same
         # function as the Discord card), and only the words change: the stored detail stays
         dm_word = (
-            dm_line_word(standing, str(row["a"]), str(row["b"]))
+            dm_line_word(standing, str(row["a"]), str(row["b"]), str(row.get("detail") or ""))
             if is_dm and standing and row["predicate"] == "knows"
             else None
         )
