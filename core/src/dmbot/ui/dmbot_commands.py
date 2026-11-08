@@ -722,6 +722,7 @@ class BackupPicker(_Menu):
 
 class RestoreChoice(_Menu):
     _landed: str | None = None  # the result, once the copy is in, for a cancel to still tell
+    _landed_campaign: str | None = None  # the restored campaign's id, for its page (#3663)
 
     def __init__(
         self,
@@ -801,6 +802,7 @@ class RestoreChoice(_Menu):
         # and a stall line (a hung restore holds the server's session lock). Its result is written
         # after the wait ends, so nothing overwrites the last word.
         self._landed = None
+        self._landed_campaign = None
         done = RESTORE_FAILED
         try:
             async with WaitingMessage(
@@ -818,13 +820,18 @@ class RestoreChoice(_Menu):
         except asyncio.CancelledError:
             if self._landed is not None:  # the copy is in: the person is told, whatever stopped us
                 await asyncio.shield(
-                    self._deliver(interaction, self._landed + RESTORED_TIDY_FAILED)
+                    self._deliver(
+                        interaction, self._landed + RESTORED_TIDY_FAILED, self._landed_campaign
+                    )
                 )
             raise
-        await self._deliver(interaction, done)
+        # (the id is set only when the copy landed; a failure points at the Load a backup page)
+        await self._deliver(interaction, done, self._landed_campaign)
 
     @staticmethod
-    async def _deliver(interaction: discord.Interaction, done: str) -> None:
+    async def _deliver(
+        interaction: discord.Interaction, done: str, campaign_id: str | None = None
+    ) -> None:
         """The result, in the message; if that fails, once more; if that fails (the message ran
         out, was dismissed, or Discord is struggling), privately. A restore that landed is never
         left unknown (#2564). Never raises."""
@@ -839,9 +846,17 @@ class RestoreChoice(_Menu):
                 await asyncio.sleep(1.0)
         log.info("Telling the person the restore result privately")
         with contextlib.suppress(discord.HTTPException):
-            # The Load a backup page for the person who restored (#3663): where they can see the
-            # same result and try again. A restored campaign's own page is not known here.
-            view = dm_links.view_with_site(None, dm_links.restore_link(dm_links.configured_site()))
+            # The restored campaign's page for the person who restored (#3663), or the Load a
+            # backup page when nothing landed.
+            guild = interaction.guild
+            if campaign_id is not None and guild is not None:
+                view = dm_links.view_for(
+                    None, guild.id, campaign_id, dm_links.DMLinks(page="campaigns")
+                )
+            else:
+                view = dm_links.add_links(
+                    None, site_url=dm_links.restore_link(dm_links.configured_site())
+                )
             await interaction.user.send(
                 done,
                 view=view if view is not None else discord.utils.MISSING,
@@ -921,6 +936,7 @@ class RestoreChoice(_Menu):
         )
         result = f"{done}{erased} Use `/dmbot start` to play it.{left_out}"
         self._landed = result  # from here the person is always told it landed, even on a cancel
+        self._landed_campaign = campaign.id
         waiting.step("Step 3 of 3: tidying up")
         # The restore has landed; from here a problem must never be told as "nothing was
         # restored" (running `/dmbot restore` again would make a second copy).

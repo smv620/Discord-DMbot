@@ -215,13 +215,6 @@ class ThePieceFourAddresses(unittest.TestCase):
         self.assertEqual(dl.restore_link(self.SITE), "https://getdmbot.com/account/restore")
         self.assertEqual(dl.restore_link(""), "")
 
-    def test_the_handover_and_account_pages_hold_no_ids(self) -> None:
-        self.assertEqual(dl.handover_link(self.SITE), "https://getdmbot.com/handover")
-        self.assertEqual(dl.account_link(self.SITE), "https://getdmbot.com/account")
-        for site in ("", "http://getdmbot.com", "https://u:p@getdmbot.com", "not a url"):
-            self.assertEqual(dl.handover_link(site), "", site)
-            self.assertEqual(dl.account_link(site), "", site)
-
     def test_the_configured_site_gives_the_button_and_unset_gives_none(self) -> None:
         self.addCleanup(dl.configure_site, "")
         dl.configure_site("")

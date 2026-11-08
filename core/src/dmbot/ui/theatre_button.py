@@ -257,10 +257,16 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
         await edit(outcome.text)  # a second card for a run already going: say so, never hang
     elif outcome.started and not outcome.taken_over and edit_failed:
         # The last word still reaches the DM, with the script's page on the website (#3663).
-        page = script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number)
+        site = bot.settings.site_url
+        # (the address is built here, but only for a site Discord would take: an https one)
+        page = (
+            script_link(site, guild_id, session.campaign_id, session.number)
+            if dm_links.site_link(site, "transcripts", guild_id, session.campaign_id)
+            else ""
+        )
         view = dm_links.for_campaign(
             None,
-            bot.settings.site_url,
+            site,
             guild_id,
             session.campaign_id,
             dm_links.DMLinks(page="transcripts", site_url_override=page),

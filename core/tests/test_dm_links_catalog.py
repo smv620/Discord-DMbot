@@ -20,13 +20,15 @@ THROUGH_THE_HELPER = {
     "questions/discord.py",
     # (piece 4: the campaign's home, the hand-over page, Load a backup and the script's page)
     "dm_screen/game_masters.py",
-    "dm_screen/handover.py",
     "dm_screen/site_offers.py",
     "ui/dmbot_commands.py",
     "ui/theatre_button.py",
 }
 # Not a message about a question to answer, so no links (each with its reason).
 OUT_OF_SCOPE = {
+    "dm_screen/handover.py": "the offer goes to the person offered, whose page needs the private "
+    "link in their email (the token is not in an address a message can carry); the answer is the "
+    "Accept and No thanks buttons in the message itself",
     "fightbot.py": "a player's own combat reminder, to a player about their own sheet",
     "sheet_reread.py": "a player's own sheet questions, to a player",
     "consent_dm.py": "messages to players (consent), not to the DM (#3663 out of scope)",

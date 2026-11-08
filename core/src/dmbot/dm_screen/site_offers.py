@@ -240,7 +240,6 @@ class SiteOffers:
                             server=md(new.name),
                             name=md(offer.to_name or "The new owner"),
                         ),
-                        view=_home(new.id, offer.campaign_id),
                         allowed_mentions=NO_PINGS,
                     )
             if new is not None:
@@ -540,7 +539,10 @@ async def _tell_decision(
             member = await _member(guild, offer.from_user_id)
             await member.send(
                 to_owner,
-                view=_home(offer.guild_id, offer.campaign_id),
+                # (an accepted hand-over leaves them without the campaign: nothing to open)
+                view=discord.utils.MISSING
+                if offer.status == "accepted"
+                else _home(offer.guild_id, offer.campaign_id),
                 allowed_mentions=NO_PINGS,
             )
     if offer.via_email or offer.delivered_at is None:
@@ -558,14 +560,10 @@ async def _tell_decision(
                 if offer.status != "withdrawn":
                     return  # they chose it themselves; the site told them
         if offer.status == "withdrawn":  # no message to change: tell them anyway
-            await member.send(
-                to_person,
-                view=_home(offer.guild_id, offer.campaign_id),
-                allowed_mentions=NO_PINGS,
-            )
+            await member.send(to_person, allowed_mentions=NO_PINGS)  # (a withdrawn offer: no page)
 
 
-def _home(guild_id: int, campaign_id: str) -> Any:
+def _home(guild_id: int, campaign_id: str) -> discord.ui.View | Any:
     """The campaign's page on the website as a link button under a private note about its move
     or hand-over (#3663), or nothing when the site has no https address (`MISSING`)."""
     view = dm_links.view_for(None, guild_id, campaign_id, dm_links.DMLinks(page="campaigns"))

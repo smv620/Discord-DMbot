@@ -95,24 +95,9 @@ def site_link(
     return f"https://{host}/account/{page}/{ref}{query}"
 
 
-def handover_link(site_url: str) -> str:
-    """The hand-over page (#437): one page for a person offered a campaign, at `/handover`, outside
-    the account area. No ids: the offer's token is in the address's hash only when the person
-    follows an email. "" without an https site."""
-    host = _host(site_url)
-    return f"https://{host}/handover" if host else ""
-
-
 def restore_link(site_url: str) -> str:
     """The Load a backup page (one page for every campaign). "" without an https site."""
     return site_link(site_url, "restore", 0, "x")
-
-
-def account_link(site_url: str) -> str:
-    """The account page, where a campaign's page falls back to when it has no page of its own
-    (a page behind a switch that is off, a restored campaign whose id is not known yet)."""
-    host = _host(site_url)
-    return f"https://{host}/account" if host else ""
 
 
 # The website's address, set once at start (the bot's `settings.site_url`). Senders that are far
@@ -122,6 +107,7 @@ _site = ""
 
 
 def configure_site(site_url: str) -> None:
+    """Set the website's address once, at start (`bot.run`); read-only afterwards."""
     global _site
     _site = site_url
 
@@ -133,13 +119,8 @@ def view_for(
     return for_campaign(view, _site, guild_id, campaign_id, links)
 
 
-def view_with_site(view: discord.ui.View | None, site_url_for_page: str) -> discord.ui.View | None:
-    """`view` with one "Open on the website" button for an address built by `handover_link` or
-    `account_link` with the configured site, or the view unchanged when it is empty."""
-    return add_links(view, site_url=site_url_for_page)
-
-
 def configured_site() -> str:
+    """The website's address set at start, "" before that (then no website button is added)."""
     return _site
 
 

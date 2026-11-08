@@ -42,7 +42,6 @@ from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
 from dmbot.dm_screen.messages import DM_CAMPAIGN_GONE, LOAD_FAILED
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import dm_links
 
 log = logging.getLogger(__name__)
 
@@ -614,10 +613,6 @@ async def deliver_offer(
     try again later instead (offers made on the website, #690)."""
     try:
         member = guild.get_member(offer.to_user_id) or await guild.fetch_member(offer.to_user_id)
-        buttons = offer_view(guild.id, offer.id)
-        # The hand-over page, for the person offered (#3663). The Accept / No thanks buttons stay
-        # in the message; the address holds no id.
-        site = dm_links.handover_link(dm_links.configured_site())
         return await member.send(
             OFFER_TEXT.format(
                 owner=md(offer.from_name),
@@ -625,7 +620,7 @@ async def deliver_offer(
                 server=md(guild.name),
                 deadline=discord.utils.format_dt(_at(offer.expires_at), "f"),
             ),
-            view=dm_links.add_links(buttons, site_url=site) or buttons,
+            view=offer_view(guild.id, offer.id),
             allowed_mentions=NO_PINGS,
         )
     except discord.HTTPException as exc:  # not a member (404), messages closed (403)…
@@ -641,12 +636,7 @@ async def _tell_person(guild: discord.Guild, user_id: int, text: str) -> None:
     their messages, and the answer stands either way)."""
     with contextlib.suppress(discord.HTTPException):
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
-        view = dm_links.view_with_site(None, dm_links.handover_link(dm_links.configured_site()))
-        await member.send(
-            text,
-            view=view if view is not None else discord.utils.MISSING,
-            allowed_mentions=NO_PINGS,
-        )
+        await member.send(text, allowed_mentions=NO_PINGS)
 
 
 async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, text: str) -> None:
