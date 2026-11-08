@@ -28,8 +28,8 @@ export { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS };
 
 type Phase =
   | { kind: "idle" }
-  | { kind: "saving"; seen: "waiting" | "working"; progress?: JobProgress | null | undefined }
-  | { kind: "offline" }
+  // `late`: past OFFLINE_AFTER_MS, so the page says DMbot is not answering, but keeps any progress the bot still reports.
+  | { kind: "saving"; seen: "waiting" | "working"; progress?: JobProgress | null | undefined; late?: boolean }
   | { kind: "saved"; note: string }
   | { kind: "error"; message: string }
   | { kind: "confirm"; value: string };
@@ -91,7 +91,7 @@ function Control({
   onConfirm: (v: string) => void;
   onKeep: () => void;
 }) {
-  const busy = phase.kind === "saving" || phase.kind === "offline"; // offline: a second tap would queue a second change
+  const busy = phase.kind === "saving"; // (also while the bot is not answering: a second tap would queue a second change)
   const options = words.options[setting] ?? [];
   // The wait shows the shared panel (#3347); only a finished or refused change is said in words.
   const seen = useObservedWait(phase.kind === "saving", phase.kind === "saving" ? phase.seen : "");
@@ -137,14 +137,15 @@ function Control({
       )}
       {phase.kind === "saving" && seen.startedAt !== null && (
         <WorkProgress
-          stage={stageWords(words.stage, phase.seen)}
+          stage={stageWords(words.stage, phase.seen === "working" ? "saving" : "waiting")}
           startedAt={phase.progress?.startedAt ?? seen.startedAt}
           updatedAt={phase.progress?.updatedAt ?? seen.movedAt}
-          serverNow={phase.progress?.serverNow}
-          state={phase.progress?.state ?? (seen.quiet ? "stalled" : "running")}
+          // With no progress from the bot, the page's own clock is used: no skew correction for it.
+          serverNow={phase.progress?.serverNow ?? Math.floor(Date.now() / 1000)}
+          state={phase.progress?.state ?? (phase.late || seen.quiet ? "stalled" : "running")}
         />
       )}
-      {phase.kind === "offline" && <WorkProgress stage={stageWords(words.stage, "waiting")} state="stalled" whatToDo={words.offline} />}
+      {phase.kind === "saving" && phase.late && <p class="small">{words.offline}</p>}
       {/* Two steady live regions: a region whose role changes after it appears is often not read out. */}
       <p class="small muted" role="status">
         {phase.kind === "error" ? "" : line}
@@ -202,10 +203,16 @@ export default function CampaignSettings({
       const waited = Date.now() - started;
       // What the page says while it waits, whether the look worked or not: a site that cannot be
       // reached must not leave "Saving…" showing for an hour.
-      // While the bot has not answered, the wait shows its stage and progress; past the offline time it says so.
+      // While the bot has not answered, the wait shows its stage and progress; past the offline time it also says so,
+      // and keeps showing whatever progress the bot still reports.
       const say = (state?: "waiting" | "working", progress?: JobProgress | null) => {
-        if (waited > OFFLINE_AFTER_MS) set(setting, { kind: "offline" });
-        else if (state !== undefined) set(setting, { kind: "saving", seen: state === "working" ? "working" : "waiting", progress });
+        const late = waited > OFFLINE_AFTER_MS;
+        if (state !== undefined) return set(setting, { kind: "saving", seen: state === "working" ? "working" : "waiting", progress, late });
+        if (late && live.current)
+          setPhases((before) => {
+            const cur = before[setting];
+            return cur.kind === "saving" ? { ...before, [setting]: { ...cur, late: true } } : before;
+          });
       };
       // The queue forgets a choice after an hour. Look once more before giving up, in case the
       // answer came just now.

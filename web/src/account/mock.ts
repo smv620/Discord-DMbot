@@ -1417,6 +1417,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!asked || asked.ref !== ref) throw new ApiError("not-found");
       const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
       if (/\.cs-(offline|stalled)$/.test(ref)) return { ...base, state: "waiting" };
+      // `.cs-working`: the bot has taken the choice and is saving it (the stage the bot reports, #3347).
+      if (/\.cs-working$/.test(ref)) return { ...base, state: "working" };
       // `.cs-late`: the bot answers on the 40th look, long after the page gave up waiting live.
       if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
         return { ...base, state: "waiting" };

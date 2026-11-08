@@ -57,6 +57,7 @@ describe("changing a choice", () => {
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
     expect(await within(section).findByText(w.stage.waiting as string)).toBeTruthy();
     expect(within(section).getByText(/Running for/)).toBeTruthy();
+    expect(within(section).getByText(/Hasn't moved forward yet|Last progress/)).toBeTruthy();
     expect(within(section).queryByText(w.saving)).toBeNull();
   });
 
@@ -64,9 +65,24 @@ describe("changing a choice", () => {
     const { section } = await open("100.cmp1.cs-offline");
     vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
-    await vi.advanceTimersByTimeAsync(OFFLINE_AFTER_MS - 5_000);
+    await vi.advanceTimersByTimeAsync(OFFLINE_AFTER_MS - 1_000);
     expect(within(section).getByText(w.stage.waiting as string)).toBeTruthy();
     expect(within(section).queryByText(w.offline)).toBeNull();
+  });
+
+  it("keeps DMbot's stage while the bot still reports progress after 30 seconds, and says it is not answering", async () => {
+    const { section } = await open("100.cmp1.cs-late");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await vi.advanceTimersByTimeAsync(OFFLINE_AFTER_MS + 5_000);
+    expect(within(section).getByText(w.stage.waiting as string)).toBeTruthy();
+    expect(within(section).getByText(w.offline)).toBeTruthy();
+  });
+
+  it("shows DMbot's working stage when the bot says it is saving the choice", async () => {
+    const { section } = await open("100.cmp1.cs-working");
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    expect(await within(section).findByText(w.stage.saving as string)).toBeTruthy();
   });
 
   it("after 30 seconds without an answer the stalled panel shows with the offline words", async () => {
