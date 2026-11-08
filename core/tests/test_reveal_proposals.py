@@ -164,6 +164,17 @@ class WhatCanBeLearned(Base):
         got = await self.put((check(), (DM_ID,)))
         self.assertEqual((got.stored, got.counts["reveal_known"]), (0, 1))
 
+    async def test_a_guess_can_still_be_confirmed(self) -> None:
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, self.rel, {self.tran: 0.3}, source="dm"
+        )
+        self.assertEqual((await self.put((check(), (DM_ID,)))).stored, 1)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, self.rel, {self.clyde: 1.0}, source="dm"
+        )
+        got = await self.put((check(who="Clyde"), (DM_ID,)))
+        self.assertEqual((got.stored, got.counts["reveal_known"]), (0, 1))
+
     async def test_a_teller_who_does_not_know_it_tells_nothing(self) -> None:
         got = await self.put((tell(), (DM_ID,)))
         self.assertEqual((got.stored, got.counts["reveal_teller_ignorant"]), (0, 1))

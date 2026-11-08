@@ -12,8 +12,9 @@ Rules held here, not trusted (the parser, `reveal_reading`, held the ones that n
   words): an entry alone, or a confirmed connection between the two named ends. Not found, or more
   than one fits: dropped and counted (`unplaced`), never made: a new fact is the claims' job.
 - **The one who learned it is one character**, and so is a teller (never a group or the party).
-- **Something to learn.** A statement the character can already see (the gate, `gate.visible`) is
-  dropped (`known`): there is nothing to reveal.
+- **Something to learn.** A statement the character already holds as sure (the gate,
+  `gate.visible`) is dropped (`known`): there is nothing to reveal. One they hold only as a guess
+  (below 1.0) can still be proposed: keeping it makes it sure (Supervisor's ruling on #2996).
 - **A teller tells only what they know.** A tell is kept only when the gate shows the teller the
   statement (`teller_ignorant` otherwise). Nothing spreads past the listener.
 - **One proposal for a (character, statement) in a session**, whatever the row's status, across
@@ -34,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from dmbot.db import Conn
 from dmbot.memory import gate
 from dmbot.memory.link_words import reads_both_ways
-from dmbot.memory.models import CONFIRMED, name_key, new_id
+from dmbot.memory.models import CONFIRMED, KNOWN, name_key, new_id
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.reveal_reading import TELL, RevealProposal
 
@@ -209,7 +210,12 @@ class RevealProposals:
                     counts["reveal_repeated"] += 1
                     continue
                 learner = gate.visible(gate.Viewer.character(placed.character_id), data)
-                if learner.knows(placed.kind, placed.statement_id):
+                sure = learner.how_sure(placed.kind, placed.statement_id)
+                # (a guess below sure can still be confirmed: the DM's Keep makes it sure,
+                # Supervisor's ruling on #2996; known without a certainty is known outright)
+                if learner.knows(placed.kind, placed.statement_id) and (
+                    sure is None or sure >= KNOWN
+                ):
                     counts["reveal_known"] += 1  # (nothing to learn)
                     continue
                 if placed.teller_id is not None and not gate.visible(
