@@ -1397,6 +1397,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # Which disagreeing house rule wins, as the DM decided; set where the database is known.
         self.house_wins: WinsStore | None = None
+        self.said_as_ai = (  # how to say a name, suggested on the name card (#2316)
+            self.ai_client.tier(FEATURE_TIERS[Feature.SAID_AS], Feature.SAID_AS)
+            if self.ai_client
+            else None
+        )
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
