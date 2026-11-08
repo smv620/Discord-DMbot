@@ -470,6 +470,46 @@ class NameCards(NamesTest):
             await self.memory.said_as(GUILD, self.campaign.id, self.bell.id), "Bell-air-os"
         )
 
+    async def test_every_button_on_a_full_card_still_builds(self) -> None:
+        from dmbot.ui import name_card
+
+        card = name_card.NameCard(
+            self.campaign.id,
+            self.bell.id,
+            say=True,
+            suggest=True,
+            led=True,
+            book=True,
+            sheet=True,
+            players_line=True,
+            others=True,
+            hide=False,
+        )
+        self.assertIn(name_card.SUGGEST_BUTTON, [getattr(c, "label", "") for c in card.children])
+
+    async def test_a_hung_ai_ends_with_the_failure_words(self) -> None:
+        import asyncio
+
+        from dmbot.ui import name_card
+
+        class Hung:
+            async def complete(self, *_: Any, **__: Any) -> Any:
+                await asyncio.sleep(60)
+
+        with patch.object(name_card, "SUGGEST_WAIT_S", 0.05):
+            it = await self.press_suggest(Hung())
+        self.assertEqual(it.response.sent[0][0], name_card.SUGGEST_FAILED)
+
+    async def test_a_stale_offer_after_the_plan_lapsed_saves_nothing(self) -> None:
+        from dmbot.ui import name_card
+
+        offer = name_card.SuggestOffer(self.campaign.id, self.bell.id, "Bell-air-os")
+        it = self.it()
+        with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
+            await offer._use(it)
+        self.assertIn("Spoken recaps aren't on", it.response.sent[0][0])
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, self.bell.id))
+
     async def test_no_thanks_leaves_it_and_a_non_dm_is_refused(self) -> None:
         from dmbot.ui import name_card
 

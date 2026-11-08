@@ -932,8 +932,6 @@ class NameCard(_Menu):
         self.add_item(_Button(self._connect, label="🧭 Connect to…", style=grey, row=2))
         if say:  # how the recap narrator says this name (#2171), the same as the website's field
             self.add_item(_Button(self._say, label=SAY_BUTTON, style=grey, row=2))
-            if suggest:
-                self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=2))
         if led:  # the DM's word that this led to a thread or an event (#1679)
             self.add_item(_Button(self._led_to, label=LED_TO_BUTTON, style=grey, row=2))
         if book:  # the DM's word that this is an entry in their adventure (#1715)
@@ -986,6 +984,11 @@ class NameCard(_Menu):
             # thread's five buttons, made the card fail to build (#2339: "item would not fit at
             # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
+        if suggest:  # on the first row with room, as the players' line is: row 2 can be full
+            for row in (2, 3, 1):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=row))
+                    break
         if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
             try:  # placed wherever there is room; a card that is full simply goes without it
                 self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
@@ -1296,9 +1299,14 @@ class NameCard(_Menu):
             await _tell(interaction, SAY_NOT_ON)
             return
         entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        if entity is None:
+            await _tell(interaction, GONE)
+            return
         try:
-            spelling = await said_as_suggest.suggest(ai, name, entity.type if entity else "")
-        except said_as_suggest.SuggestFailed:
+            # (A spoken-recaps plan always includes a working one, so no separate AI-plan check.)
+            async with asyncio.timeout(SUGGEST_WAIT_S):
+                spelling = await said_as_suggest.suggest(ai, name, entity.type)
+        except (said_as_suggest.SuggestFailed, TimeoutError):
             await _tell(interaction, SUGGEST_FAILED)
             return
         if not spelling:
@@ -1579,7 +1587,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
-SUGGEST_BUTTON = "💡 Suggest"  # DMbot offers a spelling for the DM to take or not (#2316)
+SUGGEST_BUTTON = "💡 Suggest saying"  # DMbot offers a spelling for the DM to take or not (#2316)
 PLAYERS_LINE_BUTTON = "💬 Line for the players"  # the players' line for an entry (#2967)
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
 
@@ -1635,8 +1643,12 @@ class PlayersLineForm(discord.ui.Modal, title="Line for the players"):
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
 
-SUGGEST_NONE = "DMbot has no suggestion for that name. You can type how to say it instead."
-SUGGEST_FAILED = "Something went wrong on DMbot's side. Try again in a minute, or type it."
+SUGGEST_WAIT_S = 30  # a hung AI call ends with the failure words, not an endless "thinking"
+SUGGEST_NONE = "No suggestion for this name. Press 🔊 How to say it to type your own."
+SUGGEST_FAILED = (
+    "Couldn't get a suggestion. Try 💡 again in a minute, or press 🔊 How to say it to type "
+    "your own."
+)
 
 
 class SuggestOffer(_Menu):
@@ -1649,7 +1661,7 @@ class SuggestOffer(_Menu):
         self.entity_id = entity_id
         self.spelling = spelling
         self.add_item(_Button(self._use, label="✅ Use this", style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._no, label="No thanks", style=discord.ButtonStyle.secondary))
+        self.add_item(_Button(self._no, label="Skip", style=discord.ButtonStyle.secondary))
 
     async def _no(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -1682,7 +1694,7 @@ class SuggestOffer(_Menu):
             campaign.id,
             self.entity_id,
             replace=True,
-            note=f"🔊 The narrator will say it as **{_md(self.spelling)}**.",
+            note=f"🔊 Saved. The narrator will say it like **{_md(self.spelling)}**.",
         )
 
 
