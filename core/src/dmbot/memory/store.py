@@ -1785,23 +1785,29 @@ class MemoryStore:
         0379 grouped look-alikes by a SQL key that keeps accents and doubled spaces apart). The
         oldest keeps its name. One change, so one Undo. Returns how many were (or, with
         `dry_run`, would be) given a new name; ids and counts only."""
-        async with self._read(guild_id, campaign_id) as scope:
-            live = await scope.select(
+        # (read and written in one change, under the campaign's lock, so a row rejected or renamed
+        # meanwhile is never overwritten; the source is DMbot's own bookkeeping, not a DM
+        # decision, and the DM can still undo it)
+        async with self._write(guild_id, campaign_id, "extractor") as w:
+            live = await w.select(
                 ENTITIES,
                 " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY created_at, id",
             )
-        seen: set[str] = set()
-        later: list[dict[str, Any]] = []
-        for r in live:
-            key = name_key(str(r["name"]))
-            (later.append(r) if key in seen else seen.add(key))
-        if dry_run or not later:
-            return len(later)
-        async with self._write(guild_id, campaign_id, "extractor") as w:
-            anchors = {
+            seen: set[str] = set()
+            later: list[dict[str, Any]] = []
+            for r in live:
+                key = name_key(str(r["name"]))
+                if key in seen:
+                    later.append(r)
+                else:
+                    seen.add(key)
+            if dry_run or not later:
+                return len(later)
+            anchors = {  # (live anchors only: a label leaves a gone anchor out, as it is shown)
                 str(a["id"]): str(a["name"])
                 for a in await w.select(
-                    ENTITIES, " AND id = ANY(%s)",
+                    ENTITIES, " AND id = ANY(%s) AND merged_into IS NULL"
+                    " AND status IN ('proposed', 'confirmed')",
                     [sorted({str(r["unnamed_anchor"]) for r in later if r["unnamed_anchor"]})],
                 )
             }  # fmt: skip
@@ -6370,10 +6376,12 @@ async def _unique_labels(
 ) -> dict[str, dict[str, Any]]:
     """New stored names for people the story never named whose label is changing (#3743): each
     `(row, its anchor's name after the change)` gets `name` and `unnamed_what` unique among the
-    campaign's live unnamed names, as a person is when made (`_add_unnamed_in`). An old "(first
-    seen …)" is dropped first and given again only when still needed, and each new name is taken
-    before the next is chosen, so two people relabelled in one change never share a name. In the
-    caller's write, under the campaign's lock."""
+    campaign's live unnamed names, as a person is when made (`_add_unnamed_in`). A row keeps its
+    own words, an earlier "(first seen …)" included, whenever they are free, so a name never
+    churns and its tag keeps the session's date it was given; only when they are taken does it get
+    the next thing that tells it apart. A rejected or merged row takes no name from anyone: it
+    keeps its plain copy. Each new name is taken before the next is chosen, so two people
+    relabelled in one change never share one. In the caller's write, under the campaign's lock."""
     if not items:
         return {}
     moving = {str(r["id"]) for r, _ in items}
@@ -6383,10 +6391,15 @@ async def _unique_labels(
     for r, anchor_name in sorted(
         items, key=lambda item: (int(item[0]["created_at"]), item[0]["id"])
     ):
-        word = unnamed_mod.unique_what(
-            unnamed_mod.without_tag(str(r["unnamed_what"] or "")), anchor_name, taken,
-            int(r["created_at"]),
-        )  # fmt: skip
+        own = str(r["unnamed_what"] or "")
+        if r["status"] not in (PROPOSED, CONFIRMED):
+            out[str(r["id"])] = {"name": unnamed_mod.stored(own, anchor_name), "unnamed_what": own}
+            continue
+        word = own
+        if name_key(unnamed_mod.stored(word, anchor_name)) in taken:
+            word = unnamed_mod.unique_what(
+                unnamed_mod.without_tag(own), anchor_name, taken, int(r["created_at"])
+            )
         name = unnamed_mod.stored(word, anchor_name)
         taken.add(name_key(name))
         out[str(r["id"])] = {"name": name, "unnamed_what": word}
@@ -6398,13 +6411,13 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
     were merged into (#2790), in the same change: lists that show the stored name stay right, and
     one Undo takes it back. (The label shown is always built from the parts; this is the copy.)
     Kept unique in the campaign (#3743): a renamed anchor can make two people read the same."""
-    labels = await _unique_labels(w, [(r, anchor_name) for r in rows if r["unnamed"]])
+    by_id = {str(r["id"]): r for r in rows if r["unnamed"]}
+    labels = await _unique_labels(w, [(r, anchor_name) for r in by_id.values()])
     changed = {
         i: new
         for i, new in labels.items()
-        if any(str(r["id"]) == i and (r["name"], r["unnamed_what"]) != (new["name"],
-               new["unnamed_what"]) for r in rows)
-    }  # fmt: skip
+        if (by_id[i]["name"], by_id[i]["unnamed_what"]) != (new["name"], new["unnamed_what"])
+    }
     if changed:
         await w.update_rows(ENTITIES, changed)
 
