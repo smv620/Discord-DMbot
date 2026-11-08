@@ -63,6 +63,7 @@ import type {
   Waiting,
   MyNpcNote,
   NpcPage,
+  RuleDecision,
   RuleSharing,
   RuleSharingAnswer,
   RuleSharingChoice,
@@ -1141,6 +1142,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const deletedLines = new Set<string>();
   // The pretend rule sharing's memory, per campaign ref (#2783).
 const sharingState = new Map<string, RuleSharing>();
+// The pretend decided pairs of house rules (#3697) by campaign: rule 2 wins over rule 1, and a followed set's rule 1 over own rule 2.
+const ruleDecisionState = new Map<string, RuleDecision[]>();
+function ruleDecisionsOf(ref: string): RuleDecision[] {
+  const found = ruleDecisionState.get(ref) ?? (/\.rd-none$/.test(ref) ? [] : [
+    { a: { set: "", number: 1 }, b: { set: "", number: 2 }, winner: "b" as const, decidedAt: 1_800_000_000 },
+    { a: { set: "", number: 2 }, b: { set: "Red Table", number: 1 }, winner: "b" as const, decidedAt: 1_800_100_000 },
+  ]);
+  ruleDecisionState.set(ref, found);
+  return found;
+}
 const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
 let sharingCount = 0;
 const SHARING_HERE = [
@@ -1182,6 +1193,17 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
   } else if (choice.action === "unfollow") {
     now.following = [];
     note = "Stopped following.";
+  } else if (choice.action === "decide_clash" || choice.action === "clear_clash") {
+    const [x, y] = choice.arg.split(":").map(Number) as [number, number];
+    const kept = ruleDecisionsOf(ref).filter((d) => !(d.a.set === "" && d.b.set === "" && ((d.a.number === x && d.b.number === y) || (d.a.number === y && d.b.number === x))));
+    if (choice.action === "decide_clash") {
+      const [lo, hi] = x < y ? [x, y] : [y, x];
+      kept.push({ a: { set: "", number: lo }, b: { set: "", number: hi }, winner: x === lo ? "a" : "b", decidedAt: 1_800_200_000 });
+      note = `✅ Rule ${x} wins over rule ${y}.`;
+    } else {
+      note = "Done. If those two rules clash again, DMbot will ask which one wins.";
+    }
+    ruleDecisionState.set(ref, kept);
   }
   sharingState.set(ref, now);
   return note;
@@ -3217,6 +3239,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const id = String(++sharingCount).padStart(32, "0");
       sharingChoices.set(id, { ref, choice, looks: 0 });
       return id;
+    },
+    async ruleDecisions(ref): Promise<RuleDecision[]> {
+      calls.push(`ruleDecisions:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.rs-player$/.test(ref)) throw new ApiError("not-allowed");
+      return structuredClone(ruleDecisionsOf(ref));
     },
     async ruleSharingAnswer(ref, answer): Promise<RuleSharingAnswer> {
       calls.push(`ruleSharingAnswer:${ref}:${answer}`);
