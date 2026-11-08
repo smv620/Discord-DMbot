@@ -737,7 +737,11 @@ class TheDoor(Settings):
         }
         # (the Shared story switch, #2985, is checked below: its three choices would fill the
         # campaign's ten open places together with these nine)
-        self.assertEqual(campaign_settings.CHOICES, {**offered, "story_mode": STORY_MODES})
+        # (and "share to improve DMbot", on or off, #3741: the website's own switch)
+        self.assertEqual(
+            campaign_settings.CHOICES,
+            {**offered, "story_mode": STORY_MODES, "share_improve": ("on", "off")},
+        )
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             for setting, values in offered.items():

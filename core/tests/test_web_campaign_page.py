@@ -83,6 +83,7 @@ class TheCampaignPage(Base):
                 "mainRules",
                 "fallbackRules",
                 "gameMasters",
+                "shareImprove",
             },
         )
         self.assertEqual(got["settings"]["gameMasters"], 1)
@@ -110,7 +111,7 @@ class TheCampaignPage(Base):
             co["settings"],
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
              "storyMode": "guide", "dndbeyondInvite": "", "mainRules": "2024",
-             "fallbackRules": "2014", "gameMasters": 2},
+             "fallbackRules": "2014", "gameMasters": 2, "shareImprove": False},
         )  # fmt: skip
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
@@ -191,6 +192,7 @@ class TheCampaignRoute(Base):
                     "mainRules": "2024",
                     "fallbackRules": "2014",
                     "gameMasters": 1,
+                    "shareImprove": False,
                 },
             },
         )
