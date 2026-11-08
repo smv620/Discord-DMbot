@@ -37,7 +37,7 @@ from dmbot.transcript import importer
 Say = Callable[[str], None]
 Sleep = Callable[[float], Awaitable[None]]
 
-PAID_KINDS = ("paid", "grant")  # a plan, or free access (the owner's own accounts have it)
+PAID_KINDS = ("paid", "grant", "free")  # a plan, or free access (the owner's accounts and server)
 LORE_CHOICES = ("world", "spoilers", "smart")
 POLL_S = 5.0
 LORE_WAIT_S = 45 * 60
@@ -63,12 +63,16 @@ async def require_paid(
     dm: int,
     now: int,
     access_of: Callable[..., Awaitable[Any]] | None = None,
+    guild_id: int | None = None,
 ) -> None:
-    """The campaign's plan is its owner's, so the DM must have one. The tool never grants a plan."""
+    """The campaign's plan is its owner's, so the DM must have one. The tool never grants a plan.
+    A server on the free list (`DMBOT_FREE_GUILDS`, #3788) has free access whoever its DM is."""
     if access_of is None:
         from dmbot.entitlements import plan_and_access
 
-        access_of = plan_and_access
+        async def access_of(db: Database, dm: int, now: int) -> Any:
+            return await plan_and_access(db, dm, now, guild_id=guild_id)
+
     _plan, access = await access_of(db, dm, now)
     if access.kind not in PAID_KINDS:
         raise SampleError("the DM account has no paid plan or free access; nothing was changed")

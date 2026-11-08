@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from dmbot import imports_switch
 from dmbot.config import MODEL_NAME, ConfigError
-from dmbot.entitlements import parse_free_users
+from dmbot.entitlements import parse_free_guilds, parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
 from dmbot.transcription.config import OUTSIDE_ENGINES
 from dmbot.web.admin_hash import decode_hash
@@ -128,6 +128,7 @@ class WebSettings:
     session_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
+    free_guilds: frozenset[int] = field(default=frozenset(), repr=False)
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
@@ -374,6 +375,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         )
     try:
         free_users = parse_free_users(get("DMBOT_FREE_USERS"))
+        free_guilds = parse_free_guilds(get("DMBOT_FREE_GUILDS"))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
     enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
@@ -492,6 +494,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         port=port,
         session_days=session_days,
         free_users=free_users,
+        free_guilds=free_guilds,
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         stripe=stripe,

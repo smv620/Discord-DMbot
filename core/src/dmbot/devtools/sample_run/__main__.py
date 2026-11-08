@@ -146,6 +146,19 @@ async def run(
         raise SampleError("DATABASE_URL isn't set")
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise SampleError("ANTHROPIC_API_KEY isn't set")
+    # The free lists, as the running bot reads them (#771, #3788): the plan check below knows the
+    # owner's own accounts and test server only if they are configured in this process too.
+    from dmbot import entitlements
+
+    try:
+        entitlements.configure_free_users(
+            entitlements.parse_free_users(os.environ.get("DMBOT_FREE_USERS", ""))
+        )
+        entitlements.configure_free_guilds(
+            entitlements.parse_free_guilds(os.environ.get("DMBOT_FREE_GUILDS", ""))
+        )
+    except ValueError as exc:
+        raise SampleError(str(exc)) from exc
     folder = steps.keep_folder(args.backup_dir)
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
@@ -162,7 +175,7 @@ async def run(
         today = dt.date.today().isoformat()
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
-        await steps.require_paid(db, dm, now)
+        await steps.require_paid(db, dm, now, guild_id=gid)
         found = await steps.check_existing(db, campaigns, gid, dm)
         ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
