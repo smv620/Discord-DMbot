@@ -18,6 +18,14 @@ in the quote changes nothing:
 - **The kind the quote names.** The catch-all with words that read "a serves b" ("bodyguard for",
   "works for", "employed by", "hired by") is `serves`; `leads` for "the owner and proprietor of The
   Blue Clam" is `owns` (when no word for leading is there).
+- **Carrying is not owning** (#3619). An `owns` whose quote has a carry word ("He carries a unique
+  wolf figurine") and no word of belonging (his, her, their, belongs, bought, owns, a possessive
+  such as "Fizzlebomb's") is `carries`, who has the item with them now. With any belonging word
+  it stays `owns`: "his wolf figurine, which he carries" says both, and the reader writes both
+  lines itself when the text says both. The check leans to `owns` on purpose: any "'s" counts
+  ("Aurora's Wind", "he's carrying"), and it can't tell whose thing a possessive names ("his
+  master's tome" stays as the AI read it). A `carries` whose ends can't carry (a group, a pet) is
+  stored as `owns` (`name_background.fitted`).
 - **Knowing a fact is not knowing a person.** "The Brotherhood knows who you are" is no `knows`
   between the Brotherhood and Danneth, the other name in that note. Dropped only when every "know"
   in the quote is followed by a fact word and what is known holds neither name nor a pronoun that
@@ -57,6 +65,18 @@ SERVES_LABEL = re.compile(
 )
 OWNER_OF = r"\b(?:owner|proprietor)\s+(?:and\s+\w+\s+)?of\s+(?:the\s+)?"
 LEADER = re.compile(r"\b(?:lead\w*|captain|chief|head|commander|boss|rules?|ruler)\b", re.I)
+# (not "wore" or "worn", which are past or "well-worn", nor "carried out", which is doing a deed)
+CARRY = re.compile(
+    r"\b(?:carr(?:y|ies|ied|ying)(?!\s+out\b)|wears?|wearing|wields?|wielding|wielded|"
+    r"grab(?:s|bed|bing)?)\b",
+    re.I,
+)
+BELONGING = re.compile(
+    r"\b(?:his|her|hers|their|theirs|its|my|your|our|belong\w*|bought|buys?|buying|purchas\w*|"
+    r"own|owns|owned|owning|owner\w*)\b"
+    r"|\w['’]s\b|\ws['’](?!\w)",  # (a possessive: "his master's", "the brothers' sword")
+    re.I,
+)
 KNOW = re.compile(r"\bkn(?:ow|ows|ew|own|owing)\b", re.I)
 FACT = re.compile(r"\s+(?:who|what|where|when|why|how|that|whether|if)\b", re.I)
 PRONOUN = re.compile(r"\b(?:he|she|him|her|they|them|it|his|hers|its|their)\b", re.I)
@@ -159,6 +179,9 @@ def held(made: Connection, lost: Counter[str], *, waiting: bool = False) -> Conn
         if any(re.search(OWNER_OF + _name(n), quote, re.I) for n in owned):
             lost["kind_named_owner"] += 1
             return replace(made, how="owns")
+    if made.how == "owns" and CARRY.search(quote) and not BELONGING.search(quote):
+        lost["kind_carried"] += 1
+        return replace(made, how="carries")
     if made.how == "knows" and not waiting and _knows_a_fact(quote, made):
         lost["knows_a_fact"] += 1
         return None
