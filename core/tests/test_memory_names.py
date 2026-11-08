@@ -2678,14 +2678,21 @@ class Review(NamesTest):
                 "UPDATE memory_entities SET players_text = %s WHERE campaign_id = %s AND id = %s",
                 ("The town smith.", self.campaign.id, eid),
             )
-        other = await self.scan_guess("Greyfen", "place")  # no line: nothing extra
-        assert other
-        _view, it = await self.review()
+        await self.scan_guess("Greyfen", "place")  # no line: nothing extra on its card
+        view, it = await self.review()
         self.assertIn("Players know: The town smith.", it.response.sent[0][0])
         it = self.it(MANAGER)  # a server manager who is not a DM
         await ui.start_review(it, self.campaign.id)
-        sent = it.response.sent[0][0] if it.response.sent else ""
-        self.assertNotIn("Players know", sent)
+        self.assertEqual(len(it.response.sent), 1)
+        self.assertNotIn("Players know", it.response.sent[0][0])
+        async with self.db.guild(GUILD) as conn:  # the line is the first card's only: drop it
+            await conn.execute(
+                "UPDATE memory_entities SET players_text = NULL WHERE campaign_id = %s",
+                (self.campaign.id,),
+            )
+        _view, again = await self.review()
+        self.assertNotIn("Players know", again.response.sent[0][0])
+        assert view
 
     async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
         await self.scan_guess("Greyfen", "place")

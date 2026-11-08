@@ -1114,7 +1114,7 @@ def suggestion_text(
     context: str = "",
     tagged: str = "",
     scene: str = "",
-    players: str = "",
+    players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1161,6 +1161,8 @@ def suggestion_text(
     text = f"📝 **{title}**{told}{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
     if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
         text = f"📝 **{title}**{told}{heard}{where}{around}{others}{read}\n{question}{more}"
+    if around and len(text) > SUGGESTION_MAX:  # then the sentence around it, never the line itself
+        text = f"📝 **{title}**{told}{heard}{where}{others}{read}\n{question}{more}"
     return text
 
 
