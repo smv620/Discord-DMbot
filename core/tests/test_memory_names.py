@@ -2671,6 +2671,22 @@ class Review(NamesTest):
     def labels_of(self, view: Any) -> list[str]:
         return [str(getattr(c, "label", "") or "") for c in view.children]
 
+    async def test_the_review_card_shows_the_players_line_to_a_dm_only(self) -> None:
+        eid = await self.scan_guess("Aldric", "character")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET players_text = %s WHERE campaign_id = %s AND id = %s",
+                ("The town smith.", self.campaign.id, eid),
+            )
+        other = await self.scan_guess("Greyfen", "place")  # no line: nothing extra
+        assert other
+        _view, it = await self.review()
+        self.assertIn("Players know: The town smith.", it.response.sent[0][0])
+        it = self.it(MANAGER)  # a server manager who is not a DM
+        await ui.start_review(it, self.campaign.id)
+        sent = it.response.sent[0][0] if it.response.sent else ""
+        self.assertNotIn("Players know", sent)
+
     async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
         await self.scan_guess("Greyfen", "place")
         await self.scan_guess("Oakvale", "place")
