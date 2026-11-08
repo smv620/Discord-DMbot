@@ -23,6 +23,10 @@ claims a version made something it did not.
 **Per transaction, not per row:** a write that opted in restamps every row it updates, a dependent
 hide a DM's row included; the stamp is the build that last wrote the row, not who asked.
 
+**Known limit (recaps):** "Keep the earlier version" puts a recap's previous text back as the DM's
+act, so it keeps the stamp of the replacement draft's build, not the older text's. `recap_accepted`
+is stamped for the build that kept the text, which copies DMbot's own title and summary.
+
 **Part 1's backup** carries `made_by` for the memory section's own tables only (`memory/backup.py`,
 `_TAGS`). The other stamped tables are restored by their own sections, which do not carry it yet, so
 they restore with none ("made before versions were recorded"): honest, but a loss, filed as a
@@ -51,15 +55,16 @@ STAMPED_MEMORY = (
     "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
     "rel_ties", "lore_uploads",
 )  # fmt: skip
-STAMPED = frozenset(STAMPED_MEMORY)
+# Part 2: recaps, name checks and the theatre script (migration 0380).
+STAMPED_RECAPS = (
+    "recap_jobs", "recap_dictionaries", "recap_requests", "recap_accepted", "theatre_lines",
+)  # fmt: skip
+STAMPED = frozenset(STAMPED_MEMORY) | frozenset(STAMPED_RECAPS)
 
 # Campaign tables a later part of #3739 stamps: recaps and audio (part 2), transcripts and imports
 # (part 3), the rest (part 4: maps, pictures, rules, questions, the AI feed, sheets). Each part
 # moves its tables to `STAMPED`; the list ends empty.
 NOT_YET: tuple[str, ...] = (
-    # part 2: recaps and audio
-    "recap_accepted", "recap_dictionaries", "recap_holds", "recap_jobs", "recap_name_checks",
-    "recap_requests", "theatre_lines", "theatre_runs",
     # part 3: transcripts and imports
     "transcript_lines", "transcript_respells", "transcript_sessions", "transcript_suggestions",
     "session_imports", "import_plays", "import_speakers", "said_as_suggestions", "session_notes",
@@ -118,6 +123,9 @@ NOT_STAMPED: dict[str, str] = {
             "plan_same_as",
             "report_answers",
             "secret_exposures",
+            "recap_holds",
+            "recap_name_checks",
+            "theatre_runs",
         ),
         _DM,
     ),
