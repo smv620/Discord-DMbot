@@ -122,6 +122,9 @@ class Settings:
     theatre_on: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
+    # A story role the importance reading proposes is matched to one the campaign has, by meaning
+    # (#3172): needs meaning search and the Voyage key too. Off until dev1's golden-set counts.
+    role_match: bool = False
     # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
@@ -206,6 +209,11 @@ class Settings:
     @property
     def meaning_search_on(self) -> bool:
         return self.meaning_search and bool(self.voyage_key)
+
+    @property
+    def role_match_on(self) -> bool:
+        """New story roles are matched by meaning (#3172): its own switch, inside meaning search."""
+        return self.role_match and self.meaning_search_on
 
     @property
     def recap_audio_on(self) -> bool:
@@ -393,6 +401,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if rel_read_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_REL_READ_ON must be 1 (on) or 0 (off), got "' + rel_read_raw + '".'
+        )
+    role_match_raw = (get("DMBOT_ROLE_MATCH") or "0").lower()
+    if role_match_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_ROLE_MATCH must be 1 (on) or 0 (off), got "' + role_match_raw + '".'
         )
     readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
     if readings_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -609,6 +622,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
+        role_match=role_match_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),

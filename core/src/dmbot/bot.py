@@ -291,6 +291,7 @@ from dmbot.memory import (
     meaning,
     plan_reader,
     report_make,
+    role_match,
     scan_kinds,
     scene_step,
     voyage,
@@ -347,6 +348,7 @@ from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
+from dmbot.memory.role_store import RoleStore
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -1464,6 +1466,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.voyage: voyage.Voyage | None = None
         self.meaning_seeds: meaning.MeaningSeeds | None = None
         self.meaning_calls = meaning.CallCounter(time.time)
+        self.role_seeds = role_match.SeededVectors()  # (the seeded roles' vectors, #3172)
         if memory is not None and settings.meaning_search_on:
             self._voyage_http = voyage.HttpTransport(settings.voyage_key)
             self.voyage = voyage.Voyage(
@@ -9055,6 +9058,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         gid, sid, through_ms=0, calls=1, now=int(time.time())
                     )
 
+                matcher = (
+                    role_match.RoleMatcher(
+                        self.voyage, VectorStore.of(memory), RoleStore(memory._db),
+                        self.settings.voyage_embed_model, self.role_seeds,
+                        count_call=self.meaning_calls.count,
+                    )
+                    if self.settings.role_match_on and self.voyage is not None
+                    else None
+                )  # fmt: skip
                 report = await importance_step.run(
                     ai,
                     memory._db,
@@ -9068,6 +9080,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     max_calls=allowed,
                     count_call=count_call,
                     renew=renew,
+                    matcher=matcher,
                 )
                 log.info(report.line())
             except Exception as exc:  # the type only: never fatal, never a word of the story

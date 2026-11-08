@@ -88,7 +88,8 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        ("meaning_search", "voyage_key"),
+        # (`role_match`: new story roles matched by meaning, #3172; a part of meaning search)
+        ("meaning_search", "voyage_key", "role_match"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
     ),
     Feature(
