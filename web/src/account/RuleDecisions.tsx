@@ -7,7 +7,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { ruleSharingWords as w } from "../content/rule-sharing-words";
-import { ApiError, type AccountApi, type HouseRuleItem, type RuleDecision, type RuleSharingChoice, type RuleSide } from "./api";
+import { ApiError, type AccountApi, type HouseRuleItem, type HouseRuleSet, type RuleDecision, type RuleSharingChoice, type RuleSide } from "./api";
 
 const own = (s: RuleSide): boolean => s.set === "";
 const day = (at: number): string => new Date(at * 1000).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
@@ -16,6 +16,7 @@ export default function RuleDecisions({
   api,
   campaignRef,
   rules,
+  sets = [],
   busy,
   tick,
   choose,
@@ -24,6 +25,8 @@ export default function RuleDecisions({
   campaignRef: string;
   /** The campaign's own rules, from the House rules read (the words of each number). */
   rules: HouseRuleItem[];
+  /** The sets the campaign follows, for the words of a followed set's rule. */
+  sets?: HouseRuleSet[];
   /** A sharing choice is on its way: no second press. */
   busy: boolean;
   /** Bumped after each change, so the list is read again. */
@@ -44,9 +47,10 @@ export default function RuleDecisions({
   }, [api, campaignRef, tick]);
 
   if (list === "hidden") return null;
-  const wordsOf = (s: RuleSide): string | null => (own(s) ? (rules.find((r) => r.number === s.number)?.rule ?? null) : null);
+  // (a followed set's rule can share a number with an own rule, so own rules are found among the campaign's own only)
+  const wordsOf = (s: RuleSide): string | null =>
+    own(s) ? (rules.find((r) => r.fromSet === null && r.number === s.number)?.rule ?? null) : (sets.find((x) => x.name === s.set)?.rules.find((r) => r.number === s.number)?.rule ?? null);
   const name = (s: RuleSide): string => (own(s) ? w.clashOwn(s.number) : w.clashOther(s.number, s.set));
-  // (a followed set's rule words are not sent, so only its number and set are named)
   const line = (s: RuleSide): string => {
     const said = wordsOf(s);
     return said === null ? name(s) : `${name(s)}: ${said}`;
@@ -87,7 +91,7 @@ export default function RuleDecisions({
                     <button type="button" class="button secondary" aria-disabled={busy} onClick={() => !busy && void choose({ action: "decide_clash", arg: `${lose.number}:${win.number}` })}>
                       {w.clashFlip(lose.number)}
                     </button>
-                    <button type="button" class="button secondary" aria-disabled={busy} onClick={() => !busy && void choose({ action: "clear_clash", arg: `${d.a.number}:${d.b.number}` })}>
+                    <button type="button" class="button secondary" aria-disabled={busy} aria-label={w.clashClearFor(w.clashWins(name(win), name(lose)))} onClick={() => !busy && void choose({ action: "clear_clash", arg: `${d.a.number}:${d.b.number}` })}>
                       {w.clashClear}
                     </button>
                     <span class="small muted">{w.clashClearHint}</span>

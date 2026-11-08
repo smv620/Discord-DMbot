@@ -14,6 +14,7 @@ import {
   ApiError,
   type AccountApi,
   type HouseRuleItem,
+  type HouseRuleSet,
   type RuleSharing,
   type RuleSharingAnswer,
   type RuleSharingChoice,
@@ -30,7 +31,7 @@ const ENDS = ["not-allowed", "not-found", "signed-out"]; // looking again will n
 /** Discord's own words come back with bold marks; the page shows them plain. */
 const plain = (note: string): string => note.replaceAll("**", "");
 
-export default function RuleSharingSection({ api, campaignRef, rules = [] }: { api: AccountApi; campaignRef: string; rules?: HouseRuleItem[] }) {
+export default function RuleSharingSection({ api, campaignRef, rules = [], sets = [] }: { api: AccountApi; campaignRef: string; rules?: HouseRuleItem[]; sets?: HouseRuleSet[] }) {
   const [info, setInfo] = useState<RuleSharing | "loading" | "failed" | "hidden">("loading");
   const [work, setWork] = useState<Work | null>(null);
   const [changes, setChanges] = useState(0); // bumped after a change to the decided rule pairs, so their list is read again
@@ -128,8 +129,9 @@ export default function RuleSharingSection({ api, campaignRef, rules = [] }: { a
 
   const choose = async (choice: RuleSharingChoice): Promise<void> => {
     const got = await send(choice);
+    // The list of decided pairs is read again whatever the bot answered: a rule removed meanwhile, or a give-up, may have changed it.
+    if (live.current && (choice.action === "decide_clash" || choice.action === "clear_clash")) setChanges((n) => n + 1);
     if (!got || !live.current) return;
-    if (choice.action === "decide_clash" || choice.action === "clear_clash") setChanges((n) => n + 1);
     if (choice.action === "look_code") return setFound({ code: choice.arg, note: plain(got.note) });
     setFound(null);
     if (choice.action === "publish") setName("");
@@ -176,7 +178,7 @@ export default function RuleSharingSection({ api, campaignRef, rules = [] }: { a
       )}
       {work?.gaveUp && <WorkProgress stage={w.stage["waiting"] as string} state="stalled" frozen whatToDo={w.gaveUp} />}
 
-      {RULE_CLASHES_LIVE && api.ruleDecisions && <RuleDecisions api={api} campaignRef={campaignRef} rules={rules} busy={busy} tick={changes} choose={choose} />}
+      {RULE_CLASHES_LIVE && api.ruleDecisions && <RuleDecisions api={api} campaignRef={campaignRef} rules={rules} sets={sets} busy={busy} tick={changes} choose={choose} />}
 
       <h4>{w.shareHeading}</h4>
       {mine?.shared ? (
