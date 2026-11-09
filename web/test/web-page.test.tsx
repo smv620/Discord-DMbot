@@ -392,8 +392,8 @@ describe("every connection between two names, in both directions (#2934)", () =>
   });
 });
 
-describe("the kind of each connection in the line panel (#2934)", () => {
-  it("shows the kind's word and a dot above each connection", async () => {
+describe("the line panel no longer shows a kind of connection (#3809)", () => {
+  it("lists the connection's words with no kind label or dot above it", async () => {
     const api = mockApi("table");
     api.webSize = async () => ({ names: 2 });
     api.webGraph = async () => ({
@@ -411,8 +411,10 @@ describe("the kind of each connection in the line panel (#2934)", () => {
     await screen.findByText("Showing 2 names and 1 connection");
     fireEvent.click((await screen.findAllByRole("button", { name: /^See the connections between/ }))[0] as HTMLElement);
     const panel = (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
-    expect(panel.querySelector(".web-kindmark")?.textContent?.trim()).toBe("Work");
-    expect(panel.querySelector(".web-dot")).not.toBeNull();
+    expect(panel.querySelector(".web-kindmark")).toBeNull();
+    expect(panel.querySelector(".web-dot")).toBeNull();
+    expect(panel.textContent).toContain("serves");
+    expect(panel.textContent).not.toContain("Work");
   });
 });
 

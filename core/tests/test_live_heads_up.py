@@ -276,7 +276,11 @@ class Buttons(unittest.IsolatedAsyncioTestCase):
             memory=memory,
             tables={GUILD: table},
             campaigns=SimpleNamespace(
-                get=AsyncMock(return_value=SimpleNamespace(id=CAMPAIGN, dm_user_ids=[DM_USER]))
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        id=CAMPAIGN, dm_user_ids=[DM_USER], dm_accounts=[DM_USER]
+                    )
+                )
             ),
         )
         done = {"now": False}

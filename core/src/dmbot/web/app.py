@@ -31,11 +31,14 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
+from dmbot.ai import TierClient
 from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
+from dmbot.site_ask import answer as answer_words
+from dmbot.site_ask.service import Limited, SiteAsk
 from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
@@ -103,16 +106,18 @@ from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
 from dmbot.web.feedback import Discussions, FeedbackError, HumanCheck
+from dmbot.web.hear import queue_hear, read_hear
 from dmbot.web.improvement import read_choice as read_improvement
 from dmbot.web.improvement import save_choice as save_improvement
 from dmbot.web.kind_offers import read_kind_offers
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
+from dmbot.web.listen import MAX_CLIP_BYTES, queue_listen, read_listen, wait_for_answer
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_answer as read_name_answer
 from dmbot.web.name_checks import read_campaign_checks, read_checks
-from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names import list_names, set_said_as, suggest_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
 from dmbot.web.node_summary_route import read_node_summary
@@ -214,7 +219,9 @@ def create_app(
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
     smart_names: names_smart.SmartNames | None = None,
+    said_as_ai: TierClient | None = None,
     smart_limit: RateLimit | None = None,
+    site_ask: SiteAsk | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -237,6 +244,7 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    said_as_limit = RateLimit(60, count=20)
     if smart_limit is None:
         # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
         # so one person gets 20 a minute, counted by account.
@@ -437,6 +445,12 @@ def create_app(
             moved.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
             moved.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
             return moved
+        except sessions.AccountRemoved:
+            # Taken off a DMbot account, or added to one (#2533): it can't start another.
+            removed = RedirectResponse(f"{account_page}?signin=removed", status_code=302)
+            removed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
+            removed.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
+            return removed
         except Exception:
             # A bad answer from Discord or a database problem: the person gets the plain
             # "try again" page, the log gets the details (no token, no names).
@@ -868,6 +882,12 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "bad_clip": (422, "bad_clip"),  # a clip that is not audio, or cannot be made out (#2316)
+        "server": (503, "server"),  # the AI did not answer (a suggestion, #3806)
+        "voice_off": (
+            409,
+            "voice_off",
+        ),  # spelling a spoken name is off (#3806)
         "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
@@ -2781,6 +2801,130 @@ def create_app(
             raise HTTPException(status_code=status, detail=detail) from None
         return {"ok": True}
 
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/suggest")
+    async def me_campaign_name_said_as_suggest(
+        ref: str, alias_id: str, signed: Signed
+    ) -> dict[str, str]:
+        """DMbot's suggestion for how to say one name (#3806): `{"suggestion": "Kah-zeth"}`, or an
+        empty one when it has none. Not saved: the DM presses Save. DM only."""
+        session, _token = signed
+        # A press is a paid AI call: the same per-person limit as the meaning search.
+        taken = said_as_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            said = await suggest_said_as(
+                db,
+                session,
+                ref,
+                alias_id,
+                said_as_ai,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            said_as_limit.give_back(f"user-{session.user_id}")  # a refused press costs no turn
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"suggestion": said}
+
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/from-voice")
+    async def me_campaign_name_said_as_from_voice(
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> Any:
+        """🎤 Say it (#2316): the body is one short clip (webm, ogg or wav, at most 1 MB and 10
+        seconds). The bot turns it into a respelling on this server and clears the clip as it
+        writes the answer; this waits up to 20 seconds and answers `{respelling, ipa}`, or 202
+        `{id}` to poll. `voice_off` when it is switched off or the plan has no narration."""
+        session, _token = signed
+        # Stop reading at the limit: a body bigger than a clip is refused without being kept.
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_CLIP_BYTES:
+            raise HTTPException(status_code=413, detail="too_big")
+        body = bytearray()
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > MAX_CLIP_BYTES:
+                raise HTTPException(status_code=413, detail="too_big")
+        try:
+            heard = await queue_listen(
+                db,
+                session,
+                ref,
+                alias_id,
+                bytes(body),
+                request.headers.get("content-type"),
+                voice_on=settings.said_as_voice_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+            answer = await wait_for_answer(lambda: read_listen(db, session, ref, heard))
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        if answer is None:
+            return JSONResponse({"id": heard}, status_code=202)
+        if answer["state"] == "failed":
+            status, detail = recap_refusals.get(answer["error"], (503, "server"))
+            raise HTTPException(status_code=status, detail=detail)
+        return {"respelling": answer["respelling"], "ipa": answer["ipa"]}
+
+    @app.get("/me/campaigns/{ref}/names/{alias_id}/said-as/from-voice/{heard}")
+    async def me_campaign_name_said_as_heard(
+        ref: str, alias_id: str, heard: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where one clip stands (for the page, when the answer took longer than the first wait).
+        Only the DM who sent it can read it; never the clip."""
+        session, _token = signed
+        try:
+            return await read_listen(db, session, ref, heard)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/names/{alias_id}/said-as/hear")
+    async def me_campaign_name_hear(
+        ref: str, alias_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """🔊 Hear it (#3807): queue the box's words, possibly unsaved, to be said in the recap
+        narrator's voice: `{"text": "Kah-zeth"}` answers `{"id": ...}` to poll. The key stays with
+        the bot, so this only queues. `voice_off` when narration is not set up or the owner's plan
+        has none (the page falls back to the browser's voice); 429 `too_soon` past 20 a minute."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("text") if isinstance(body, dict) else None
+        try:
+            press = await queue_hear(
+                db,
+                session,
+                ref,
+                alias_id,
+                words,
+                audio_on=settings.recap_audio_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"id": press}
+
+    @app.get("/me/campaigns/{ref}/names/{alias_id}/said-as/hear/{press}")
+    async def me_campaign_name_hear_read(
+        ref: str, alias_id: str, press: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where one press of Hear it stands, and the clip once it is done (base64 WAV, handed
+        over once). Only the DM who pressed can read it."""
+        session, _token = signed
+        try:
+            return await read_hear(db, session, ref, press)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/recap-choices")
     async def me_recap_choices(ref: str, signed: Signed) -> dict[str, Any]:
         """The DM's three recap choices for a campaign (#1468). DM only; anyone else gets "not
@@ -4173,6 +4317,32 @@ def create_app(
         current = await user_of_dmbot_id(db, uid)
         await mail.unsubscribe(db, current or user_id, now=int(clock()))
         return {"ok": True}
+
+    @app.post("/site/ask")
+    async def site_ask_route(request: Request) -> JSONResponse:
+        """The search bar's short answer (#3856): `{q}` in, `{answer, link}` out. No sign-in. Off
+        (404) unless the switch and both Cloudflare settings are set. Over a limit: 429 with
+        `{"limit": "hour" | "day"}` so the page picks its words. Neither the question nor the
+        answer nor the address is logged."""
+        if site_ask is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > 2048:
+                raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+        except (ValueError, RecursionError):
+            raw = None
+        question = answer_words.read_question(raw.get("q") if isinstance(raw, dict) else None)
+        if question is None:
+            raise HTTPException(status_code=400, detail="bad_question")
+        try:
+            reply = await site_ask.ask(client_address(request), question)
+        except Limited as limited:
+            return JSONResponse({"limit": limited.limit}, status_code=429)
+        return JSONResponse({"answer": reply.answer, "link": reply.link})
 
     @app.post("/feedback")
     async def send_feedback(request: Request) -> dict[str, str]:

@@ -51,6 +51,28 @@ class TheDm(Views):
         self.assertEqual(mine["nodes"], theirs["nodes"])
         self.assertEqual(mine["edges"], theirs["edges"])
 
+    async def test_a_secret_meeting_is_kept_from_the_players_view(self) -> None:
+        # (#3882: whether two people met rides on the line, so a hidden line hides it too)
+        rook = await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="Rook Hale", source="dm",
+            status="confirmed",
+        )  # fmt: skip
+        await self.memory.set_hidden_from_players(self.g, self.one.id, rook.value.id, False,
+                                                  source="dm")  # fmt: skip
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", rook.value.id, source="dm", confidence=1.0,
+            status="confirmed", secret=True, knows_how="met",
+        )  # fmt: skip
+        link = made.value[0].id
+        players = await self.graph(self.player, center=self.mira, hops=1)
+        self.assertNotIn(link, self.ids(players))
+        self.assertFalse(any("knowsHow" in x and x["id"] == link
+                             for e in players["edges"] for x in e["links"]))  # fmt: skip
+        await self.memory.update_relation(self.g, self.one.id, link, source="dm", secret=False)
+        players = await self.graph(self.player, center=self.mira, hops=1)
+        shown = [x for e in players["edges"] for x in e["links"] if x["id"] == link]
+        self.assertEqual([(x["words"], x["knowsHow"]) for x in shown], [("has met", "met")])
+
     async def test_full_marks_secret_links_and_players_view_marks_nothing(self) -> None:
         secret = await self.secret_link()
         full = await self.graph(center=self.mira, hops=1, view="full")

@@ -1114,6 +1114,7 @@ def suggestion_text(
     context: str = "",
     tagged: str = "",
     scene: str = "",
+    players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1153,9 +1154,15 @@ def suggestion_text(
     seen = scene_line(scene)  # (DMbot's summary of the scene, #3596, above the places)
     # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
     title = _md(tagged or entity.name)
-    text = f"📝 **{title}**{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
+    # What the players will be told of it (#2967, #3833): shown as written, never cut (the column
+    # holds at most 120 characters), so confirming the name is confirming this line too. Nothing
+    # extra for a name with no line: DMbot never makes one up.
+    told = f"\nPlayers know: {_md(players)}" if players else ""
+    text = f"📝 **{title}**{told}{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
     if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
-        text = f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
+        text = f"📝 **{title}**{told}{heard}{where}{around}{others}{read}\n{question}{more}"
+    if around and len(text) > SUGGESTION_MAX:  # then the sentence around it, never the line itself
+        text = f"📝 **{title}**{told}{heard}{where}{others}{read}\n{question}{more}"
     return text
 
 
@@ -1467,6 +1474,9 @@ class SuggestionReview(_Menu):
             context=self._context(interaction, campaign, entity),
             tagged=await tagged_name(memory, campaign, entity),
             scene=await scene_of(interaction, campaign, entity),
+            players=(
+                (entity.players_text or "") if sees_secrets(campaign, interaction.user.id) else ""
+            ),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])

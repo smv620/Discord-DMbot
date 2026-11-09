@@ -63,9 +63,9 @@ STAMPED_MEMORY = (
     "memory_contradictions", "memory_differences", "memory_heard", "memory_mentions",
     "memory_vectors", "memory_who_answers", "memory_kind_offers", "memory_knowers",
     "memory_alias_knowers", "memory_told", "memory_link_sources", "memory_importance",
-    "memory_flags", "memory_rule_links", "memory_report_runs", "backstory_links",
-    "backstory_which", "waiting_name_questions", "name_pass_fixes", "name_pass_reports",
-    "rel_ties", "lore_uploads",
+    "memory_role_codes", "memory_roles", "memory_flags", "memory_rule_links", "memory_report_runs",
+    "backstory_links", "backstory_which", "waiting_name_questions", "name_pass_fixes",
+    "name_pass_reports", "rel_ties", "lore_uploads", "memory_reveal_proposals",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -158,6 +158,8 @@ NOT_STAMPED: dict[str, str] = {
         (
             "name_actions",
             "setting_actions",
+            "said_as_hears",
+            "said_as_listens",
             "web_backup_parts",
             "web_backups",
             "web_house_file_actions",
@@ -181,6 +183,9 @@ NOT_STAMPED: dict[str, str] = {
             "game_clock_group_log",
             "game_clock_log",
             "image_day_use",
+            "hear_use",
+            "upload_notices",
+            "campaign_channel_people",
             "npcs_channel_messages",
             "owner_campaigns",
             "pack_suggestions_sent",

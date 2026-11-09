@@ -7,9 +7,13 @@
 // box UNSAVED: the DM changes it and saves. The clip is never kept here (the API deletes it too).
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { HEAR_NARRATOR_LIVE } from "../content/hear-narrator-switch";
 import { CLIP_SECONDS, sayIt as words } from "../content/say-it-words";
-import { ApiError, type AccountApi } from "./api";
+import { ApiError, type AccountApi, type JobProgress } from "./api";
+import { useObservedWait } from "./useObservedWait";
 import { pickType } from "./recording";
+import SavingWait from "./SavingWait";
+import WorkProgress from "./WorkProgress";
 
 type Phase = "idle" | "asking" | "recording" | "recorded" | "sending";
 
@@ -55,14 +59,28 @@ export default function SayIt({
   const ticker = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const mounted = useRef(true);
   const sending = useRef(false);
+  // A ref, not the state: two presses in one tick would both see hearing=false.
+  const hearingRef = useRef(false);
+  // Set by "Type it instead": the poll for the bot's answer stops at its next look.
+  const requestId = useRef(0);
+  // The narrator's clip being played, kept so it can be stopped and its address let go.
+  const playing = useRef<HTMLAudioElement | null>(null);
+  const playingUrl = useRef<string | null>(null);
   const stopButton = useRef<HTMLButtonElement>(null);
   const recordButton = useRef<HTMLButtonElement>(null);
 
   const type = typeof window === "undefined" ? null : pickType();
   const canSuggest = Boolean(api.suggestSaidAs);
   const canRecord = Boolean(api.respellFromVoice) && type !== null && Boolean(navigator.mediaDevices?.getUserMedia);
-  const canHear =
+  const canBrowserHear =
     typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined";
+  // Hear it in the narrator's voice (#3807) when the switch is on and the API has it; the browser's voice otherwise.
+  const narrator = HEAR_NARRATOR_LIVE && Boolean(api.hearSaidAs);
+  const canHear = narrator || canBrowserHear;
+  const [hearing, setHearing] = useState(false);
+  // Where the clip is with the bot (#3828): not yet picked up, or being listened to.
+  const [look, setLook] = useState<{ state: "waiting" | "working"; progress: JobProgress | null } | null>(null);
+  const [browserOnly, setBrowserOnly] = useState(false); // narration is off on the server: the browser's voice reads it
 
   const release = (): void => {
     if (ticker.current) clearInterval(ticker.current);
@@ -95,6 +113,8 @@ export default function SayIt({
       if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
       clipUrlRef.current = null;
       if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+      playing.current?.pause();
+      if (playingUrl.current) URL.revokeObjectURL(playingUrl.current);
     },
     // Everything read is a ref or a module value, so the first render's closure is the right one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,7 +167,8 @@ export default function SayIt({
     setProblem(null);
     setSaid(null);
     // A voice still reading the box aloud would be heard by the microphone.
-    if (canHear) window.speechSynthesis.cancel();
+    if (canBrowserHear) window.speechSynthesis.cancel();
+    playing.current?.pause();
     setPhase("asking");
     let got: MediaStream;
     try {
@@ -244,11 +265,16 @@ export default function SayIt({
     const made = clip.current;
     if (!made || !api.respellFromVoice || sending.current) return;
     sending.current = true;
+    const mine = (requestId.current += 1);
+    setLook({ state: "waiting", progress: null });
     setPhase("sending");
     setProblem(null);
     try {
-      const text = await api.respellFromVoice(campaignRef, nameId, made);
-      if (!mounted.current) return;
+      const text = await api.respellFromVoice(campaignRef, nameId, made, {
+        onLook: (got) => mounted.current && setLook(got),
+        cancelled: () => requestId.current !== mine || !mounted.current,
+      });
+      if (!mounted.current || requestId.current !== mine) return;
       onValue(text, "heard");
       setSaid(words.filled);
       dropClip();
@@ -256,22 +282,79 @@ export default function SayIt({
       // The words are in the box: the keyboard goes there, to check and save them.
       if (fieldId) setTimeout(() => document.getElementById(fieldId)?.focus(), 0);
     } catch (error) {
-      if (!mounted.current) return;
-      fail(error);
+      if (!mounted.current || requestId.current !== mine) return;
+      if (error instanceof ApiError && error.kind === "still-waiting") setProblem(words.problem["voice-late"]!);
+      else if (error instanceof ApiError && error.kind === "too-soon") setProblem(words.problem["voice-too-soon"]!);
+      else fail(error);
       // The clip is still here: the DM may try again or record it again.
       setPhase("recorded");
     } finally {
-      sending.current = false;
+      if (requestId.current === mine) sending.current = false;
     }
   };
 
-  const hear = (): void => {
-    if (!canHear || value.trim() === "") return;
+  const hearWithBrowser = (): void => {
+    if (!canBrowserHear) return;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(value));
   };
 
+  const hear = async (): Promise<void> => {
+    if (!canHear || value.trim() === "" || hearing || hearingRef.current) return;
+    setProblem(null);
+    if (!narrator || browserOnly || !api.hearSaidAs) {
+      // With the narrator's voice in play, a robot voice must never pass for it: say so every time, not once.
+      if (HEAR_NARRATOR_LIVE) setSaid(words.browserVoice);
+      return hearWithBrowser();
+    }
+    hearingRef.current = true;
+    setHearing(true);
+    try {
+      const clipBlob = await api.hearSaidAs(campaignRef, nameId, value);
+      if (!mounted.current) return;
+      playing.current?.pause();
+      if (playingUrl.current) URL.revokeObjectURL(playingUrl.current);
+      const url = URL.createObjectURL(clipBlob);
+      playingUrl.current = url;
+      const audio = new Audio(url);
+      playing.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        if (playingUrl.current === url) playingUrl.current = null;
+      };
+      try {
+        await audio.play();
+      } catch {
+        // The clip is made, but the browser refused to start it (no press any more on Safari/iOS).
+        URL.revokeObjectURL(url);
+        if (playingUrl.current === url) playingUrl.current = null;
+        setProblem(words.problem["play-refused"]!);
+      }
+    } catch (error) {
+      if (!mounted.current) return;
+      // Narration is not set up (or the plan has none): the browser's voice reads it, and the page says so once.
+      if (error instanceof ApiError && error.kind === "voice-off" && canBrowserHear) {
+        setBrowserOnly(true);
+        setSaid(words.browserVoice);
+        hearWithBrowser();
+      } else fail(error);
+    } finally {
+      hearingRef.current = false;
+      if (mounted.current) setHearing(false);
+    }
+  };
+
   const waiting = suggesting || phase === "sending";
+  const voiceSeen = useObservedWait(phase === "sending", `${look?.state ?? ""}:${look?.progress?.updatedAt ?? ""}`);
+  // "Type it instead": stop waiting, drop the clip and leave the keyboard in the box. Nothing is lost: the clip is deleted by the bot.
+  const typeInstead = (): void => {
+    requestId.current += 1;
+    sending.current = false;
+    dropClip();
+    setPhase("idle");
+    setSaid(words.typing);
+    if (fieldId) setTimeout(() => document.getElementById(fieldId)?.focus(), 0);
+  };
   useEffect(() => {
     if (!waiting) {
       setWaited(0);
@@ -283,7 +366,7 @@ export default function SayIt({
 
   if (!canSuggest && !canRecord && !canHear) return null;
 
-  const busy = disabled || suggesting || phase === "asking" || phase === "sending";
+  const busy = disabled || suggesting || hearing || phase === "asking" || phase === "sending";
   // What a screen reader is told as things change; the region is always on the page, so it is heard.
   const spoken =
     phase === "recording"
@@ -293,7 +376,9 @@ export default function SayIt({
         : phase === "asking"
           ? words.askingHint
           : phase === "sending"
-            ? words.sending
+            ? look?.state === "working"
+              ? words.voiceWorking
+              : words.voiceWaiting
             : (said ?? "");
   return (
     <div class="say-it">
@@ -320,7 +405,7 @@ export default function SayIt({
           </button>
         )}
         {canHear && phase === "idle" && value.trim() !== "" && (
-          <button type="button" class="button secondary" disabled={busy} onClick={hear}>
+          <button type="button" class="button secondary" disabled={busy || hearing} onClick={() => void hear()}>
             {words.hear}
           </button>
         )}
@@ -345,8 +430,30 @@ export default function SayIt({
           </div>
         </div>
       )}
-      {phase === "sending" && <p class="small muted">{words.sending}</p>}
-      {waiting && waited >= 5 && <p class="small muted">{waited >= 30 ? words.stalled(waited) : words.slow(waited)}</p>}
+      {phase === "sending" && (
+        <div role="status" aria-live="polite" class="stack">
+          <WorkProgress
+            stage={look?.state === "working" ? words.voiceWorking : words.voiceWaiting}
+            startedAt={look?.progress?.startedAt ?? voiceSeen.startedAt}
+            updatedAt={look?.progress?.updatedAt ?? voiceSeen.movedAt}
+            serverNow={look?.progress?.serverNow}
+            state={voiceSeen.quiet ? "stalled" : "running"}
+            progressUnknown={!look?.progress}
+            whatToDo={words.voiceQuiet}
+          />
+          {look?.state !== "working" && waited >= 15 && <p class="small muted">{words.voiceBusy}</p>}
+          {(waited >= 15 || voiceSeen.quiet) && (
+            <div class="row">
+              <button type="button" class="button secondary" onClick={typeInstead}>
+                {words.typeInstead}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      <SavingWait active={hearing} stage={words.hearStage} whatToDo={words.hearQuiet} />
+      {narrator && !browserOnly && canHear && phase === "idle" && value.trim() !== "" && <p class="small muted">{words.hearPrivacy}</p>}
+      {suggesting && waited >= 5 && <p class="small muted">{waited >= 30 ? words.stalled(waited) : words.slow(waited)}</p>}
       {said && phase === "idle" && <p class="small muted">{said}</p>}
       <p class="sr-only" role="status">
         {spoken}

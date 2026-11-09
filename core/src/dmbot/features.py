@@ -88,8 +88,16 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        ("meaning_search", "voyage_key"),
+        # (`role_match`: new story roles matched by meaning, #3172; a part of meaning search)
+        ("meaning_search", "voyage_key", "role_match"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
+    ),
+    Feature(
+        "say a name",
+        "Say a name to spell it",
+        "Say a name into the microphone on the website and DMbot writes how to say it.",
+        lambda s: s.said_as_voice and bool(s.said_as_model),
+        ("said_as_voice", "said_as_model"),
     ),
     Feature(
         "recap audio",
@@ -153,6 +161,8 @@ FEATURES: tuple[Feature, ...] = (
             "story_readings_on",
             "story_scenes_on",
             "story_deeds_on",
+            "story_reveals_on",
+            "story_reveals_precheck",
             "story_who_on",
             "story_who_apply_on",
             "story_family_only",
@@ -264,6 +274,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",
     "database_pool_max": "a number",
+    "hear_credits_per_month": "a number: how many credits Hear it may spend a month",
     "data_dir": "a folder",
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",

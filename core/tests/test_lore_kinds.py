@@ -199,6 +199,27 @@ class TheEnds(NamesTest):
         )
         self.assertEqual(lost["bad_kind"], 0)
 
+    async def test_a_character_carries_an_item_and_a_group_s_carrying_is_owning(self) -> None:
+        await self.make_names(
+            ("Mira", "npc", "npc"), ("Silver Lanterns", "faction", None),
+            ("Lantern of Dawn", "item", None), ("Key of Aldmoor", "item", None),
+        )  # fmt: skip
+        lost = await self.queue(
+            bg.Connection("Mira", "carries", "Lantern of Dawn", "Mira carries the Lantern of Dawn"),
+            bg.Connection(
+                "Silver Lanterns",
+                "carries",
+                "Key of Aldmoor",
+                "The Silver Lanterns carry the Key of Aldmoor",
+            ),
+        )
+        got = {(a, p, b) for a, p, b in await self.waiting()}
+        self.assertEqual(
+            got,
+            {("Mira", "carries", "Lantern of Dawn"), ("Silver Lanterns", "owns", "Key of Aldmoor")},
+        )  # (only a character carries, #3619: the group's is kept as owning, never lost)
+        self.assertEqual(lost["bad_kind"], 0)
+
     async def test_an_own_kind_and_the_catch_all_take_any_ends(self) -> None:
         await self.make_names(("Mira", "npc", "npc"), ("Brindle", "place", None))
         lost = await self.queue(

@@ -133,13 +133,14 @@ class TheStore(WithImports):
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}), dm_screen_channel_id=66,
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
+        ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True),
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
-        **{"memory": object(), **kw},
+        **{"memory": SimpleNamespace(entities=AsyncMock(return_value=[])), **kw},
         consent=SimpleNamespace(
             consenting=AsyncMock(return_value={MIRA}), agreed=AsyncMock(return_value={MIRA})
         ),
@@ -148,6 +149,9 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         recap_holds=None,
         post=AsyncMock(return_value=True),
         _import_names={},
+        _import_speakers={},
+        _import_entries={},
+        _import_batches={},
         _import_reports={},
         _import_unhonoured={},
         _import_party={},
@@ -721,6 +725,7 @@ class TheFollowUp(WithImports):
         def no_dm(b: Any, c: Any) -> None:
             c.owner_user_id = 0
             c.dm_user_ids = frozenset()
+            c.dm_accounts = frozenset()
 
         cases: dict[str, Callable[[Any, Any], None]] = {
             "recaps off": recaps_off,

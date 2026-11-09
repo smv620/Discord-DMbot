@@ -201,6 +201,19 @@ class WebSettings:
     # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
     # bot does.
     recap_voice_tags: bool = True
+    # "🎤 Say it" (#2316): the bot's SAID_AS_VOICE switch, so the route says `voice_off` at once
+    # when it is off. The model and its folder are the bot's; this container never sees them.
+    said_as_voice_on: bool = False
+    # The website search bar's short answer (#3856): off unless SITE_ASK is 1 and both Cloudflare
+    # settings are set. The token is a secret: held only in the client that calls Cloudflare.
+    site_ask: bool = False
+    cloudflare_account_id: str = ""
+    cloudflare_ai_token: str = field(default="", repr=False)
+    site_ask_daily: int = 1500
+
+    @property
+    def site_ask_on(self) -> bool:
+        return self.site_ask and bool(self.cloudflare_account_id) and bool(self.cloudflare_ai_token)
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
@@ -231,6 +244,15 @@ class WebSettings:
     @property
     def install_redirect_uri(self) -> str:
         return f"{self.api_url.rstrip('/')}/install/callback"
+
+
+def _site_ask_daily(raw: str) -> int:
+    """The most answers a day (#3856): 1,500 unless the owner sets another, 1 to 100,000."""
+    if not raw:
+        return 1500
+    if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 100_000:
+        raise ConfigError("DMBOT_SITE_ASK_DAILY must be a whole number from 1 to 100000.")
+    return int(raw)
 
 
 def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
@@ -341,6 +363,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         # Behind the proxy every visitor has the proxy's address: without the header, one
         # message would use up the whole site's turn for 10 minutes.
         raise ConfigError("WEB_CLIENT_IP_HEADER must be set when GITHUB_FEEDBACK_TOKEN is.")
+    if (
+        (get("DMBOT_SITE_ASK") or "0").lower() in ("1", "true", "on")
+        and not client_ip_header
+        and urlsplit(get("WEB_API_URL")).hostname not in ("localhost", "127.0.0.1")
+    ):
+        # Behind the proxy every visitor has the proxy's address: without the header, one person
+        # asking 100 questions would lock out the whole site (#3856).
+        raise ConfigError("WEB_CLIENT_IP_HEADER must be set when DMBOT_SITE_ASK is on.")
     admin_emails = tuple(
         sorted({e.strip().lower() for e in get("ADMIN_EMAILS").split(",") if e.strip()})
     )
@@ -482,6 +512,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
             and get("RECAP_AUDIO_VOICE_SET") == "1"
         ),
         recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
+        said_as_voice_on=(get("SAID_AS_VOICE") or "0").lower() in ("1", "true", "on"),
+        site_ask=(get("DMBOT_SITE_ASK") or "0").lower() in ("1", "true", "on"),
+        cloudflare_account_id=get("CLOUDFLARE_ACCOUNT_ID"),
+        cloudflare_ai_token=get("CLOUDFLARE_AI_TOKEN"),
+        site_ask_daily=_site_ask_daily(get("DMBOT_SITE_ASK_DAILY")),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,

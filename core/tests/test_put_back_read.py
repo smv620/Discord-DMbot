@@ -63,6 +63,8 @@ class Base(DatabaseTest):
             story_extractor_max_calls_day=50,
             story_readings_on=False,
             story_deeds_on=False,
+            story_reveals_on=False,
+            story_reveals_precheck=False,
             story_who_on=False,
             story_family_only=False,
         )
@@ -290,7 +292,7 @@ class TheNameScanAtTheEnd(Base):
         self.agreed = {ALICE}  # Bob stopped being recorded
         table = SimpleNamespace(
             guild_id=GUILD, campaign_id=self.cid, transcript_session_id=self.sid,
-            heard=[(ALICE, "the held words")], dm_user_id=DM, dm_user_ids=set(),
+            heard=[(ALICE, "the held words")], dm_user_id=DM, dm_user_ids=set(), dm_accounts=set(),
             new_names=[],
         )  # fmt: skip
         self.dm.save_transcript = AsyncMock()

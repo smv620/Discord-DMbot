@@ -77,7 +77,9 @@ class TheMarker(Base):
 
 
 def press(button: Any, user: int = DM_ID, *, files: Any = None) -> tuple[Any, Any, Any]:
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+    )
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=SimpleNamespace(

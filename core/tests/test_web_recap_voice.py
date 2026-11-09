@@ -561,8 +561,10 @@ class TheLoop(WithClips):
 
         bot = object.__new__(DMBot)
         stub: Any = bot
-        for name, value in {
+        fields: dict[str, Any] = {
             "_closing": False,
+            "_listening": None,
+            "_speech_sounds": None,
             "ai_watch": SimpleNamespace(wait=AsyncMock()),
             "plan_reads": {},
             "_eleven_http": None,
@@ -578,7 +580,8 @@ class TheLoop(WithClips):
             "_loops": [],
             "ai_client": None,
             "ears": SimpleNamespace(send=AsyncMock(), stop=AsyncMock()),
-        }.items():
+        }
+        for name, value in fields.items():
             setattr(stub, name, value)
         clip = asyncio.create_task(asyncio.sleep(60))
         stub._voice_tasks = {THURSDAY.id: clip}

@@ -40,6 +40,7 @@ def fake_bot(*, people: list[int], minutes: int = 10, now: float = 0.0) -> Any:
         voice_channel_id=55,
         dm_user_id=DM,
         dm_user_ids=frozenset(),
+        dm_accounts=frozenset(),
         campaign_name="Frostmaiden",
         segmenter=SimpleNamespace(session=SESSION),
         totals=SimpleNamespace(speakers={}),

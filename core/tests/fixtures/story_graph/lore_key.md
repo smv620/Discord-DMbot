@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 89 entries, 121 connections (80 must-find), 19 events.
+**Totals:** 89 entries, 122 connections (80 must-find), 19 events.
 
 ## Connections
 
@@ -162,6 +162,11 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l119 | Jebidiah | works_in | Targos | inferred | no | yes | 96 | a kennel master the party met there |
 | l120 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | 18 | born in the Temple of the Seldarine (the more exact place; l019 says the city) |
 | l121 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | 18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (l011 says works_for) |
+| l122 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | 67 | the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner) |
+| l123 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | 30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
+| l124 | Belleros Stormgrace | leads | Aurora's Wind | stated | no | yes | 93 | 'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b) |
+| l125 | Okthandom Korran | enemy_of | Fizzlebomb | stated | no | yes | 93 | pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b) |
+| l126 | Cerric Vanya'elen | enemy_of | Fizzlebomb | stated | no | yes | 93 | 'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b) |
 
 ## Events
 

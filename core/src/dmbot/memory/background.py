@@ -74,6 +74,8 @@ CONNECTIONS = {
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
+    # (who has an item with them now, as the story graph keeps it apart from owning, #3619)
+    "carries": "carries",
     "works for": "serves",
     "knows": "knows",
     "sworn to": "sworn_to",  # an oath, vow, pact or fealty
@@ -104,6 +106,8 @@ LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
 LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
 LORE_WORDS = {
     "worships": "worships",
+    # (a past fact, "a found b": never a holding, so it is no `owns` or `carries`, #3619)
+    "found": "found",
 }
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
@@ -146,8 +150,9 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "also": {"type": "array", "items": {"type": "string"}},
                         "secret": {"type": "array", "items": {"type": "string"}},
                         "quote": {"type": "string"},
+                        "about": {"type": "string"},
                     },
-                    "required": ["name", "kind", "also", "secret", "quote"],
+                    "required": ["name", "kind", "also", "secret", "quote", "about"],
                     "additionalProperties": False,
                 },
             },
@@ -187,6 +192,9 @@ class Found:
     also: tuple[str, ...]
     secret: tuple[str, ...]  # disguises and secret identities: never a public name
     quote: str  # at most QUOTE_WORDS words, as written; "" when the AI's quote was not in the text
+    # What the text says it is or does, one short line (#2967 slice a): stored as the players'
+    # line only when the DM said the players know all of the upload; "" when none was given.
+    about: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,7 +614,11 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             words = quote.split()[:QUOTE_WORDS]  # the front of a verbatim quote is still verbatim
             if words and _has(haystack, " ".join(words)):
                 kept = " ".join(words)
-        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept))
+        about = item.get("about")
+        about = " ".join(about.split()) if isinstance(about, str) else ""
+        if not about.isprintable():  # (as the website's own box refuses one, all_names.py)
+            about = ""
+        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept, about))
     return out
 
 
@@ -716,6 +728,7 @@ def merge(
                 tuple(a for a in item.also if name_key(a) not in skip),
                 tuple(a for a in item.secret if name_key(a) not in skip),
                 item.quote,
+                item.about,
             )
             old = merged.get(key)
             if old is None:
@@ -731,6 +744,7 @@ def merge(
                 (*old.also, *more)[:MAX_ALSO],
                 (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
+                old.about or item.about,
             )
     if dropped is not None and (left_out := generic - merged.keys()):
         dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
@@ -794,7 +808,7 @@ def merge(
                 have.add(name_key(a))
                 carried.append(a)
         joined.append(
-            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote)
+            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote, f.about)
             if carried
             else f
         )
@@ -813,6 +827,7 @@ def merge(
             ),
             f.secret,
             f.quote,
+            f.about,
         )
         for f in out
     ]

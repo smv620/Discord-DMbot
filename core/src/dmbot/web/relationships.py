@@ -117,10 +117,11 @@ def edges_from(
         # the DM's own word for the pair wins over the reader's on a `knows` line (#3642; the same
         # function as the Discord card), and only the words change: the stored detail stays
         dm_word = (
-            dm_line_word(standing, str(row["a"]), str(row["b"]))
+            dm_line_word(standing, str(row["a"]), str(row["b"]), str(row.get("detail") or ""))
             if is_dm and standing and row["predicate"] == "knows"
             else None
         )
+        how = str(row.get("knows_how") or "") if row["predicate"] == "knows" else None
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
@@ -135,6 +136,8 @@ def edges_from(
                     directional,
                     subject_kind,
                     feeling=is_dm,
+                    # "has met" / "has heard of" leads a knows line (#3882), feeling kept
+                    knows_how=how,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
                 "standing": dm_word,
@@ -148,7 +151,10 @@ def edges_from(
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,
+                    knows_how=how,
                 ),
+                # whether two people have met, for the page's "Have they met?" (#3882)
+                "knowsHow": how,  # None: not a knows line, and the field is not sent
                 # the words that follow the name for the two place readings that need them ("is
                 # where Tavin was last seen"): empty for every other connection (#3363)
                 "backAfter": back_after(
@@ -194,6 +200,8 @@ def edges_from(
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
                         "kind": x["kind"],
+                        # (a knows line only, one this reader is shown, #3882)
+                        **({"knowsHow": x["knowsHow"]} if x["knowsHow"] is not None else {}),
                         **(who_knows(x) if is_dm else {}),
                         **({"standing": x["standing"]} if is_dm and x["standing"] else {}),
                     }

@@ -125,6 +125,16 @@ services:
       # The bot's setting for mood tags in the narration, so the page can tell which paragraphs a
       # change would speak again (#2630). It changes nothing the bot does.
       DMBOT_RECAP_VOICE_TAGS: ${DMBOT_RECAP_VOICE_TAGS:-1}
+      # The bot's switch for "🎤 Say it" (#2316), so the route can say it is off. The model's
+      # folder (SAID_AS_MODEL) stays with the bot.
+      SAID_AS_VOICE: ${SAID_AS_VOICE:-0}
+      # The website search bar's short answer (#3856): off unless DMBOT_SITE_ASK=1 and both
+      # Cloudflare settings are set. The token is a secret, read here and nowhere else.
+      DMBOT_SITE_ASK: ${DMBOT_SITE_ASK:-0}
+      DMBOT_SITE_ASK_DAILY: ${DMBOT_SITE_ASK_DAILY:-1500}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_AI_TOKEN: ${CLOUDFLARE_AI_TOKEN:-}
+      DMBOT_DOCS_DIR: /app/knowledge
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
@@ -233,6 +243,20 @@ services:
     volumes:
       - recap-audio:/recap-audio:ro
       - bot-status:/status:ro
+      # DMbot's public words, and only those (#3856): the site's pages, the Help page and What's
+      # new. The list is fixed in code (core/src/dmbot/site_ask/sources.py, with a test) and
+      # these mounts are exactly it. Never the plan, CLAUDE.md or the logs.
+      - ./web/src/pages/index.astro:/app/knowledge/web/src/pages/index.astro:ro
+      - ./web/src/pages/how-it-works.astro:/app/knowledge/web/src/pages/how-it-works.astro:ro
+      - ./web/src/pages/players.astro:/app/knowledge/web/src/pages/players.astro:ro
+      - ./web/src/pages/install.astro:/app/knowledge/web/src/pages/install.astro:ro
+      - ./web/src/pages/credits.astro:/app/knowledge/web/src/pages/credits.astro:ro
+      - ./web/src/pages/legal/privacy.astro:/app/knowledge/web/src/pages/legal/privacy.astro:ro
+      - ./web/src/pages/legal/terms.astro:/app/knowledge/web/src/pages/legal/terms.astro:ro
+      - ./web/src/pages/legal/refunds.astro:/app/knowledge/web/src/pages/legal/refunds.astro:ro
+      - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
+      - ./web/src/content/pricing.ts:/app/knowledge/web/src/content/pricing.ts:ro
+      - ./web/src/content/whats-new:/app/knowledge/web/src/content/whats-new:ro
     expose:
       - "${WEB_API_PORT:-8080}"
     healthcheck:

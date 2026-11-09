@@ -52,7 +52,12 @@ DM_CHECKS = {
     "_require_dm",
     "_locked_dm_state",
 }
-OWNER_CHECKS = {"owner_user_id", "from_user_id", "refusal"}  # from_user_id: the offer's maker
+OWNER_CHECKS = {
+    "owner_user_id",
+    "is_owner",
+    "from_user_id",
+    "refusal",
+}  # from_user_id: the offer's maker
 # What a function listed in CHECKED_ELSEWHERE may use: a DM check, an owner check, or the filter
 # that keeps secret names out of what a non-DM sees.
 ANY_CHECK = DM_CHECKS | OWNER_CHECKS
@@ -147,6 +152,10 @@ AUDIENCE: dict[str, str] = {
             "ui.deed_card.RecordButton",  # the same
             "ui.deed_card.NotButton",  # the same
             "ui.deed_card.UndoButton",  # the same
+            "ui.reveal_card.OpenButton",  # _checked: the presser is a DM of the campaign (#2996)
+            "ui.reveal_card.KeepButton",  # the same
+            "ui.reveal_card.NotButton",  # the same
+            "ui.reveal_card.UndoButton",  # the same
             "dm_screen.buttons.StopListeningButton",
             "dm_screen.buttons.VisibilityButton",
             "dm_screen.clock.ClockButton",
@@ -186,6 +195,10 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.settings.InviteButton",
             "dm_screen.settings.LevelButton",
             "dm_screen.settings.RulesCardsButton",
+            "dm_screen.settings.AskBeforeAddingButton",
+            "dm_screen.channel_sync_ui.ChannelsMenuButton",
+            "dm_screen.channel_sync_ui.ChannelsChoiceButton",
+            "dm_screen.channel_sync_ui.PeopleButton",
             "dm_screen.settings.SettingsButton",
             "dm_screen.settings.VisibilityMenuButton",
             "dm_screen.settings.ManagementMenuButton",
@@ -245,6 +258,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_share.ShareButton",
             "ui.recap_short.ShortRecapButton",
             "ui.revealed_report.UndoRevealedButton",
+            "ui.upload_notice.UndoUploadButton",
             "ui.secret_aloud.SecretAloudButton",
             "ui.secret_reveal.RevealButton",
             "ui.story_watch.KnowButton",

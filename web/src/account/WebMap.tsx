@@ -22,8 +22,6 @@ import {
   COOLING,
   extentOf,
   forceStep,
-  LINK_KINDS,
-  edgeKind,
   kindAnchors,
   NO_QUEST,
   orderedKinds,
@@ -66,6 +64,15 @@ export function lineWidthOf(count: number, on: boolean, chosen: boolean): { stro
   return { strokeWidth: chosen ? base + 2 : base };
 }
 const NUDGE = 24; // how far an arrow key moves the name it is on
+
+/** Who knows a line, from its connections (#3809): "all" when every one is fully revealed, "dm" when every one is hidden from
+ * every player, else "some". A connection from an older API has no `who`: it counts as "all" unless it is secret. */
+function knowOf(edge: WebEdge): "all" | "some" | "dm" {
+  const each = edge.links.map((l) => l.who ?? (l.secret ? "dm" : "all"));
+  if (each.every((w) => w === "all")) return "all";
+  if (each.every((w) => w === "dm")) return "dm";
+  return "some";
+}
 
 /** How many of a line's connections its tooltip lists before "plus n more…" (#3279). */
 const TIP_LINKS = 4;
@@ -249,8 +256,6 @@ export default function WebMap({
   const touched = useRef(false);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
 
-  // Kinds of connection the person turned off with the chips: their lines are not drawn.
-  const [off, setOff] = useState<Set<string>>(new Set());
   const sim = useRef<SimNode[]>([]);
   const heat = useRef({ alpha: 0, steps: 0 });
   const loop = useRef(0);
@@ -358,7 +363,7 @@ export default function WebMap({
   // still here keeps where it is, so choosing another middle does not shuffle the whole map.
   // The parent builds fresh arrays on every render; only a real change to the names or lines may re-place them,
   // or choosing a line would shake the whole map.
-  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}:${edgeKind(x)}`).join(",")}`;
+  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}`).join(",")}`;
   useEffect(() => {
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
@@ -568,7 +573,6 @@ export default function WebMap({
   if (focus) {
     near.add(focus);
     for (const e of edges) {
-      if (off.has(edgeKind(e))) continue; // a line that is not drawn lights nothing
       if (e.a === focus) near.add(e.b);
       if (e.b === focus) near.add(e.a);
     }
@@ -577,7 +581,6 @@ export default function WebMap({
   // Every kind drawn, people first, each once (the legend shows its colour, shape and word).
   const kindsHere = orderedKinds(nodes.map((n) => n.kind));
   const anyPinned = sim.current.some((n) => n.pinned);
-  const kindsPresent = LINK_KINDS.filter((k) => edges.some((e) => edgeKind(e) === k));
   const tooBig = nodes.length > MAX_SIM_NAMES;
   // The side panel: the name that was clicked or tapped (never one the pointer only passes over), or the middle name, with its connections in words.
   // A picked or focused name that is no longer drawn falls back to the next, never to an empty panel.
@@ -585,7 +588,7 @@ export default function WebMap({
   const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
   const sideLines = detail
     ? edges
-        .filter((x) => (x.a === detail.id || x.b === detail.id) && !off.has(edgeKind(x)))
+        .filter((x) => x.a === detail.id || x.b === detail.id)
         .flatMap((x) =>
           x.links.map((l) => ({
             id: l.id,
@@ -640,30 +643,6 @@ export default function WebMap({
           {words.letGo}
         </button>
       </div>
-      {kindsPresent.length > 0 && (
-        <div class="web-chips" role="group" aria-label={words.kindLabel}>
-          {kindsPresent.map((k) => (
-            <button
-              key={k}
-              type="button"
-              class={`button secondary web-chip web-link-${k}`}
-              aria-pressed={!off.has(k)}
-              onClick={() =>
-                setOff((was) => {
-                  const next = new Set(was);
-                  if (next.has(k)) next.delete(k);
-                  else next.add(k);
-                  return next;
-                })
-              }
-            >
-              <span class="web-dot" aria-hidden="true" /> {words.linkKind[k]}
-              {off.has(k) && <span class="visually-hidden"> {words.hiddenMark}</span>}
-            </button>
-          ))}
-        </div>
-      )}
-      {kindsPresent.length > 0 && <p class="small muted">{words.kindHint}</p>}
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
       <div class={`web-stage web-side-${side}`}>
       <svg
@@ -702,8 +681,8 @@ export default function WebMap({
             const p = at.get(edge.a);
             const q = at.get(edge.b);
             if (!p || !q) return null;
-            const kind = edgeKind(edge);
-            if (off.has(kind)) return null;
+            // The line's style says who knows it, for the DM's full view only; every other view draws it solid (#3809).
+            const know = canEdit ? knowOf(edge) : "all";
             const chosen = selected !== null && ((selected.a === edge.a && selected.b === edge.b) || (selected.a === edge.b && selected.b === edge.a));
             const theory = isTheory(edge);
             const dim = edge.links.length > 0 && edge.links.every((l) => l.revealed === false);
@@ -751,7 +730,7 @@ export default function WebMap({
             return (
               <g
                 key={`${edge.a}|${edge.b}`}
-                class={`web-edge web-link-${kind}${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
+                class={`web-edge web-know-${know}${chosen ? " chosen" : ""}${theory ? " web-theory" : ""}${dim ? " web-dim" : ""}${focus && !touches ? " web-faded" : ""}`}
               >
                 <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} class="web-line" style={lineWidthOf(edge.links.length, look.lineWidth, chosen)} />
                 {/* A fat invisible line: easy to hit with a finger, and reachable by keyboard. */}
@@ -868,11 +847,6 @@ export default function WebMap({
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
-                  {l.kind && (
-                    <span class={`web-kindmark web-link-${l.kind}`}>
-                      <span class="web-dot" aria-hidden="true" /> {words.linkKind[l.kind]}:{" "}
-                    </span>
-                  )}
                   {markSecret(l) && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
                   {l.text}
@@ -927,19 +901,23 @@ export default function WebMap({
               {kindWords(k)}
             </li>
           ))}
-          {kindsPresent.map((k) => (
-            <li key={`kind-${k}`} class={`web-link-${k}`}>
-              <svg width="34" height="12" viewBox="0 0 34 12" aria-hidden="true">
-                <line x1="1" y1="6" x2="33" y2="6" class="web-line" />
-              </svg>{" "}
-              {words.linkKind[k]}
-            </li>
-          ))}
           {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
           {nodes.some((n) => n.knowWord === "secret") && (
             <li>
               {words.secretMark} {words.knowWords.secret}
             </li>
+          )}
+          {canEdit && edges.length > 0 && (
+            <>
+              {(["all", "some", "dm"] as const).map((k) => (
+                <li key={`know-${k}`} class={`web-know-${k}`}>
+                  <svg width="34" height="12" viewBox="0 0 34 12" aria-hidden="true">
+                    <line x1="1" y1="6" x2="33" y2="6" class="web-line" />
+                  </svg>{" "}
+                  {words.legendKnow[k]}
+                </li>
+              ))}
+            </>
           )}
           {edges.some(isTheory) && <li>{words.legendTheory}</li>}
           {edges.some((e) => e.links.some((l) => l.pinned)) && <li>{words.legendPinned}</li>}

@@ -39,8 +39,10 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "character_sheets",
     ),
     "memory_importance": ("memory_importance",),  # PlotBot's importance ranks (#3172)
+    "memory_roles": ("memory_role_codes", "memory_roles"),  # the story roles (#3172, item b)
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
     "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
+    "memory_reveal_proposals": ("memory_reveal_proposals",),  # who learned what (#2996)
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),
@@ -95,6 +97,7 @@ _WAIT = "a wait or a pointer, kept out by its schema comment"
 _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 _QUEUE = "a request still waiting for an answer: a restored campaign starts with none"
+_MEMBER_IDS = "Discord ids of this server's members: not in a file anyone in the server may get"
 _KEY = "a key to a publisher's set, which must not travel in a file anyone in the server may get"
 _VOICE_CO = (
     "an object on the voice company's one shared account, not in our data: a file could point a "
@@ -141,6 +144,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
+    "hear_use": _RUNTIME,
+    "campaign_channel_people": _MEMBER_IDS,  # members a DM let see the channels by hand (#3891)
+    "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
@@ -171,6 +177,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
+    "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
+    "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,
@@ -187,7 +195,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
-    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words): "
+    "memory_vectors": "meaning-search numbers made from campaign text (and a line's own words, "
+    "and added story roles' texts): "
     "made again from the text, and never carried, so a person's words leave no copy (#2664)",
     "name_pass_reports": "the name pass's report and Undo record: a run's history, the fixes "
     "themselves are in the transcript (#2684)",
@@ -247,4 +256,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
     "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
+    "upload_notices.channel_id": "left: the notice stays in the old server; its buttons name the "
+    "old server, so they find nothing after a move",
+    "upload_notices.message_id": "left: as its channel",
 }

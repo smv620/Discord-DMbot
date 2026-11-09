@@ -36,7 +36,11 @@ def bot(*, plan: bool = True, offer: Any = OFFER) -> Any:
     me = SimpleNamespace(
         memory=memory,
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({DM})))
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+                )
+            )
         ),
         plan_allows=AsyncMock(return_value=plan),
         ask_dm=AsyncMock(),

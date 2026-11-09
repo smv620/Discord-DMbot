@@ -107,6 +107,22 @@ class TheNumberMoves(ConfirmedMemoryTest):
                 "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (GUILD_A, self.c)
             )
 
+    async def test_a_story_role_added_or_ended_moves_it(self) -> None:
+        from collections import Counter
+
+        from dmbot.memory.role_store import NewRole, RoleStore
+
+        a = await self.add("Aldric")
+        roles = RoleStore(self.db)
+        v = await self.version()
+        await roles.add(GUILD_A, self.c, [NewRole(a, "god", "reading")], Counter())
+        self.assertTrue(await self.moved(v))
+        v = await self.version()
+        await roles.add(GUILD_A, self.c, [NewRole(a, "god", "reading")], Counter())
+        self.assertEqual(await self.version(), v)  # (held already: nothing changed)
+        await roles.end(GUILD_A, self.c, a, "god")
+        self.assertTrue(await self.moved(v))
+
     async def test_another_campaigns_change_does_not_move_this_one(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other Wastes", DM)).id
         v = await self.version()
@@ -131,6 +147,8 @@ FILES: dict[str, str] = {
     "memory/contradiction_grades.py": NOT_DRAWN,
     "memory/deed_proposals.py": NOT_DRAWN + " (deeds waiting for the DM, #3175)",
     "memory/deed_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/reveal_proposals.py": NOT_DRAWN + " (who learned what, waiting for the DM, #2996)",
+    "memory/reveal_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
@@ -139,6 +157,9 @@ FILES: dict[str, str] = {
     "memory/heard_backup.py": NOT_DRAWN,
     "memory/importance_backup.py": NOT_DRAWN + " (the importance rank)",
     "memory/importance_rank.py": NOT_DRAWN + " (the importance rank)",
+    "memory/role_backup.py": NOT_DRAWN + " (the story roles in a backup: a restore loads with the"
+    " memory section, whose load moves the version)",
+    "memory/role_store.py": BUMPS + " (a node's why shows its roles, #3172)",
     "memory/kind_offers.py": NOT_DRAWN + " (the DM's answers about kinds, #3033)",
     "memory/kind_offers_backup.py": NOT_DRAWN + " (the same answers in a backup)",
     "memory/knowers.py": INSIDE_WRITE,

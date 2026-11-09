@@ -823,8 +823,14 @@ class RecapWorker:
                     last_error="",
                 )  # fmt: skip
                 return await self._store.get(gid, cid, job.session_at)
-        split = sp.all_play(said)
         earlier = inputs.earlier
+        # (no earlier session: only a spoken recap the rule finds is marked, the same answer the
+        # story reader's split gives, so the recap and the story never disagree, #3298)
+        split = (
+            sp.all_play(said)
+            if earlier is not None
+            else (sp.spoken_recap(said, inputs.dm_ids) or sp.all_play(said))
+        )
         if earlier is not None and job.errors >= SPLIT_ERRORS_MAX:
             # The labelling is optional: after repeated service errors the recap goes on with
             # what code alone can tell, rather than fail for it.

@@ -336,3 +336,9 @@ class TheSpoilerCheck(unittest.TestCase):
     def test_the_dm_version_never_asks_for_a_peek(self) -> None:
         n = person("Kesh", 3, kin(viewer_knows=False))
         self.assertFalse(ns.summarize(MIRA, [n], ns.DM).needs_peek)
+
+
+class CarryingReadsAsCarrying(unittest.TestCase):
+    def test_carries_reads_both_ways(self) -> None:  # (offered by the readers since #3619)
+        self.assertEqual(ns._wording(fact("carries", outward=True)), "carried by them")
+        self.assertEqual(ns._wording(fact("carries", outward=False)), "carries it")

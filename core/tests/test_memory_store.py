@@ -156,8 +156,14 @@ class Isolation(MemoryTest):
             )  # fmt: skip
         # and an internal importance assessment of a character (#3172)
         await importance_rank.ImportanceStore(self.db).add(
-            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
+            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "reading")]
         )
+        # and a story role no connection shows, with its campaign's codes (#3172)
+        from collections import Counter
+
+        from dmbot.memory.role_store import NewRole, RoleStore
+
+        await RoleStore(self.db).add(GUILD_A, self.c, [NewRole(a, "god", "reading")], Counter())
         # and the AI's scene of a waiting question (#3596)
         from dmbot.memory.scenes import ENTITY, Scene, Scenes
 
@@ -255,6 +261,16 @@ class Isolation(MemoryTest):
             "voyage-3.5",
             [vectors.Item(vectors.ASSERTION, "x", vectors.text_hash("x"), [1.0, 0.0])],
         )
+        # and a "who learned what" the session reader proposed (#2996): ids only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id, character_id,"
+                " statement_kind, statement_id, how, check_name, lines, speaker_ids,"
+                " prompt_version, model, status, created_at) VALUES (%s, %s, %s, %s, 'entry', %s,"
+                " 'check', 'Insight', ARRAY['1'], ARRAY[%s::bigint], 'reveals-1', 'm',"
+                " 'proposed', 5)",
+                (GUILD_A, self.c, "e" * 32, a, b, DM),
+            )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:

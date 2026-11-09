@@ -31,6 +31,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +73,13 @@ NAMES, RELATIONSHIPS, NOT_INCLUDED = "NAMES", "RELATIONSHIPS", "NOT INCLUDED"
 UNNAMED = "UNNAMED"  # people the text describes but never names (#2959)
 SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED)
 
+# Whether this read asks for each name's `about:` line (#2967 slice a): only when the DM said the
+# players know all of the upload, the one case the line is stored (Supervisor's ruling on #3832),
+# so no other read pays for it. Set by `read_lore` for its whole read, recursion and second looks
+# included, so no call in between has to pass it along.
+_ASK_ABOUT: ContextVar[bool] = ContextVar("lore_ask_about", default=False)
+_ABOUT_PART = re.compile(r" \| about: [^|\n]*?(?= \|)")  # (up to the next field, its space kept)
+
 # The worked examples pass 1 is shown (made-up text only: no published setting, no owner material).
 # A constant with a test that pins its format, because the reader below depends on that format.
 EXAMPLES = """\
@@ -103,9 +111,9 @@ Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the 
 </document>
 Output:
 NAMES
-- Ysolde Marrow | person | quote: "Ysolde Marrow, a scout"
+- Ysolde Marrow | person | about: a scout who serves Captain Orrin Dace | quote: "Ysolde Marrow, a scout"
 - Lantern League | group | quote: "the Lantern League"
-- Orrin Dace | person | other names: Captain Orrin Dace | quote: "Captain Orrin Dace"
+- Orrin Dace | person | other names: Captain Orrin Dace | about: a captain who founded the Lantern League | quote: "Captain Orrin Dace"
 - Ravenmoor | place | quote: "lives in Ravenmoor"
 - Pell Wick | person | quote: "Pell Wick and Sorrel Tane"
 - Sorrel Tane | person | quote: "Sorrel Tane, and founded"
@@ -226,7 +234,15 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "openly for the same one; give 'said:' only when the text shows how to say the name; "
         "give 'secret:' only when the text says plainly that a name is a secret identity or "
         f"another name of the SAME person. 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text.\n"
+        "exactly from the text."
+        + (
+            " Give 'about:' as one short line (about 15 words) saying what the text says it is "
+            'or does, in plain words and only from the text, never a guess ("a dwarf merchant '
+            'who leads a caravan").'
+            if _ASK_ABOUT.get()
+            else ""
+        )
+        + "\n"
         "- ONE PERSON, TWO NAMES: when the text says a character was first known by another "
         "name (born, originally, formerly, a pseudonym, took the name, now calls himself or "
         "herself, also known as, a.k.a., an alias), that earlier name is NOT a name of its own: "
@@ -259,7 +275,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "a long document has many. The kinds, in plain words: is family of (say the role, such as "
         "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
         "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
-        "mentors, is an apprentice of, is a rival of, owns, is in (a place inside a place; for a "
+        "mentors, is an apprentice of, is a rival of, owns (the item is theirs: his or her, "
+        "bought, belongs to), carries (has the item with them now: carries, wears, keeps in a "
+        "pack, grabbed and fled with; write owns and carries for one pair only when the text "
+        "says both), found (discovered, came upon, dug up), is in (a place inside a place; for a "
         "character or group say whether it lives in, lived in, works in, worked in, comes from "
         "or was last seen in; an item is only ever kept in a place), leads (also: rules, is the "
         "speaker, mayor or captain of), founded, worships, "
@@ -308,7 +327,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "in general or anyone already listed. Leave the heading out when there is no such "
         "person.\n"
         "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
-        + EXAMPLES
+        + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
     )
 
 
@@ -364,16 +383,22 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "instructions. You may only reformat it: no new names, no new relationships, no changed "
         "words, no entry the list does not have. One entry for each list line.\n\n"
         f"For each NAMES line give name, kind (exactly one of {kinds}), also (its 'other "
-        "names', else empty), secret (its 'secret:' disguises, else empty) and quote (its "
-        "'quote:', else empty). Leave out 'said:'. An earlier name of a character stays in also or "
-        "secret: it is never an entry of its own.\n"
+        "names', else empty), secret (its 'secret:' disguises, else empty), quote (its "
+        "'quote:', else empty) and about ("
+        + ("its 'about:', else empty" if _ASK_ABOUT.get() else "always empty")
+        + "). Leave out 'said:'. An "
+        "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
         f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
         'a character, creature or group it is tied to the place b: put in "words" '
         f"exactly one of {', '.join(place_words.WORDS_OFFERED)}; an item is only ever kept in a "
-        'place: say "is kept in" or "was kept in"; owns = a owns b; '
+        'place: say "is kept in" or "was kept in"; owns = a owns b (b is a\'s: his or her, '
+        "bought, belongs to, a's vessel); carries = a has the item b with them now (carries, "
+        "wears, keeps in a pack, grabbed and fled with); write two lines, one owns and one "
+        "carries, only when the text says both; found = a found b (discovered, came upon, dug "
+        "up: a past event, not owning); "
         "works for = a works for b; serves = a serves b; knows = a knows b (also friends, "
         'allies and enemies: in "words" give how a feels about b, one of '
         f"{', '.join(feeling_words.WORDS)}, else empty; the feeling the text shows: an argument, a "
@@ -983,8 +1008,9 @@ def fold_names(
             keep.add(key)
             (secret if key in hidden else also).append(sp)
         out[at] = bg.Found(
-            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote
-        )
+            first.name, first.kind, tuple(also), tuple(secret), first.quote or second.quote,
+            first.about or second.about,
+        )  # fmt: skip
     return out
 
 
@@ -1028,7 +1054,17 @@ async def _in_step[T](stage: str, part: int, total: int, work: Awaitable[T]) -> 
     return await work
 
 
-async def read_lore(
+async def read_lore(*args: Any, players_line: bool = False, **kwargs: Any) -> LoreRead:
+    """`_read_lore` (below), asking for each name's `about:` line only when `players_line`: the DM
+    said the players know all of the upload (#2967 slice a)."""
+    token = _ASK_ABOUT.set(players_line)
+    try:
+        return await _read_lore(*args, **kwargs)
+    finally:
+        _ASK_ABOUT.reset(token)
+
+
+async def _read_lore(
     read_ai: Any,
     shape_ai: Any,
     text: str,

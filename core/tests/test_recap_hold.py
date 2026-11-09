@@ -228,7 +228,7 @@ def entity(created_at: int, status: str = PROPOSED, id: str = "") -> Any:
 def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id="c" * 32, recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}),
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}),
     )  # fmt: skip
 
 
@@ -414,6 +414,7 @@ class TheCap(IsolatedAsyncioTestCase):
         bot.mailer = object()
         bot._email_hold = DMBot._email_hold.__get__(bot)
         bot.campaigns.get.return_value.dm_user_ids = frozenset({DM, DM + 1})
+        bot.campaigns.get.return_value.dm_accounts = frozenset({DM, DM + 1})
         send = AsyncMock(side_effect=[RuntimeError("boom"), "sent"])
         with patch("dmbot.recaps.discord.remind_the_dm", new=send):
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))

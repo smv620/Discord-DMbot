@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 97 entries, 135 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 97 entries, 136 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
 
 ## Ties both documents say
 
@@ -159,6 +159,12 @@ These are the ties the check should find most surely: the session repeats or sha
 | m119 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L96 | a kennel master the party met there |
 | m134 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | lore | L18 | born in the Temple of the Seldarine (the more exact place; m019 says the city) |
 | m135 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | lore | L18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (m011 says works_for) |
+| m136 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | lore | L67 | the other side of the heated debate on mithril smelting (m081 is Belleros toward Brewner) |
+| m137 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | lore | L30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
+| m138 | Belleros Stormgrace | leads | Aurora's Wind | stated | no | yes | lore | L93 | 'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b) |
+| m139 | Okthandom Korran | enemy_of | Fizzlebomb | stated | no | yes | lore | L93 | pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b) |
+| m140 | Cerric Vanya'elen | enemy_of | Fizzlebomb | stated | no | yes | lore | L93 | 'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b) |
+| m141 | Garret Velryn | associate | Dwarven Valley | stated | no | yes | session | S204 | the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b) |
 | m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
 | m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
 | m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |

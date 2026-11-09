@@ -22,6 +22,7 @@ import type {
   NameRow,
   NamesPage,
   NameSource,
+  ScriptOffer,
   MatchRow,
   NamesQuery,
   SmartNamesAnswer,
@@ -1208,6 +1209,8 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
   sharingState.set(ref, now);
   return note;
 }
+// Scripts made from the pretend website (#3899), by campaign and session.
+const madeScripts = new Set<string>();
 const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
@@ -3157,12 +3160,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The pretend script of a session (#3244): session 1 has one, the rest have none; a ref ending `.player`
     // is a player's, who may not save it.
+    // Making a script from the website (#3899). A campaign ending `.script-plan` is on a plan without scripts, `.script-off` has
+    // them switched off, `.script-fail` fails the job; session 1 already has its script, and a made one is kept for the session.
+    async scriptOffer(campaignRef, number): Promise<ScriptOffer> {
+      calls.push(`scriptOffer:${campaignRef}:${number}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) return { state: "exists", cost: null, allowed: true, why: null };
+      if (/\.script-plan$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "plan" };
+      if (/\.script-off$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "off" };
+      return { state: "none", cost: "It uses about 6 cents of your AI allowance.", allowed: true, why: null };
+    },
+    async makeScript(campaignRef, number, onLook): Promise<void> {
+      calls.push(`makeScript:${campaignRef}:${number}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (/\.script-plan$/.test(campaignRef)) throw new ApiError("plan-needed");
+      if (/\.script-off$/.test(campaignRef)) throw new ApiError("script-off");
+      if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) throw new ApiError("script-already");
+      for (let i = 1; i <= 2; i++) {
+        onLook?.({ stage: "script_writing", done: i, total: 3, unit: "parts", startedAt: 100, updatedAt: 100 + i, serverNow: 102, state: "running" });
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      if (/\.script-fail$/.test(campaignRef)) throw new ApiError("server");
+      madeScripts.add(`${campaignRef}:${number}`);
+    },
     async transcriptScript(campaignRef, number) {
       calls.push(`transcriptScript:${campaignRef}:${number}`);
       await reachable();
       signedIn();
       if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
-      if (number !== 1) throw new ApiError("no-script");
+      if (number !== 1 && !madeScripts.has(`${campaignRef}:${number}`)) throw new ApiError("no-script");
       return new Blob(
         ["The Silver Lock, session 1: the script\n\nMira [Belleros's character] draws her sword.\n"],
         { type: "text/plain" },
@@ -3366,13 +3396,38 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const half = Math.ceil(found.text.length / 2);
       return `${found.text.slice(0, half).toUpperCase()}-${found.text.slice(half).toLowerCase()}`;
     },
-    async respellFromVoice(campaignRef, nameId, clip) {
+    // 🔊 Hear it in the narrator's voice (#3807): a campaign reference ending `.hear-off` has no narration (the browser's voice
+    // reads it instead), `.hear-soon` is pressed too often, `.hear-slow` takes its time, and any other answers with a tiny WAV.
+    async hearSaidAs(campaignRef, nameId, text, onLook) {
+      calls.push(`hearSaidAs:${campaignRef}:${nameId}:${text}`);
+      await reachable();
+      signedIn();
+      if (!sayable(nameId)) throw new ApiError("not-found");
+      if (text.trim() === "" || text.length > 80) throw new ApiError("bad-text");
+      if (/\.hear-off$/.test(campaignRef)) throw new ApiError("voice-off");
+      if (/\.hear-soon$/.test(campaignRef)) throw new ApiError("too-soon");
+      onLook?.(null);
+      if (/\.hear-slow$/.test(campaignRef)) await new Promise((r) => setTimeout(r, 4000));
+      // A 44-byte WAV header with no samples: enough for a pretend clip.
+      return new Blob([new Uint8Array(44)], { type: "audio/wav" });
+    },
+    async respellFromVoice(campaignRef, nameId, clip, watch) {
       calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
       await reachable();
       signedIn();
       const found = sayable(nameId);
       if (!found) throw new ApiError("not-found");
       if (clip.size === 0) throw new ApiError("bad-clip");
+      if (/\.voice-off$/.test(campaignRef)) throw new ApiError("voice-off");
+      // `.voice-slow`: a 202, then waiting, then working, then done; `.voice-busy` stays waiting (a table is recording).
+      if (/\.voice-(slow|busy)$/.test(campaignRef)) {
+        const busy = /\.voice-busy$/.test(campaignRef);
+        for (let i = 0; i < (busy ? 40 : 3); i++) {
+          if (watch?.cancelled?.()) throw new ApiError("server");
+          watch?.onLook?.({ state: busy || i === 0 ? "waiting" : "working", progress: null });
+          await new Promise((r) => setTimeout(r, busy ? 1000 : 600));
+        }
+      }
       const half = Math.ceil(found.text.length / 2);
       return `${found.text.slice(0, half).toLowerCase()}-${found.text.slice(half).toUpperCase()}`;
     },
@@ -3416,7 +3471,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       const names = [
-        { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke." },
+        { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke.", playersText: "The smith of Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
         { id: "c".repeat(32), name: "Garrick", note: "" },
         // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.

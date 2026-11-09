@@ -34,7 +34,9 @@ import {
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
+import DraftPreview from "./DraftPreview";
 import RecapUnchecked from "./RecapUnchecked";
+import ScribeHand from "./ScribeHand";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFixName from "./RecapFixName";
@@ -789,9 +791,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       {recap.working && (
-        <p class="panel" role="status">
-          {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
-        </p>
+        <div class="panel" role="status">
+          <p>{recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}</p>
+          <ScribeHand
+            stage={recap.progress?.stage}
+            moving={!recap.waitingForCheck && !sawWaiting.current && recap.progress?.state !== "stalled" && recap.progress?.state !== "failed"}
+          />
+        </div>
       )}
       <RecapUnchecked api={api} recap={recap} onRecap={setRecap} pageFocus={() => headingRef.current} />
       {/* The only place the page says an email is coming, so the only place it names the address. */}
@@ -863,9 +869,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           <>
             <section class="panel">
               <h3>{text.textHeading}</h3>
-              {recap.text.split(/\n{2,}/).map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
+              <DraftPreview checking={recap.working && recap.status === "draft"}>
+                {recap.text.split(/\n{2,}/).map((p, i) => (
+                  <p key={i}>{p}</p>
+                ))}
+              </DraftPreview>
             </section>
             {RECAP_AUDIO_LIVE && recap.audio && hasCues(recap.summary) && (
               <section class="panel" aria-labelledby="recap-cues">

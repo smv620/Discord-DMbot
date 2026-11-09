@@ -58,6 +58,7 @@ class TranscriptChannelTests(DatabaseTest):
         return next(ow for key, ow in overwrites.items() if key.id == target_id)
 
     async def test_a_new_channel_is_named_saved_and_view_only_for_everyone(self) -> None:
+        await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")  # (#3891)
         channel = await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         assert channel is self.new
         name = self.guild.create_text_channel.call_args.args[0]
@@ -73,6 +74,19 @@ class TranscriptChannelTests(DatabaseTest):
         self.assertIn("Anyone in this server can read it", self.created()["topic"])
         saved = await self.store.get(GUILD, self.campaign.id)
         assert saved is not None and saved.transcript_channel_id == NEW
+
+    async def test_by_default_only_the_campaigns_people_can_see_it_and_they_cannot_post(
+        self,
+    ) -> None:
+        await setup_transcript_channel(self.guild, self.campaign.id, self.store, people=[77])
+        everyone = self.overwrite_for(GUILD)
+        self.assertIs(everyone.view_channel, False)
+        self.assertTrue(self.overwrite_for(DM).view_channel)  # (the DM is always one of them)
+        person = self.overwrite_for(77)
+        self.assertTrue(person.view_channel)
+        self.assertFalse(person.send_messages)
+        self.assertTrue(self.overwrite_for(BOT).send_messages)
+        self.assertIn("Only this campaign's people can read it", self.created()["topic"])
 
     async def test_the_card_is_posted_and_pinned(self) -> None:
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
@@ -122,7 +136,7 @@ class TranscriptChannelTests(DatabaseTest):
         card.author = SimpleNamespace(id=BOT)
         campaign = await self.store.get(GUILD, self.campaign.id)
         assert campaign is not None
-        card.content = messages.transcript_card(campaign.name)
+        card.content = messages.transcript_card(campaign.name, everyone=False)  # (the default)
         self.new.pins = AsyncMock(return_value=[card])  # thousands of lines since
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)
         self.new.send.assert_not_called()

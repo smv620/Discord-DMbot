@@ -30,9 +30,10 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dmbot.devtools.sample_run import characters, plan, steps
+from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
 
@@ -40,6 +41,16 @@ if TYPE_CHECKING:
     from dmbot.db import Database
 
 Accept = Callable[["Database", int, str], Awaitable[Mapping[str, int]]]
+
+
+class Sure(Protocol):
+    def __call__(
+        self, db: Database, guild: int, campaign: str, *, connections_only: bool = False
+    ) -> Awaitable[Mapping[str, int]]: ...
+
+
+# The careful model's client and how to close it (#3900); a test passes a stand-in.
+DecideClient = Callable[[Mapping[str, str]], tuple[Any, Callable[[], Awaitable[None]]]]
 DEFAULT_BACKUPS = Path("/var/lib/dmbot-sample-backups")
 _ON = {"1", "true", "on", "yes"}
 
@@ -61,6 +72,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--date", help="when the past session was held (YYYY-MM-DD)")
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUPS)
     parser.add_argument("--commit", help="the deployed commit (default: GIT_COMMIT or git)")
+    parser.add_argument(
+        "--max-decisions",
+        type=int,
+        default=decide_mod.DEFAULT_MAX_DECISIONS,
+        help="the most careful-model decisions in the whole run (#3900); past it, items wait",
+    )
+    parser.add_argument(
+        "--accept-all",
+        action="store_true",
+        help="the old way: accept everything (#3544) instead of sure, then the AI's decisions",
+    )
     parser.add_argument("--yes", action="store_true", help="spend the money")
     return parser.parse_args(argv)
 
@@ -102,11 +124,15 @@ async def run(
     args: argparse.Namespace,
     *,
     accept: Accept | None = None,
+    sure: Sure | None = None,
+    decide_client: DecideClient | None = None,
     say: Callable[[str], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> int:
     say = say or (lambda line: print(line, flush=True))
     accept = accept or _accept_all()
+    sure = sure or _sure()
+    decide_client = decide_client or _careful_client
     now = int(time.time())
     # Everything that can refuse the run without a database comes first, so a mistake costs
     # nothing: the players, the files, the choice, the date.
@@ -138,6 +164,12 @@ async def run(
         len(lore_text.split()), len(transcript.utterances), chars
     )
     say(plan.Cost(lore, windows, story, recap).line())
+    if not args.accept_all:
+        calls = max(args.max_decisions, 0)
+        say(
+            f"decisions: at most {calls} careful-model calls (#3900),"
+            f" about ${decide_mod.estimate(calls):.2f}"
+        )
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
@@ -170,6 +202,9 @@ async def run(
     )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
+    decider: list[
+        Any
+    ] = []  # (the decisions' client is made at their first stage, closed at the end)
     try:
         campaigns, memory = steps.campaign_store(db), MemoryStore(db)
         today = dt.date.today().isoformat()
@@ -202,6 +237,48 @@ async def run(
 
         async def accept_step() -> Mapping[str, int | str]:
             return await accept(db, gid, cid)
+
+        docs = (lore_text, session_text)
+        # One asker for the whole run (#3900): the cap, the counts and the cost add up across the
+        # lore and session stages, and the record is this run's own file (stamped, owner-only).
+        record = folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}.jsonl"
+
+        async def sure_step() -> Mapping[str, int | str]:
+            return await sure(db, gid, cid)
+
+        async def decide_step(label: str) -> Mapping[str, int | str]:
+            """The careful model's answers for what is still waiting (#3900), then the connections
+            those answers made ready, kept as the sure step keeps them."""
+            from dmbot.consent import ConsentStore as Consents
+            from dmbot.devtools import accept_all
+            from dmbot.devtools.sample_run import judge
+            from dmbot.memory.backstory_links import BackstoryLinks
+            from dmbot.memory.claims import ClaimStore
+
+            if not decider:
+                ai, close = decide_client(os.environ)
+                asker = decide_mod.Asker(
+                    ai, str(getattr(ai, "model", "")),
+                    decide_mod.Budget(max(args.max_decisions, 0)), decide_mod.Run(), record,
+                )  # fmt: skip
+                decider.extend([asker, close])
+            asker = decider[0]
+            asker.stage = label
+            calls, cost = asker.run.calls, asker.run.cost
+            try:
+                await decide_mod.run(
+                    db, memory, BackstoryLinks(db), ClaimStore(memory), asker,
+                    judge.Key(steps.master_key()), gid, cid, docs=docs,
+                    opted_in=await Consents(db).recorded_in(gid, cid), dm=dm,
+                )  # fmt: skip
+            except accept_all.WrongCampaign as exc:
+                raise SampleError(str(exc)) from exc
+            after = await sure(db, gid, cid, connections_only=True)
+            return {
+                "calls": asker.run.calls - calls,
+                "cost": f"${asker.run.cost - cost:.2f}",
+                "connections kept after": after.get("accepted", 0),
+            }
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
             path = await steps.backup(campaigns, gid, cid, folder, label)
@@ -266,24 +343,49 @@ async def run(
                 raise SampleError(f"the recap was not made (recap_run exit {code})")
             return {"made": 1}
 
+        if args.accept_all:  # the old way (#3544), for comparison
+            lore_accept: dict[str, Callable[[], Awaitable[Mapping[str, int | str]]]] = {
+                "accept all (lore)": accept_step,
+                "backup and score (lore)": lambda: score_step("lore", "lore"),
+            }
+            both_accept: dict[str, Callable[[], Awaitable[Mapping[str, int | str]]]] = {
+                "accept all (session)": accept_step,
+                "backup and score (both)": lambda: score_step("both", "both"),
+            }
+        else:  # three columns, never mixed (#3900): sure, then the AI's decisions; the rest left
+            lore_accept = {
+                "sure (lore)": sure_step,
+                "backup and score (lore, sure)": lambda: score_step("lore-sure", "lore"),
+                "AI decides (lore)": lambda: decide_step("lore"),
+                "backup and score (lore, sure + AI)": lambda: score_step("lore", "lore"),
+            }
+            both_accept = {
+                "sure (session)": sure_step,
+                "backup and score (both, sure)": lambda: score_step("both-sure", "both"),
+                "AI decides (session)": lambda: decide_step("session"),
+                "backup and score (both, sure + AI)": lambda: score_step("both", "both"),
+            }
         await steps.run_steps(
             {
                 "lore read": lore_step,
                 "player characters found by the read": found_step,
-                "accept all (lore)": accept_step,
-                "backup and score (lore)": lambda: score_step("lore", "lore"),
+                **lore_accept,
                 "players not on Discord": speakers_step,
                 "player characters corrected": correct_step,
                 "session import": import_step,
-                "accept all (session)": accept_step,
-                "backup and score (both)": lambda: score_step("both", "both"),
+                **both_accept,
                 "recap (no audio)": recap_step,
             },
             done,
             say,
+            plan.STEPS if args.accept_all else plan.STEPS_DECIDE,
         )
     finally:
         await db.close()
+        if decider:  # the run's decisions, all stages together: counts and agreement only
+            await decider[1]()
+            for line in decider[0].run.lines():
+                say(line)
         for line in plan.report(
             done, commit=commit, switches=switches(os.environ), today=dt.date.today().isoformat()
         ):
@@ -322,6 +424,53 @@ def _accept_all() -> Accept:
         }
 
     return accept
+
+
+def _sure() -> Sure:
+    """What DMbot is sure of, added as an upload adds it (#3878, `memory.auto_accept` narrowed): the
+    "sure" column (#3900). `connections_only`: just the connections that are ready now (after the
+    AI's answers named their ends). Counts only; refuses any campaign but the sample."""
+    from dmbot.devtools import accept_all
+    from dmbot.memory import auto_accept as auto
+    from dmbot.memory.backstory_links import BackstoryLinks
+    from dmbot.memory.store import MemoryStore
+    from dmbot.ui.names import background_kind
+
+    async def sure(
+        db: Database, guild: int, campaign: str, *, connections_only: bool = False
+    ) -> Mapping[str, int]:
+        try:
+            await accept_all.check_campaign(db, guild, campaign)
+        except accept_all.WrongCampaign as exc:
+            raise SampleError(str(exc)) from exc
+        memory, tally = MemoryStore(db), auto.Tally()
+        if not connections_only:
+            await auto.accept_names(memory, guild, campaign, tally, kind_of=background_kind)
+            await auto.accept_other_names(memory, guild, campaign, tally)
+        await auto.accept_connections(memory, BackstoryLinks(db), guild, campaign, tally)
+        return {
+            "accepted": sum(tally.accepted.values()),
+            "left waiting": sum(tally.waiting.values()),
+            "refused by a rule": sum(tally.refused.values()),
+            "changes": len(tally.batches),
+        }
+
+    return sure
+
+
+def _careful_client(environ: Mapping[str, str]) -> tuple[Any, Callable[[], Awaitable[None]]]:
+    """The careful tier, as the bot's own settings name it, for the decisions (#3900)."""
+    from dmbot.ai import AIModelTier, AnthropicClient, Feature
+    from dmbot.config import ConfigError, parse_ai_models
+
+    try:
+        models, _ = parse_ai_models(lambda name: environ.get(name, ""))
+    except ConfigError as exc:
+        raise SampleError(str(exc)) from exc
+    # never a quiet fall back to a smaller model: the record says "careful" (#3900)
+    client = AnthropicClient(environ.get("ANTHROPIC_API_KEY", ""), models, fallback=False)
+    tier = client.tier(AIModelTier.CAREFUL, Feature.NAMES)
+    return tier, client.close
 
 
 if __name__ == "__main__":

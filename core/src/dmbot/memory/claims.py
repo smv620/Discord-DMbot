@@ -27,6 +27,7 @@ from dmbot.memory import (
     forget_readings,
     graph_review,
     kin,
+    knows_how,
     link,
     one_off,
     place_words,
@@ -37,6 +38,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -1889,14 +1891,16 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
-        went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds, reveals
+        and scenes went."""
 
-        from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
+        # (imported here: they need this module's names)
+        from dmbot.memory import deed_proposals, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)
@@ -2138,6 +2142,12 @@ class ClaimStore:
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    # whether they've met, from the reader's own words for it (#3881)
+                    knows_how=knows_how.how_from(
+                        claim.relationship, claim.details, a=claim.subject, b=claim.object
+                    )
+                    if term.key == KNOWS_PREDICATE
+                    else "",
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(
