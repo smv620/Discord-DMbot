@@ -9,7 +9,8 @@ import time
 import unittest
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.memory import background as bg
@@ -687,6 +688,69 @@ class ThePath(NamesTest):
         self.assertEqual(await self.entities(CONFIRMED), [])  # all of it, in one press
         labels = [str(getattr(b, "label", "")) for b in view.children]
         self.assertEqual(labels[0], f"✅ Add all {total}")  # offered again
+
+    async def read_with_channel(self, channel_id: int | None, *, post: Any = "ok") -> Any:
+        """The reading, with the campaign's DM-screen channel set (or not) and the bot's post
+        stood in. `post`: a message to hand back, "ok" for a fake one, or None for a failure."""
+        await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
+        sent = SimpleNamespace(
+            id=9,
+            channel=SimpleNamespace(id=channel_id),
+            jump_url=f"https://discord.com/channels/{GUILD}/{channel_id}/9",
+            edit=AsyncMock(),
+        )
+        self.bot.post_message = AsyncMock(return_value=sent if post == "ok" else post)  # type: ignore[method-assign]
+        press = await self.read()
+        return press, sent
+
+    async def test_with_a_dm_screen_channel_the_summary_is_a_message_there(self) -> None:
+        press, sent = await self.read_with_channel(77)
+        channel, text, view = cast(Any, self.bot.post_message).await_args.args
+        self.assertEqual(channel, 77)
+        self.assertIn("to check** from", text)  # the summary, counts only
+        self.assertIsInstance(view, ui_bg.BulkConfirm)
+        self.assertTrue(view.shared)
+        # the DM's own card only points to it, with no buttons
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn(sent.jump_url, card["content"])
+        self.assertIsNone(card["view"])
+
+    async def test_without_a_channel_the_card_stays_as_it_was(self) -> None:
+        press, _ = await self.read_with_channel(None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("to check** from", card["content"])
+        self.assertFalse(card["view"].shared)
+
+    async def test_when_it_cannot_be_posted_there_the_card_stays_as_it_was(self) -> None:
+        press, _ = await self.read_with_channel(77, post=None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("to check** from", card["content"])
+        self.assertFalse(card["view"].shared)
+
+    async def test_on_the_shared_summary_only_a_dm_may_press_and_one_by_one_keeps_it(self) -> None:
+        await self.read_with_channel(77)
+        view = cast(Any, self.bot.post_message).await_args.args[2]
+        self.assertFalse(await view.interaction_check(self.it(MANAGER)))  # not a DM: refused
+        self.assertTrue(await view.interaction_check(self.it(DM)))
+        (one_by_one,) = [b for b in view.children if "one by one" in str(b.label)]
+        press = self.it(DM)
+        await one_by_one.callback(press)
+        press.edit_original_response.assert_not_awaited()  # (the summary stays for the others)
+        self.assertFalse(view.is_finished())
+
+    async def test_the_summary_ends_as_all_answered_and_undo_brings_the_words_back(self) -> None:
+        await self.read_with_channel(77)
+        view = cast(Any, self.bot.post_message).await_args.args[2]
+        add = view.children[0]
+        press = self.it(DM)
+        await add.callback(press)
+        self.assertEqual(
+            press.edit_original_response.await_args.kwargs["content"], ui_bg.ALL_ANSWERED
+        )
+        undo = next(b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo"))
+        again = self.it(DM)
+        await undo.callback(again)
+        self.assertEqual(again.edit_original_response.await_args.kwargs["content"], view.words)
 
     async def test_only_a_dm_may_use_the_overall_add_all(self) -> None:
         press = await self.read()
