@@ -83,6 +83,7 @@ LOCKED_TABLES = (
     "setting_actions",
     "said_as_hears",
     "said_as_listens",
+    "script_makes",
     "picture_actions",
     "speaker_removals",
 )
@@ -95,6 +96,7 @@ WORKED_TABLES = (
     "setting_actions",
     "said_as_hears",
     "said_as_listens",
+    "script_makes",
     "picture_actions",
     "speaker_removals",
 )

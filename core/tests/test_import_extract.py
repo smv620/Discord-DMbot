@@ -206,6 +206,7 @@ class TheImportRead(WithImports):
             consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({5, -3}))),
         )
         me._mark_import_read = partial(BOT._mark_import_read, me)
+        me._import_scenes_and_who = AsyncMock()  # (then its scenes and who step, #3602)
         return me
 
     async def test_the_scans_claim_is_renewed_before_each_call_and_a_finished_read_is_marked(
@@ -250,6 +251,8 @@ class TheImportRead(WithImports):
             await BOT._extract_import(me, GUILD, ready)
             state, part, parts, _, _ = await story_of(self.db, sid)
             self.assertEqual((state, part, parts), (final, 2, 3))
+            # (only a finished read goes on to its scenes and who step, #3602)
+            self.assertEqual(me._import_scenes_and_who.await_count, int(outcome == "done"))
 
     async def test_a_session_stopped_by_the_limit_is_not_marked_read(self) -> None:
         sid = await self.imported(1)

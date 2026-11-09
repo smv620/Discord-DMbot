@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { placeSpellingWords as w } from "../content/place-spelling-words";
 import { ApiError, type AccountApi, type PlaceSpelling } from "./api";
+import SavingWait from "./SavingWait";
 
 export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChanged }: { api: AccountApi; campaignRef: string; onSignedOut: () => void; onChanged?: () => void }) {
   const [items, setItems] = useState<PlaceSpelling[] | null>(null);
@@ -89,7 +90,8 @@ export default function PlaceSpellings({ api, campaignRef, onSignedOut, onChange
         ))}
       </ul>
       {/* Always there, so a screen reader hears what is put in it. */}
-      <p class="small" role="status">{busy !== null ? w.working : (said ?? "")}</p>
+      <SavingWait active={busy !== null} />
+      <p class="small" role="status">{said ?? ""}</p>
       {problem && <p class="warn small" role="alert">{w.failed}</p>}
     </section>
   );
