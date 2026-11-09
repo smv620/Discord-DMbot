@@ -229,7 +229,9 @@ async def _read(
         await bot.campaigns.record_confirmation(
             guild_id, campaign.id, claim.rights_by, OWN_WRITING, fingerprint(text)
         )
-        upload = Upload(text, LABELS.get(claim.source, "your lore"), document=True)
+        upload = Upload(
+            text, LABELS.get(claim.source, "your lore"), document=True, source_id=claim.id
+        )
         # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:
