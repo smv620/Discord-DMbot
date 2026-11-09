@@ -22,7 +22,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 
 from dmbot.ai import OUTPUT_FLOOR, Reply
@@ -216,6 +216,16 @@ class Sections:
 def section_of(text: str, quote: str) -> str:
     """The heading of the document's section a quote is in (see `Sections`); for one quote."""
     return Sections(text).of(quote)
+
+
+def section_owner(heading: str, owners: Mapping[str, str]) -> str:
+    """The player character a section is about, from its heading (#3963 b: "Okthandom Korran
+    (Shadar-kai Blood-Hunter)" is Okthandom's backstory), or "". `owners`: each player character's
+    name keys to its entry id. Whole names only, and only when the heading names exactly one player
+    character: "How Our Heroes Met" names none, and a heading naming two is not one's own."""
+    said = f" {name_key(heading)} "
+    found = {pc for key, pc in owners.items() if key and f" {key} " in said}
+    return next(iter(found)) if len(found) == 1 else ""
 
 
 # The words that say a statement is about the party itself (#3963). Kept narrow: "the group" or

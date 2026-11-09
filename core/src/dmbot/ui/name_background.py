@@ -60,6 +60,7 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DM,
     NEEDS_A_LOOK,
+    PLAYER_CHARACTER,
     PROPOSED,
     MemoryRuleError,
     MoreNames,
@@ -810,6 +811,11 @@ async def read_background(
     traits = _traits_of(
         read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew
     )
+    # A player character's backstory written into campaign lore is known to that character
+    # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
+    # guess only (see `_backstory_owners`).
+    owner_of = await _backstory_owners(memory, campaign, upload.text, speaker, choice)
+    made_ids: dict[str, str] = {}
     stored = await store(
         memory,
         campaign,
@@ -823,7 +829,10 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
         traits=traits,
+        made=made_ids,
     )
+    if owner_of is not None:
+        await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
     short = getattr(bot, "add_short_names", None)
@@ -884,6 +893,7 @@ async def read_background(
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
         npc_guesses=link_guesses,
+        owner_of=owner_of,
     )
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
@@ -932,6 +942,63 @@ async def read_background(
         if added is not None:
             done.notice, done.questions_left = added
     return done
+
+
+async def _backstory_owners(
+    memory: MemoryStore, campaign: Campaign, text: str, speaker: str | None, choice: str
+) -> Callable[[str], str] | None:
+    """Whose backstory a quote is in, by its section's heading (`lore_knowledge.section_owner`),
+    for campaign lore with the smart guess only; None when it doesn't apply: a backstory upload
+    (its uploader's character is `known_by`), World (everyone knows all of it already), Spoilers
+    (the DM's word that none of it is known), no text, no player character. Never raises."""
+    if speaker is not None or choice != lore_knowledge.SMART or not text:
+        return None
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("The player characters couldn't be read (%s)", type(exc).__name__)
+        return None
+    owners: dict[str, str] = {}
+    for e in lookup.entities.values():
+        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into:
+            owners[name_key(e.name)] = e.id
+    pcs = set(owners.values())
+    for n in lookup.names:  # (its other public names too: "Okthandom" for Okthandom Korran)
+        if n.entity_id in pcs and not n.secret and not n.person:
+            owners.setdefault(n.key, n.entity_id)
+    if not owners:
+        return None
+    sections = lore_knowledge.Sections(text)
+    return lambda quote: lore_knowledge.section_owner(sections.of(quote), owners)
+
+
+async def _owners_learn(
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: Sequence[bg.Found],
+    made: Mapping[str, str],
+    world: Collection[str],
+    owner_of: Callable[[str], str],
+) -> int:
+    """Each new name in a player character's backstory section is known to that character, as the
+    DM's write (one change each, one Undo each): never the character itself, and never one the
+    upload already makes known to everyone. Returns how many; counts only in the log."""
+    learned = 0
+    for f in found:
+        key = name_key(f.name)
+        owner, entity_id = owner_of(f.quote), made.get(key)
+        if not owner or entity_id is None or entity_id == owner or key in world:
+            continue
+        try:
+            written = await memory.learn_statement(
+                campaign.guild_id, campaign.id, "entry", entity_id, owner, source=DM
+            )
+            learned += int(written.value)
+        except MemoryRuleError:
+            continue  # (a name the store refused, or one gone meanwhile)
+    if learned:
+        log.info("Backstory names known to their own character: %d", learned)
+    return learned
 
 
 async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
@@ -1691,6 +1758,7 @@ async def queue_links(
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
+    owner_of: Callable[[str], str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
@@ -1901,7 +1969,8 @@ async def queue_links(
                 truth and not c.inferred,  # (DMbot's inference is never pinned as 100% truth)
                 upload,
                 c.decided,
-                known_by,
+                # (in a player character's backstory section, that character knows it: #3963 b)
+                (owner_of(c.quote) if owner_of is not None and not world else "") or known_by,
                 world,
                 inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
                 # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
