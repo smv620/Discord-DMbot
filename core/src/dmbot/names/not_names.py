@@ -252,8 +252,8 @@ ADDRESS_ALONE = frozenset(
     }
 )
 # Titles and forms of address said before a name ("Lord Neverember", "Major Ursa", "Old Mother
-# Ashe"): one list for every place that must not take such a word for the name itself, so the
-# short-name rule (#3880) and the never-ask-about-a-title rule (#3385) never disagree. Single words,
+# Ashe"): a word that is never the name itself. The short-name rule (#3880) reads it; #3385 (never
+# ask about a title) is to read it too, in its own change, so the two never disagree. Single words,
 # lower case; the one-word forms of ADDRESS_ALONE are all in it.
 TITLE_WORDS = frozenset(
     {
@@ -270,12 +270,6 @@ TITLE_WORDS = frozenset(
         *("granny", "grandma", "grandpa", "grandmother", "grandfather", "captain", "master"),
     }
 )
-
-
-def is_title_word(word: str) -> bool:
-    """Whether this one word is a title or a form of address (TITLE_WORDS), whatever its case or
-    trailing full stop ("Dr.", "St.")."""
-    return _plain(word) in TITLE_WORDS
 
 
 _CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d+\s*(?:am|pm|o'?clock)\b", re.IGNORECASE)

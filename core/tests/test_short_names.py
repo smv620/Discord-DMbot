@@ -8,11 +8,13 @@ from collections.abc import Sequence
 
 from dmbot.campaigns import CampaignStore
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.extractor import heard_texts
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import PROPOSED, REJECTED, SHORT_NAME_SOURCE
 from dmbot.memory.short_names import short_names, used_alone
 from dmbot.memory.store import MemoryStore
 from dmbot.names import not_names
+from dmbot.transcript.models import Line
 from tests.pg import DatabaseTest
 
 TRAN = ("e1", "Tran Vosk")
@@ -72,19 +74,50 @@ class TheRule(unittest.TestCase):
     def test_a_possessive_counts_as_alone(self) -> None:
         self.assertEqual(rule([TRAN], "Tran Vosk came. We took Tran's horse."), [("e1", "Tran")])
 
-    def test_an_everyday_word_counts_only_mid_sentence(self) -> None:
+    def test_a_capital_at_a_sentence_or_line_start_never_counts(self) -> None:
         will = [("e1", "Will Hale")]
         self.assertEqual(rule(will, "Will Hale came. Will you help? I will."), [])
+        self.assertEqual(short_names(will, will, ["Will Hale came.", "Will you open it?"]), [])
         self.assertEqual(rule(will, "Will Hale came. I will ask Will."), [("e1", "Will")])
-        self.assertFalse(used_alone("Hope", "Marr", "Hope Marr. We hope so. Hope is gone."))
+        self.assertFalse(used_alone("Hope", "Hope Marr. We hope so. Hope is gone."))
 
-    def test_the_title_list_is_one_list(self) -> None:
-        for word in ("Lord", "lady", "Dr.", "Sister", "Major", "Captain", "friend"):
+    def test_each_text_is_its_own_line(self) -> None:
+        self.assertEqual(short_names([TRAN], [TRAN], ["Tran Vosk came.", "Tran left."]), [])
+        self.assertEqual(
+            short_names([TRAN], [TRAN], ["Tran Vosk came.", "Then Tran left."]), [("e1", "Tran")]
+        )
+
+    def test_followed_by_another_capitalised_word_is_not_alone(self) -> None:
+        # (someone with no entry yet, said before the DM names them)
+        self.assertEqual(rule([TRAN], "Tran Vosk came. Then Tran Hale waved."), [])
+        self.assertFalse(used_alone("Red", "Then the Red Wizards arrived."))
+        self.assertTrue(used_alone("Tran", "Then Tran, tired, left."))
+
+    def test_an_epithet_is_not_a_short_name(self) -> None:
+        for name in ("Red Ilsa", "Black Grim", "Mad Tom", "Iron Bruno"):
+            with self.subTest(name):
+                first = name.split()[0]
+                self.assertEqual(rule([("e1", name)], f"{name} came. Then {first} left."), [])
+
+    def test_an_undone_short_name_counts_as_one_the_entry_has(self) -> None:
+        # (the store passes the names the DM undid as names the entry already has)
+        self.assertEqual(rule([TRAN], extra=[("e1", "Tran")]), [])
+
+    def test_the_title_list_holds_every_single_address_word(self) -> None:
+        for word in ("lord", "lady", "dr", "sister", "major", "captain", "friend", "old"):
             with self.subTest(word):
-                self.assertTrue(not_names.is_title_word(word))
-        self.assertFalse(not_names.is_title_word("Claude"))
+                self.assertIn(word, not_names.TITLE_WORDS)
         single = {w for w in not_names.ADDRESS_ALONE if " " not in w}
         self.assertTrue(single <= not_names.TITLE_WORDS)
+
+
+class WhatTheReaderMayLookAt(unittest.TestCase):
+    def test_only_people_who_agree_and_never_last_time_s_recap(self) -> None:
+        def line(user: int, text: str) -> Line:
+            return Line(started_ms=0, user_id=user, heard=text, text=text)
+
+        lines = [line(7, "Last time, Tran left."), line(8, "Then Tran ran."), line(9, "Hi Tran.")]
+        self.assertEqual(heard_texts(lines, {7, 8}, recap_lines={1}), ["Then Tran ran."])
 
 
 GUILD, DM = 1, 7
@@ -108,7 +141,7 @@ class TheStore(DatabaseTest):
         found = await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
         return [(a.text, a.kind, a.status) for a in found if a.kind == "short"]
 
-    async def test_claude_joins_claude_ambere_and_undo_takes_it_back(self) -> None:
+    async def test_tran_joins_tran_vosk_and_undo_takes_it_back_for_good(self) -> None:
         tran = await self.person("Tran Vosk")
         written = await self.memory.add_short_names(GUILD, self.campaign.id, [TEXT])
         self.assertEqual([(a.text, a.entity_id) for a in written.value], [("Tran", tran)])
@@ -120,6 +153,36 @@ class TheStore(DatabaseTest):
         self.assertEqual(again.value, [])  # (it has it now)
         assert written.batch is not None
         await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        self.assertEqual(await self.shorts(tran), [])
+        after = await self.memory.add_short_names(GUILD, self.campaign.id, [TEXT])
+        self.assertEqual((after.value, after.batch), ([], None))  # (undone stays undone)
+        self.assertEqual(await self.shorts(tran), [])
+
+    async def test_nothing_to_add_writes_nothing(self) -> None:
+        await self.person("Tran Vosk")
+        written = await self.memory.add_short_names(GUILD, self.campaign.id, ["No names here."])
+        self.assertEqual((written.value, written.batch), ([], None))
+
+    async def test_an_entry_the_dm_rejected_outright_blocks_nothing(self) -> None:
+        tran = await self.person("Tran Vosk")
+        scanned = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name="Tran", source="scan"
+        )
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, scanned.value.id, REJECTED, source=DM_SOURCE
+        )
+        written = await self.memory.add_short_names(GUILD, self.campaign.id, [TEXT])
+        self.assertEqual([a.entity_id for a in written.value], [tran])
+
+    async def test_a_secret_name_of_another_entry_blocks_the_word(self) -> None:
+        tran = await self.person("Tran Vosk")
+        other = await self.person("Bruno Hale")
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, other, "Tran", kind="nickname", source=DM_SOURCE, secret=True
+        )
+        self.assertEqual(
+            (await self.memory.add_short_names(GUILD, self.campaign.id, [TEXT])).value, []
+        )
         self.assertEqual(await self.shorts(tran), [])
 
     async def test_two_people_sharing_a_first_word_neither_gets_it(self) -> None:

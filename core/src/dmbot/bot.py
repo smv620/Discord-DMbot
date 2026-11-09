@@ -9332,7 +9332,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             recap_lines = await self._recap_lines(gid, sid)
             # (a character's first name said alone is their short name before the claims are
             # matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
-            await self._add_short_names(gid, cid, [x.text for x in lines])
+            agreed = await self.consent.consenting(gid)
+            await self.add_short_names(gid, cid, extractor.heard_texts(lines, agreed, recap_lines))
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
@@ -10809,9 +10810,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
-    async def _add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
+    async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
         """Add each character's first name as their short name where the rule allows it
-        (#3880, `MemoryStore.add_short_names`). Never stops what called it; counts only."""
+        (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
+        the story extractor. `texts` must hold only what may be read (people who agree). Never
+        stops what called it; counts only."""
         if self.memory is None:
             return
         try:
@@ -10841,7 +10844,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         assert self.memory is not None
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
-        await self._add_short_names(gid, cid, lines)
+        await self.add_short_names(gid, cid, lines)
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
