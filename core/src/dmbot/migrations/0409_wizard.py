@@ -46,7 +46,7 @@ SQL = (
         guild_id    BIGINT NOT NULL,
         user_id     BIGINT NOT NULL,
         FOREIGN KEY (guild_id, user_id)
-            REFERENCES wizard_drafts (guild_id, user_id) ON DELETE CASCADE,
+            REFERENCES wizard_drafts (guild_id, user_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
         slot        TEXT NOT NULL
             CHECK (slot IN ('lore', 'secrets', 'ruleset', 'house', 'homebrew')),
