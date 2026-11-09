@@ -11199,18 +11199,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         if private:
             return True
+        # These are upkeep, not live play, so with no way to reach a DM privately they wait in the
+        # DM Bot channel (the owner's "which channel gets what", #3874); the DM screen only for a
+        # campaign that has none. Each line is counts only (`Ask.screen`), as the DM screen's
+        # peekers always saw it, so it is safe where the campaign's people read.
+        target = screen_channel_id
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            target = getattr(campaign, "dm_bot_channel_id", None) or screen_channel_id
+        except Exception:
+            log.exception("Couldn't look up where to leave the questions for the DM")
         posted = False
         for ask in ordered(asks):
-            if screen_channel_id is None:
-                break  # (no DM screen to fall back on)
+            if target is None:
+                break  # (nowhere to fall back on)
             # Each in its own try: one failed post must not skip the questions after it.
             try:
-                await self.post(
-                    screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
-                )
+                await self.post(target, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask))
                 posted = True
             except Exception:
-                log.exception("Couldn't post a question for the DM on the DM screen")
+                log.exception("Couldn't post a question for the DM")
         return posted
 
     async def _recap_lines(self, gid: int, sid: str) -> frozenset[int]:
