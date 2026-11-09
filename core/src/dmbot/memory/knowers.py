@@ -159,6 +159,68 @@ async def set_statement_knowers(
     return list(chosen)
 
 
+GUESS_SURE, GUESS_LIKELY = 0.9, 0.6  # DMbot's guess of an NPC's knowledge: never 1.0 (#2959)
+
+
+async def add_guessed(
+    w: Changes, kind: str, statement_id: str, guesses: Mapping[str, float]
+) -> int:
+    """DMbot's guesses of which NPCs and groups know a statement the DM just confirmed or kept
+    (#2959, STORY_MEMORY 9b item 4): each confirmed NPC or group of these gets a knower row at its
+    certainty, below 1.0, so it reads as DMbot's guess, never the DM's word (the DM's own edit
+    writes 1.0). Never a player character (what they know is the upload's choice), never the
+    statement's own entry, and never over a row that is there already: the DM's word, or an
+    earlier guess, stays. A knower row of an NPC or a group never shows a hidden statement to a
+    player: the gate reads players' points of view and the party's, never an NPC's. Returns how
+    many rows were added."""
+    if kind not in ("entry", "connection") or not guesses:
+        return 0
+    column, table = _COLUMNS[kind]
+    statement = await w.get(table, statement_id)
+    if statement is None or statement.get("status") != CONFIRMED:
+        return 0
+    wanted = {i: c for i, c in guesses.items() if 0.0 < c < 1.0 and i != statement_id}
+    if not wanted:
+        return 0
+    rows = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s"
+        " AND role IS DISTINCT FROM %s",
+        [sorted(wanted), CONFIRMED, PLAYER_CHARACTER],
+    )
+    have = {
+        str(r["perspective_id"])
+        for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
+    }
+    added = 0
+    for r in rows:
+        view = await _view_for(w, str(r["id"]), False)
+        if view in have:
+            continue
+        await w.insert(
+            KNOWERS,
+            {"id": new_id(), "perspective_id": view, "about_entity_id": None, "state_id": None,
+             "relation_id": None, "alias_id": None, column: statement_id, "created_at": w.now,
+             "confidence": wanted[str(r["id"])]},
+        )  # fmt: skip
+        have.add(view)
+        added += 1
+    return added
+
+
+async def apply_waiting_guesses(w: Changes, entity_id: str) -> int:
+    """The guesses a lore read left waiting for a name (`memory_npc_guesses`, #2959), written once
+    the DM confirms it, in the same change (its Undo takes them back). The waiting rows stay: a
+    knower row that is there already is never added twice."""
+    cur = await w.conn.execute(
+        "SELECT knower_id, confidence FROM memory_npc_guesses"
+        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
+        (*w.ids, entity_id),
+    )
+    guesses = {str(r["knower_id"]): float(r["confidence"]) for r in await cur.fetchall()}
+    return await add_guessed(w, "entry", entity_id, guesses)
+
+
 NOT_ONE_CHARACTER = "Only a character can learn something this way."
 
 

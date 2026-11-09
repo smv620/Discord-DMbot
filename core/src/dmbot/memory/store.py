@@ -2897,6 +2897,51 @@ class MemoryStore:
             return None
         return str(row["label"]), str(row["quote"] or ""), str(row["inferred_reason"] or "")
 
+    async def add_npc_guesses(
+        self, guild_id: int, campaign_id: str, guesses: Sequence[tuple[str, str, float]]
+    ) -> int:
+        """DMbot's guesses that an NPC or a group knows a lore name, (entry, knower, certainty),
+        kept waiting until the DM confirms the name (#2959; `knowers.apply_waiting_guesses`).
+        Ids and a number only. A pair whose entry or knower is gone, or that waits already, is
+        left out. Returns how many are new."""
+        rows = [(e, k, round(c, 2)) for e, k, c in guesses if e != k and 0.0 < c < 1.0]
+        if not rows:
+            return 0
+        added = 0
+        now = int(time.time())
+        async with self._db.guild(guild_id) as conn:
+            for entity_id, knower_id, sure in rows:
+                cur = await conn.execute(
+                    "INSERT INTO memory_npc_guesses (guild_id, campaign_id, entity_id, knower_id,"
+                    " confidence, created_at) SELECT %s, %s, e.id, k.id, %s, %s"
+                    " FROM memory_entities e JOIN memory_entities k"
+                    " ON k.guild_id = e.guild_id AND k.campaign_id = e.campaign_id AND k.id = %s"
+                    " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                    " ON CONFLICT DO NOTHING",
+                    (guild_id, campaign_id, sure, now, knower_id, guild_id, campaign_id,
+                     entity_id),
+                )  # fmt: skip
+                added += cur.rowcount
+        return int(added)
+
+    async def add_guessed_knowers(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_id: str,
+        guesses: Mapping[str, float],
+        *,
+        source: str,
+    ) -> Written[int]:
+        """DMbot's guesses of which NPCs and groups know a statement the DM just kept (a lore
+        connection, #2959): `knowers.add_guessed`, in a change of its own (its Undo takes them
+        back). Only on the DM's own press."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM's press keeps DMbot's guesses.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await knowers.add_guessed(w, kind, statement_id, guesses), w.batch)
+
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
         (#3383, part 2): a `member_of` the DM proposed for it while it waited becomes a fact."""
@@ -2924,6 +2969,8 @@ class MemoryStore:
             )
             if status == CONFIRMED and source == DM:
                 await self._confirm_group_memberships(w, entity_id)
+                # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
+                await knowers.apply_waiting_guesses(w, entity_id)
             await _forget_quotes(
                 w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
             )
