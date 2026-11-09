@@ -101,8 +101,8 @@ def _alone_linked(kind: str, n: int) -> str:
     """The words when this is the only kind waiting and its button opens the upload's summary."""
     head = _alone(kind, n).split("\n", 1)[0]
     return (
-        f"{head}\nPress the button to open the list in the DM screen: add them all there, or look "
-        "at them one by one. Nothing is added until you say yes."
+        f"{head}\nOpen the list in the DM screen. Tap **Add all**, or go through them one at a "
+        "time. Nothing is added until you say yes."
     )
 
 

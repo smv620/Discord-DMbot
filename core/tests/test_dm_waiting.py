@@ -232,7 +232,8 @@ class TheSummaryLink(WithImports):
     def test_the_words_when_the_button_opens_the_summary_say_so(self) -> None:
         made: dict[str, Any] = {"names": lambda: SimpleNamespace(), "connections": lambda: None}
         ask = asks_for(WaitingChecks(names=2), made, summary_url="https://discord.com/x")[0]
-        self.assertIn("open the list in the DM screen", ask.alone)
+        self.assertIn("Open the list in the DM screen", ask.alone)
+        self.assertIn("Tap **Add all**", ask.alone)
         self.assertIn("look at them one by one", ask.screen)  # (the screen keeps its own words)
 
 
