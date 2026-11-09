@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AddAll from "../src/account/AddAll";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "../src/account/api";
 import { addAllWords as w, countsList, plainKindSingular, sumCounts } from "../src/content/add-all-words";
+import { workWords } from "../src/content/work-progress";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/confirm-kinds-switch", () => ({
@@ -115,7 +116,7 @@ describe("the press and its wait", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.adding)).toBeTruthy();
-    expect(await screen.findByText(w.part(1, 2))).toBeTruthy();
+    expect(await screen.findByText("1 of 2 parts")).toBeTruthy();
     expect((container.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -154,6 +155,32 @@ describe("the press and its wait", () => {
     render(<AddAll api={apiWith([], { confirmKinds: async () => { throw new ApiError("not-allowed"); } })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.refused)).toBeTruthy();
+  });
+
+  it("shows how long it has run before the bot has answered", async () => {
+    const waiting: ConfirmAnswer = { state: "waiting", stage: "waiting" };
+    render(<AddAll api={apiWith([waiting], { confirmAnswer: async () => waiting })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    expect(await screen.findByText(/Running for/)).toBeTruthy();
+  });
+
+  it("says stalled once, in the panel's words and the page's", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const still: ConfirmAnswer = { state: "working", stage: "adding", progress: { done: 1, total: 2, at: 10, createdAt: 1, now: 10 } };
+    render(<AddAll api={apiWith([still], { confirmAnswer: async () => still })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(screen.getAllByText(w.stalled)).toHaveLength(1);
+    expect(screen.getAllByText(workWords.stalled)).toHaveLength(1);
+  });
+
+  it("shows the part count as the bar, once", async () => {
+    const counted: ConfirmAnswer = { state: "working", stage: "adding", progress: { done: 2, total: 5, at: 10, createdAt: 1, now: 10 } };
+    const { container } = render(<AddAll api={apiWith([counted], { confirmAnswer: async () => counted })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
+    fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
+    expect(await screen.findByText("2 of 5 parts")).toBeTruthy();
+    expect(screen.getAllByText("2 of 5 parts")).toHaveLength(1);
+    expect(container.querySelector("progress")?.getAttribute("max")).toBe("5");
   });
 
   it("a wait that stops moving for a minute says it is slower than usual", async () => {

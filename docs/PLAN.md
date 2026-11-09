@@ -1382,6 +1382,17 @@ the website's **Names** page and one to the **Story Graph**, and **Undo this upl
 notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
 one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
 
+**What "sure" means for an import, and who it reads (Supervisor, 2026-11-09, #3897, #3602, #3918).** An import's
+sure step adds its scans' names and, **since #3897, the connections the DM's own lines state**: a claim that is stated
+(not worked out), labelled as the DM's, **every cited line spoken by one of the campaign's DMs** (checked in code, never
+the AI's label alone), still waiting with both its names answered, and from this import's sessions. It goes through the
+claims review's own yes, in the notice's batch, so Undo covers it. Players' claims, plans, worked-out readings, lore's
+worked-out family ties and secret choices stay questions. Before the sure step, an import runs the same steps as a live
+session, each behind its own switch with its own stage on the import's progress card: the story read, the scenes, then
+"who is this?". Every step of an import reads **the people the import recorded** (`recorded_in`: those who agree, plus
+the speakers the uploader confirmed, minus anyone with a "no" on record), asked again after each AI call, never only
+the live agreed list; a live session still reads only those who agree now.
+
 **Who can see a campaign's channels (owner, 2026-11-09, #3891).** A per-campaign setting in ⚙️ Settings, **"Who can see
 this campaign's channels"**: **Everyone in the server**, or **Only this campaign's people** (the default, for new and existing
 campaigns). It covers the campaign's DM Bot and transcript channels; the DM screen keeps its own visibility rules. The
