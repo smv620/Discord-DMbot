@@ -761,7 +761,7 @@ class Stored(ConfirmedMemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
                   if r.id != rel]  # fmt: skip
-        self.assertEqual((new.unrevealed, done.shown), (True, False))
+        self.assertEqual((new.unrevealed, done.shown, done.held), (True, False, True))
         self.assertTrue(await self.unrevealed(rel))
 
     async def confirm_blood_bound(self) -> Any:
@@ -814,6 +814,7 @@ class Stored(ConfirmedMemoryTest):
             )
         done = await self.confirm_blood_bound()
         self.assertFalse((await self.relation(done.claim.fact_id)).unrevealed)
+        self.assertFalse(done.held)
 
     async def test_a_claim_of_its_own_kind_beside_a_held_row_is_written_as_before(self) -> None:
         """Only the catch-all is held back: a claim the reader named a kind for is its own
@@ -823,15 +824,13 @@ class Stored(ConfirmedMemoryTest):
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         new = await self.relation(done.claim.fact_id)
-        self.assertEqual((new.predicate, new.unrevealed), ("leads", False))
+        self.assertEqual((new.predicate, new.unrevealed, done.held), ("leads", False, False))
         self.assertTrue(await self.unrevealed(rel))
 
     async def test_a_catch_all_claim_with_nothing_held_back_is_shown_as_before(self) -> None:
-        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
-        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
-        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        done = await self.confirm_blood_bound()
         (new,) = await self.memory.relations(GUILD_A, self.c, include_secret=True)
-        self.assertFalse(new.unrevealed)
+        self.assertEqual((new.unrevealed, done.held), (False, False))
 
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")

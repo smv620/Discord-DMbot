@@ -41,7 +41,8 @@ SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
 # Kept hidden beside a connection the story already hides between the same two (#3975, #3979).
 HELD_NOW = (
     "🙈 Kept hidden from your players, so it can't give away another hidden connection between "
-    "these two names. To show it: open either name, ✏️ Edit a connection…, then 👁️ Who knows this?"
+    "these two names. To show it: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "then 👁️ Everyone at the table."
 )
 
 
@@ -60,7 +61,7 @@ def held_line(n: int) -> str:
         f"🙈 {n} of them {'is' if one else 'are'} kept hidden from your players, so "
         f"{'it' if one else 'they'} can't give away another hidden connection between the same "
         f"two names. To show {'it' if one else 'them'}: open either name, ✏️ Edit a connection…, "
-        f"then 👁️ Who knows this?"
+        f"👁️ Who knows this?, then 👁️ Everyone at the table."
     )
 
 

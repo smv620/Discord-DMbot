@@ -67,7 +67,7 @@ class Tally:
     batches: list[int] = field(default_factory=list)  # the changes made, to undo them together
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
     shown: int = 0  # held-back connections the table stated, shown to the players (#3963 c)
-    held: int = 0  # kept hidden beside a connection DMbot already hides (#3975, #3979)
+    held: int = 0  # kept hidden beside a connection the story hides (#3975, #3979)
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
