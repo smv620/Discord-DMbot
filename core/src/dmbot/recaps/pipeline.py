@@ -150,6 +150,8 @@ class Inputs:
 # A rough size of a token in characters, to decide whether a transcript fits (#2590). Low on
 # purpose: names and rare words take more tokens than plain English, so it errs towards "too long".
 CHARS_PER_TOKEN = 3
+SCRIPT_CHECK_CHARS = 40_000  # of the script the checks read, at most (#3901)
+SCRIPT_CUT_LINE = "\n[The script goes on; the rest is not shown.]"
 TRANSCRIPT_SHARE = 0.5  # of the smaller input room, for the transcript and the guide
 TRANSCRIPT_TOKENS_MAX = 60_000  # and never more than this, whatever the window (cost per retry)
 STORY_CHARS_MAX = (
@@ -346,6 +348,8 @@ class RecapWorker:
         unchecked: Notify | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
         names_ready: Callable[[int, str, Job], Awaitable[bool]] | None = None,
+        script_for: Callable[[int, str, Job], Awaitable[Sequence[tuple[Sequence[int], str]]]]
+        | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
@@ -426,7 +430,37 @@ class RecapWorker:
         self._unchecked = unchecked  # tells the DM once that a recap could not be checked
         self._allowance = allowance
         self._names_ready = names_ready  # PlotBot's name pass on the transcript is done (#2628)
+        # The session's script as (who each line draws on, the line), for the two checks only
+        # (#3901, part 2); None: the switch is off and the checks read what they always read.
+        self._script_for = script_for
         self._now = clock
+
+    async def _script_text(self, gid: int, cid: str, job: Job, consenting: Consenting) -> str:
+        """The script for the checks, or "" (no switch, no script, or a failure: the checks then
+        read what they always read). A line goes in only when everyone it draws on still agrees,
+        read right now, so a player who has stopped is never sent to the AI again. Capped, so a
+        long script never crowds out the beats."""
+        if self._script_for is None:
+            return ""
+        try:
+            lines = await self._script_for(gid, cid, job)
+            agreed = set(await consenting())
+        except Exception as exc:
+            log.warning(
+                "Recap: the script could not be read for the checks (%s)", type(exc).__name__
+            )
+            return ""
+        # (a line that draws on no one is never sent: there is nobody whose consent it rests on)
+        kept = [text for users, text in lines if users and set(users) <= agreed]
+        joined = "\n".join(kept)
+        if len(joined) <= SCRIPT_CHECK_CHARS:
+            return joined
+        # Cut at a line, and say so, so a checker does not take the missing end for "not said".
+        cut = joined[:SCRIPT_CHECK_CHARS].rsplit("\n", 1)[0]
+        log.info(
+            "Recap: the script was cut to %d of %d characters for the checks", len(cut), len(joined)
+        )
+        return cut + SCRIPT_CUT_LINE
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
         """Work one job until it is ready, has failed, or must wait. None if another worker
@@ -1720,8 +1754,9 @@ class RecapWorker:
                     self._heard.pop((gid, cid, job.session_at), None)
                     return None
                 given = self._given.get((gid, cid, job.session_at), rd.Given())
+                script = await self._script_text(gid, cid, job, consenting) if consenting else ""
                 reply = await self._careful.complete(
-                    rd.FACTS_SYSTEM,
+                    rd.facts_system(script),
                     rd.facts_message(
                         shown,
                         prose.summary,
@@ -1729,6 +1764,7 @@ class RecapWorker:
                         heard,
                         who_and_what=given.who_and_what,
                         story=given.story,
+                        script=script,
                     ),
                     max_tokens=room,
                     schema=rd.facts_schema(),
@@ -2081,9 +2117,11 @@ class RecapWorker:
                 loop = replace(loop, plot=tuple(plot))
                 await self._save_loop(gid, cid, job, loop)
                 job = await self._store.get(gid, cid, job.session_at) or job
-            cover_message = covg.message(inputs.musts, sheet, sentences)
+            script = await self._script_text(gid, cid, job, consenting)
+            cover_message = covg.message(inputs.musts, sheet, sentences, script)
             raw = await self._call(
-                gid, cid, job, self._careful, covg.SYSTEM, cover_message,
+                gid, cid, job, self._careful, covg.system(script),
+                cover_message,
                 covg.room(len(inputs.musts)), schema=covg.SCHEMA, stage="musts", soft=True,
                 free=waiting,
             )  # fmt: skip
