@@ -142,6 +142,8 @@ STORE = {
     "isolated_rows_in": "kept and waiting links, no guess connections, for the DM's graph "
     "clean-up (#3740); ids and words only, never shown to a player",
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
+    "reveal_stated_in": "writes: shows a held-back connection the table stated (#3963 c), only "
+    "a confirmed, live, non-secret one whose ends are both shown",
 }
 
 
