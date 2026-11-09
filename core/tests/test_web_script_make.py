@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot import entitlements
 from dmbot.web import script_make
 from dmbot.web.recaps import RecapError
+from tests.test_web_api import ALICE
 from tests.test_web_theatre_script import BOB, NOW, THURSDAY, Script
 
 
@@ -53,6 +55,44 @@ class ScriptMake(Script):
         self.assertEqual(await self.refused(self.press, theatre_on=False), "script_off")
         self.assertEqual((await self.offer())["state"], "none")  # (nothing was queued)
 
+    async def test_a_plan_without_story_memory_says_so_and_queues_nothing(self) -> None:
+        got = await self.offer(enforce_plans=True)
+        self.assertEqual((got["allowed"], got["why"]), (False, "plan"))
+        self.assertEqual(await self.refused(self.press, enforce_plans=True), "script_plan")
+        self.assertEqual((await self.offer())["state"], "none")
+        entitlements.configure_free_users({ALICE.id})  # the owner, on the free list
+        self.addCleanup(entitlements.configure_free_users, ())
+        self.assertTrue((await self.offer(enforce_plans=True))["allowed"])
+
+    async def test_a_run_lost_for_half_an_hour_lets_the_session_be_pressed_again(self) -> None:
+        first = await self.press()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE script_makes SET created_at = created_at - 3600 WHERE id = %s", (first,)
+            )
+        self.assertEqual((await self.offer())["state"], "none")  # (not shown as running)
+        again = await self.press()
+        self.assertNotEqual(again, first)
+        got = await script_make.read(self.web, self.session, self.cref, first)
+        self.assertEqual((got["state"], got["error"]), ("failed", "lost"))
+
+    async def test_a_done_run_does_not_block_a_new_press_and_another_dm_reads_the_same_job(
+        self,
+    ) -> None:
+        mine = await self.press()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
+                (self.one.id, THURSDAY.id, BOB.id),
+            )
+        bob = await self.signed_in(BOB)
+        self.assertEqual(
+            (await script_make.read(self.web, bob, self.cref, mine))["state"], "waiting"
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE script_makes SET state = 'done' WHERE id = %s", (mine,))
+        self.assertNotEqual(await self.press(), mine)
+
     async def test_the_wait_is_read_with_its_part_and_a_failure_says_why(self) -> None:
         mine = await self.press()
         got = await script_make.read(self.web, self.session, self.cref, mine)
@@ -89,7 +129,7 @@ class ScriptMake(Script):
         self,
     ) -> None:
         bob = await self.signed_in(BOB)
-        for door in ("state", "add"):
+        for door in ("state", "add"):  # (a player gets nothing from either)
             async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
                 await conn.execute(
                     "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)

@@ -16,7 +16,10 @@ from dmbot.migrations._shared import _isolate
 # given the running job's id, so a reload or a second tab can never queue a second AI charge. The
 # door checks the caller is a DM of the campaign and that the session is the campaign's own; it
 # holds the campaign to 10 presses a minute. The bot checks again that the sender still is a DM,
-# the plan, the switch and the consent. Rows go after a day.
+# the plan, the switch and the consent. Rows go after a day. A run that has been waiting or working
+# for more than 30 minutes is taken as lost (the bot stopped, or restarted without finishing): the
+# door fails it and lets the session be pressed again. `created_at` is in seconds; `claimed_at` is
+# the queue's own stamp in milliseconds, as the other waits' (the page's "last moved" divides it).
 SQL = (
     r"""
     CREATE TABLE script_makes (
@@ -65,6 +68,8 @@ SQL = (
             'running', (SELECT m.id FROM script_makes m
                         WHERE m.guild_id = g AND m.campaign_id = c AND m.session_id = sid
                           AND m.state IN ('waiting', 'working')
+                          AND m.created_at
+                              >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 1800
                         ORDER BY m.created_at DESC LIMIT 1));
     END
     $fn$;
@@ -88,9 +93,13 @@ SQL = (
                           WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
             RETURN NULL;
         END IF;
-        PERFORM pg_advisory_xact_lock(hashtextextended('script_make:' || g::TEXT || sid, 0));
+        -- one lock for the campaign: the minute's count below cannot be passed by two at once
+        PERFORM pg_advisory_xact_lock(hashtextextended('script_make:' || g::TEXT || ':' || c, 0));
         DELETE FROM script_makes m
             WHERE m.guild_id = g AND m.campaign_id = c AND m.created_at < now_s - 86400;
+        UPDATE script_makes m SET state = 'failed', error = 'lost'
+            WHERE m.guild_id = g AND m.campaign_id = c
+              AND m.state IN ('waiting', 'working') AND m.created_at < now_s - 1800;
         IF EXISTS (SELECT 1 FROM theatre_lines l WHERE l.guild_id = g AND l.session_id = sid) THEN
             RETURN jsonb_build_object('status', 'already');
         END IF;

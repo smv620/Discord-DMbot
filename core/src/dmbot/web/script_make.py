@@ -24,8 +24,9 @@ from typing import Any
 from dmbot import plan_rules, progress
 from dmbot.db import Database
 from dmbot.transcript.theatre_job import estimate_line
+from dmbot.web.names import _parse
 from dmbot.web.recap_choices import owner_access
-from dmbot.web.recaps import RecapError, _scoped
+from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 from dmbot.web.transcripts import _sessions
 
@@ -134,6 +135,10 @@ async def queue(
         now=now,
         enforce_plans=enforce_plans,
     )
+    # A closed gate queues nothing: the refusal comes before any row is made (a game master whose
+    # session already has a script is still told so by the offer, which reads without queuing).
+    if why is not None:
+        raise RecapError(f"script_{why}")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
@@ -144,8 +149,6 @@ async def queue(
         raise RecapError("not_allowed")
     if got["status"] == "already":
         raise RecapError("script_already")
-    if why is not None and not got.get("id"):
-        raise RecapError(f"script_{why}")
     if got["status"] != "ok":
         raise RecapError(str(got["status"]))
     return str(got["id"])
@@ -154,9 +157,6 @@ async def queue(
 async def read(db: Database, session: Session, ref: str, make: str) -> dict[str, Any]:
     """Where one press stands, for any DM of the campaign: `state` (waiting, working, done, failed),
     the `error` word when it failed, and the shared `progress` (the part it is on of how many)."""
-    from dmbot.web.names import _parse  # (the reference's own reader)
-    from dmbot.web.recaps import _guild_of
-
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if not _ID.match(make):
