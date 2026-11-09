@@ -32,7 +32,7 @@ SOURCES = ("upload", "link", "drive")
 STATUSES = ("ok", "unreadable")
 REASONS = ("", "empty", "scanned", "locked", "too_big", "not_text")
 NAME_MAX = 100
-LINK_MAX = 2000
+LINK_MAX = 2_048
 CHARACTERS_MAX = 12
 # Door statuses the page words itself; any other non-"ok" status is a code bug and shows as a
 # plain failure.
