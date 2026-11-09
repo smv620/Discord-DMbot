@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.campaigns import CampaignStore
+from dmbot.dm_screen import channel_sync
 from dmbot.dm_screen import channel_sync_ui as ui
 from tests.pg import DatabaseTest
 from tests.test_dm_screen_setup import DM, GUILD
@@ -57,7 +58,7 @@ class Card(DatabaseTest):
 
     async def test_a_dm_choosing_everyone_saves_it_and_puts_the_channels_in_step(self) -> None:
         press = self.press(DM)
-        with patch.object(ui.channel_sync, "reconcile", new=AsyncMock(return_value=None)) as sync:
+        with patch.object(channel_sync, "reconcile", new=AsyncMock(return_value=None)) as sync:
             await ui.ChannelsChoiceButton(self.campaign.id, "everyone").callback(press)
         saved = await self.store.get(GUILD, self.campaign.id)
         assert saved is not None
@@ -69,13 +70,13 @@ class Card(DatabaseTest):
     async def test_a_missing_permission_is_shown_on_the_card(self) -> None:
         press = self.press(DM)
         said = "I need Manage Roles to set up the DM screen."
-        with patch.object(ui.channel_sync, "reconcile", new=AsyncMock(return_value=said)):
+        with patch.object(channel_sync, "reconcile", new=AsyncMock(return_value=said)):
             await ui.ChannelsChoiceButton(self.campaign.id, "everyone").callback(press)
         self.assertIn(said, press.edit_original_response.await_args.kwargs["content"])
 
     async def test_someone_who_is_not_a_dm_changes_nothing(self) -> None:
         press = self.press(OTHER)
-        with patch.object(ui.channel_sync, "reconcile", new=AsyncMock()) as sync:
+        with patch.object(channel_sync, "reconcile", new=AsyncMock()) as sync:
             await ui.ChannelsChoiceButton(self.campaign.id, "everyone").callback(press)
             await ui.PeopleButton(self.campaign.id).callback(press)
         sync.assert_not_awaited()
@@ -89,7 +90,7 @@ class Card(DatabaseTest):
         person = MagicMock(spec=discord.Member)
         person.id, person.bot, person.display_name = EVE, False, "Eve"
         with (
-            patch.object(ui.channel_sync, "reconcile", new=AsyncMock(return_value=None)),
+            patch.object(channel_sync, "reconcile", new=AsyncMock(return_value=None)),
             patch.object(
                 type(view.add_pick), "values", new=property(lambda _s: [person]), create=True
             ),
@@ -98,7 +99,7 @@ class Card(DatabaseTest):
         self.assertEqual(await self.store.channel_people_by_hand(GUILD, self.campaign.id), [EVE])
         again = ui.PeopleView(self.campaign.id, {EVE: "Eve"})
         with (
-            patch.object(ui.channel_sync, "reconcile", new=AsyncMock(return_value=None)),
+            patch.object(channel_sync, "reconcile", new=AsyncMock(return_value=None)),
             patch.object(
                 type(again.remove_pick), "values", new=property(lambda _s: [str(EVE)]), create=True
             ),

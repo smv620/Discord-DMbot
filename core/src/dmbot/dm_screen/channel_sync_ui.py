@@ -82,13 +82,8 @@ async def _problem_line(
 ) -> str:
     """Put the channels in step with the saved choice; the plain cause on a line of its own when
     that could not be done (empty when it was)."""
-    bot = interaction.client
-    problem = await channel_sync.reconcile(
-        guild,
-        campaign,
-        bot.campaigns,
-        getattr(bot, "memory", None),  # type: ignore[attr-defined]
-    )
+    bot: Any = interaction.client  # (DMBot; the screens reach its stores this way)
+    problem = await channel_sync.reconcile(guild, campaign, bot.campaigns, bot.memory)
     if problem:
         return (
             f"\n⚠️ Saved, but the channels haven't changed yet. {problem} "
