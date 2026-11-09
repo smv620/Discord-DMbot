@@ -144,6 +144,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
     "hear_use": _RUNTIME,
+    "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
@@ -253,4 +254,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
     "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
+    "upload_notices.channel_id": "left: the notice stays in the old server; its buttons name the "
+    "old server, so they find nothing after a move",
+    "upload_notices.message_id": "left: as its channel",
 }

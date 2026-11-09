@@ -193,6 +193,9 @@ class Campaign:
     recaps_text: bool = True
     recaps_audio: bool = True
     recaps_email: bool = True
+    # "Ask me before adding" (#3878): a lore upload offers its names for a yes instead of adding
+    # what DMbot is sure of by itself. Off by default.
+    ask_before_adding: bool = False
     # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
     story_mode: str = DEFAULT_STORY_MODE
     # The initiative style the DM last set, kept for the next session (#1784): see fight_style.

@@ -421,6 +421,17 @@ class Alias:
     said_as: str | None = None  # how the recap's narrator says it (#1419); never on a secret name
 
 
+# How two people know each other (#3881, Supervisor's ruling): one `knows` relationship with this
+# in its own column, lowest first. It only moves up (aware → met), except by the DM.
+KNOWS_AWARE, KNOWS_MET = "aware", "met"
+KNOWS_HOWS = ("", KNOWS_AWARE, KNOWS_MET)
+
+
+def knows_rank(how: str | None) -> int:
+    """Where a `knows_how` stands: "" lowest, then "aware", then "met"."""
+    return KNOWS_HOWS.index(how) if how in KNOWS_HOWS else 0
+
+
 @dataclass(frozen=True, slots=True)
 class Relation:
     id: str
@@ -449,6 +460,10 @@ class Relation:
     # The secret other name a join moved it through (#3037): a character that holds that name
     # sees this connection on that name's own node, whatever else it knows. None for the rest.
     via_alias_id: str | None = None
+    # How two people know each other, on a `knows` only (#3881): "met", "aware" (heard of them, a
+    # tale, a vision) or "" (the story doesn't say, shown as plain "knows"). Between two people
+    # only. It only moves up, except by the DM.
+    knows_how: str = ""
 
 
 @dataclass(frozen=True, slots=True)
