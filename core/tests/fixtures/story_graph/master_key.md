@@ -160,6 +160,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | m134 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | lore | L18 | born in the Temple of the Seldarine (the more exact place; m019 says the city) |
 | m135 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | lore | L18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (m011 says works_for) |
 | m136 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | lore | L67 | the other side of the heated debate on mithril smelting (m081 is Belleros toward Brewner) |
+| m137 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | lore | L30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
 | m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
 | m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
 | m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
