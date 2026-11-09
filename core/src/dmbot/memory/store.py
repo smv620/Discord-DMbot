@@ -2340,7 +2340,8 @@ class MemoryStore:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
                 " ('memory_entities', 'memory_aliases', 'memory_rule_links'))"
-                " AND bool_or(table_name = 'memory_entities') AS names_only,"
+                # (a name or another name must be in it: a batch of rules links alone is no list)
+                " AND bool_or(table_name IN ('memory_entities', 'memory_aliases')) AS names_only,"
                 " count(*) AS n"
                 " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
                 (*w.ids, batch),
