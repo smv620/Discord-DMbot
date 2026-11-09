@@ -2,6 +2,8 @@
 // The one layout every page uses: head tags, header with the menu, footer with the legal links.
 import "../styles/global.css";
 import "../styles/transitions.css";
+import { SEARCH_LIVE } from "../content/search-switch";
+import SearchBar from "../search/SearchBar";
 
 interface Props {
   /** Page name shown in the browser tab, before " · DMbot". */
@@ -132,6 +134,7 @@ const menu = [
             }
           </ul>
         </nav>
+        {SEARCH_LIVE && <SearchBar client:idle />}
       </div>
     </header>)}
     <main id="main" class="wrap">

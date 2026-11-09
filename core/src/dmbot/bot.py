@@ -346,6 +346,8 @@ from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
+from dmbot.memory.reveal_proposals import RevealProposals
+from dmbot.memory.reveal_proposals_backup import RevealProposalsSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
 from dmbot.memory.role_store import RoleStore
@@ -534,6 +536,7 @@ from dmbot.ui import (
     name_pass_undo,
     player_id,
     recap_audio,
+    reveal_card,
     shared_rules_defs,
     theatre_button,
 )
@@ -1748,6 +1751,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(theatre_button.ScriptButton)  # make a script of a session (#3244)
         self.add_dynamic_items(  # deeds the party did, for the DM to record (#3175)
             deed_card.OpenButton, deed_card.RecordButton, deed_card.NotButton, deed_card.UndoButton
+        )
+        self.add_dynamic_items(  # what the characters learned, for the DM to keep (#2996)
+            reveal_card.OpenButton,
+            reveal_card.KeepButton,
+            reveal_card.NotButton,
+            reveal_card.UndoButton,
         )
         self.add_dynamic_items(  # make the table's repeated words a kind of connection (#3033)
             kind_offer.OpenButton, kind_offer.AnswerButton, kind_offer.UndoButton
@@ -3194,6 +3203,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("kind offer", lambda: self.offer_kind(table)),
             # Deeds the party did, noticed in the session, for the DM to record (#3175).
             ("deeds to record", lambda: self.offer_deeds(table)),
+            # What the characters learned in the session, for the DM to keep (#2996).
+            ("reveals to keep", lambda: self.offer_reveals(table)),
             # How much each entry the session touched matters, and its roles (#3172): after the
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
@@ -9339,6 +9350,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 deed_store=DeedProposals(self.memory)
                 if self.settings.story_deeds_on and self.memory is not None
                 else None,
+                reveals=self.settings.story_reveals_on,
+                reveal_store=RevealProposals(self.memory)
+                if self.settings.story_reveals_on and self.memory is not None
+                else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9511,6 +9526,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 deeds=self.settings.story_deeds_on,
                 deed_store=DeedProposals(self.memory)
                 if self.settings.story_deeds_on and self.memory is not None
+                else None,
+                reveals=self.settings.story_reveals_on,
+                reveal_store=RevealProposals(self.memory)
+                if self.settings.story_reveals_on and self.memory is not None
                 else None,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
@@ -10211,6 +10230,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if count:
                 log.info("Deeds: %d waiting for the DM", count)
                 await self.ask_dm(table, deed_card.ask_for(gid, cid, count))
+
+    async def offer_reveals(self, table: Table) -> None:
+        """After a session (#2996), only with DMBOT_STORY_REVEALS: one more question for the DM
+        when the session reader noticed things the characters learned and they wait to be kept.
+        Counts only; the DM looks at each one and presses Keep (the DM's own `learn_statement`).
+        Only for a campaign whose plan has story memory."""
+        if not self.settings.story_reveals_on or self.memory is None or table.campaign_id is None:
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            count = await RevealProposals(self.memory).count_waiting(
+                gid, cid, opted_in=await self.consent.consenting(gid)
+            )
+            if count:
+                log.info("Reveals: %d waiting for the DM", count)
+                await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
@@ -14354,6 +14394,7 @@ def register_backup_sections(
     campaigns.register_section(ImportanceSection())  # after memory: needs its entries (#3172)
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
+    campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)

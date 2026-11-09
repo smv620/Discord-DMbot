@@ -192,6 +192,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
             load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
 
+    def test_who_learned_what_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).story_reveals_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_REVEALS": "1"}).story_reveals_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(
