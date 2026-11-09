@@ -149,6 +149,7 @@ FILES: dict[str, str] = {
     "memory/deed_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/reveal_proposals.py": NOT_DRAWN + " (who learned what, waiting for the DM, #2996)",
     "memory/reveal_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/trait_offers.py": NOT_DRAWN + " (a lineage or class waiting for the DM, #3926)",
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
