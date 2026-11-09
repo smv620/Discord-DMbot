@@ -1291,6 +1291,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(
                 subject_id="s", predicate="kin_of", object_id="o", secret=False, detail=detail,
                 truth=False, decided="", known_by="", world=0, upload="", inferred="",
+                npc_guesses={},
             )  # fmt: skip
 
         await keep_all(memory, store, 1, "c", [waiting("parent"), waiting("")])  # type: ignore[arg-type]
