@@ -1800,6 +1800,16 @@
    "line": 67,
    "feeling": "wary",
    "note": "the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner)"
+  },
+  {
+   "id": "l123",
+   "a": "Okthandom Korran",
+   "relation": "associate",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": false,
+   "line": 30,
+   "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
   }
  ],
  "events": [

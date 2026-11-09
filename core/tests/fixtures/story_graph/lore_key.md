@@ -163,6 +163,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l120 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | 18 | born in the Temple of the Seldarine (the more exact place; l019 says the city) |
 | l121 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | 18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (l011 says works_for) |
 | l122 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | 67 | the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner) |
+| l123 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | 30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
 
 ## Events
 
