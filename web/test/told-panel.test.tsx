@@ -2,12 +2,13 @@
 // @vitest-environment happy-dom
 // "Tavin now knows the guard is Ken" and Take back in the Story Graph's name panel (#3542), against the pretend API.
 // DM only; the choice is offered only to holders who were not told; told, then Take back (asked once); each refusal worded.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
 import ToldPanel from "../src/account/ToldPanel";
+import { savingWait } from "../src/content/work-progress";
 import { toldWords as w } from "../src/content/told-words";
 
 afterEach(cleanup);
@@ -49,6 +50,23 @@ describe("who has been told a secret name", () => {
     await screen.findByText(w.saidBack("Wen", "the guard", "Ken"));
     expect(changes(api)).toEqual([`changeName:${REF}:n1:${JSON.stringify({ action: "told-remove", alias: "sn1", character: "pc2" })}`]);
     await screen.findByRole("button", { name: w.tell("Wen", "the guard", "Ken") });
+  });
+
+  it("shows DMbot's stage while the change is out, and clears it when it is answered", async () => {
+    const api = mockApi("table");
+    const real = api.changeName!.bind(api);
+    let finish!: () => void;
+    api.changeName = (...args: Parameters<typeof real>) =>
+      new Promise((resolve) => {
+        finish = () => resolve(real(...args));
+      });
+    await open(REF, "n1", api);
+    fireEvent.click(await screen.findByRole("button", { name: w.tell("Tavin", "the guard", "Ken") }));
+    expect(await screen.findByText(savingWait.stage)).toBeTruthy();
+    expect(screen.getByText(/Running for/)).toBeTruthy();
+    await act(async () => finish());
+    await screen.findByText(w.saidTold("Tavin", "the guard", "Ken"));
+    expect(screen.queryByText(savingWait.stage)).toBeNull();
   });
 
   it("words a refusal plainly and keeps the list", async () => {

@@ -899,7 +899,13 @@ async def read_background(
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
-        added = await add_sure(bot, campaign, stored, label)
+        added = await add_sure(
+            bot,
+            campaign,
+            stored,
+            label,
+            source=("lore", upload.source_id) if upload.source_id else None,
+        )
         if added is not None:
             done.notice, done.questions_left = added
     return done
