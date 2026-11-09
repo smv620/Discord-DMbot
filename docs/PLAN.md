@@ -1392,6 +1392,14 @@ replaces "anyone in the Discord server" for transcripts (2026-10-05) and "everyo
 (2026-10-17) with the campaign's choice. Backups are unchanged: anyone in the server may still download a paid campaign's
 backup, so a campaign survives its DM.
 
+**A script for every session (owner, 2026-11-09, #3901).** With `DMBOT_THEATRE_ON` on and story memory in the plan, every
+session, live or imported, gets its script (the theatrical transcript, #3244) by itself. The after-session "make a script?"
+question goes away, and the DM sees one line, "📜 Script made", with a link to it. The recap waits for the script for at most
+10 minutes, then goes on without it and says so. The recap's "did we miss anything important" check and its fact check read the
+script as well as the beat sheet and the cleaned transcript, behind `DMBOT_RECAP_READS_SCRIPT`, scored before and after like
+any recap change. Same rules as the script today: consenting speakers only, what the party knows, DM-only, counted in the
+session's AI spend.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
