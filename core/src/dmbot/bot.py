@@ -1148,6 +1148,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Waiting backstory connections that may have become ready (#2650): the campaigns to look
         # at, so a burst of name answers is one look a few seconds on.
         self._links_ready_pending: set[str] = set()
+        # campaign -> (channel, message) of its one live "connections ready" message, edited as more
+        # become ready instead of a new post each time (#3874); in memory: after a restart the next
+        # one is a new message, and the button (persistent) works on both
+        self._links_ready_msgs: dict[str, tuple[int, int]] = {}
+        self._links_ready_locks: dict[str, asyncio.Lock] = {}  # one say at a time for a campaign
         self._links_guilds: dict[str, int] = {}  # campaign -> its server, once found
         self._npcs_recall: RecallService | None = None
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -14206,17 +14211,50 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         guild_id, campaign = found
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            # Upkeep, not live play: the DM Bot channel (the DM screen only where there is none).
+            channel_id = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
             # (nothing is marked told while there is nowhere to say it)
-            if not campaign.dm_screen_channel_id or not await store.count(guild_id, campaign_id):
+            if not channel_id or not await store.count(guild_id, campaign_id):
                 return  # most campaigns have none waiting: the common case costs one count
             onto = await memory.ontology(guild_id, campaign_id)
             symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
             taken = await store.take_ready_notices(guild_id, campaign_id, symmetric=symmetric)
-            text = links_ready.notice(taken.counts)
-            if text and not await self.post(
-                campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
-            ):
+            if not taken.ids:
+                return  # nothing new became ready: the message stays as it is
+            # One message that says the whole count (what is ready now, told before or not), so a
+            # burst of answers never becomes a flood of posts.
+            now = await store.ready_counts(guild_id, campaign_id, symmetric=symmetric)
+            # (counts only in the DM Bot channel; the DM screen may name the upload, as it did)
+            text = links_ready.notice(now, named=not campaign.dm_bot_channel_id)
+            if not text:
+                return  # nothing is ready any more (a name changed since): say nothing untrue
+            async with self._links_ready_locks.setdefault(campaign_id, asyncio.Lock()):
+                said = await self._say_links_ready(campaign_id, channel_id, text)
+            if not said:
                 await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
+
+    async def _say_links_ready(self, campaign_id: str, channel_id: int, text: str) -> bool:
+        """Edit the campaign's live "connections ready" message, or post it (and remember it).
+        True when the words are on screen."""
+        mine = self._links_ready_msgs.get(campaign_id)
+        if mine is not None and mine[0] == channel_id:
+            channel = self.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                try:
+                    await channel.get_partial_message(mine[1]).edit(
+                        content=text, view=links_ready.view(campaign_id)
+                    )
+                    return True
+                except (discord.NotFound, discord.Forbidden):
+                    # gone, or not ours any more: a new one below
+                    self._links_ready_msgs.pop(campaign_id, None)
+                except discord.HTTPException:
+                    return False  # a passing problem: said again next time, never a second message
+        sent = await self.post_message(channel_id, text, links_ready.view(campaign_id))
+        if sent is None:
+            return False
+        self._links_ready_msgs[campaign_id] = (channel_id, sent.id)
+        return True
 
     def _winding_down(self, guild_id: int, campaign_id: str) -> bool:
         """Is a session of this campaign still finishing its after-session work (#2532)?"""
