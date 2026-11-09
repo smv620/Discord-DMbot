@@ -103,10 +103,10 @@ async def reconcile(
             await setup(guild, campaign.id, campaigns, people=people)
             changed += 1
         if changed:
-            log.info("Channel access: %d channel(s) of a campaign put in step", changed)
+            log.info("Channel sync: %d channel(s) of a campaign put in step", changed)
         return None
     except (TranscriptChannelError, DmBotChannelError) as exc:
         return str(exc)  # already plain words, with the permission's name when one is missing
     except Exception:
-        log.exception("Channel access: couldn't put a campaign's channels in step")
+        log.exception("Channel sync: couldn't put a campaign's channels in step")
         return None

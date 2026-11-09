@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.campaigns import CampaignStore
-from dmbot.dm_screen import channel_access
+from dmbot.dm_screen import channel_sync
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
 from tests.pg import DatabaseTest
@@ -60,12 +60,12 @@ class Access(DatabaseTest):
             GUILD, self.campaign.id, type="character", name="Mira", role="player_character",
             played_by=MIRA, status="confirmed", source="dm",
         )  # fmt: skip
-        people = await channel_access.campaign_people(self.store, self.memory, self.campaign, BOT)
+        people = await channel_sync.campaign_people(self.store, self.memory, self.campaign, BOT)
         self.assertEqual(people, {DM, EVE, MIRA})
 
     async def test_a_channel_that_everyone_can_see_is_hidden_from_non_members(self) -> None:
         await self.store.add_channel_person(GUILD, self.campaign.id, EVE, DM, 1)
-        problem = await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        problem = await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
         self.assertIsNone(problem)
         for channel in (self.transcript, self.dm_bot):
             sent = self.edited(channel)
@@ -76,23 +76,23 @@ class Access(DatabaseTest):
             self.assertTrue(by_id[DM].view_channel)
 
     async def test_a_channel_already_right_is_left_alone(self) -> None:
-        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
         for channel in (self.transcript, self.dm_bot):
             sent = self.edited(channel)
             assert sent is not None
             channel.overwrites = sent  # (Discord now has what was sent)
             channel.edit.reset_mock()
-        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
         self.transcript.edit.assert_not_awaited()
         self.dm_bot.edit.assert_not_awaited()
 
     async def test_choosing_everyone_puts_the_channels_back(self) -> None:
-        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
         for channel in (self.transcript, self.dm_bot):
             channel.overwrites = self.edited(channel)
             channel.edit.reset_mock()
         opened = await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")
-        await channel_access.reconcile(self.guild, opened, self.store, self.memory)
+        await channel_sync.reconcile(self.guild, opened, self.store, self.memory)
         sent = self.edited(self.transcript)
         assert sent is not None
         by_id = {key.id: ow for key, ow in sent.items()}
@@ -103,7 +103,7 @@ class Access(DatabaseTest):
         self.me.guild_permissions = discord.Permissions(
             view_channel=True, send_messages=True, read_message_history=True, manage_channels=True
         )
-        problem = await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        problem = await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
         assert problem is not None
         self.assertIn("Manage Roles", problem)
         self.transcript.edit.assert_not_awaited()
@@ -113,5 +113,5 @@ class Access(DatabaseTest):
         role = MagicMock(spec=discord.Role)
         role.id = 777
         self.transcript.overwrites = {role: discord.PermissionOverwrite(view_channel=True)}
-        found = channel_access.exposure(self.transcript, self.campaign, BOT, [DM])
+        found = channel_sync.exposure(self.transcript, self.campaign, BOT, [DM])
         self.assertEqual(found.roles, (777,))

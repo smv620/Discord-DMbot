@@ -1,0 +1,321 @@
+"""⚙️ Manage DMbot → 🔒 Who can see this campaign's channels (#3891): the two choices, and a
+private list of people a DM adds by hand. Words are in plain language and counts only.
+
+The choice is saved, then `channel_sync.reconcile` puts the DM Bot and transcript channels in
+step at once (the hourly sweep heals anything missed). A missing permission is said in plain words
+with its name, and nothing is half applied. Only the campaign's DMs, or a server manager, may use
+it, checked on every press. The picker is an ordinary private message with a timeout; its
+selections are checked again when made.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import re
+import time
+from typing import Any
+
+import discord
+
+from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns.models import CHANNELS_EVERYONE, CHANNELS_PEOPLE
+from dmbot.dm_screen import channel_people as cp
+from dmbot.dm_screen import channel_sync
+from dmbot.dm_screen.buttons import may_change_screen
+from dmbot.logs import log_context
+from dmbot.mentions import NO_PINGS
+
+log = logging.getLogger(__name__)
+
+_ID = r"(?P<campaign>[0-9a-f]{32})"
+MAX_BY_HAND = 25  # one Remove list holds this many (Discord's limit for a select)
+
+CHOICES = {
+    CHANNELS_PEOPLE: "Only this campaign's people",
+    CHANNELS_EVERYONE: "Everyone in the server",
+}
+EVERYONE_HELP = "Everyone in the server can see its channels."
+FAILED = "Sorry, that didn't save. Please try again."
+NOT_A_PERSON = "That's a bot, not a person."
+LIST_FULL = f"The list is full ({MAX_BY_HAND} people). Take someone off first."
+NOBODY = "Nobody was added by hand yet."
+ADD_PLACEHOLDER = "Add someone to see the channels"
+REMOVE_PLACEHOLDER = "Take someone off the list"
+BACK_TO = "Tap a choice to change it."
+
+
+def channels_text(campaign: Campaign) -> str:
+    """The card: what is chosen now, in the words the choice uses."""
+    on = campaign.channels_visibility
+    help_line = cp.HELP if on == CHANNELS_PEOPLE else EVERYONE_HELP
+    return (
+        f"🔒 **Who can see {discord.utils.escape_markdown(campaign.name)}'s channels**\n"
+        f"{help_line}\n"
+        f"These are its DM Bot and transcript channels; the DM screen has its own choice. {BACK_TO}"
+    )
+
+
+def channels_view(campaign: Campaign) -> discord.ui.View:
+    """The card's buttons: the two choices (the saved one marked), 👥 Who can see, and Back."""
+    from dmbot.dm_screen.settings import BackToSettingsButton  # (it imports this module)
+
+    view = discord.ui.View(timeout=None)
+    for choice in CHOICES:
+        view.add_item(
+            ChannelsChoiceButton(
+                campaign.id, choice, current=choice == campaign.channels_visibility
+            )
+        )
+    view.add_item(PeopleButton(campaign.id))
+    view.add_item(BackToSettingsButton(campaign.id))
+    return view
+
+
+async def _problem_line(
+    guild: discord.Guild, campaign: Campaign, interaction: discord.Interaction
+) -> str:
+    """Put the channels in step with the saved choice; the plain cause on a line of its own when
+    that could not be done (empty when it was)."""
+    bot = interaction.client
+    problem = await channel_sync.reconcile(
+        guild,
+        campaign,
+        bot.campaigns,
+        getattr(bot, "memory", None),  # type: ignore[attr-defined]
+    )
+    return f"\n⚠️ {problem}" if problem else ""
+
+
+class ChannelsMenuButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:chmenu:{_ID}",
+):
+    """🔒 Who can see this campaign's channels: opens the card."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Who can see the channels",
+                emoji="🔒",
+                style=discord.ButtonStyle.secondary,
+                row=3,
+                custom_id=f"dmbot:chmenu:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ChannelsMenuButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        campaign = allowed[0]
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.response.edit_message(
+                content=channels_text(campaign),
+                view=channels_view(campaign),
+                allowed_mentions=NO_PINGS,
+            )
+
+
+class ChannelsChoiceButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:chset:{_ID}:(?P<choice>people|everyone)",
+):
+    """One of the two choices; the saved one is drawn as pressed."""
+
+    def __init__(self, campaign_id: str, choice: str, *, current: bool = False) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=CHOICES[choice] + (" ✓" if current else ""),
+                style=discord.ButtonStyle.primary if current else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:chset:{campaign_id}:{choice}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.choice = choice
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ChannelsChoiceButton:
+        return cls(match["campaign"], match["choice"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        campaign, guild, store = allowed
+        await interaction.response.defer()
+        with log_context(guild_id=guild.id, campaign_id=campaign.id):
+            try:
+                saved = await store.set_channels_visibility(guild.id, campaign.id, self.choice)
+            except (CampaignError, Exception):
+                log.exception("Couldn't change who sees the channels")
+                await interaction.followup.send(FAILED, ephemeral=True)
+                return
+            note = await _problem_line(guild, saved, interaction)
+            log.info("Who sees the channels set to %s", self.choice)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=channels_text(saved) + note,
+                view=channels_view(saved),
+                allowed_mentions=NO_PINGS,
+            )
+
+
+class PeopleButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:chpeople:{_ID}",
+):
+    """👥 Who can see: a private list to add a person by hand or take one off."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Who can see",
+                emoji="👥",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:chpeople:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> PeopleButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        campaign, guild, store = allowed
+        by_hand = await store.channel_people_by_hand(guild.id, campaign.id)
+        await interaction.response.send_message(
+            people_text(campaign, by_hand, guild),
+            view=PeopleView(campaign.id, by_hand, guild),
+            ephemeral=True,
+            allowed_mentions=NO_PINGS,
+        )
+
+
+def _name(guild: discord.Guild, user_id: int) -> str:
+    member = guild.get_member(user_id)
+    return member.display_name if member is not None else "Someone who left"
+
+
+def people_text(campaign: Campaign, by_hand: list[int], guild: discord.Guild) -> str:
+    """Who was added by hand (names only; the list the DM built)."""
+    lines = [f"- {discord.utils.escape_markdown(_name(guild, i))}" for i in by_hand] or [NOBODY]
+    return (
+        "👥 **Who can see this campaign's channels**\n"
+        "Always: its game masters, the players of its characters and anyone recorded at its "
+        "sessions. Added by hand:\n" + "\n".join(lines)
+    )
+
+
+class PeopleView(discord.ui.View):
+    """An Add picker and, when anyone was added, a Remove picker. Both are checked again when
+    used: the DM may have lost the right, or the list may have changed, since it was opened."""
+
+    def __init__(self, campaign_id: str, by_hand: list[int], guild: discord.Guild) -> None:
+        super().__init__(timeout=10 * 60)
+        self.campaign_id = campaign_id
+        self.add_pick: discord.ui.UserSelect[PeopleView] = discord.ui.UserSelect(
+            placeholder=ADD_PLACEHOLDER, min_values=1, max_values=1
+        )
+        self.add_pick.callback = self._added  # type: ignore[method-assign]
+        self.add_item(self.add_pick)
+        if by_hand:
+            self.remove_pick: discord.ui.Select[PeopleView] = discord.ui.Select(
+                placeholder=REMOVE_PLACEHOLDER,
+                options=[
+                    discord.SelectOption(label=_name(guild, i)[:100], value=str(i))
+                    for i in by_hand[:MAX_BY_HAND]
+                ],
+            )
+            self.remove_pick.callback = self._removed  # type: ignore[method-assign]
+            self.add_item(self.remove_pick)
+
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]
+    ) -> None:
+        log.error("Changing who sees the channels failed", exc_info=error)
+        with contextlib.suppress(discord.HTTPException):
+            if interaction.response.is_done():
+                await interaction.followup.send(FAILED, ephemeral=True)
+            else:
+                await interaction.response.send_message(FAILED, ephemeral=True)
+
+    async def _finish(
+        self, interaction: discord.Interaction, guild: discord.Guild, text: str
+    ) -> None:
+        """Put the channels in step, then show the list as it is now with what happened."""
+        store = interaction.client.campaigns  # type: ignore[attr-defined]
+        campaign = await store.get(guild.id, self.campaign_id)
+        if campaign is None:
+            return
+        note = await _problem_line(guild, campaign, interaction)
+        by_hand = await store.channel_people_by_hand(guild.id, campaign.id)
+        self.stop()
+        await interaction.edit_original_response(
+            content=f"{text}{note}\n\n{people_text(campaign, by_hand, guild)}",
+            view=PeopleView(campaign.id, by_hand, guild),
+            allowed_mentions=NO_PINGS,
+        )
+
+    async def _added(self, interaction: discord.Interaction) -> None:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        campaign, guild, store = allowed
+        person = self.add_pick.values[0]
+        if person.bot:
+            await interaction.response.send_message(NOT_A_PERSON, ephemeral=True)
+            return
+        by_hand = await store.channel_people_by_hand(guild.id, campaign.id)
+        if len(by_hand) >= MAX_BY_HAND and person.id not in by_hand:
+            await interaction.response.send_message(LIST_FULL, ephemeral=True)
+            return
+        await interaction.response.defer()
+        name = discord.utils.escape_markdown(person.display_name or person.name)
+        with log_context(guild_id=guild.id, campaign_id=campaign.id):
+            await store.add_channel_person(
+                guild.id, campaign.id, person.id, interaction.user.id, int(time.time())
+            )
+            log.info("A person was added by hand to those who see the channels")
+        await self._finish(
+            interaction, guild, f"Added {name}. They can see this campaign's channels."
+        )
+
+    async def _removed(self, interaction: discord.Interaction) -> None:
+        allowed = await may_change_screen(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        campaign, guild, store = allowed
+        user_id = int(self.remove_pick.values[0])
+        await interaction.response.defer()
+        name = discord.utils.escape_markdown(_name(guild, user_id))
+        with log_context(guild_id=guild.id, campaign_id=campaign.id):
+            await store.remove_channel_person(guild.id, campaign.id, user_id)
+            log.info("A person was taken off those who see the channels")
+        people = await channel_sync.campaign_people(
+            store,
+            getattr(interaction.client, "memory", None),
+            campaign,
+            guild.me.id if guild.me else 0,
+        )
+        still = (
+            " They can still see them as a game master, a player or someone recorded here."
+            if user_id in people
+            else ""
+        )
+        await self._finish(interaction, guild, f"Took {name} off the list.{still}")
