@@ -45,18 +45,22 @@ from dmbot.memory.link_words import (
 )
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
+    CLASS,
     CONFIRMED,
     DM,
     DM_ONLY_TYPES,
+    LINK_LABELS,
     MERGED,
     PLAYERS_TEXT_MAX,
     PRONOUNCED,
     PROPOSED,
     REJECTED,
+    SPECIES,
     Alias,
     Entity,
     MemoryRuleError,
     Relation,
+    RuleLink,
     TooLateToUndo,
     Written,
     days,
@@ -438,6 +442,23 @@ def _with_connections(head: str, rows: list[Row], limit: int, url: str) -> str:
     return "\n".join([top, *shown])
 
 
+def traits_line(links: Sequence[RuleLink]) -> str:
+    """ "🧬 Lineage: Dwarf · Class: Cleric" from a character's rules links (#2959 item 3), or "".
+    "Lineage" is the owner's word; a 2014-only entry is tagged `[Legacy 2014]`, and words the rules
+    don't have say so."""
+
+    def one(link: RuleLink) -> str:
+        tag = " [Legacy 2014]" if link.edition == "2014" else ""
+        return _md(link.name) + tag + ("" if link.known else " (not in DMbot's rules)")
+
+    parts = []
+    for kind in (SPECIES, CLASS):
+        mine = [one(r) for r in links if r.kind == kind]
+        if mine:
+            parts.append(f"**{LINK_LABELS[kind].capitalize()}:** {', '.join(mine)}")
+    return "\n🧬 " + " · ".join(parts) if parts else ""
+
+
 def card_text(
     lookup: CampaignLookup,
     entity_id: str,
@@ -701,6 +722,15 @@ async def show_card(
             "(they read this in recaps and answers)"
         )
         if len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets:  # lineage and class (#2959 item 3): the DM's alone (a spoiler upload gives them)
+        try:
+            links = await memory.rule_links(campaign.guild_id, campaign.id, [entity_id])
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: lineage and class not read (%s)", type(exc).__name__)
+            links = []
+        line = traits_line(links)
+        if line and len(text) + len(line) <= CARD_MAX:
             text += line
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;

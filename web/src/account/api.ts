@@ -1929,6 +1929,8 @@ export type WebLinkChange =
   | { action: "pin"; id: string; pinned: boolean }
   // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
   | { action: "feeling"; id: string; feeling: string }
+  // How the two people of a `knows` connection know each other (#3882, core #3889): "met", "aware" or "" (not said).
+  | { action: "knows-how"; id: string; how: "met" | "aware" | "" }
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
