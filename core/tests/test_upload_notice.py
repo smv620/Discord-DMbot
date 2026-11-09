@@ -214,7 +214,8 @@ class ImportAdds(NamesTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        self.bot.upload_notices = UploadNotices(self.db)
+        self.notices = UploadNotices(self.db)
+        self.bot.upload_notices = self.notices
         self.bot.lookup = None
         self.bot.post_upload_notice = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={self.MIRA}))  # type: ignore[assignment]
@@ -294,7 +295,7 @@ class ImportAdds(NamesTest):
 
         await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1"})
         notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
-        found = await self.bot.upload_notices.get(GUILD, notice.id)
+        found = await self.notices.get(GUILD, notice.id)
         assert found is not None
         self.assertEqual((found.source_kind, found.source_id), ("import", "imp1"))
         later = await self.scanned("Orrin", "place")
@@ -302,7 +303,7 @@ class ImportAdds(NamesTest):
             self.bot, self.campaign, {"names": [later]}, "a file", source=("lore", "up42")
         )
         assert done is not None
-        again = await self.bot.upload_notices.get(GUILD, done[0].id)
+        again = await self.notices.get(GUILD, done[0].id)
         assert again is not None
         self.assertEqual((again.source_kind, again.source_id), ("lore", "up42"))
 
@@ -313,7 +314,7 @@ class ImportAdds(NamesTest):
             self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1", "imp2"}
         )
         notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
-        found = await self.bot.upload_notices.get(GUILD, notice.id)
+        found = await self.notices.get(GUILD, notice.id)
         assert found is not None
         self.assertIsNone(found.source_kind)
         self.assertIsNone(found.source_id)
