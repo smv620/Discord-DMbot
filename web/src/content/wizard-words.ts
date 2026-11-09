@@ -7,15 +7,15 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 /** The steps in order; the number is the step the draft keeps. */
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
-/** The seven supplements the rules step offers (PLAN, step 6). Choosing one only tells the rules advisor which books the table uses. */
+/** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
-  { code: "xgte", title: "Xanathar's Guide to Everything (2017)" },
-  { code: "ggtr", title: "Guildmasters' Guide to Ravnica (2018)" },
-  { code: "motm", title: "Mythic Odysseys of Theros (2020)" },
-  { code: "tcoe", title: "Tasha's Cauldron of Everything (2020)" },
-  { code: "ftod", title: "Fizban's Treasury of Dragons (2021)" },
-  { code: "mpmm", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
-  { code: "bgg", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
+  { code: "ravnica", title: "Guildmasters' Guide to Ravnica (2018)" },
+  { code: "theros", title: "Mythic Odysseys of Theros (2020)" },
+  { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
+  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
+  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
+  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
 ];
 
 export const wizardWords = {
@@ -27,7 +27,7 @@ export const wizardWords = {
   expired: "Your unfinished setup was kept for 7 days and has been removed. You can start again.",
   noRoom: "Your plan has no room for another campaign. Change your plan or remove a campaign, then come back.",
   tooFast: "Too many tries at once. Wait a moment, then try again.",
-  notAllowed: "Only a DM of this server can set up a campaign here.",
+  notAllowed: "You can't set up a campaign in this server. Ask someone who runs the server to do it.",
   saved: "Saved. You can leave and come back: your answers are kept for 7 days.",
   saving: "Saving…",
   step: (n: number, of: number): string => `Step ${n} of ${of}`,
@@ -196,7 +196,7 @@ export const wizardWords = {
     // The finish run's failure words (docs/WIZARD_DESIGN.md, 4.4).
     errors: {
       plan: "Your plan has no room for another campaign.",
-      "not-allowed": "Only a DM of this server can set up a campaign here.",
+      "not-allowed": "You can't set up a campaign in this server. Ask someone who runs the server to do it.",
       gone: "The setup was thrown away before it finished. Start again.",
       "no-key": "Your campaign is ready. DMbot can't read the lore until you add an AI key in Settings. Nothing is lost.",
       failed: "Something went wrong. Nothing you entered is lost. Try again in a minute.",

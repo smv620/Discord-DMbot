@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
 import { mockWizard } from "../src/account/wizard-mock";
-import { wizardWords as w } from "../src/content/wizard-words";
+import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
 afterEach(() => {
   cleanup();
@@ -223,5 +223,14 @@ describe("the wizard", () => {
     for (let i = 0; i < 20 && !screen.queryByRole("link", { name: w.finish.open }); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getAllByText(w.finish.errors["no-key"]!).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+  });
+
+  it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {
+    // (core's wizard.py list: a code not on it is refused at the door)
+    expect(SUPPLEMENTS.map((s) => s.code)).toEqual(["xanathar", "ravnica", "theros", "tasha", "fizban", "mordenkainen", "bigby"]);
+    const api = mockWizard();
+    await api.start(G, "");
+    await expect(api.set(G, 6, { supplements: ["tasha", "nope"] })).rejects.toMatchObject({ kind: "bad_value", key: "supplements" });
+    await expect(api.set(G, 6, { supplements: ["tasha", "bigby"] })).resolves.toBeTruthy();
   });
 });

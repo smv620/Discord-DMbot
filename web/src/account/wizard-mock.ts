@@ -1,6 +1,7 @@
 // The wizard's pretend API (#3956): keeps one draft in memory so every page can be tried and tested without a server. Server ids
 // ending in a word change what happens: `.full` has no room for another campaign, `.expired` has no draft, `.fail` makes the
 // finish run stop with "failed", `.nokey` stops it with "no-key" (the campaign is made), `.slow` takes longer to finish.
+import { SUPPLEMENTS } from "../content/wizard-words";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardDoc, type WizardDraft, type WizardFinish, type WizardFinishStage, type WizardSlot } from "./wizard-api";
 
 const DAY = 86400;
@@ -54,6 +55,7 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const draft = mine(guild);
       if ((patch.target ?? draft.answers.target) === (patch.fallback ?? draft.answers.fallback)) throw new WizardError("bad_value", "fallback");
       if (patch.invite && !/^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/.test(patch.invite)) throw new WizardError("bad_value", "invite");
+      if (patch.supplements?.some((code) => !SUPPLEMENTS.some((s) => s.code === code))) throw new WizardError("bad_value", "supplements");
       if ((patch.characters?.length ?? 0) > 12) throw new WizardError("bad_value", "characters");
       draft.answers = { ...draft.answers, ...patch };
       draft.step = step;
