@@ -966,7 +966,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   </div>
                 )}
                 {/* A reveal can take up to a minute: the wait sits below this name's row, never inside the flex row (#3803).
-                    It is fetched only while a reveal is out, so the page's first download stays within its budget. */}
+                    It is fetched only while a reveal is out, so the page's first download stays within its budget; until the code arrives the line says it is loading, and no stage shows yet. */}
                 {canEdit && api.webReveal && revealing.has(`name:${n.id}`) && (
                   <LazyPanel key={`wait-${n.id}`} load={() => import("./SavingWait")} what="DMbot's progress" props={{ active: true }} />
                 )}

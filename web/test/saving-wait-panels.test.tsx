@@ -100,6 +100,8 @@ describe("the link and name panels show DMbot's stage while a change is out (#38
     );
     expect(await screen.findByText(savingWait.stage)).toBeTruthy();
     expect(screen.getByText(/Running for/)).toBeTruthy();
+    // Below the row, not in a flex row beside its buttons.
+    expect(screen.getByText(savingWait.stage).closest('[role="status"]')?.closest(".row")).toBeNull();
   });
 
   it("the name editor shows the stage while a save is out, and a second press does nothing", async () => {
@@ -117,12 +119,13 @@ describe("the link and name panels show DMbot's stage while a change is out (#38
         refId="100.cmp1"
       />,
     );
-    const save = screen.getByRole("button", { name: pageWords.saveSpelling });
-    fireEvent.click(save);
-    fireEvent.click(save);
-    expect(await screen.findByText(savingWait.stage)).toBeTruthy();
-    expect((save as HTMLButtonElement).disabled).toBe(true);
+    const save = screen.getByRole("button", { name: pageWords.saveSpelling }) as HTMLButtonElement;
+    // Two presses in one tick, before Preact redraws, so only the ref can stop the second one.
+    save.click();
+    save.click();
     expect(calls).toBe(1);
+    expect(await screen.findByText(savingWait.stage)).toBeTruthy();
+    expect(save.disabled).toBe(true);
     await act(async () => pending.finish(null));
     expect(screen.queryByText(savingWait.stage)).toBeNull();
   });
