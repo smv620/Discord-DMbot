@@ -3,7 +3,9 @@ the database, the queue's claim order, and the files removed on delete. Invented
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.pictures.actions import DMS_ONLY, GONE, NOT_YOURS, Outcome, PictureActions
@@ -55,6 +57,32 @@ class Applying(DatabaseTest):
         )
         assert added.picture is not None
         self.picture = added.picture
+
+    async def test_a_kept_picture_carries_the_build_that_described_it(self) -> None:
+        """Lineage (#3739): the description is DMbot's AI read of the image, so the row is
+        stamped when it is made; the DM's later choices (private, permanent) keep the stamp."""
+        commit, later = "e" * 40, "f" * 40
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": commit}):
+            added = await self.store.add(
+                GUILD, self.campaign.id, poster_id=POSTER, session_id="", line_id=None,
+                message_id=2, description="a blue door", consent_version=7, right_granted_at=900,
+                sha256="b" * 64, object_key="p/two.png", preview_key="p/two-preview.webp",
+                size_bytes=MB, preview_bytes=0, storage_mb=5,
+            )  # fmt: skip
+        assert added.picture is not None
+
+        async def stamp() -> str | None:
+            async with self.db.guild(GUILD) as conn:
+                cur = await conn.execute(
+                    "SELECT made_by_commit AS c FROM campaign_pictures WHERE id = %s",
+                    (added.picture.id,),  # type: ignore[union-attr]
+                )
+                return (await cur.fetchone())["c"]  # type: ignore[index,no-any-return]
+
+        self.assertEqual(await stamp(), commit)
+        with mock.patch.dict(os.environ, {"GIT_COMMIT": later}):
+            await self.actions.apply(GUILD, self.campaign.id, DM, added.picture.id, "private")
+        self.assertEqual(await stamp(), commit)
 
     async def do(self, user: int, action: str) -> Outcome:
         return await self.actions.apply(GUILD, self.campaign.id, user, self.picture.id, action)

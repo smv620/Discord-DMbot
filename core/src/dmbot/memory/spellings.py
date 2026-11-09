@@ -49,7 +49,9 @@ def fold_in_read(found: Sequence[Found]) -> tuple[list[Found], int]:
         keep = out[at]  # (the folded spelling's own quote is dropped: the first place's stands)
         if name_key(f.name) != name_key(keep.name):
             also = tuple(dict.fromkeys((*keep.also, f.name, *f.also)))
-            out[at] = replace(keep, also=also, secret=(*keep.secret, *f.secret))
+            out[at] = replace(
+                keep, also=also, secret=(*keep.secret, *f.secret), about=keep.about or f.about
+            )
             folded += 1
         # (the same name twice is the merge's business, not a second spelling)
     return out, folded

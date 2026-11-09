@@ -202,3 +202,28 @@ class TheQuestionsPage(unittest.TestCase):
         self.assertEqual(dl.questions_link(SITE), f"{SITE}/account/questions")
         self.assertEqual(dl.questions_link(""), "")
         self.assertEqual(dl.questions_link("http://x.example.com"), "")
+
+
+class ThePieceFourAddresses(unittest.TestCase):
+    """The pages the last senders point at (#3663, piece 4)."""
+
+    SITE = "https://getdmbot.com"
+
+    def test_the_campaigns_home_and_the_restore_page(self) -> None:
+        home = dl.site_link(self.SITE, "campaigns", 5, "c" * 32)
+        self.assertEqual(home, f"https://getdmbot.com/account/campaigns/5.{'c' * 32}")
+        self.assertEqual(dl.restore_link(self.SITE), "https://getdmbot.com/account/restore")
+        self.assertEqual(dl.restore_link(""), "")
+
+    def test_the_configured_site_gives_the_button_and_unset_gives_none(self) -> None:
+        self.addCleanup(dl.configure_site, "")
+        dl.configure_site("")
+        links = dl.DMLinks(page="campaigns")
+        self.assertIsNone(dl.view_for(None, 5, "c" * 32, links))
+        dl.configure_site(self.SITE)
+        view = dl.view_for(None, 5, "c" * 32, links)
+        assert view is not None
+        self.assertEqual(
+            [getattr(c, "url", None) for c in view.children],
+            [f"https://getdmbot.com/account/campaigns/5.{'c' * 32}"],
+        )

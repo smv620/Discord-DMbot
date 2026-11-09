@@ -34,7 +34,9 @@ from dmbot.campaigns import offer_notify
 from dmbot.campaigns.backup_names import build_commit
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
+    CHANNELS_CHOICES,
     CONFIRMATION_PURPOSES,
+    DEFAULT_CHANNELS,
     DEFAULT_DM_SCREEN_LEVEL,
     DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
@@ -57,6 +59,7 @@ from dmbot.campaigns.models import (
     check_dm_screen_level,
     check_dm_screen_visibility,
     check_rulesets,
+    clean_channels,
     clean_name,
     fingerprint,
     name_key,
@@ -76,6 +79,7 @@ from dmbot.campaigns.parts import (
 )
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
+from dmbot.memory import graph_review
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +90,10 @@ EXPORT_FORMAT = "dmbot-campaign"
 # works them out from the old flags; a file of this version keeps the lists it holds, however few.
 # 4: carries each session's notes (`session_notes`, #3026). An older file has none, and its restore
 # simply has none; a DMbot that predates the section refuses a file of this version as too new.
-EXPORT_VERSION = 4
+# 5: story-memory rows carry `made_by`, the build that made them (#3739). Optional on load, so an
+# older file restores with none (read as "made before versions were recorded"). The bump is needed
+# so a DMbot that knows no `made_by` refuses the file instead of failing its strict row check.
+EXPORT_VERSION = 5
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -337,6 +344,8 @@ _SETTABLE = frozenset(
         "recaps_text",
         "recaps_audio",
         "recaps_email",
+        "ask_before_adding",
+        "channels_visibility",
     }
 )
 RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
@@ -375,6 +384,7 @@ MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (
     f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
 )
+NOT_A_LOGIN = "That Discord account was taken off its DMbot account, so it can't be added here."
 LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -404,6 +414,10 @@ class CampaignStore:
         restore_needs_slot: bool = False,
     ) -> None:
         self._db = db
+        # Whether the schema has the account doors (0392, 0395, #2533). Always true once migrated;
+        # a test that opens an older schema on purpose has neither, and then every person is their
+        # own account. Asked once, then remembered.
+        self._accounts: bool | None = None
         self._clock = clock
         self._has_free_slot = has_free_slot
         # Restoring makes the importer an owner, which takes a slot. Checked only when the
@@ -497,7 +511,7 @@ class CampaignStore:
             )
             rows = await cur.fetchall()
             dms = await self._dms_for(conn, guild_id)
-        return [_to_campaign(r, dms.get(r["id"], set())) for r in rows]
+        return [_to_campaign(r, dms.get(r["id"], _Roster())) for r in rows]
 
     async def guilds_with_campaigns(self) -> list[int]:
         """Every server that has held a campaign, from the database and not from the bot's
@@ -652,6 +666,18 @@ class CampaignStore:
                 (target, fallback),
             )
 
+    async def set_share_improve(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Share this campaign's story to improve DMbot" (#3741), the DM's switch. Off deletes
+        every waiting graph check and every report not yet posted, in the same transaction
+        (Supervisor's ruling: "off means off")."""
+        async with self._db.guild(guild_id) as conn:
+            saved = await self._update(
+                conn, guild_id, campaign_id, sql.SQL("share_improve = %s"), (on,)
+            )
+            if not on:
+                await graph_review.drop_all(conn, guild_id, campaign_id)
+            return saved
+
     async def set_optional_rules_default(
         self, guild_id: int, campaign_id: str, enabled: bool
     ) -> Campaign:
@@ -677,7 +703,13 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             # Read with the row locked (#77: one read), so two adds cannot pass the cap.
             current = await self._require(conn, guild_id, campaign_id, lock=True)
-            if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
+            # The table holds the DM's account number, never a second Discord ID (#2533).
+            account = user_id if user_id in current.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
+            if account is None:
+                raise CampaignError(NOT_A_LOGIN)
+            if account not in current.dm_accounts and len(current.dm_accounts) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
             # One statement: the row is added and, only if it was new, the story's number moves
             # (who the DMs are changes what a viewer sees, #3294).
@@ -686,27 +718,31 @@ class CampaignStore:
                 " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1)"
                 " UPDATE campaigns SET memory_version = memory_version + 1"
                 " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM added)",
-                (campaign_id, guild_id, user_id, guild_id, campaign_id),
+                (campaign_id, guild_id, account, guild_id, campaign_id),
             )
-            # (no read after: the locked row cannot change under this transaction)
-            return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
+            # (the locked row cannot change under this transaction; read for the new roster)
+            return await self._require(conn, guild_id, campaign_id)
 
     async def remove_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign row so two removals can't leave it with no DM.
             campaign = await self._require(conn, guild_id, campaign_id, lock=True)
-            if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
+            # (an account number from the list of game masters, or a Discord ID of one of them)
+            account = user_id if user_id in campaign.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
+            if account == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
-            if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
+            if account in campaign.dm_accounts and len(campaign.dm_accounts) == 1:
                 raise CampaignError(LAST_DM)
             await conn.execute(
                 "WITH gone AS (DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s RETURNING 1)"
                 " UPDATE campaigns SET memory_version = memory_version + 1"
                 " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM gone)",
-                (guild_id, campaign_id, user_id, guild_id, campaign_id),
+                (guild_id, campaign_id, account, guild_id, campaign_id),
             )
-            return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_dm_screen(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -931,6 +967,56 @@ class CampaignStore:
         """Whether rules cards show on the DM screen when a spell or creature is named
         (#931). Who may change it is checked by the caller (the campaign's DMs)."""
         return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
+
+    async def set_ask_before_adding(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Ask me before adding" (#3878): on, a lore upload offers its names for the DM's yes
+        (Add all) as it always did; off (the default), what DMbot is sure of is added by itself.
+        Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "ask_before_adding", bool(on))
+
+    async def set_channels_visibility(
+        self, guild_id: int, campaign_id: str, choice: str
+    ) -> Campaign:
+        """Who can see the DM Bot and transcript channels (#3891): "people" or "everyone". Who may
+        change it is checked by the caller (the campaign's DMs); applying it to the channels is
+        `dm_screen.channel_sync.reconcile`'s job."""
+        if choice not in CHANNELS_CHOICES:
+            raise CampaignError("Please pick who can see the channels from the list.")
+        return await self._set(guild_id, campaign_id, "channels_visibility", choice)
+
+    async def channel_people_by_hand(self, guild_id: int, campaign_id: str) -> list[int]:
+        """The members a DM added by hand to those who may see the campaign's channels."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM campaign_channel_people"
+                " WHERE guild_id = %s AND campaign_id = %s ORDER BY added_at, user_id",
+                (guild_id, campaign_id),
+            )
+            return [int(r["user_id"]) for r in await cur.fetchall()]
+
+    async def add_channel_person(
+        self, guild_id: int, campaign_id: str, user_id: int, added_by: int, now: int
+    ) -> bool:
+        """Let one more member see the campaign's channels. False when already on the list."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO campaign_channel_people"
+                " (guild_id, campaign_id, user_id, added_by, added_at)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, user_id, added_by, now),
+            )
+            return cur.rowcount > 0
+
+    async def remove_channel_person(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
+        """Take a hand-added member off the list. Only the list is changed: someone who is on
+        the campaign's people another way (a DM, a player, a recorded speaker) still sees it."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM campaign_channel_people"
+                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+                (guild_id, campaign_id, user_id),
+            )
+            return cur.rowcount > 0
 
     async def set_paused(
         self, guild_id: int, campaign_id: str, user_id: int, paused: bool, now: int
@@ -1653,6 +1739,8 @@ class CampaignStore:
                 "recaps_text": campaign.recaps_text,
                 "recaps_audio": campaign.recaps_audio,
                 "recaps_email": campaign.recaps_email,
+                "ask_before_adding": campaign.ask_before_adding,
+                "channels_visibility": campaign.channels_visibility,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
                 "table_chat": campaign.table_chat,
@@ -1865,7 +1953,22 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
-            for name, rows in sections.items():
+            # Who sees the channels (#3891); the by-hand list is not in a backup.
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = %s WHERE guild_id = %s AND id = %s",
+                (info["channels_visibility"], guild_id, campaign_id),
+            )
+            # The "Ask me before adding" choice (#3878); a backup from before it says nothing: off.
+            await conn.execute(
+                "UPDATE campaigns SET ask_before_adding = %s WHERE guild_id = %s AND id = %s",
+                (info["ask_before_adding"], guild_id, campaign_id),
+            )
+            # A restore keeps the stamp each row was made with, NULL included, and never stamps a
+            # row with the build that loaded it (#3739, `dmbot.lineage`).
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
+            # The build stamps go back last whatever the order of the file's sections: they are
+            # put on rows the other sections have just made (#3751).
+            for name, rows in sorted(sections.items(), key=lambda item: item[0] == "lineage"):
                 try:
                     await self._sections[name].load(conn, guild_id, campaign_id, rows)
                 except CampaignError:
@@ -1873,6 +1976,9 @@ class CampaignStore:
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
                 await tell(step)
+            # What follows is DMbot working the old file out (`move_flags`): the running build made
+            # those rows, so the restore's keep-the-stamp setting ends with the loads.
+            await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             if _has_no_lists(sections, data):
                 from dmbot.memory import knowers
 
@@ -1881,6 +1987,8 @@ class CampaignStore:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
                 await tell(progress, 0, len(order))
+                # (the transcript parts carry every column, the stamp included: keep it as it is)
+                await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
                 for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
@@ -1890,6 +1998,8 @@ class CampaignStore:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
                     await tell(progress, done, len(order))
+                # (the stamps end with the loads, as after the sections: what runs next is DMbot's)
+                await conn.execute("SELECT set_config('dmbot.restoring', '', true)")
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
@@ -1981,7 +2091,7 @@ class CampaignStore:
                 raise CampaignError(NOT_HERE)
             return await self._require(conn, guild_id, campaign_id)  # the condition did not hold
         dms = await self._dms_for(conn, guild_id, campaign_id)
-        return _to_campaign(row, dms.get(campaign_id, set()))
+        return _to_campaign(row, dms.get(campaign_id, _Roster()))
 
     async def _get(
         self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
@@ -1995,7 +2105,7 @@ class CampaignStore:
         if row is None:
             return None
         dms = await self._dms_for(conn, guild_id, campaign_id)
-        return _to_campaign(row, dms.get(campaign_id, set()))
+        return _to_campaign(row, dms.get(campaign_id, _Roster()))
 
     async def _require(
         self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
@@ -2007,21 +2117,78 @@ class CampaignStore:
 
     async def _dms_for(
         self, conn: Conn, guild_id: int, campaign_id: str | None = None
-    ) -> dict[str, set[int]]:
-        """DMs per campaign for one server (or one campaign), in a single query."""
-        if campaign_id is None:
-            cur = await conn.execute(
-                "SELECT campaign_id, user_id FROM campaign_dms WHERE guild_id = %s", (guild_id,)
-            )
-        else:
-            cur = await conn.execute(
-                "SELECT campaign_id, user_id FROM campaign_dms"
-                " WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
-            )
-        result: dict[str, set[int]] = {}
+    ) -> dict[str, _Roster]:
+        """Who is a DM and who is the owner, per campaign for one server (or one campaign), in a
+        single query. The tables hold account numbers; each is expanded into the Discord IDs that
+        can act as it (`dmbot_account_logins`, 0395, #2533)."""
+        if not await self._has_accounts(conn):
+            return await self._plain_dms_for(conn, guild_id, campaign_id)
+        scope = "" if campaign_id is None else " AND campaign_id = %s"
+        owner_scope = "" if campaign_id is None else " AND c.id = %s"
+        args: tuple[Any, ...] = (guild_id,) if campaign_id is None else (guild_id, campaign_id)
+        cur = await conn.execute(
+            "SELECT d.campaign_id, 'dm' AS kind, d.user_id AS account, l AS login"
+            " FROM campaign_dms d"
+            " LEFT JOIN LATERAL dmbot_account_logins(d.user_id) AS l ON true"
+            " WHERE d.guild_id = %s" + scope.replace("campaign_id", "d.campaign_id") + " UNION ALL"
+            " SELECT c.id, 'owner', c.owner_user_id, l FROM campaigns c"
+            " LEFT JOIN LATERAL dmbot_account_logins(c.owner_user_id) AS l ON true"
+            " WHERE c.guild_id = %s AND c.owner_user_id IS NOT NULL" + owner_scope,
+            args + args,
+        )
+        result: dict[str, _Roster] = {}
         for r in await cur.fetchall():
-            result.setdefault(r["campaign_id"], set()).add(int(r["user_id"]))
+            roster = result.setdefault(r["campaign_id"], _Roster())
+            if r["kind"] == "dm":
+                roster.dm_accounts.add(int(r["account"]))
+                if r["login"] is not None:
+                    roster.dm_ids.add(int(r["login"]))
+                    roster.login_accounts[int(r["login"])] = int(r["account"])
+            elif r["login"] is not None:
+                roster.owner_ids.add(int(r["login"]))
+        return result
+
+    async def _account_of(self, conn: Conn, user_id: int) -> int | None:
+        """The account number a Discord user is stored as in the campaign tables (#2533): the
+        account they belong to, else their own ID (someone who has never signed in to the website
+        is their own account). None for a first Discord ID its account took off itself: it is
+        nobody's login any more and must not be stored as anyone."""
+        if not await self._has_accounts(conn):
+            return user_id
+        cur = await conn.execute(
+            "SELECT dmbot_account_of(%s) AS account, dmbot_account_taken_off(%s) AS gone",
+            (user_id, user_id),
+        )
+        row = await cur.fetchone()
+        if row is not None and row["account"] is not None:
+            return int(row["account"])
+        return None if row is not None and row["gone"] else user_id
+
+    async def _has_accounts(self, conn: Conn) -> bool:
+        if self._accounts is None:
+            cur = await conn.execute(
+                "SELECT to_regprocedure('dmbot_account_logins(bigint)') IS NOT NULL AS yes"
+            )
+            row = await cur.fetchone()
+            if not (row and row["yes"]):
+                return False  # (not remembered: the schema may be migrated a moment later)
+            self._accounts = True
+        return self._accounts
+
+    async def _plain_dms_for(
+        self, conn: Conn, guild_id: int, campaign_id: str | None
+    ) -> dict[str, _Roster]:
+        """The roster of a schema older than the accounts doors: everyone is their own account."""
+        cur = await conn.execute(
+            "SELECT campaign_id, user_id FROM campaign_dms WHERE guild_id = %s"
+            + ("" if campaign_id is None else " AND campaign_id = %s"),
+            (guild_id,) if campaign_id is None else (guild_id, campaign_id),
+        )
+        result: dict[str, _Roster] = {}
+        for r in await cur.fetchall():
+            roster = result.setdefault(r["campaign_id"], _Roster())
+            roster.dm_accounts.add(int(r["user_id"]))
+            roster.dm_ids.add(int(r["user_id"]))
         return result
 
     async def _insert(
@@ -2082,7 +2249,18 @@ async def _scope(conn: Conn, guild_id: int) -> None:
     await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),))
 
 
-def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
+@dataclasses.dataclass
+class _Roster:
+    """The people of one campaign as the store loads them (#2533): the DM accounts, every Discord
+    ID that can act as one, and the owner's Discord IDs."""
+
+    dm_accounts: set[int] = dataclasses.field(default_factory=set)
+    dm_ids: set[int] = dataclasses.field(default_factory=set)
+    owner_ids: set[int] = dataclasses.field(default_factory=set)
+    login_accounts: dict[int, int] = dataclasses.field(default_factory=dict)
+
+
+def _to_campaign(row: dict[str, Any], roster: _Roster) -> Campaign:
     return Campaign(
         id=row["id"],
         guild_id=int(row["guild_id"]),
@@ -2092,7 +2270,10 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         target_ruleset=row["target_ruleset"],
         fallback_ruleset=row["fallback_ruleset"],
         optional_rules_default=bool(row["optional_rules_default"]),
-        dm_user_ids=frozenset(dms),
+        dm_user_ids=frozenset(roster.dm_ids),
+        dm_accounts=frozenset(roster.dm_accounts),
+        owner_ids=frozenset(roster.owner_ids),
+        login_accounts=dict(roster.login_accounts),
         dm_screen_channel_id=row_int(row, "dm_screen_channel_id"),
         last_voice_channel_id=row_int(row, "last_voice_channel_id"),
         dm_screen_visibility=row["dm_screen_visibility"],
@@ -2134,6 +2315,8 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         recaps_text=bool(row.get("recaps_text", True)),  # older schemas (tests) have none
         recaps_audio=bool(row.get("recaps_audio", True)),
         recaps_email=bool(row.get("recaps_email", True)),
+        channels_visibility=clean_channels(row.get("channels_visibility")),
+        ask_before_adding=bool(row.get("ask_before_adding", False)),  # (older schemas: off)
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -2388,6 +2571,16 @@ def _validate_backup(
     if not isinstance(table_chat, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the channel setting existed get the default: the campaign's own people.
+    channels_visibility = campaign.get("channels_visibility", DEFAULT_CHANNELS)
+    if channels_visibility not in CHANNELS_CHOICES:
+        raise CampaignError(DAMAGED)
+
+    # Backups made before the upload notices existed have "Ask me before adding" off.
+    ask_before_adding = campaign.get("ask_before_adding", False)
+    if not isinstance(ask_before_adding, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
     if invite is not None:
@@ -2424,5 +2617,7 @@ def _validate_backup(
         **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
+        "ask_before_adding": ask_before_adding,
+        "channels_visibility": channels_visibility,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

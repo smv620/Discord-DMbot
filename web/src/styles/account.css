@@ -927,7 +927,8 @@
     white-space: nowrap;
   }
 
-  @media (min-width: 48rem) {
+  /* Packed rows are for a mouse: a tablet is a thumb, so it keeps the 44 px rows (#3657). */
+  @media (min-width: 48rem) and (pointer: fine) {
     .account .name-row {
       padding-block: 0;
     }
@@ -1100,11 +1101,7 @@
 }
 
 /* Players View / Full View (#2405): what the players have not learned yet is dimmed in the drawing only,
-   never the words, so the text keeps its contrast; a theory is a dotted line. */
-.account .web-edge.web-theory .web-line {
-  stroke-dasharray: 2 6;
-  stroke-linecap: round;
-}
+   never the words, so the text keeps its contrast; a theory is drawn lighter (web-map.css). */
 
 .account .web-edge.web-dim .web-line {
   opacity: 0.5;
@@ -1147,7 +1144,7 @@
 .account .web-edge-text {
   fill: var(--text, currentColor);
   stroke: none;
-  font-size: 14px;
+  font-size: var(--web-text, 14px); /* (the viewer's text size from Graph settings, #3620) */
   paint-order: stroke;
 }
 
@@ -1184,6 +1181,19 @@
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
+}
+
+/* A slider is a thumb's target too: 44 px tall, whatever the browser draws inside it (#3657). */
+.account input[type="range"] {
+  height: var(--tap);
+}
+
+/* The tick boxes of the graph settings: the whole row is the target, 44 px tall (#3657). */
+.account #graph-settings label:has(> input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
 }
 
 /* The secret answers (🤫 All secret and a claim's own "True, but keep it secret"), purple like Discord's, so they stand apart
@@ -1227,3 +1237,38 @@
     color: var(--secret-text-hover);
   }
 }
+
+/* DMbot's summary of the scene (#3644): long text wraps at any width, never past the box. */
+.account .scene-line {
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+/* A recap draft still being checked (#3861): faded to about half, with a big light-grey DRAFT over it at about 30 degrees.
+   The mark is only an overlay: it takes no clicks and the text under it can still be selected. */
+.account .draft-preview { position: relative; overflow: hidden; }
+.account .draft-preview-text { opacity: 0.5; }
+.account .draft-preview-mark { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transform: rotate(-30deg); font-size: clamp(3rem, 18vw, 7rem); font-weight: 800; letter-spacing: 0.1em; color: rgb(140 140 140 / 0.35); pointer-events: none; user-select: none; }
+
+/* A hand writing and turning a page while DMbot writes a recap (owner request, 2026-11-09). Still unless the work is moving
+   and the reader has not asked for less motion. The drawing uses the page's own colours, so it reads in light and dark. */
+.account .scribe { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-3); }
+.account .scribe-art { flex: none; overflow: visible; }
+.account .scribe-page { fill: var(--surface); stroke: var(--border); stroke-width: 2; }
+.account .scribe-lines { fill: none; stroke: var(--border); stroke-width: 2; stroke-linecap: round; }
+.account .scribe-ink { fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 40; }
+.account .scribe-leaf { fill: var(--accent-soft); stroke: var(--border); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: left center; }
+.account .scribe-shaft { stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; fill: none; }
+.account .scribe-quill { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+.account .scribe-skin { fill: var(--surface); stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.account .scribe-knuckle { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linecap: round; }
+.account .scribe-line { margin: 0; font-style: italic; }
+@media (prefers-reduced-motion: no-preference) {
+  .account .scribe-moving .scribe-ink { animation: scribe-write 4.8s ease-in-out infinite; }
+  .account .scribe-moving .scribe-hand-move { animation: scribe-hand 4.8s ease-in-out infinite; }
+  .account .scribe-moving .scribe-leaf { animation: scribe-turn 4.8s ease-in-out infinite; }
+}
+/* the ink and the hand travel together along the line (0-70%), then the leaf turns (75-95%) and it starts over */
+@keyframes scribe-write { 0% { stroke-dashoffset: 100; } 70%, 100% { stroke-dashoffset: 0; } }
+@keyframes scribe-hand { 0% { transform: translateX(0); } 70% { transform: translateX(48px); } 85% { transform: translateX(48px) translateY(-4px); } 100% { transform: translateX(0); } }
+@keyframes scribe-turn { 0%, 72% { opacity: 0; transform: scaleX(1); } 76% { opacity: 1; transform: scaleX(1); } 94% { opacity: 1; transform: scaleX(-1); } 100% { opacity: 0; transform: scaleX(-1); } }

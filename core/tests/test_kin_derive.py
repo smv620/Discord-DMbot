@@ -138,6 +138,31 @@ class TheLinksNeverWorkedOut(unittest.TestCase):
 
         self.assertEqual(derive(links), [])
 
+    def test_a_parent_cycle_gives_no_sibling_link_through_its_people(self) -> None:
+        # Mira, Aldric and Sera are each other's ancestor; Mira's sibling Bran would be Sera's child
+        links = [
+            stated("1", "mira", "parent", "aldric"),
+            stated("2", "aldric", "parent", "sera"),
+            stated("3", "sera", "parent", "mira"),
+            stated("4", "mira", "sibling", "bran"),
+        ]
+
+        self.assertEqual(derive(links), [])
+
+    def test_an_unrelated_chain_next_to_a_parent_cycle_is_still_worked_out(self) -> None:
+        links = [
+            stated("1", "mira", "parent", "aldric"),
+            stated("2", "aldric", "parent", "sera"),
+            stated("3", "sera", "parent", "mira"),
+            stated("4", "gwen", "parent", "gil"),
+            stated("5", "gil", "parent", "hob"),
+        ]
+
+        self.assertEqual(
+            [(d.a_id, d.role, d.b_id) for d in derive(links)],
+            [("gwen", "grandparent", "hob")],
+        )
+
     def test_a_link_stated_twice_is_worked_out_once(self) -> None:
         links = [
             stated("1", "mira", "parent", "aldric"),

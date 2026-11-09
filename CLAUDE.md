@@ -47,6 +47,18 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **What counts as "gained code"** (owner, 2026-11-07, after PRs queued behind one full CI rerun per
+  merge): `development` has gained code for a PR only when the CI areas of what it gained overlap the
+  PR's own. The areas are the jobs `scripts/ci-changes.sh` names (core, ears, web). For what
+  `development` gained, run it on `origin/development` with the commit of the PR's last green CI as
+  its base. For the PR's own areas, run it on the PR's head. When they don't overlap and GitHub
+  reports no conflict, the PR merges on its own green CI with no refresh: a log-only merge, a
+  web-only change under a core-only PR, and so on. The `development` run after the merge is the
+  check on the pair. While `development` is red, nothing else merges, as always.
+  **Refresh only what merges next** (owner, 2026-11-07): RepoManager refreshes a PR onto
+  `development` only when it is next in Supervisor's merge order, never every open PR after each
+  merge. In a stack, only the lowest PR is refreshed; the ones above wait until it merges, then each
+  is refreshed once.
   **The Cloudflare Pages check is a preview, not CI** (Supervisor, 2026-10-21, after it sat "in
   progress" for over 20 minutes on #2267 and #2269): when every CI job (`core`, `ears`, `web`,
   `scripts`, `docker images`) is green on the exact head and Cloudflare Pages has been in progress for
@@ -80,6 +92,12 @@ CI runs all of the above on every pull request. Never merge red CI.
   `development`, and that move carries the approval over too. An edit to an existing entry
   on either side is not a union. A conflict in any other file goes to the author and needs a fresh
   "approved".
+  **List unions** (Supervisor, 2026-11-07, after each WebDev merge left the next one conflicting on
+  `NAMES_METHODS`): when every conflicting hunk is a list that both sides only add to (an array such as
+  `NAMES_METHODS`, an interface's members, `mock.ts` entries, import lines, `docs/GO_LIVE.md` rows),
+  RepoManager resolves it as the union, keeping every item of both sides in the file's order, removing and
+  editing nothing, runs that area's checks (`npm run typecheck && npm test` for web), and notes "approval
+  carried over from <sha> (list union)". Anything else goes to the author.
   **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
   "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
   no new design review; Supervisor records the approval again as a review on the new head so the
@@ -100,9 +118,19 @@ CI runs all of the above on every pull request. Never merge red CI.
   identical)". Any difference, a renumbered migration included, goes to Supervisor for a fresh
   review.
   **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
-  may merge up to four approved PRs back to back when one CI run is green on a single branch
-  of `development` plus all of them merged in the planned order, and each PR's own patch is
-  unchanged. That run is the "CI on the combination". If it fails, merge one at a time again.
+  may merge up to six approved PRs (four until 2026-11-07) back to back when one CI run is green on
+  a single branch of `development` plus all of them merged in the planned order, and each PR's own
+  patch is unchanged. That run is the "CI on the combination". **A batch is the default** (owner,
+  2026-11-07): when two or more approved PRs are each green on their own heads, they go through a
+  batch, not one CI cycle each. If the batch fails, split it in two and run each half (the failure's
+  job and file usually name the PR, which goes back to its author), and never fall back to one at a
+  time. Merge the PRs with the merge method, in the batch's order, so the last merge's tree is the
+  batch branch's tree and CI reuses its green run (#3703).
+  **Refresh a batch's members together** (Supervisor, 2026-11-08, after batch 1's merges were refused one by one):
+  GitHub's branch protection needs each PR's own head checks green, so a PR whose last run is on an older
+  `development` can't merge on the batch's run alone. Every member of a batch counts as "merges next": refresh
+  them all onto `development` at once, so their own CI runs in parallel, check each one's net diff, then merge
+  them in the batch's order as each goes green.
   RepoManager pushes that branch itself as `batch/<date>-<n>` (Supervisor, 2026-10-18: the rule
   had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
   only carries the CI run, and the PRs then merge as themselves.
@@ -146,6 +174,12 @@ CI runs all of the above on every pull request. Never merge red CI.
 - Before opening a PR, run the reviewer agents in `.claude/agents/` (reviewer,
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
+- **Discord and the website stay level** (owner, 2026-11-07, #3663): a new DM-facing feature ships in
+  both places, or files the other half as an issue (linked in the PR) before it merges. Discord-only on
+  purpose is allowed only for what is live at the table or is Discord itself (which voice channel, joining
+  and recording, live alerts, the initiative tracker, a player's own consent button, server roles); the
+  PR says why. The list of what is where is `docs/discord-web-parity.md`; the PR that adds a feature
+  updates its row.
 - A PR that ships something users can see adds its line to the site's What's new page
   (one file per entry in `web/src/content/whats-new/`, #2469), or marks it `held` with the reason while something known
   stops it working (Supervisor, 2026-10-15; docs/PLAN.md, "What's new page").
@@ -257,11 +291,16 @@ dev1 as a note on the issue.
   table. A later deploy waits until the earlier one has been checked.
   **The sample run is part of every deploy's tests** (owner, 2026-11-06): once a deploy is checked,
   dev1 makes a fresh "test of the frostmaiden (sample)" campaign. Into it dev1 uploads the small
-  sample lore, accepts every DMbot suggestion without the DM pressing anything in Discord
-  (`devtools/accept_all`, #3544), and scores it against the lore key. Then dev1 imports the sample
-  session, accepts every suggestion again, scores it against the master key (lore key + session key),
-  and builds the recap with no audio. The counts go on #3545 for GraphEngineer, with a line in
-  `docs/testing-history.log`. The steps are in `core/tests/fixtures/story_graph/README.md`.
+  sample lore and lets DMbot decide without the DM pressing anything in Discord (`devtools/sample_run`;
+  owner, 2026-11-09, #3900): first what DMbot is sure of is added, as an upload adds it, and scored
+  against the lore key (`lore-sure`). Then the careful AI decides each item still waiting, at most 60 a
+  run, with its cost shown before `--yes`. Each yes or no goes through the DM's own store calls, is
+  checked against the key, and is scored again (`lore`). Then dev1 imports the sample session, does the
+  same against the master key (lore key + session key) (`both-sure`, then `both`), and builds the recap
+  with no audio. The counts go on #3545 for GraphEngineer, with the AI's agreement with the key per kind,
+  and a line in `docs/testing-history.log`. The decision record stays on the server, never on GitHub.
+  `--accept-all` (#3544, accept every suggestion) remains for comparison; scores from before #3900 are a
+  different series. The steps are in `core/tests/fixtures/story_graph/README.md`.
   **dev1's checks gate the next deploy; the owner's checks can wait** (owner, 2026-11-06, to clear
   the deploy backlog). Supervisor marks each deploy-handover check as **dev1** (logs, counts, the
   sample run) or **owner** (looked at in Discord or on the site, or at the table). The next deploy
@@ -325,6 +364,8 @@ lead decides everything before handing off, so the assistant never has to guess.
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
 
+**The tracking issue is #3720** (from 2026-11-07, when #516 reached GitHub's 2,500-comment limit): wherever this file says #516 for reports, merge lists, handovers or "online" notes, post on #3720. #516 keeps the history.
+
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
@@ -340,7 +381,7 @@ Each role is woken once an hour by a scheduled task (dev1 twice), at staggered m
 | WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
 | CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
 | GraphEngineer | :09 (hourly check) | long-lived cloud session (from 2026-10-31) |
-| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| RepoManager | :24 and :54 (twice an hour, owner 2026-11-07; :54 is the hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
 
 **Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
@@ -480,10 +521,12 @@ terminal output or Discord screenshots copied to it.
   (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
   the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
   that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
-- **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
-  Discord server may view and download a campaign's session transcripts (decided
-  2026-10-05). Only people who agreed are ever recorded, and the consent request tells
-  them the whole server can read the transcript. DM-screen content (rules alerts,
+- **Transcripts are shared; the DM screen is not pushed to players.** A campaign's people
+  (its DMs, its players and those recorded at its table) may view and download its session
+  transcripts, or everyone in the Discord server when the campaign's "Who can see this
+  campaign's channels" setting says so (owner, 2026-11-09, #3891; it was everyone in the
+  server from 2026-10-05). Only people who agreed are ever recorded, and the consent request
+  tells them who can read the transcript. DM-screen content (rules alerts,
   house-rule prompts, NPC and plot notes) never goes into transcripts, and the bot never
   sends it to players. Players see the DM screen only if the campaign's DM-screen
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a

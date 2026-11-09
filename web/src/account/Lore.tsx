@@ -4,9 +4,11 @@
 // shown back; the page keeps nothing of them. Only a campaign's DM gets a page; the door says so too.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
+import LazyPanel from "./LazyPanel";
 import WorkProgress from "./WorkProgress";
 import AddAll from "./AddAll";
 
@@ -201,6 +203,9 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
           frozen={stopped}
           reason={failed ? (words.failedReasons[upload.error] ?? words.failedFallback) : null}
         />
+        {AI_FEED_LIVE && api.aiFeed && (
+          <LazyPanel load={() => import("./AiFeed")} what="what DMbot asked the AI" props={{ api, campaignRef: ref, kind: "lore" as const, job: upload.id, running: open }} />
+        )}
         {done && (
           <div class="stack">
             <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>

@@ -16,10 +16,11 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import kin, lore_knowledge
+from dmbot.memory import kin, knows_how, lore_knowledge
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     CONFIRMED,
@@ -28,6 +29,7 @@ from dmbot.memory.models import (
     REJECTED,
     MemoryRuleError,
     Relation,
+    knows_rank,
     name_key,
 )
 from dmbot.memory.ontology import DISGUISED_AS, Ontology
@@ -43,6 +45,17 @@ class KeptAll:
     ended: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
     worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
+
+
+def kept_how(c: Waiting, old: Sequence[Relation]) -> str:
+    """Whether the two people have met, for a kept lore connection (#3881): what its quote says,
+    or what the connection it replaces already said, whichever is higher (it only moves up: a
+    feeling changed by the lore never takes a meeting away). "" for anything but a `knows`."""
+    if c.predicate != KNOWS_PREDICATE:
+        return ""
+    found = [knows_how.how_from(c.quote, a=c.subject, b=c.object)]
+    found += [r.knows_how for r in old if r.predicate == KNOWS_PREDICATE]
+    return max(found, key=knows_rank)
 
 
 def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> list[Relation]:
@@ -251,6 +264,8 @@ async def keep_all(
                 ),
                 from_session_at=start if old else None,  # (starts as the old one ends)
                 keep_flags=keep_flags,
+                # whether they've met, from the quote's own words (#3881)
+                knows_how=kept_how(c, old),
             )  # fmt: skip
         except Exception as exc:
             # the change is whole or not at all, whatever went wrong
@@ -266,7 +281,7 @@ async def keep_all(
         # (an older twin's rows are not this upload's), and never a reason to lose the connection.
         if c.upload and made.created_at >= now:
             try:
-                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload)
+                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload, c.quote)
             except Exception as exc:
                 log.warning(
                     "A kept connection's source could not be stored (%s)", type(exc).__name__

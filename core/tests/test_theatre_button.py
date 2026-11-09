@@ -33,7 +33,9 @@ def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
         ),
         campaigns=SimpleNamespace(
             get=AsyncMock(
-                return_value=SimpleNamespace(dm_user_ids=frozenset({DM}), dm_screen_channel_id=9)
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=9
+                )
             )
         ),
         plan_allows=AsyncMock(return_value=plan),
@@ -296,7 +298,15 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         me = self.bot()
         text = "No lines were kept. Nothing was changed."
         await self.go(self.card(me, expired=True), job.Outcome(text, started=True))
-        me.sidebar_send_dm.assert_awaited_once_with(DM, text)
+        me.sidebar_send_dm.assert_awaited_once()
+        sent = me.sidebar_send_dm.await_args
+        self.assertEqual(sent.args[:2], (DM, text))
+        # the script's page on the website, as a link button (#3663), or none without a site
+        view = sent.args[2]
+        urls = [getattr(c, "url", None) for c in (view.children if view is not None else [])]
+        site = me.settings.site_url
+        want = tb.script_link(site, GUILD, "c" * 32, 2) if site else ""
+        self.assertEqual([u for u in urls if u], [want] if want else [])
 
     async def test_a_working_card_sends_no_extra_message_and_a_taken_over_run_says_nothing(
         self,

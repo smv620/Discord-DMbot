@@ -161,6 +161,7 @@ _PHRASES: dict[str, tuple[str, str]] = {
     "sworn_to": ("sworn to them", "sworn to them"),
     "member_of": ("in their group", "their group"),
     "owns": ("owned by them", "owns it"),
+    "carries": ("carried by them", "carries it"),  # (the readers offer it since #3619)
     "ally_of": ("allied with them", "allied with them"),
     "enemy_of": ("an enemy of theirs", "an enemy of theirs"),
 }
@@ -184,6 +185,14 @@ _ADJECTIVE = {  # the nine words, as they read in "was ___ toward them, now ___"
 _DEED_OUT = {  # the node did it to the neighbour
     "attack": "attacked by them", "kill": "killed by them", "rescue": "rescued by them",
     "save": "saved by them", "steal": "robbed by them", "help": "helped by them",
+}  # fmt: skip
+_EFFECT_OUT = {  # a deed with no kind, only how it landed: the node did it to the neighbour
+    "helped": "helped by them", "pleased": "pleased by them", "annoyed": "annoyed by them",
+    "hurt": "hurt by them",
+}  # fmt: skip
+_EFFECT_IN = {  # ... the neighbour did it to the node
+    "helped": "helped them", "pleased": "pleased them", "annoyed": "annoyed them",
+    "hurt": "hurt them",
 }  # fmt: skip
 _DEED_IN = {  # the neighbour did it to the node
     "attack": "attacked them", "kill": "killed them", "rescue": "rescued them",
@@ -270,9 +279,13 @@ def _wording(fact: Fact) -> str:
         word = reputation_words.word_of(fact.detail)
         table = _FEELING_OUT if fact.outward else _FEELING_IN
         return table.get(word or "", "")
-    if fact.kind == "did" and fact.deed:
-        table = _DEED_OUT if fact.outward else _DEED_IN
-        return table.get(fact.deed, fact.detail or "")
+    if fact.kind == "did":
+        kinds = _DEED_OUT if fact.outward else _DEED_IN
+        if fact.deed in kinds:
+            return kinds[fact.deed]
+        # no kind was kept (or not one we word): only how it landed (#3236)
+        effects = _EFFECT_OUT if fact.outward else _EFFECT_IN
+        return effects.get(fact.detail, fact.detail.strip())
     if fact.kind == "kin_of":
         return fact.detail.strip() or "family"
     if fact.kind == "located_in":  # (by the word it says; never "lives there" for a sighting)

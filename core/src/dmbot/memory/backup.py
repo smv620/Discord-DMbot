@@ -16,9 +16,11 @@ from psycopg import errors as pg_errors
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
 from dmbot.memory import beliefs, evidence, notify, sheets
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -58,6 +60,7 @@ from dmbot.memory.models import (
     FIX,
     HOWS,
     KEEP,
+    KNOWS_HOWS,
     LIE_STATUSES,
     LINE_REF_MAX,
     LINK_EDITIONS,
@@ -72,6 +75,8 @@ from dmbot.memory.models import (
     SOURCES,
     THREAD_STATES,
     is_id,
+    lookup_key,
+    name_key,
     new_id,
 )
 from dmbot.memory.ontology import (
@@ -88,6 +93,7 @@ from dmbot.memory.ontology import (
     god_is_an_npc,
 )
 from dmbot.memory.sounds import sound_codes
+from dmbot.memory.voice import split_effect_note
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
@@ -155,6 +161,7 @@ _CHOICES: dict[str, Sequence[str]] = {
         *BELIEF_STATUSES,
     ),
     "how": HOWS,
+    "knows_how": KNOWS_HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -193,6 +200,14 @@ def _valid(column: str, value: object) -> bool:
         return is_id(value)
     if column in _VERSIONS:
         return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
+    if column == "played_by":
+        # A Discord user (positive), or a speaker of this campaign without Discord (negative,
+        # #3690): that one is checked against the restored speakers when they load.
+        return (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and (0 <= value <= INT64_MAX or -INT64_MAX <= value < 0)
+        )
     if column in _INTS:
         return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= INT64_MAX
     if column in _LISTS:
@@ -265,7 +280,10 @@ class MemorySection:
         out: list[Any] = []
         for tag, table in _TAGS.items():
             order = sql.SQL(" ORDER BY {}").format(sql.Identifier(table.key))
-            cur = await conn.execute(scoped_select(table, order), (guild_id, campaign_id))
+            cur = await conn.execute(
+                scoped_select(table, order, stamp=table.name in lineage.STAMPED),
+                (guild_id, campaign_id),
+            )
             raws = await cur.fetchall()
             # Building the rows is pure CPU (a big campaign takes a good fraction of a
             # second): off the event loop, so voice and other servers don't wait (#164).
@@ -292,7 +310,13 @@ class MemorySection:
             for tag, table in _TAGS.items():
                 if not by_tag[tag]:
                     continue
-                cols = ("guild_id", "campaign_id", *table.columns)
+                stamped = table.name in lineage.STAMPED
+                cols = (
+                    "guild_id",
+                    "campaign_id",
+                    *table.columns,
+                    *(("made_by_commit",) if stamped else ()),
+                )
                 query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
                     sql.Identifier(table.name),
                     sql.SQL(", ").join(sql.Identifier(c) for c in cols),
@@ -302,7 +326,12 @@ class MemorySection:
                     await cur.executemany(
                         query,
                         [
-                            (guild_id, campaign_id, *(_db_value(c, r[c]) for c in table.columns))
+                            (
+                                guild_id,
+                                campaign_id,
+                                *(_db_value(c, r[c]) for c in table.columns),
+                                *((r.get("made_by"),) if stamped else ()),
+                            )
                             for r in by_tag[tag]
                         ],
                     )
@@ -338,6 +367,9 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
     for tag, table, raws in fetched:
         for raw in raws:
             row = row_of(raw, table)
+            if table.name in lineage.STAMPED:
+                # the build that made the row travels with it (#3739); None for an old row
+                row["made_by"] = raw["made_by_commit"]
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
             if table is CLAIMS:
@@ -368,14 +400,26 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     it would strand the campaign, while a loop only shows as a neighbour on a card (the readers
     follow one link, not a chain) and a new link or a merge can't add to it."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(rows)))
+    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(_unnamed_names(rows))))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
         table = _TAGS[raw["table"]]
-        if set(raw) != {"table", *table.columns}:
+        # `made_by` (#3739) is optional: a file from before versions were recorded has none, and
+        # is read as made before versions were recorded. It is checked, as the file is untrusted.
+        made_by = raw.get("made_by")
+        stamped = table.name in lineage.STAMPED
+        if set(raw) - {"made_by"} != {"table", *table.columns} or (
+            "made_by" in raw and not stamped
+        ):
+            raise CampaignError(DAMAGED)
+        if not lineage.valid(made_by):
             raise CampaignError(DAMAGED)
         if table is RELATIONS and raw["mention_ids"]:
+            raise CampaignError(DAMAGED)
+        # whether two people met is a `knows` thing only (#3881): the database refuses it elsewhere,
+        # so a hand-edited file says "damaged" here instead of failing mid-restore
+        if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
             raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
@@ -586,10 +630,91 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "directional": False,
                 "decided": None,
                 "via_alias_id": None,  # from before #3037: no connection came through a name
+                "knows_how": "",  # from before #3881: the story's word on how was not kept
                 **raw,
                 "definition_version": version,
             }
+            if isinstance(raw.get("detail"), str):
+                # from before #3628: a kept connection carried the claim's "happened to them" note
+                # on its detail; it is not a detail, and a feeling word with it was no word (#3650)
+                raw["detail"] = split_effect_note(raw["detail"])[0]
         out.append(raw)
+    return out
+
+
+def _unnamed_names(rows: list[Any]) -> list[Any]:
+    """A backup from before #3736 reads as migration 0379 left the database: each unnamed person's
+    stored "<description> (name unknown)" becomes "unnamed - <description>", and so does the label a
+    joined person left on the entry it was joined into (its key worked out again; its sound codes
+    are worked out again on load anyway). Two live people whose names would then read the same are
+    told apart by when they were made, as a new one is. A current backup passes through as it is.
+    Malformed rows are left for the checks after this to refuse."""
+    entities = [
+        r for r in rows if isinstance(r, dict) and r.get("table") == "entity" and r.get("unnamed")
+    ]
+    old = [
+        r
+        for r in entities
+        if isinstance(r.get("name"), str) and unnamed_mod.is_old_label(r["name"])
+    ]
+    if not old:
+        return rows
+    gone = {
+        (str(r["name"]), str(r.get("merged_into"))) for r in old if r.get("merged_into") is not None
+    }
+    old_rows = {id(r) for r in old}  # (by identity: two rows could be equal)
+    renamed: dict[int, dict[str, Any]] = {}
+    for i, raw in enumerate(rows):
+        if not isinstance(raw, dict):
+            continue
+        if id(raw) in old_rows:
+            renamed[i] = {**raw, "name": unnamed_mod.from_old_label(raw["name"])}
+        elif (
+            raw.get("table") == "alias"
+            and isinstance(raw.get("text"), str)
+            and (raw["text"], str(raw.get("entity_id"))) in gone
+        ):
+            text = unnamed_mod.from_old_label(raw["text"])
+            renamed[i] = {**raw, "text": text, "key": lookup_key(text)}
+    out = [renamed.get(i, raw) for i, raw in enumerate(rows)]
+    return _unique_unnamed(out)
+
+
+def _unique_unnamed(rows: list[Any]) -> list[Any]:
+    """Live unnamed people whose names read the same: the later ones (by when they were made) get
+    "(first seen …)" in their description and their name, as `unnamed.unique_what` gives a new one
+    (migration 0379 does the same in the database)."""
+    live = sorted(
+        (
+            (int(r.get("created_at") or 0), str(r.get("id")), i)
+            for i, r in enumerate(rows)
+            if isinstance(r, dict)
+            and r.get("table") == "entity"
+            and r.get("unnamed")
+            and r.get("merged_into") is None
+            and r.get("status") in ("proposed", "confirmed")
+            and isinstance(r.get("name"), str)
+            and isinstance(r.get("unnamed_what"), str)
+        )
+    )
+    taken: set[str] = set()
+    out = list(rows)
+    for at, _, i in live:
+        row = out[i]
+        if name_key(row["name"]) in taken:
+            for with_time in (False, True):
+                tag = f" (first seen {unnamed_mod.first_seen(at, with_time=with_time)})"
+                name = unnamed_mod.without_tag(row["name"])[: NAME_MAX - len(tag)] + tag
+                if name_key(name) not in taken:
+                    break
+            what = unnamed_mod.without_tag(row["unnamed_what"])
+            row = {
+                **row,
+                "name": name,
+                "unnamed_what": what[: unnamed_mod.MAX_WHAT - len(tag)] + tag,
+            }
+            out[i] = row
+        taken.add(name_key(row["name"]))
     return out
 
 
@@ -664,7 +789,8 @@ def _checked_sheet(raw: dict[str, Any]) -> dict[str, Any]:
     url, snapshot, source, fetched = raw["url"], raw["sheet"], raw["source"], raw["fetched_at"]
     if not is_id(raw["entity_id"]) or not _valid("played_by", raw["player_id"]):
         raise CampaignError(DAMAGED)
-    if raw["player_id"] is None or raw["player_id"] == 0:
+    # (a sheet belongs to a Discord player: a speaker without Discord has none, #3690)
+    if raw["player_id"] is None or raw["player_id"] <= 0:
         raise CampaignError(DAMAGED)
     if url is not None and (
         not isinstance(url, str) or sheets.sheet_url(sheets.character_id(url) or 0) != url

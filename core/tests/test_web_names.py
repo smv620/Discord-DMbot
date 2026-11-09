@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock
 import httpx
 import psycopg
 
+from dmbot import entitlements
+from dmbot.ai import Reply
 from dmbot.bot import DMBot
 from dmbot.memory.lookup import LookupCache
 from dmbot.memory.models import DM as DM_SOURCE
@@ -20,11 +22,32 @@ from dmbot.memory.store import MemoryStore
 from dmbot.recaps.audio import names as nm
 from dmbot.web import sessions
 from dmbot.web.app import create_app
-from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names import list_names, set_said_as, suggest_said_as
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
+
+
+class FakeAI:
+    """Stands in for the fast-tier client: answers `text` and remembers what it was sent."""
+
+    def __init__(
+        self,
+        text: str = "Kah-zeth",
+        *,
+        cut: bool = False,
+        boom: bool = False,
+        refused: bool = False,
+    ) -> None:
+        self.text, self.cut, self.boom, self.refused = text, cut, boom, refused
+        self.sent: list[str] = []
+
+    async def complete(self, system: str, text: str, **_kw: Any) -> Reply:
+        self.sent.append(text)
+        if self.boom:
+            raise RuntimeError("down")
+        return Reply(text=self.text, cut=self.cut, refused=self.refused)
 
 
 class Names(Base):
@@ -240,6 +263,75 @@ class Names(Base):
         assert row is not None
         self.assertEqual((row["r"], row["n"]), ("not_allowed", None))
 
+    # ---- the suggestion (#3806) ------------------------------------------------------------
+
+    async def suggest(self, ai: FakeAI | None, alias: str | None = None, **kw: Any) -> str:
+        return await suggest_said_as(
+            self.web, self.session, self.cref, alias or self.main, ai,  # type: ignore[arg-type]
+            now=NOW, enforce_plans=kw.get("enforce_plans", False),
+        )  # fmt: skip
+
+    async def test_a_suggestion_sends_only_the_name_and_its_kind(self) -> None:
+        ai = FakeAI("Kah-zeth")
+        self.assertEqual(await self.suggest(ai), "Kah-zeth")
+        self.assertEqual(ai.sent, ["Name: \u201cKa'zeth\u201d\nKind: full"])
+        self.assertIsNone((await self.names())["Ka'zeth"]["saidAs"])  # not saved: the DM decides
+
+    async def test_an_answer_that_is_not_a_plain_spelling_comes_back_empty(self) -> None:
+        for bad in (
+            "",
+            "Kah-zeth, as in the story",
+            "Kah zeth 2",
+            "x" * 81,
+            "Kah\u2014zeth",
+            "<b>",
+        ):
+            with self.subTest(bad=bad[:12]):
+                self.assertEqual(await self.suggest(FakeAI(bad)), "")
+        self.assertEqual(await self.suggest(FakeAI("Kah-zeth", refused=True)), "")
+        self.assertEqual(await self.suggest(FakeAI("  Ka'zeth \n")), "Ka'zeth")
+
+    async def test_a_cut_or_failed_answer_is_a_server_refusal_not_no_suggestion(self) -> None:
+        for ai in (FakeAI("Kah-zeth", cut=True), FakeAI(boom=True)):
+            with self.subTest(cut=ai.cut), self.assertRaises(RecapError) as caught:
+                await self.suggest(ai)
+            self.assertEqual(caught.exception.code, "server")
+
+    async def test_no_ai_or_no_plan_calls_nothing(self) -> None:
+        self.assertEqual(await self.suggest(None), "")
+        ai = FakeAI()
+        # The owner (Alice) has no plan here, so with plans enforced the AI is not called.
+        self.assertEqual(await self.suggest(ai, enforce_plans=True), "")
+        self.assertEqual(ai.sent, [])
+
+    async def test_an_owner_with_a_working_plan_gets_the_call(self) -> None:
+        entitlements.configure_free_users({ALICE.id})  # the owner, on the free list
+        self.addCleanup(entitlements.configure_free_users, ())
+        ai = FakeAI()
+        self.assertEqual(await self.suggest(ai, enforce_plans=True), "Kah-zeth")
+        self.assertEqual(len(ai.sent), 1)
+
+    async def test_a_suggestion_is_refused_like_the_save(self) -> None:
+        bob_token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)  # type: ignore[arg-type]
+        bob = await sessions.find(self.web, bob_token, now=NOW)
+        assert bob is not None
+        theirs = await self.alias_of("Brynwater", self.two.id)
+        ai = FakeAI()
+        for who, ref, alias in (
+            (self.session, self.cref, self.title),  # a secret name
+            (self.session, self.cref, self.heard),
+            (self.session, self.cref, theirs),  # another campaign's name through mine
+            (self.session, self.cref, "not-an-id"),
+            (bob, self.cref, self.main),  # not a DM of it
+        ):
+            with self.subTest(alias=alias[:6]), self.assertRaises(RecapError) as caught:
+                await suggest_said_as(
+                    self.web, who, ref, alias, ai,  # type: ignore[arg-type]
+                    now=NOW, enforce_plans=False,
+                )  # fmt: skip
+            self.assertEqual(caught.exception.code, "not_found")
+        self.assertEqual(ai.sent, [])
+
     # ---- the narrator and the role's rights ------------------------------------------------
 
     async def test_a_saved_spelling_reaches_the_narrators_dictionary(self) -> None:
@@ -307,6 +399,68 @@ class TheRoutes(Names):
             json={"saidAs": None}, headers=HEADERS,
         )  # fmt: skip
         self.assertEqual(cleared.status_code, 200)
+
+    async def test_suggest_and_voice_over_http(self) -> None:
+        ai = FakeAI("Kah-zeth")
+        app = create_app(settings(), self.web, FakeDiscord(), said_as_ai=ai, clock=lambda: NOW)  # type: ignore[arg-type]
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
+        self.addAsyncCleanup(client.aclose)
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        base = f"/me/campaigns/{self.cref}/names"
+        got = await client.post(f"{base}/{self.main}/said-as/suggest", headers=HEADERS)
+        self.assertEqual((got.status_code, got.json()), (200, {"suggestion": "Kah-zeth"}))
+        secret = await client.post(f"{base}/{self.title}/said-as/suggest", headers=HEADERS)
+        self.assertEqual((secret.status_code, secret.json()), (404, {"error": "not_found"}))
+        voice = await client.post(f"{base}/{self.main}/said-as/from-voice", headers=HEADERS)
+        self.assertEqual((voice.status_code, voice.json()), (409, {"error": "voice_off"}))
+        cut = create_app(
+            settings(),
+            self.web,
+            FakeDiscord(),
+            said_as_ai=FakeAI(cut=True),  # type: ignore[arg-type]
+            clock=lambda: NOW,
+        )
+        cutter = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=cut), base_url="https://web-api.internal.test"
+        )
+        self.addAsyncCleanup(cutter.aclose)
+        cutter.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        failed = await cutter.post(f"{base}/{self.main}/said-as/suggest", headers=HEADERS)
+        self.assertEqual((failed.status_code, failed.json()), (503, {"error": "server"}))
+        none = await client.post(f"{base}/{self.title}/said-as/from-voice", headers=HEADERS)
+        self.assertEqual(none.status_code, 404)  # a name that isn't listed says nothing of voice
+        bob_token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)  # type: ignore[arg-type]
+        stranger = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
+        self.addAsyncCleanup(stranger.aclose)
+        stranger.cookies.set("__Host-dmbot_session", bob_token, domain="web-api.internal.test")
+        for tail in ("suggest", "from-voice"):
+            theirs = await stranger.post(f"{base}/{self.main}/said-as/{tail}", headers=HEADERS)
+            self.assertEqual(theirs.status_code, 404, tail)  # not a DM of it
+        # The 21st press in a minute is held back, and a refused one cost no turn.
+        for _ in range(20):
+            await client.post(f"{base}/{self.main}/said-as/suggest", headers=HEADERS)
+        slow = await client.post(f"{base}/{self.main}/said-as/suggest", headers=HEADERS)
+        self.assertEqual(slow.status_code, 429)
+
+    async def test_without_an_ai_the_route_answers_no_suggestion(self) -> None:
+        got = await self.client.post(
+            f"/me/campaigns/{self.cref}/names/{self.main}/said-as/suggest", headers=HEADERS
+        )
+        self.assertEqual((got.status_code, got.json()), (200, {"suggestion": ""}))
+        bare = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
+        )
+        self.addAsyncCleanup(bare.aclose)
+        for tail in ("suggest", "from-voice"):
+            out = await bare.post(
+                f"/me/campaigns/{self.cref}/names/{self.main}/said-as/{tail}", headers=HEADERS
+            )
+            self.assertEqual(out.status_code, 401, tail)
 
     async def test_refusals_over_http(self) -> None:
         url = f"/me/campaigns/{self.cref}/names"

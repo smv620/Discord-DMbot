@@ -44,6 +44,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
+from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places, player_id
 from dmbot.ui.dmbot_commands import (
@@ -1112,6 +1113,8 @@ def suggestion_text(
     places: str = "",
     context: str = "",
     tagged: str = "",
+    scene: str = "",
+    players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1148,9 +1151,50 @@ def suggestion_text(
     # (links kept as plain text too: a masked link in the DM's text must not become clickable)
     shown = discord.utils.escape_markdown(context, ignore_links=False)
     around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
+    seen = scene_line(scene)  # (DMbot's summary of the scene, #3596, above the places)
     # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
     title = _md(tagged or entity.name)
-    return f"📝 **{title}**{heard}{where}{around}{others}{read}\n{question}{more}"
+    # What the players will be told of it (#2967, #3833): shown as written, never cut (the column
+    # holds at most 120 characters), so confirming the name is confirming this line too. Nothing
+    # extra for a name with no line: DMbot never makes one up.
+    told = f"\nPlayers know: {_md(players)}" if players else ""
+    text = f"📝 **{title}**{told}{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
+    if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
+        text = f"📝 **{title}**{told}{heard}{where}{around}{others}{read}\n{question}{more}"
+    if around and len(text) > SUGGESTION_MAX:  # then the sentence around it, never the line itself
+        text = f"📝 **{title}**{told}{heard}{where}{others}{read}\n{question}{more}"
+    return text
+
+
+# a question's text stays under this (Discord's limit, with the group line after)
+SUGGESTION_MAX = MESSAGE_MAX - 300
+SCENE_TITLE = "📍 *DMbot's summary of the scene:*"
+
+
+def scene_line(scene: str) -> str:
+    """The scene as a card line ("" for none), as DMbot's own telling: escaped so the table's words
+    in it cannot format or ping."""
+    if not scene:
+        return ""
+    return f"\n{SCENE_TITLE} {_md(discord.utils.escape_mentions(scene))}"
+
+
+async def scene_of(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
+    """The stored scene of this open question, or "" (none yet, answered, or a speaker stopped).
+    Never raises: a card without its scene is still a card. DM-only, checked here: a review can be
+    opened by a server manager who is not a DM."""
+    memory = _memory(interaction)
+    if memory is None or not sees_secrets(campaign, interaction.user.id):
+        return ""  # (a server manager who is not a DM can open a review: they are not shown it)
+    try:
+        agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
+        found = await Scenes(memory).of(
+            campaign.guild_id, campaign.id, ENTITY, [entity.id], opted_in=agreed
+        )
+    except Exception:
+        log.exception("Couldn't read the scene of a question")
+        return ""
+    return found.get(entity.id, "")
 
 
 async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -> str:
@@ -1429,6 +1473,10 @@ class SuggestionReview(_Menu):
             places=self.places.text(),
             context=self._context(interaction, campaign, entity),
             tagged=await tagged_name(memory, campaign, entity),
+            scene=await scene_of(interaction, campaign, entity),
+            players=(
+                (entity.players_text or "") if sees_secrets(campaign, interaction.user.id) else ""
+            ),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])

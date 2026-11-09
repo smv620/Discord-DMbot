@@ -43,6 +43,8 @@ PAGES = frozenset(
         "import",
         "timeline",
         "transcripts",
+        "campaigns",  # the campaign's home: `/account/campaigns/<ref>`
+        "restore",  # Load a backup: one page for every campaign, so no ref (NO_REF)
     }
 )
 
@@ -65,7 +67,7 @@ def _host(site_url: str) -> str:
 
 # Pages that are one page for every campaign: they have no `<ref>` in their address, because the
 # site serves them only at `/account/<page>` (web/public/_redirects has a rewrite for the others).
-NO_REF = frozenset({"questions"})
+NO_REF = frozenset({"questions", "restore"})
 
 
 def site_link(
@@ -91,6 +93,35 @@ def site_link(
     if page in NO_REF:
         return f"https://{host}/account/{page}{query}"
     return f"https://{host}/account/{page}/{ref}{query}"
+
+
+def restore_link(site_url: str) -> str:
+    """The Load a backup page (one page for every campaign). "" without an https site."""
+    return site_link(site_url, "restore", 0, "x")
+
+
+# The website's address, set once at start (the bot's `settings.site_url`). Senders that are far
+# from the bot object (a module-level `tell_new`, an offers loop) read it here rather than carry
+# it through every call; unset (the default, and in tests) the website button is simply left out.
+_site = ""
+
+
+def configure_site(site_url: str) -> None:
+    """Set the website's address once, at start (`bot.run`); read-only afterwards."""
+    global _site
+    _site = site_url
+
+
+def view_for(
+    view: discord.ui.View | None, guild_id: int, campaign_id: str, links: DMLinks
+) -> discord.ui.View | None:
+    """`for_campaign` with the configured website address."""
+    return for_campaign(view, _site, guild_id, campaign_id, links)
+
+
+def configured_site() -> str:
+    """The website's address set at start, "" before that (then no website button is added)."""
+    return _site
 
 
 def questions_link(site_url: str) -> str:

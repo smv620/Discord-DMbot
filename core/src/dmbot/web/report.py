@@ -63,7 +63,9 @@ def _words(rel: dict[str, Any]) -> str:
             detail,
             bool(rel.get("directional")),
             subject_kind=str(rel.get("subjectKind") or ""),
-            feeling=True,  # (the report is the DM's alone)
+            # (the report is the DM's alone; it tells what was read then, so it keeps the reader's
+            # word and not the DM's Reputation as it is now, #3642)
+            feeling=True,
         )
     )
     return f"{rel['subject']} {said} {rel['object']}"

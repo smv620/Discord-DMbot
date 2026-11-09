@@ -12,13 +12,23 @@ A campaign is named by `<server>.<campaign>` (the recap's address without its la
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from dmbot import plan_rules
+from dmbot.ai import TierClient
 from dmbot.db import Database
 from dmbot.recaps.notify import parse_ref
+from dmbot.said_as.suggest import SPELLING, SuggestFailed, suggest
+from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
+log = logging.getLogger(__name__)
+
+# The suggestion's spelling check moved to `said_as.suggest`; tests written against this module
+# (the respelling's) still read it here under its old name.
+_SPELLING = SPELLING
 SAID_AS_MAX = 80  # the same limit as the bot's MemoryStore.set_said_as and the database's check
 ALIAS_ID_LENGTH = 32
 
@@ -77,3 +87,36 @@ async def set_said_as(
     # Not this campaign's DM, no such name and a secret name are all told as "not found": nobody
     # learns that a secret name with that id exists. Only a too-long spelling is its own answer.
     raise RecapError("bad_text" if outcome == "too_long" else "not_found")
+
+
+async def suggest_said_as(
+    db: Database,
+    session: Session,
+    ref: str,
+    alias_id: str,
+    ai: TierClient | None,
+    *,
+    now: int,
+    enforce_plans: bool,
+) -> str:
+    """One suggested spelling for a name, or "" when there is none to give (#3806). DM only, with
+    the same checks as the save: a name that is not on this campaign's list (another campaign's, a
+    secret one) is "not found". Only the name and its kind go to the AI, never the campaign's story.
+    Nothing is called without the AI set up and a working plan on the campaign owner's account (the
+    bot's `can_use_ai` rule), and an answer that is not a plain spelling comes back empty: the page
+    then says DMbot has no suggestion. The suggestion is not saved; the DM decides."""
+    guild_id, campaign_id = _parse(ref)
+    alias = _alias_id(alias_id)
+    found = next((n for n in await list_names(db, session, ref) if n.get("id") == alias), None)
+    if found is None:
+        raise RecapError("not_found")
+    if ai is None:
+        return ""
+    if enforce_plans:
+        access = await owner_access(db, session, guild_id, campaign_id, now)
+        if not plan_rules.can_use_ai(access):
+            return ""
+    try:
+        return await suggest(ai, str(found["text"]), str(found["kind"]))
+    except SuggestFailed:
+        raise RecapError("server") from None  # not "no suggestion": the AI did not answer

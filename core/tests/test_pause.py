@@ -423,3 +423,91 @@ class PauseButtonAndResume(BotTest):
         self.assertIn("paused", cast(Any, clear.await_args).args[1])
         self.assertEqual(posted, [hours.paused_resume("One")])
         self.assertIn("▶️ **Unpause**", posted[0])
+
+
+class FreeServers(PauseTest):
+    """A campaign in a listed free server takes no slot of its owner's cap and is never the one
+    that gets paused (#3792). GUILD_B is the listed one."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot import entitlements
+
+        self.addCleanup(entitlements.configure_free_guilds, ())
+        entitlements.configure_free_guilds({GUILD_B})
+
+    async def test_it_takes_no_slot(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.make(GUILD_B, "Test table", ALICE, played=300)
+        self.assertEqual(await self.counted(ALICE), 0)
+        async with self.db.meter(GUILD_A, ALICE) as conn:
+            room = await campaign_cap.room(conn, ALICE, NOW)
+        self.assertTrue(room.fits(1))  # the one place is still free
+        await self.make(GUILD_A, "Real table", ALICE, played=100)
+        self.assertEqual(await self.counted(ALICE), 1)
+
+    async def test_it_is_never_the_one_paused(self) -> None:
+        await self.give_plan(ALICE, 1)
+        listed = await self.make(GUILD_B, "Test table", ALICE, played=300)  # the newest
+        old = await self.make(GUILD_A, "Old", ALICE, played=100)
+        new = await self.make(GUILD_A, "New", ALICE, played=200)
+        settled = await self.settle(ALICE)
+        assert settled is not None
+        self.assertEqual({p.campaign_id for p in settled.paused}, {old.id})  # not the listed one
+        self.assertEqual(await self.paused_ids(ALICE), {old.id})
+        self.assertNotIn(listed.id, await self.paused_ids(ALICE))
+        self.assertNotIn(new.id, await self.paused_ids(ALICE))
+        await self.assert_in_step(ALICE)
+
+    async def test_the_setting_is_put_back_and_the_website_may_only_count(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.make(GUILD_B, "Test table", ALICE, played=300)
+        await self.make(GUILD_A, "Real", ALICE, played=100)
+        async with self.db.meter(GUILD_A, ALICE) as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'x', true)")
+            await conn.execute("SELECT dmbot_owned_campaigns_outside(%s::bigint[])", ([GUILD_B],))
+            await conn.execute(
+                "SELECT * FROM dmbot_pause_over_cap(5, '{}', %s::bigint[])", ([GUILD_B],)
+            )
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync') AS s")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["s"], "x")  # as it was, on the counting path and the early return
+        async with self.db.meter(GUILD_A, ALICE) as conn:  # NULLs in the list change nothing
+            cur = await conn.execute(
+                "SELECT dmbot_owned_campaigns_outside(ARRAY[NULL, %s]::bigint[]) AS n", (GUILD_B,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)
+
+    async def test_an_already_paused_campaign_in_a_listed_server_is_left_as_it_is(self) -> None:
+        await self.give_plan(ALICE, 1)
+        listed = await self.make(GUILD_B, "Test table", ALICE, played=300)
+        await self.store.set_paused(GUILD_B, listed.id, ALICE, True, NOW)
+        await self.make(GUILD_A, "Real", ALICE, played=100)
+        self.assertEqual(await self.counted(ALICE), 1)
+        await self.settle(ALICE)  # nothing is over the cap, so nothing is paused
+        self.assertEqual(await self.paused_ids(ALICE), {listed.id})
+
+    async def test_with_no_listed_server_the_old_rule_holds(self) -> None:
+        from dmbot import entitlements
+
+        entitlements.configure_free_guilds(())
+        await self.give_plan(ALICE, 1)
+        await self.make(GUILD_B, "Was the test table", ALICE, played=300)
+        old = await self.make(GUILD_A, "Old", ALICE, played=100)
+        self.assertEqual(await self.counted(ALICE), 2)
+        settled = await self.settle(ALICE)
+        assert settled is not None
+        self.assertEqual({p.campaign_id for p in settled.paused}, {old.id})
+
+    async def test_another_owners_campaigns_are_untouched(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.give_plan(BOB, 1)
+        await self.make(GUILD_A, "Bob's", BOB, played=100)
+        await self.make(GUILD_B, "Alice's test table", ALICE, played=300)
+        await self.make(GUILD_A, "Alice's old", ALICE, played=100)
+        await self.make(GUILD_A, "Alice's new", ALICE, played=200)
+        await self.settle(ALICE)
+        self.assertEqual(len(await self.paused_ids(BOB)), 0)

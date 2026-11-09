@@ -144,6 +144,10 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "1"}).story_extractor_on)
         self.assertFalse(load_settings(BASE).story_readings_on)  # off unless asked
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_READINGS": "1"}).story_readings_on)
+        self.assertFalse(load_settings(BASE).story_scenes_on)  # off unless asked (#3596)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_SCENES": "1"}).story_scenes_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_SCENES must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_SCENES": "maybe"})
         self.assertFalse(load_settings(BASE).story_deeds_on)  # off unless asked (#3175)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_DEEDS": "1"}).story_deeds_on)
         self.assertFalse(load_settings(BASE).story_who_on)  # off unless asked (#3602)
@@ -177,6 +181,27 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_REL_READ_ON": "1"}).rel_read_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_REL_READ_ON must be 1"):
             load_settings({**BASE, "DMBOT_REL_READ_ON": "maybe"})
+
+    def test_role_match_is_its_own_switch_inside_meaning_search(self) -> None:
+        self.assertFalse(load_settings(BASE).role_match)
+        on = load_settings({**BASE, "DMBOT_ROLE_MATCH": "1"})
+        self.assertTrue(on.role_match)
+        self.assertFalse(on.role_match_on)  # (no meaning search, no key: nothing is sent)
+        both = {**BASE, "DMBOT_ROLE_MATCH": "1", "DMBOT_MEANING_SEARCH": "1", "VOYAGE_API_KEY": "k"}
+        self.assertTrue(load_settings(both).role_match_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
+            load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
+
+    def test_who_learned_what_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).story_reveals_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_REVEALS": "1"}).story_reveals_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS": "maybe"})
+        self.assertFalse(load_settings(BASE).story_reveals_precheck)
+        on = {**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "1"}
+        self.assertTrue(load_settings(on).story_reveals_precheck)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS_PRECHECK must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "maybe"})
 
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
@@ -221,6 +246,14 @@ class PlanChecksSetting(unittest.TestCase):
             load_settings({**BASE, "DMBOT_RECAP_AUDIO_MAX_CREDITS": "5"})
         with self.assertRaisesRegex(ConfigError, "ELEVENLABS_VOICE_ID"):
             load_settings({**BASE, "ELEVENLABS_VOICE_ID": "../x"})
+
+    def test_the_hear_it_allowance_has_a_default_and_is_checked(self) -> None:
+        self.assertEqual(load_settings(BASE).hear_credits_per_month, 5000)
+        got = load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": "9000"})
+        self.assertEqual(got.hear_credits_per_month, 9000)
+        for bad in ("99", "200001", "lots", "-5", "1.5"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ConfigError, "HEAR_CREDITS"):
+                load_settings({**BASE, "DMBOT_HEAR_CREDITS_PER_MONTH": bad})
 
     def test_the_recall_budget_has_a_default_and_is_checked(self) -> None:
         self.assertEqual(load_settings(BASE).recall_budget, 4000)

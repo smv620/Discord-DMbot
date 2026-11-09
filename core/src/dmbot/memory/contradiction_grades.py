@@ -82,7 +82,7 @@ class GradeStore:
         it was found is skipped. How many were kept."""
         kept = 0
         found: list[str] = []
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for g in graded:
                 c = g.candidate
                 grade = g.grade if g.grade in GRADES else NOT_GRADED

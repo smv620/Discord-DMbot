@@ -123,11 +123,13 @@ class FakeStore:
 class FakeMember:
     def __init__(self) -> None:
         self.sent: list[str] = []
+        self.views: list[Any] = []  # what each message carried as `view` (#3663)
         self.edits: list[tuple[int, dict[str, Any]]] = []
         self.dm_channel = self
 
-    async def send(self, text: str, **_: Any) -> None:
+    async def send(self, text: str, **kw: Any) -> None:
         self.sent.append(text)
+        self.views.append(kw.get("view"))
 
     def get_partial_message(self, message_id: int) -> Any:
         async def edit(**changes: Any) -> None:
@@ -621,6 +623,34 @@ class Decisions(Harness):
         self.assertNotIn("plan", text)
         [theirs] = self.guilds[OTHER_GUILD].buyer.sent
         self.assertIn("Your plan has no room for one more campaign.", theirs)
+
+    async def test_the_private_notes_carry_the_campaigns_page_where_the_person_can_open_it(
+        self,
+    ) -> None:
+        from dmbot.campaigns.moves import Moved
+        from dmbot.ui import dm_links
+
+        dm_links.configure_site("https://getdmbot.com")
+        self.addCleanup(dm_links.configure_site, "")
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        moved = replace(
+            offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD, delivered_at=NOW
+        )
+        await self.offers._tell_moved(Moved("moved", moved, "Frostmaiden"))
+        [old_view] = self.guilds[GUILD].owner.views
+        [new_view] = self.guilds[OTHER_GUILD].buyer.views
+        self.assertIsNone(old_view)  # they no longer own it: no button was passed
+        [link] = [c.url for c in new_view.children]
+        self.assertEqual(
+            link, f"https://getdmbot.com/account/campaigns/{OTHER_GUILD}.{moved.campaign_id}"
+        )
+        self.guilds[GUILD].owner.views.clear()
+        await self.offers._tell_moved(Moved("reopened", moved, "Frostmaiden"))
+        [back] = self.guilds[GUILD].owner.views
+        self.assertEqual(
+            [c.url for c in back.children],
+            [f"https://getdmbot.com/account/campaigns/{GUILD}.{moved.campaign_id}"],
+        )
 
     async def test_declined_tells_the_owner(self) -> None:
         self.decided("declined")

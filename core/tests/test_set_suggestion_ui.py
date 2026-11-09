@@ -30,7 +30,12 @@ SET = rule_sets.SharedSet("s", "Red Table", True, 4)
 
 def campaign(dms: tuple[int, ...] = (DM,), screen: int | None = 99) -> Any:
     return SimpleNamespace(
-        name="Far Away", guild_id=1, id=CAMPAIGN, dm_user_ids=list(dms), dm_screen_channel_id=screen
+        name="Far Away",
+        guild_id=1,
+        id=CAMPAIGN,
+        dm_user_ids=list(dms),
+        dm_accounts=list(dms),
+        dm_screen_channel_id=screen,
     )
 
 

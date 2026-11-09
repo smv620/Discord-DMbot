@@ -725,7 +725,10 @@ class BotTests(DatabaseTest):
         outsider = 999
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=outsider,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
 
@@ -741,7 +744,10 @@ class BotTests(DatabaseTest):
         assert campaign is not None
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=None, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=None,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
         users = await self.end_with_gate(
@@ -774,7 +780,10 @@ class BotTests(DatabaseTest):
         assert campaign is not None
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=outsider,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
         self.bot.settings = dataclasses.replace(

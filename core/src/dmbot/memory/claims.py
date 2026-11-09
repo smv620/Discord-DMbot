@@ -25,16 +25,20 @@ from dmbot.memory import (
     descriptions,
     evidence,
     forget_readings,
+    graph_review,
     kin,
+    knows_how,
     link,
     one_off,
     place_words,
     reputation_words,
+    scenes,
     unique_item,
     who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, Changes
+from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -80,7 +84,15 @@ from dmbot.memory.store import (
     _load_ontology,
     _new_alias,
 )
-from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
+from dmbot.memory.voice import (
+    EFFECT,
+    EFFECT_NOTE,
+    OWN,
+    PARTY,
+    PARTY_REASON,
+    split_effect_note,
+    voice,
+)
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
@@ -114,6 +126,10 @@ ODD_NOW = "That doesn't look like something said in the game any more."
 UNKNOWN_NAME_REASON = "a name in it is not one DMbot knows yet"
 # (#3373) Only one particular thing is tracked: "Garret's sled", not "a sled".
 ITEM_REASON = "an item that is not one particular thing"
+# A kind of creature the rules already hold ("owlbears", "an owlbear") is not a name in the story
+# (#3634): the lore read leaves it out too (`background.in_the_rules`); a creature the story names
+# or sets apart ("Owlbear Mama") is not a kind and stays an entry.
+RULES_REASON = "a kind of creature the rules already hold"
 TWO_ENTRIES_REASON = "a name in it could be two different entries"
 SAME_ENTRY_REASON = "it connects an entry to itself"
 STATE_REASON = "that entry can't be in that condition"
@@ -198,15 +214,19 @@ class Claim:
     # The entries the DM picked for a name that could mean two (#3238), ahead of the words.
     subject_picked: str | None = None
     object_picked: str | None = None
+    # Why a player character's line is "something that happened to them" (#2562), apart from the
+    # details: the note is stored run on to them and taken off here (#3624).
+    note: str = ""
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
     """A stored claim from its row."""
+    details, note = split_effect_note(str(r["details"] or ""))
     return Claim(
-        r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
+        r["id"], r["subject"], r["relationship"], r["object"], details, r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"),
+        r["fact_id"], r.get("reading"), r.get("subject_picked"), r.get("object_picked"), note,
     )  # fmt: skip
 
 
@@ -230,8 +250,11 @@ class Proposed:
     unplaced_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
     # About people the story describes but never names (#3431), counts only:
     described: int = 0  # claims kept for the DM's answer ("Keep a person with no name")
-    described_over_cap: int = 0  # ... and those past the session's cap, counted and not stored
-    described_dropped: int = 0  # a described person at both ends, or with a name to make: not kept
+    described_held: int = 0  # ... and those past the session's cap, held for the next read (#3749)
+    described_dropped: int = 0  # none since #3736 (every described end is kept); stays for the logs
+    # About how names were said (#3634), counts only:
+    rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
+    tidied: int = 0  # claims with a name that lost a leading "a"/"an" or a bracketed note
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,6 +446,21 @@ def feeling_of(
     return None
 
 
+def _fits(
+    known: tuple[PredicateTerm, bool], subject_kind: str, object_kind: str, onto: Ontology
+) -> bool:
+    """Whether a known relationship's two ends are kinds it takes. A companion link
+    (`travels_with`) is judged by the store's own rule afterwards, so it is never turned into
+    the catch-all here (#3176)."""
+    term, from_object = known
+    if term.key == TRAVELS_WITH:
+        return True
+    s_kind, o_kind = (object_kind, subject_kind) if from_object else (subject_kind, object_kind)
+    return (not term.subject_types or onto.is_any(s_kind, term.subject_types)) and (
+        not term.object_types or onto.is_any(o_kind, term.object_types)
+    )
+
+
 def place_relationship(
     onto: Ontology,
     text: str,
@@ -459,8 +497,10 @@ def place_relationship(
     ):
         return located, False, ""
     known = resolve_relationship(onto, text)
-    if known is not None:
+    if known is not None and _fits(known, subject_kind, object_kind, onto):
         return known[0], known[1], ""
+    # (a known word whose two ends don't fit, "performed" between two characters, is not lost: it
+    # goes on the catch-all with its own words, like a word DMbot does not know, #3033)
     decision = decide_term(
         onto,
         # "link" is only the proposal's key when the words have no letters to make one from.
@@ -471,7 +511,11 @@ def place_relationship(
         decision = Refused(REASON_BETWEEN, Fallback(FALLBACK_PREDICATE, text))
     if tally is not None:
         tally.record(decision)
-    if isinstance(decision, Reused) and decision.existing in onto.predicates:
+    if (
+        isinstance(decision, Reused)
+        and decision.existing in onto.predicates
+        and _fits((onto.predicates[decision.existing], False), subject_kind, object_kind, onto)
+    ):
         return onto.predicates[decision.existing], False, ""
     label = " ".join(text.split())
     if len(label) > DETAIL_MAX:
@@ -521,7 +565,7 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         # a person no longer makes one, so this only holds back the ones made before. One the DM
         # typed, and an unnamed person's stored label, are left to their own rules.
         if not (
-            descriptions.is_described_person(str(e["name"]))
+            descriptions.is_described(str(e["name"]))
             and not descriptions.matches_alone(str(e["name"]), "full", str(e.get("source") or ""))
         ):
             seen.setdefault(name_key(str(e["name"])), {})[str(e["id"])] = str(e["type"])
@@ -772,13 +816,87 @@ def _unknown_names(claim: Extracted, names: Names) -> list[str]:
     return [n for n in said if n.strip() and not names.by_key.get(name_key(n))]
 
 
-def _known_ends(claim: Extracted, names: Names) -> list[str]:
-    """The ends of a claim (not a condition) that match an entry."""
-    return [
-        n
-        for n in (claim.subject, claim.object)
-        if n.strip() and names.by_key.get(name_key(n)) and condition_of(claim) is None
-    ]
+def _described_shape(text: str) -> str | None:
+    """`not_names.shape_of` for a description (#3736): its head phrase only ("the barmaid" of "the
+    barmaid with red hair"), since the tail says which one, and a counted group is a group ("three
+    hooded figures"), never a number."""
+    shape = not_names.shape_of(descriptions.head_phrase(text))
+    if shape == "clause" or (shape == "number" and descriptions.is_described_group(text)):
+        return None
+    return shape
+
+
+def _unnamed_kind(end: str) -> str:
+    """What an unnamed end is made as: a particular group ("the loud sailors in the corner") is a
+    group, anyone else a person (#3736)."""
+    return "faction" if descriptions.is_described_group(end) else "character"
+
+
+def _only_described_unknown(claim: Extracted, names: Names) -> bool:
+    """Is every end of the claim that matches no entry a person the story describes but never
+    names (#3736)? Then the claim waits for the DM's Keep, which makes or finds them, rather than
+    for a name to be proposed."""
+    unknown = _unknown_names(claim, names)
+    return bool(unknown) and all(descriptions.is_described(n) for n in unknown)
+
+
+def _a_kind_of_creature(name: str) -> bool:
+    """Is this new name a kind of creature the rules hold ("owlbears", "an owlbear", "three
+    goblins"), in any edition? A proper name ("Owlbear Mama") is not (`rules.is_monster` looks at
+    the kind alone)."""
+    from dmbot.rules import index  # late: the rules data loads on first use
+
+    # said as a kind, not as a name: lower case ("owlbears", "an owlbear", "three goblins"); a
+    # capitalised word ("Azer", "Wolf", "The Owlbear", "Owlbear Mama") may be somebody's name and
+    # is left to the DM. A lower-case article may stand before the kind; nothing else may be a
+    # capital.
+    rest = name
+    for article in ("a ", "an ", "the "):
+        if name.startswith(article):
+            rest = name[len(article) :]
+            break
+    if rest != rest.casefold():
+        return False
+    return index.srd().is_monster(name)
+
+
+# A trailing bracket is dropped only when it reads as a note about the name ("(no name given yet)",
+# "(either Ok or Nysarra)", "(maybe two)", "(unknown)"), never as part of what tells two things
+# apart ("Mira (the baker)", "Dragon (Red)").
+_BRACKET_TAIL = re.compile(
+    r"\s*[(\[][^()\[\]]*\b(?:no name|unnamed|unknown|either|maybe|perhaps|possibly|probably|"
+    r"not sure|unsure|name unknown|or)\b[^()\[\]]*[)\]]\s*$|\s*[(\[]\s*\?\s*[)\]]\s*$",
+    re.IGNORECASE,
+)
+# "a" or "an" as an article: lower case, before a lower-case word ("an owlbear"). "A Ling", "An Lu"
+# and "A. Smith" are names, and a capitalised "A beggar woman" is left as it is rather than guess.
+_INDEFINITE = re.compile(r"^(?:a|an)\s+(?=[a-z])")
+
+
+def tidy_name(name: str) -> str:
+    """How a name is judged (#3634): a trailing bracketed note is not part of it ("(no name given
+    yet)", "(either Ok or Nysarra)") and a leading "a" or "an" is not either ("an owlbear"). "The"
+    is kept: it is part of a title ("The Everlasting Rime"). Nothing is stripped that would leave
+    nothing."""
+    out = name.strip()
+    for _ in range(3):
+        cut = _BRACKET_TAIL.sub("", out)
+        if not cut or cut == out:
+            break
+        out = cut
+    out = _INDEFINITE.sub("", out)
+    return out or name.strip()
+
+
+def tidy_ends(claim: Extracted, known: Collection[str] = ()) -> Extracted:
+    """The claim with both ends tidied (`tidy_name`); the same claim when nothing changed. A name
+    the campaign already holds as said ("a rusty dagger", its own entry) is left as it is: `known`
+    holds the name keys it has."""
+    subject = claim.subject if name_key(claim.subject) in known else tidy_name(claim.subject)
+    obj = claim.object if name_key(claim.object) in known else tidy_name(claim.object)
+    if (subject, obj) == (claim.subject, claim.object):
+        return claim
+    return replace(claim, subject=subject, object=obj)
 
 
 def _generic_items(
@@ -833,12 +951,17 @@ def which_choices(
     """The "Which one?" choices of a kept claim's row, from the campaign's live entries and other
     names (#3238): one `WhichOne` for each name in it that could mean two entries and has not been
     picked for. Pure, so the website reads the same choices from the facts a database door sends it
-    (#3463). A secret name is never used, even to tell two entries apart."""
+    (#3463). A secret name is never used, even to tell two entries apart. The entries come in a
+    fixed order (name, kind, id) and each note's other names sorted, whatever order the rows were
+    read in: the database gives none without ORDER BY, and the DM's list must not reorder itself
+    between two looks (#3776)."""
     by_id = {str(e["id"]): e for e in entities}
     others: dict[str, list[str]] = {}
     for a in aliases:
         if not a.get("secret"):  # never a secret name, even to tell two entries apart
             others.setdefault(str(a["entity_id"]), []).append(str(a["text"]))
+    for texts in others.values():
+        texts.sort(key=lambda t: (t.casefold(), t))
     names = names_of(entities, aliases)
     out: list[WhichOne] = []
     for side in ("subject", "object"):
@@ -857,6 +980,7 @@ def which_choices(
                 )[:80]
             )
             options.append(EntryOption(entry_id, str(e["name"]), str(e["type"]), note))
+        options.sort(key=lambda o: (o.name.casefold(), o.kind, o.id))
         out.append(WhichOne(str(row[side]), side, tuple(options)))
     return out
 
@@ -905,7 +1029,9 @@ class ClaimStore:
         become a new name later (a reading never makes one, #2412)."""
         waiting = dropped = repeated = 0
         kept_unplaced = unplaced_over_cap = 0
-        described = described_over_cap = described_dropped = 0
+        described = described_held = described_dropped = 0
+        described_taken = 0  # held claims about people with no name, asked in this read
+        rules_dropped = tidied = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
             onto = await _load_ontology(w)
@@ -928,9 +1054,11 @@ class ClaimStore:
 
             leftovers = [
                 r
-                for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                # oldest first, so a held claim is never passed over for a newer one (#3749)
+                for r in await w.select(CLAIMS, " AND status = 'proposed' ORDER BY created_at, id")
                 if r["reason"] == WAITING_NAME_REASON and make_names
             ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
+            people_held = resolved = 0  # held claims about people with no name; all ends known
 
             players = {
                 str(e["id"])
@@ -956,7 +1084,11 @@ class ClaimStore:
             # First pass: the rules, with the names as they are. A claim that fails only for a
             # name DMbot does not know is a candidate for the linker.
             work: list[tuple[Extracted, str, list[str]]] = []  # claim, reason, unknown names
-            claims, lists = expand_lists(claims[:limit], names)
+            # (#3634) "an owlbear (maybe two)" is "owlbear": tidied before a list is split, so a
+            # bracketed note with a comma in it goes whole
+            tidy = [tidy_ends(x, names.by_key) for x in claims[:limit]]
+            tidied = sum(1 for was, now in zip(claims, tidy, strict=False) if was != now)
+            claims, lists = expand_lists(tidy, names)
             # How many lines offer each name (a name two lines offer is more likely a real one)
             lines_by_name: dict[str, set[str]] = {}
             not_a_name: Counter[str] = Counter()
@@ -986,7 +1118,11 @@ class ClaimStore:
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                     elif any(
                         kinds := [
-                            not_names.why_not(
+                            # (a person or group the story describes is no name and is not meant
+                            # to be one, #3736: only the shape of its head phrase can drop it)
+                            _described_shape(n)
+                            if descriptions.is_described(n)
+                            else not_names.why_not(
                                 n,
                                 text="\n".join((said or {}).get(r, "") for r in claim.lines),
                                 offered=len(lines_by_name.get(name_key(n), ())),
@@ -1000,33 +1136,50 @@ class ClaimStore:
                                 not_a_name[k] += 1
                         reason = NOT_A_NAME_REASON
                         unknown = []
+                    elif any(_a_kind_of_creature(n) for n in unknown):
+                        reason, unknown = RULES_REASON, []
+                        rules_dropped += 1
                     elif _generic_items(onto, claim, unknown, said or {}):
                         # A new item that is clearly everyday gear is not made into an entry, so
                         # its claim goes with it (#3373): no owns, carries or kept-in is stored.
                         reason, unknown = ITEM_REASON, []
-                    elif any(descriptions.is_described_person(n) for n in unknown):
+                    elif any(descriptions.is_described(n) for n in unknown):
                         # A person the story describes but never names ("the woman") is never
-                        # made into a name to check (#3431). One described end next to a known
-                        # one waits for the DM's answer, and Keep makes the unnamed person;
-                        # anything else is not kept.
-                        if len(unknown) == 1 and len(_known_ends(claim, names)) == 1:
-                            reason = DESCRIBED_REASON
+                        # made into a name to check (#3431), and is never dropped either (owner,
+                        # 2026-11-07, #3736): Keep makes or finds each described end. Every
+                        # unknown end described (one beside a known end, two in a chain, or one
+                        # alone with a fact about them): kept for the DM's answer. A described
+                        # end beside a new name: the name goes to the names to check, and the
+                        # claim waits on it like any claim with a new name.
+                        named = [n for n in unknown if not descriptions.is_described(n)]
+                        if condition_of(claim) is None and name_key(claim.subject) == name_key(
+                            claim.object
+                        ):
+                            reason, unknown = SAME_ENTRY_REASON, []  # ("the woman knows the woman")
+                        elif named:
+                            unknown = named
                         else:
-                            reason = NOT_A_NAME_REASON
-                            described_dropped += 1
-                        unknown = []
+                            reason = DESCRIBED_REASON
+                            unknown = []
                 work.append((claim, reason, unknown))
             # Claims kept from an earlier session for a name that was past its limit come first:
             # their names are proposed before this session's own (#1367).
             old: list[tuple[dict[str, Any], Extracted, list[str]]] = []
             for r in leftovers:
-                kept = Extracted(
-                    r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"], r.get("reading"),
+                kept = tidy_ends(
+                    Extracted(
+                        r["subject"], r["relationship"], r["object"], r["details"],
+                        tuple(r["lines"]), r["how"], r.get("reading"),
+                    ),
+                    names.by_key,
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read
-                unknown = _unknown_names(kept, names)
+                # a described end is never made into a name to check (#3431), here either: only
+                # the claim's new names are proposed, and Keep makes the person later (#3736)
+                unknown = [
+                    n for n in _unknown_names(kept, names) if not descriptions.is_described(n)
+                ]
                 if any(name_key(n) in refused_names for n in unknown):
                     await w.update(
                         CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": NAME_REJECTED_REASON}
@@ -1051,6 +1204,14 @@ class ClaimStore:
                         )
                     else:
                         old.append((r, kept, unknown))
+                elif _only_described_unknown(kept, names):
+                    people_held += 1
+                    old.append((r, kept, unknown))  # (its name is known now: asked below)
+                elif not _unknown_names(kept, names):
+                    # every end is known now (the DM named it meanwhile, or a held person's words
+                    # came to match an entry): judged again below, so it never waits unseen
+                    resolved += 1
+                    old.append((r, kept, unknown))
             old_mentions = [name_key(n) for _, _, unknown in old for n in unknown]
             chosen_old, left_old = link.most_mentioned(old_mentions, new_names)
             fresh = [name_key(n) for _, _, unknown in work for n in unknown]
@@ -1077,16 +1238,29 @@ class ClaimStore:
             else:
                 new, joined = [], 0
             for r, kept, _ in old:  # the names that were made now resolve: ask them as usual
-                if _unknown_names(kept, names):
+                described_left = _only_described_unknown(kept, names)
+                if _unknown_names(kept, names) and not described_left:
                     continue
                 holders = [int(x) for x in r["speaker_ids"]]
                 reason = judge(kept, onto, names, holders, opted_in, tally, dms)
+                if described_left and reason == UNKNOWN_NAME_REASON:
+                    # its new name is made and the rest is described: asked now, and Keep makes
+                    # the person (#3736), under the same per-session cap as this session's own
+                    if described >= UNPLACED_LIMIT:
+                        continue  # (stays held for its name's sake; asked in a later read)
+                    await w.update(CLAIMS, r["id"], {"reason": DESCRIBED_REASON})
+                    described += 1
+                    described_taken += 1
+                    waiting += 1
+                    continue
                 if reason:
                     await w.update(CLAIMS, r["id"], {"status": CLAIM_DROPPED, "reason": reason})
                 else:
                     await w.update(CLAIMS, r["id"], {"reason": ""})
                     waiting += 1
-            kept_waiting = len(leftovers)
+            # (only claims still waiting on a real name count toward `WAITING_NAME_CLAIMS`: held
+            # claims about people with no name are never let go, #3749)
+            kept_waiting = len(leftovers) - people_held - resolved
             if not_a_name:
                 logger.info("not a name, by reason: %s", dict(not_a_name))  # counts only
             rows: list[dict[str, Any]] = []
@@ -1118,6 +1292,8 @@ class ClaimStore:
                             ))  # fmt: skip
                         continue
                     reason = judged(claim)
+                    if reason == UNKNOWN_NAME_REASON and _only_described_unknown(claim, names):
+                        reason = DESCRIBED_REASON  # (its new name is made: the rest is described)
                 key = _repeat_key(
                     claim.subject, claim.relationship, claim.object, claim.how, claim.reading
                 )
@@ -1131,7 +1307,18 @@ class ClaimStore:
                     continue
                 if reason == DESCRIBED_REASON:
                     if described >= UNPLACED_LIMIT:
-                        described_over_cap += 1
+                        # Past this read's cap: held, never dropped (owner's rule, #3749). Stored
+                        # as waiting for its name, which every list and count leaves out, so the
+                        # next read takes it up first (the held-claims loop above), within its own
+                        # cap. Not under `WAITING_NAME_CLAIMS`: that limit lets go of claims.
+                        described_held += 1
+                        asked.add(key)
+                        rows.append(
+                            self._row(
+                                claim, cited, prompt_version, model, session_started_at, w.now,
+                                status=CLAIM_PROPOSED, reason=WAITING_NAME_REASON,
+                            )
+                        )  # fmt: skip
                         continue
                     described += 1
                     waiting += 1
@@ -1175,6 +1362,14 @@ class ClaimStore:
                     )
                 )  # fmt: skip
             await w.insert_many(CLAIMS, rows)
+            pile = people_held - described_taken + described_held
+            if pile or described_taken:
+                # counts only, whenever the pile of held claims about people with no name is not
+                # empty, so one that never shrinks shows in the logs (#3749)
+                logger.info(
+                    "people with no name held: %d new this read, %d taken up, %d held now",
+                    described_held, described_taken, pile,
+                )  # fmt: skip
         return Proposed(
             waiting,
             dropped,
@@ -1189,8 +1384,10 @@ class ClaimStore:
             kept_unplaced,
             unplaced_over_cap,
             described,
-            described_over_cap,
+            described_held,
             described_dropped,
+            rules_dropped,
+            tidied,
         )
 
     @staticmethod
@@ -1287,7 +1484,10 @@ class ClaimStore:
                         "description": f"Heard {sum(times[k] for k in group)} times",
                         "status": PROPOSED, "merged_into": None, "source": EXTRACTOR,
                         "created_at": w.now, "played_by": None,
-                        "needs_look": False, "unique_item": None,
+                        "needs_look": False,
+                        # an item reaches here only when `_generic_items` judged it one particular
+                        # thing (#3618), so a second owner is flagged like a named item's
+                        "unique_item": True if onto.is_a(kind, "item") else None,
                     },
                 )  # fmt: skip
                 alias = await w.insert(
@@ -1515,12 +1715,22 @@ class ClaimStore:
                 if condition_of(wording) is not None
                 else [claim.subject, claim.object]
             )
+            if claim.reason == DESCRIBED_REASON:
+                # a described end is made by Keep, not named first (#3736): the claim is ready
+                # once every other end is confirmed (a new name beside it waits for its answer)
+                said = [
+                    n
+                    for n in said
+                    if live.by_key.get(name_key(n)) or not descriptions.is_described(n)
+                ]
             found = [live.by_key.get(name_key(n), ()) for n in said]
             unnamed = [n for n, f in zip(said, found, strict=True) if not f]
             if any(name_key(n) in rejected for n in unnamed):
                 gone.append((claim, NAME_REJECTED_REASON))  # the DM said it isn't a name
-            elif unnamed and claim.reason == WAITING_NAME_REASON:
-                pending.append(claim)  # its name is not proposed yet: a later session does it
+            elif claim.reason == WAITING_NAME_REASON:
+                # held for a later read (its name not proposed yet, or past a read's cap, #3749):
+                # in no list until a read asks it, as `waiting_for_check` and the web lists do
+                pending.append(claim)
             elif unnamed:
                 ready.append(claim)  # a name that went away: asking says why it can't be written
             elif all(any(e in sure for e, _ in f) for f in found):
@@ -1681,9 +1891,19 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds, reveals
+        and scenes went."""
+
+        # (imported here: they need this module's names)
+        from dmbot.memory import deed_proposals, reveal_proposals
+
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
+            readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
+            readings += await scenes.forget(conn, guild_id, user_id)
+            # (DMbot's graph check reports that quote them, #3741)
+            readings += await graph_review.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
@@ -1700,8 +1920,9 @@ class ClaimStore:
         """The DM says no: it is not asked again, and nothing is written to memory."""
         async with self._store._write(guild_id, campaign_id, DM) as w:
             row = await w.get(CLAIMS, claim_id)
-            if row is None or row["status"] != CLAIM_PROPOSED:
-                raise MemoryRuleError(GONE)
+            held = row is not None and row["reason"] == WAITING_NAME_REASON
+            if row is None or row["status"] != CLAIM_PROPOSED or held:
+                raise MemoryRuleError(GONE)  # (a held claim is in no list: never answered, #3749)
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
@@ -1739,7 +1960,9 @@ class ClaimStore:
         return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
     @staticmethod
-    async def _same_session_person(w: Changes, claim: Claim, described: str) -> str | None:
+    async def _same_session_person(
+        w: Changes, claim: Claim, described: str, kind: str = "character"
+    ) -> str | None:
         """The unnamed person an earlier Keep of this same session already made for the same
         words (#3431): within one session "the woman" is one woman. Across sessions it is a new
         person, and the same-person question offers the join; never campaign-wide, since two
@@ -1756,30 +1979,38 @@ class ClaimStore:
         facts = [str(r["fact_id"]) for r in kept]
         if not facts:
             return None
-        ends: set[str] = set()
+        # a kept fact is a connection, a condition (its state row) or the entry itself (a condition
+        # that changed nothing): the person is an end of the first, the state's entry, or the third
+        ends: set[str] = set(facts)
         for row in await w.select(RELATIONS, " AND id = ANY(%s)", [facts]):
             ends |= {str(row["subject_id"]), str(row["object_id"])}
+        for row in await w.select(STATES, " AND id = ANY(%s)", [facts]):
+            ends.add(str(row["entity_id"]))
         for row in await w.select(
             ENTITIES,
-            " AND unnamed AND status = 'confirmed' AND unnamed_anchor IS NULL AND id = ANY(%s)"
+            " AND unnamed AND status = 'confirmed' AND unnamed_anchor IS NULL AND type = %s"
+            " AND id = ANY(%s)"
             " ORDER BY created_at, id",
-            [sorted(ends)],
+            [kind, sorted(ends)],
         ):
             if unnamed_mod.same_person_key(str(row["unnamed_what"]), row["unnamed_role"]) == same:
                 return str(row["id"])
         return None
 
     @staticmethod
-    def _described_end(claim: Claim, names: Names) -> str | None:
-        """The one end of a kept "person with no name" claim that still matches no entry (#3431),
-        or None when there is none any more (the DM named them since: the fact is then written the
-        ordinary way). A claim whose end is not a described person any more is refused."""
-        ends = [n for n in (claim.subject, claim.object) if not names.by_key.get(name_key(n))]
-        if not ends:
-            return None
-        if len(ends) != 1 or not descriptions.is_described_person(ends[0]):
+    def _described_ends(claim: Claim, names: Names, *, condition: bool) -> list[str]:
+        """The ends of a kept "person with no name" claim that still match no entry (#3431): one
+        beside a known end, two for a chain of unnamed people, or the subject of a fact about one
+        alone (#3736). None left when the DM named them since: the fact is then written the
+        ordinary way. A claim with an unknown end that is not a described person is refused."""
+        said = (claim.subject,) if condition else (claim.subject, claim.object)
+        ends: list[str] = []
+        for n in said:  # (one end per person: "The woman" and "the woman" are one)
+            if not names.by_key.get(name_key(n)) and name_key(n) not in map(name_key, ends):
+                ends.append(n)
+        if any(not descriptions.is_described(n) for n in ends):
             raise MemoryRuleError(GONE)
-        return ends[0]
+        return ends
 
     async def confirm(
         self,
@@ -1802,7 +2033,9 @@ class ClaimStore:
         players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
         never written secret."""
         claim = await self.get(guild_id, campaign_id, claim_id)
-        if claim is None or claim.status != CLAIM_PROPOSED:
+        # A held claim (waiting for its name, or past a read's cap, #3749) is in no list the DM
+        # sees: an id that reaches here anyway is gone, never written.
+        if claim is None or claim.status != CLAIM_PROPOSED or claim.reason == WAITING_NAME_REASON:
             raise MemoryRuleError(GONE)
         if claim.reading is not None:
             # A theory said "yes" to as a fact would be a lie in the DM's own voice: a reading is
@@ -1831,14 +2064,18 @@ class ClaimStore:
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
         names = names_of(entities, aliases)
-        described: str | None = None
+        described: list[str] = []
         if claim.reason == DESCRIBED_REASON:
             # The person is made inside the same write as the fact (below), so a fact the rules
-            # refuse leaves nothing behind; here the end only stands for them (#3431).
-            described = self._described_end(claim, names)
-            if described is not None:
+            # refuse leaves nothing behind; here each end only stands for them (#3431), with a
+            # stand-in of its own, so the two ends of a chain are two people (#3736).
+            described = self._described_ends(
+                claim, names, condition=condition_of(wording) is not None
+            )
+            if described:
                 found = dict(names.by_key)
-                found[name_key(described)] = ((NEW_PERSON, "character"),)
+                for i, end in enumerate(described):
+                    found[name_key(end)] = ((f"{NEW_PERSON}:{i}", _unnamed_kind(end)),)
                 names = replace(names, by_key=found)
         waiting_ids = {str(e["id"]) for e in entities if e["status"] == PROPOSED}
         # Asked again against what is known now: a name may have been merged or renamed since.
@@ -1866,17 +2103,26 @@ class ClaimStore:
         # `confirm` is only an early exit: this one, under the lock, is the one that counts.
         async with self._store._write(guild_id, campaign_id, DM) as w:
             current = await w.get(CLAIMS, claim_id)
-            if current is None or current["status"] != CLAIM_PROPOSED:
+            if (
+                current is None
+                or current["status"] != CLAIM_PROPOSED
+                or current["reason"] == WAITING_NAME_REASON
+            ):
                 raise MemoryRuleError(GONE)
-            if described is not None:
-                person_id = await self._same_session_person(w, claim, described)
+            made: dict[str, tuple[str, str]] = {}  # stand-in -> the person, made or found
+            for i, end in enumerate(described):
+                kind = _unnamed_kind(end)  # (a person, or a particular group, #3736)
+                person_id = await self._same_session_person(w, claim, end, kind)
                 if person_id is None:
-                    added = await self._store._add_unnamed_in(w, described, None, "", None)
+                    added = await self._store._add_unnamed_in(
+                        w, end, None, "", None, seen_at=claim.session_started_at, kind=kind
+                    )
                     person_id = added.entity.id
                 person = await w.update(ENTITIES, person_id, {"status": CONFIRMED})
-                who = (str(person["id"]), "character") if who[0] == NEW_PERSON else who
-                if other and not isinstance(other, str) and other[0] == NEW_PERSON:
-                    other = (str(person["id"]), "character")
+                made[f"{NEW_PERSON}:{i}"] = (str(person["id"]), kind)
+            who = made.get(who[0], who)
+            if other and not isinstance(other, str):
+                other = made.get(other[0], other)
             if before is not None:
                 await before(w)
             if condition is not None:
@@ -1896,6 +2142,12 @@ class ClaimStore:
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    # whether they've met, from the reader's own words for it (#3881)
+                    knows_how=knows_how.how_from(
+                        claim.relationship, claim.details, a=claim.subject, b=claim.object
+                    )
+                    if term.key == KNOWS_PREDICATE
+                    else "",
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(

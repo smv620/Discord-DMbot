@@ -258,6 +258,7 @@ def fake_bot(
             get=AsyncMock(
                 return_value=SimpleNamespace(
                     dm_user_ids=frozenset({DM_ID}),
+                    dm_accounts=frozenset({DM_ID}),
                     dm_screen_visibility=visibility,
                     name="Frostmaiden",
                 )
@@ -354,6 +355,7 @@ def press(
         guild_id=GUILD_A,
         id="c" * 32,
         dm_user_ids=frozenset({DM_ID}),
+        dm_accounts=frozenset({DM_ID}),
         dm_screen_visibility=visibility,
     )
     bot = SimpleNamespace(

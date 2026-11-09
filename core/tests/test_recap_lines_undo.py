@@ -81,7 +81,9 @@ class TheUndo(Base):
         return it, bot
 
     async def test_only_a_dm_can_press_it_and_the_press_is_answered_first(self) -> None:
-        campaign = SimpleNamespace(id=self.c, dm_user_ids=frozenset({DM}))
+        campaign = SimpleNamespace(
+            id=self.c, dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+        )
         button = rl.RecapLinesUndoButton(self.c, self.sid)
         stranger, bot = self.press(PLAYER, campaign)
         await button.callback(stranger)  # type: ignore[arg-type]

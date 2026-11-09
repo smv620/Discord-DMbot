@@ -62,7 +62,7 @@ class TheGroup(MemoryTest):
         page = name_lists.Browse(self.c, dm, name_unnamed.NOT_NAMED)
         text = page.text(dm, campaign)
         self.assertIn("Not named yet", text)
-        self.assertIn("Ken's sister (name unknown)", text)
+        self.assertIn("unnamed - Ken's sister", text)
         self.assertIn("not named yet", text)
         assert page.open is not None
         self.assertIn("Give them a name", page.open.placeholder or "")
@@ -72,15 +72,13 @@ class TheGroup(MemoryTest):
         ken, sis = await self.setup_people()
         await self.memory.rename_entity(GUILD_A, self.c, ken, "Kenneth", source="dm")
         dm = await self.view(True)
-        self.assertEqual(name_unnamed.shown(dm, sis), "Kenneth's sister (name unknown)")
+        self.assertEqual(name_unnamed.shown(dm, sis), "unnamed - Kenneth's sister")
 
     async def test_one_hanging_off_another_unnamed_person_reads_through(self) -> None:
         _ken, sis = await self.setup_people()
         kid = (await self.memory.add_unnamed(GUILD_A, self.c, what="son", anchor_id=sis)).entity.id
         dm = await self.view(True)
-        self.assertEqual(
-            name_unnamed.shown(dm, kid), "Ken's sister (name unknown)'s son (name unknown)"
-        )
+        self.assertEqual(name_unnamed.shown(dm, kid), "unnamed - Ken's sister's son")
 
 
 class GivingTheName(MemoryTest):
@@ -149,7 +147,7 @@ class GivingTheName(MemoryTest):
         ):
             await button.callback(pressed)
         [(entity, shown)] = await self.memory.unnamed(GUILD_A, self.c)
-        self.assertEqual((entity.id, shown), (sis, "Ken's sister (name unknown)"))
+        self.assertEqual((entity.id, shown), (sis, "unnamed - Ken's sister"))
 
     async def test_a_name_dmbot_knows_asks_first_and_changes_nothing(self) -> None:
         _ken, sis, campaign = await self.setUp2()

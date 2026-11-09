@@ -72,7 +72,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
-from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _send, _tell
+from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
     BUSY,
@@ -88,6 +88,7 @@ from dmbot.ui.name_lists import (
 )
 from dmbot.ui.names import (
     REVIEW_LABEL_MAX,
+    RecapNamesButton,
     _campaign_for,
     _md,
     _memory,
@@ -611,26 +612,33 @@ class BackgroundOffer(_Menu):
                     choice=knows,
                 )
             stored, queued, cut = done.stored, done.queued, done.cut
-            await summary(
-                interaction,
-                campaign,
-                self.upload.label,
-                stored,
-                queued,
-                cut=cut,
-                links_found=done.links_found,
-                ready=done.ready,
-                dropped=done.dropped,
-                questions=done.questions,
-                changes=done.changes,
-                suggested=done.suggested,
-                knowledge_note=done.knowledge_note,
-            )
-            # The card above is the DM's own, and goes when they close it: what waits for them
-            # also comes once to their private chat, like a live session's (#3314).
-            await bot.tell_dm_waiting(
-                guild, campaign.id, f"lore:{time.time_ns()}", where="your upload"
-            )
+            if done.notice is not None:  # it added what it was sure of (#3878)
+                posted = await announce(interaction, bot, campaign, done)
+            else:
+                posted = await summary(
+                    interaction,
+                    campaign,
+                    self.upload.label,
+                    stored,
+                    queued,
+                    cut=cut,
+                    links_found=done.links_found,
+                    ready=done.ready,
+                    dropped=done.dropped,
+                    questions=done.questions,
+                    changes=done.changes,
+                    suggested=done.suggested,
+                    knowledge_note=done.knowledge_note,
+                )
+            # What waits for the DM also comes once to their private chat, like a live session's
+            # (#3314). When the summary above was posted in the DM Bot channel, its names and
+            # connections buttons open it (#3873).
+            key = f"lore:{time.time_ns()}"
+            if posted is not None and stored:
+                bot.note_upload_summary(
+                    guild, campaign.id, key, posted, sum(map(len, stored.values()))
+                )
+            await bot.tell_dm_waiting(guild, campaign.id, key, where="your upload")
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -668,6 +676,11 @@ class BackgroundRead:
     # What the DM should know about "who knows it" (#2959), else "": it could not be sorted, or no
     # player character is confirmed yet. Words only, nothing from the text.
     knowledge_note: str = ""
+    # What was added by itself when the campaign does not ask first (#3878): the upload's notice and
+    # the number of questions left. None while "Ask me before adding" is on, or if it could not be
+    # kept; the DM then has today's Add all summary.
+    notice: Any = None
+    questions_left: int = 0
 
 
 async def read_background(
@@ -695,6 +708,7 @@ async def read_background(
     memory = bot.memory
     ai = bot.background_ai
     guild = campaign.guild_id
+    label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -721,6 +735,8 @@ async def read_background(
         upload.text,
         own,
         AI_AT_ONCE,
+        # (the players' line is asked for only where it can be stored, #2967 slice a)
+        players_line=not speaker and lore_knowledge.normalize(choice) == lore_knowledge.WORLD,
         skip_name=lambda name: name_key(name) in known,
         progress=progress,
         aliases=aliases,
@@ -794,6 +810,11 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
     )
+    # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
+    # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
+    short = getattr(bot, "add_short_names", None)
+    if short is not None:
+        await short(guild, campaign.id, [upload.text])
     await save_place_spellings(
         memory,
         campaign,
@@ -825,7 +846,7 @@ async def read_background(
         dropped=read.stats.dropped,
         questions=questions,
         keys=keys,
-        upload=upload_label(upload.label, time.time()),
+        upload=label,
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
@@ -853,7 +874,9 @@ async def read_background(
         ", ".join(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
-            if k not in ("quote_widened", "quote_reach")  # (lines kept, not dropped: log only)
+            # (kept lines, corrected or widened: logged as drops they are not, #3780)
+            if k not in ("quote_widened", "quote_reach", "feeling_demoted")
+            and not k.startswith("kind_")
         )
         or "nothing",
     )  # (counts only: the questions are the DM's own words, shown only to them)
@@ -868,10 +891,24 @@ async def read_background(
             note = KNOWS_UNSORTED
         elif not pcs:
             note = KNOWS_NO_PLAYERS
-    return BackgroundRead(
+    done = BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
     )  # fmt: skip
+    if not campaign.ask_before_adding and not read.cut:
+        # (a read that was cut off is not finished: nothing is added until the DM has seen it)
+        from dmbot.ui.upload_notice import add_sure
+
+        added = await add_sure(
+            bot,
+            campaign,
+            stored,
+            label,
+            source=("lore", upload.source_id) if upload.source_id else None,
+        )
+        if added is not None:
+            done.notice, done.questions_left = added
+    return done
 
 
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:
@@ -1101,6 +1138,11 @@ async def store(
                 # DM confirms it, at the hook's 1.0: only a connection's certainty is lowered for
                 # a smart guess, #2959)
                 shown=known,
+                # only an item the unique-item judge kept reaches this point (#3618)
+                unique=True if item.kind == "item" else None,
+                # the players' line (#2967 slice a): only when the DM said the players know all of
+                # it; a spoilers upload, a smart guess and a backstory never fill it
+                players_text=item.about if known and fold_secret else "",
             )
         )
         items.append(item)
@@ -1271,7 +1313,12 @@ async def summary(
     changes: int = 0,
     suggested: int = 0,
     knowledge_note: str = "",
-) -> None:
+) -> discord.Message | None:
+    """Say what the reading found. The summary with the Add all buttons is a real message in the
+    campaign's DM Bot channel when it can be posted there (#3873): the private questions after
+    an upload open it, and it is edited as the names are answered. The DM's own card then only
+    points to it. Without a channel, or without permission, it stays on the DM's own card as it
+    always was. Returns the posted message, or None."""
     total = sum(map(len, stored.values()))
     links_waiting = queued + (dropped or {}).get("which_waiting", 0)
     waiting = links_waiting + suggested  # (the 📜 button shows for names too)
@@ -1293,8 +1340,10 @@ async def summary(
     if not total:
         # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
         # and never "Nothing was added" while connections wait for a yes (#3021)
-        await interaction.edit_original_response(
-            content=(
+        posted = await _deliver(
+            interaction,
+            campaign,
+            (
                 CUT_NOTHING.format(label=_md(label))
                 if cut
                 else f"🤖 DMbot found no new names in {_md(label)}."
@@ -1313,18 +1362,19 @@ async def summary(
                     else " Nothing was added." + note
                 )
             ),
-            view=BulkConfirm(campaign.id, stored, waiting) if waiting and not cut else None,
-            allowed_mentions=NO_PINGS,
+            BulkConfirm(campaign.id, stored, waiting) if waiting and not cut else None,
         )
         if queued:  # the names were all known already: the connections may be ready
             await offer_ready(interaction, campaign.id)
-        return
+        return posted
     parts = ", ".join(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
     view = BulkConfirm(campaign.id, stored, waiting)
-    await interaction.edit_original_response(
-        content=(
+    return await _deliver(
+        interaction,
+        campaign,
+        (
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
             f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
             "Nothing is added until you say yes, and **Add all** adds every name of that "
@@ -1338,10 +1388,89 @@ async def summary(
             + names_note
             + (CUT_NOTE if cut else "")
         ),
-        view=view,
-        allowed_mentions=NO_PINGS,
+        view,
     )
-    view.origin = interaction
+
+
+async def announce(
+    interaction: discord.Interaction, bot: Any, campaign: Campaign, done: BackgroundRead
+) -> discord.Message | None:
+    """The upload added what DMbot was sure of by itself (#3878): its notice goes live in the DM
+    Bot channel (and privately), the DM's own card says the same and points to it. What is left
+    to answer keeps its button on the notice. Returns the channel message, or None."""
+    from dmbot.ui.upload_notice import notice_text, notice_view
+
+    notice = done.notice
+    asks: list[Callable[[], discord.ui.Item[Any]]] = []
+    if done.questions_left:
+        waiting = await bot.count_waiting(campaign.guild_id, campaign.id)
+        if waiting.names:
+            asks.append(partial(RecapNamesButton, campaign.guild_id, campaign.id))
+        if waiting.connections:
+            from dmbot.dm_screen import links_ready  # (it imports this module's neighbours)
+
+            asks.append(partial(links_ready.ReadyButton, campaign.id))
+    posted: discord.Message | None = await bot.post_upload_notice(
+        campaign, notice, done.questions_left, asks
+    )
+    text = notice_text(notice.label, notice.counts, done.questions_left)
+    if posted is not None:
+        card = f"{text}\n{NOTICE_IN_THE_CHANNEL.format(link=posted.jump_url)}"
+        view = None
+    else:  # (no DM Bot channel, or it could not be posted there: the notice stays on this card)
+        card = text
+        view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
+    if done.knowledge_note:
+        card += done.knowledge_note
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.edit_original_response(content=card, view=view, allowed_mentions=NO_PINGS)
+    return posted
+
+
+SHARED_TIMEOUT_S = 24 * 3600  # a summary in the channel stays usable for a day
+ALL_ANSWERED = "✅ All answered."
+NOTICE_IN_THE_CHANNEL = "📜 The notice, with Undo this upload, is in {link}."
+IN_THE_CHANNEL = (
+    "📜 The list is in {link}: the names to check, with **Add all**. Only game masters can use "
+    "its buttons."
+)
+
+
+async def _deliver(
+    interaction: discord.Interaction,
+    campaign: Campaign,
+    content: str,
+    view: BulkConfirm | None,
+) -> discord.Message | None:
+    """Show a names summary. With buttons and a DM Bot channel (the campaign's `dmb-dm-bot-…`
+    channel, where upkeep belongs, not the DM screen, which is for live play) it is posted there as
+    a real message, so the private questions can open it (#3873); the DM's own card then points to
+    it.
+    Counts only in either place. When the channel is unknown, gone, or DMbot may not post there, it
+    stays on the DM's own card, as before. Returns the posted message, or None."""
+    posted: discord.Message | None = None
+    if view is not None and campaign.dm_bot_channel_id:
+        view.shared = True
+        view.timeout = SHARED_TIMEOUT_S
+        with contextlib.suppress(Exception):  # (never fatal: the card below is the fallback)
+            posted = await _bot(interaction).post_message(campaign.dm_bot_channel_id, content, view)
+    if posted is not None and view is not None:
+        view.message = posted
+        view.words = content
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=IN_THE_CHANNEL.format(link=posted.jump_url),
+                view=None,
+                allowed_mentions=NO_PINGS,
+            )
+        return posted
+    if view is not None:
+        view.shared = False
+        view.timeout = VIEW_TIMEOUT_S
+    await interaction.edit_original_response(content=content, view=view, allowed_mentions=NO_PINGS)
+    if view is not None:
+        view.origin = interaction
+    return None
 
 
 async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
@@ -1554,6 +1683,14 @@ async def queue_links(
             return c.how
         if c.how == "member_of" and a_type == "place" and b_type == "place":
             return "located_in"
+        owns = onto.predicates.get("owns")
+        if (
+            c.how == "carries"
+            and owns is not None
+            and onto.is_any(a_type, owns.subject_types)
+            and onto.is_any(b_type, owns.object_types)
+        ):
+            return "owns"  # (only a character carries an item: a group's or a pet is owned, #3619)
         return None
 
     # (a kept connection may name an end by another spelling than the one the read listed: both
@@ -1664,10 +1801,15 @@ async def _unnamed_rows(
                 campaign.id,
                 what=u.what,
                 anchor_id=fixed if u.anchored else None,
-                role=u.role[: unnamed_mod.MAX_ROLE],
+                # (a role is what a person is to their anchor: a group gets none, #3736)
+                role=None
+                if descriptions.is_described_group(u.what)
+                else u.role[: unnamed_mod.MAX_ROLE],
                 # ("someone" is never joined to another "someone": two pronouns for nobody
                 # are two people unless the story gives a real shared descriptor)
                 read=None if u.what == who_resolve.SOMEONE else read,
+                # a particular group the story never names is a group (#3736)
+                kind="faction" if descriptions.is_described_group(u.what) else "character",
             )
         except MemoryRuleError:  # an anchor that went away meanwhile, or no word: counted
             if dropped is not None:
@@ -2105,7 +2247,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional, feeling=True)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2122,7 +2264,11 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
+        how = link_words(
+            c.predicate, c.detail, kin.directional(c.detail), feeling=True,
+            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
+        )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -2241,6 +2387,8 @@ class ConnectionOffer(_Menu):
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret,
+                    # whether they've met, from the quote's own words (#3881)
+                    knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong
@@ -2382,6 +2530,12 @@ class BulkConfirm(_Menu):
         self.campaign_id = campaign_id
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
+        # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
+        # to use (#3873): `shared` makes every press check that, and keeps one DM's "one by one"
+        # from taking the buttons off for the rest. `message` is that message, to edit at the end.
+        self.shared = False
+        self.message: discord.Message | None = None
+        self.words = ""  # what the summary said, to put back if "All answered" is undone
         # What the last press added, to undo: (kind, batch, ids) for each kind it covered (one for
         # a kind's own button, one per kind for the overall Add all).
         self.last: list[tuple[str, int, list[str]]] = []
@@ -2451,7 +2605,38 @@ class BulkConfirm(_Menu):
         characters, which are confirmed one at a time with the player who plays them (#3553)."""
         return {k: v for k, v in self.ids.items() if k not in NEEDS_A_LOOK and v}
 
+    def _ending(self) -> Any:
+        """On the summary in the channel, once every name is answered the message ends as
+        "✅ All answered" (only an Undo may stay); a card of the DM's own keeps its words."""
+        return ALL_ANSWERED if self.shared and not self.ids else discord.utils.MISSING
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """On the summary in the channel (shared), anyone who can see the channel can press, so
+        every press checks it is a game master of the campaign first; the refusal is private."""
+        await super().interaction_check(interaction)
+        if not self.shared:
+            return True
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return False
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, ONLY_DMS)
+            return False
+        return True
+
+    async def on_timeout(self) -> None:
+        if self.shared and self.message is not None:
+            # The buttons go; the words stay, and 📝 Check new names still has every name.
+            with contextlib.suppress(discord.HTTPException):
+                await self.message.edit(view=None)
+            return
+        await super().on_timeout()
+
     async def _open(self, interaction: discord.Interaction) -> None:
+        if self.shared:
+            # (the summary stays for the other game masters; the cards are this DM's, privately)
+            await start_review(interaction, self.campaign_id, bulk=False)
+            return
         self.stop()
         await interaction.response.edit_message(view=None)
         await start_review(interaction, self.campaign_id, bulk=False)
@@ -2499,7 +2684,9 @@ class BulkConfirm(_Menu):
         self.last = done
         self._build()
         with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
+            await interaction.edit_original_response(
+                content=self._ending(), view=self, allowed_mentions=NO_PINGS
+            )
         total = sum(added.values())
         if not total:
             text = "Nothing was added: those names were already answered."
@@ -2544,7 +2731,11 @@ class BulkConfirm(_Menu):
         self.last = []
         self._build()
         with contextlib.suppress(discord.HTTPException):
-            await interaction.edit_original_response(view=self, allowed_mentions=NO_PINGS)
+            await interaction.edit_original_response(
+                content=self.words if self.shared and self.words else discord.utils.MISSING,
+                view=self,
+                allowed_mentions=NO_PINGS,
+            )
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(
                 f"↩️ Took back {what}. They're back in 📝 Check new names.",

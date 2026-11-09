@@ -157,10 +157,13 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id"),
+     "via_alias_id", "knows_how"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
-    # older row's role has no direction (#2457)
-    defaults={"unrevealed": False, "directional": False, "decided": None, "via_alias_id": None},
+    # older row's role has no direction (#2457). knows_how: the story didn't say (#3881)
+    defaults={
+        "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
+        "knows_how": "",
+    },
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -332,17 +335,24 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
 
 
 def scoped_select(
-    table: Table, where: sql.Composable | None = None, *, awake_only: bool = False
+    table: Table,
+    where: sql.Composable | None = None,
+    *,
+    awake_only: bool = False,
+    stamp: bool = False,
 ) -> sql.Composed:
     """SELECT a table's columns for one server and campaign, plus `where`. `awake_only`: leave out
-    the rows put to sleep (`hidden_by` set, see KNOWERS)."""
+    the rows put to sleep (`hidden_by` set, see KNOWERS). `stamp`: also read the build that made the
+    row (`made_by_commit`, #3739), for a backup; the row readers never need it."""
     asleep = (
         sql.SQL(" AND cardinality(hidden_by) = 0")
         if awake_only and table.name == "memory_knowers"
         else sql.SQL("")
     )
     return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}{}").format(
-        sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
+        sql.SQL(", ").join(
+            sql.Identifier(c) for c in (*table.columns, *(("made_by_commit",) if stamp else ()))
+        ),
         sql.Identifier(table.name),
         asleep,
         where if where is not None else sql.SQL(""),
@@ -418,6 +428,9 @@ class Changes(Scope):
         # Beliefs the DM's write added, (point of view, connection): The truth taking up a
         # connection is how the DM fixes a "denied" difference (#2661).
         self.belief_additions: list[tuple[str, str]] = []
+        # The DM's own writes to entries, (before, after): a merge ("Same as…") or a name given to
+        # someone the story never named, which the graph clean-up's careful check reads (#3741).
+        self.entity_changes: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
         # Items that name a connection the DM deleted, found before the delete takes them with it
         # (the database cascades them away), and connections an Undo brought back (#2661).
         self.deleted_items: set[tuple[str, str]] = set()
@@ -771,6 +784,8 @@ class Changes(Scope):
         self.tables.add(table.name)
         if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
             self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if table.name == "memory_entities" and self.source == "dm" and self.undoes is None:
+            self.entity_changes += [(b, a) for _, b, a in rows]
         if self.undoes is not None:
             for _, before, after in rows:
                 self._note_undone(table, op, before, after)
@@ -814,6 +829,8 @@ class Changes(Scope):
         if self.source == "dm" and self.undoes is None:
             if table.name == "memory_relations":
                 self.relation_changes.append((op, before, after))
+            elif table.name == "memory_entities":
+                self.entity_changes.append((before, after))
             elif table.name == "memory_beliefs" and op == "insert" and after is not None:
                 self.belief_additions.append(
                     (str(after["perspective_id"]), str(after["relation_id"]))
@@ -851,6 +868,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "directional": False,
         "decided": None,
         "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
+        "knows_how": "",  # how two people know each other was not kept before #3881
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -889,6 +907,11 @@ def _filled(table: Table, snapshot: Any) -> Any:
     (#1189), so Undo across a migration puts back what the row is now."""
     if not isinstance(snapshot, dict):
         return snapshot
+    if "made_by_commit" in snapshot:
+        # The build's stamp (#3739) is never part of a change: the web's SQL doors log the whole
+        # row (`to_jsonb`), which now carries it, but the row readers and Undo name their columns.
+        # With it in, "changed again since" would always be true for such a row.
+        snapshot = {k: v for k, v in snapshot.items() if k != "made_by_commit"}
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
     if table.name == "memory_entities" and snapshot.get("role") == "god":

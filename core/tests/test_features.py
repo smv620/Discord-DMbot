@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+import tempfile
 import unittest
+import unittest.mock
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -112,9 +116,18 @@ class TheDMsListTest(unittest.TestCase):
             story_extractor_on=True,
             live_heads_up=True,
             plot_check_on=True,
+            said_as_voice=True,
+            said_as_model="/models/phonemes",
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)
+
+    def test_the_say_a_name_switch_needs_the_model_folder_as_well(self) -> None:
+        say = next(f for f in features.FEATURES if f.log_name == "say a name")
+        self.assertFalse(say.is_on(settings()))
+        self.assertFalse(say.is_on(settings(said_as_voice=True)))  # no model folder named
+        self.assertTrue(say.is_on(settings(said_as_voice=True, said_as_model="/m")))
+        self.assertNotIn("/m", features.features_line(settings(said_as_model="/m")))  # no value
 
     def test_no_value_is_shown(self) -> None:
         text = features.whats_on_text(settings(ai_key="sk-secret", site_url="https://example.org"))
@@ -124,7 +137,11 @@ class TheDMsListTest(unittest.TestCase):
 
 class TheButtonTest(unittest.IsolatedAsyncioTestCase):
     def press(self, user: int, *, campaign: bool = True) -> Any:
-        found = SimpleNamespace(dm_user_ids=frozenset({DM})) if campaign else None
+        found = (
+            SimpleNamespace(dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}))
+            if campaign
+            else None
+        )
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=found)),
             settings=settings(recaps_on=True),
@@ -181,6 +198,74 @@ class TheButtonTest(unittest.IsolatedAsyncioTestCase):
         rows = screen_settings.settings_view(campaign, None, DM).to_components()
         self.assertLessEqual(len(rows), 5)
         self.assertTrue(all(len(r["components"]) <= 5 for r in rows))
+
+
+class TheSnapshotTest(unittest.TestCase):
+    def test_the_on_off_split_matches_whats_on_text(self) -> None:
+        s = settings(recaps_on=True, time_suggestions=True)
+        data = features.whats_on_list(s)
+        text = features.whats_on_text(s)
+        shown = [f for f in features.FEATURES if f.for_dms]
+        self.assertEqual([i["name"] for i in data["on"]], [f.dm_name for f in shown if f.is_on(s)])
+        self.assertEqual(data["off"], [f.dm_name for f in shown if not f.is_on(s)])
+        for item in data["on"]:
+            self.assertIn(f"✅ **{item['name']}**", text)
+        for name in data["off"]:
+            self.assertIn(f"⬜ {name}", text)
+
+    def test_the_file_is_valid_json_with_exactly_these_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(features.write_snapshot(settings(recaps_on=True), tmp, 1700000000.9))
+            body = json.loads((Path(tmp) / "features.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(body), {"version", "writtenAt", "on", "off"})
+        self.assertEqual(body["version"], 1)
+        self.assertEqual(body["writtenAt"], 1700000000)
+        self.assertTrue(body["on"])
+        for item in body["on"]:
+            self.assertEqual(set(item), {"name", "words"})
+
+    def test_a_feature_that_is_not_for_dms_is_absent(self) -> None:
+        hidden = [f for f in features.FEATURES if not f.for_dms]
+        self.assertTrue(hidden)
+        data = features.whats_on_list(settings(recaps_on=True, enforce_plans=True, ai_key="k"))
+        names = [i["name"] for i in data["on"]] + data["off"]
+        for feature in hidden:
+            self.assertNotIn(feature.dm_name, names)
+
+    def test_an_unwritable_directory_does_not_raise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "a-file"
+            blocker.write_text("x", encoding="utf-8")
+            with self.assertLogs(features.log, level="WARNING") as logs:
+                self.assertFalse(features.write_snapshot(settings(), blocker / "sub", 1.0))
+            self.assertEqual(len(logs.output), 1)
+            self.assertNotIn(tmp, logs.output[0])
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["a-file"])
+
+    def test_no_secret_is_in_the_file(self) -> None:
+        secret = "sk-fake-secret-123"
+        with tempfile.TemporaryDirectory() as tmp:
+            features.write_snapshot(settings(ai_key=secret, recaps_on=True), tmp, 1.0)
+            text = (Path(tmp) / "features.json").read_text(encoding="utf-8")
+        self.assertNotIn(secret, text)
+
+    def test_the_write_is_atomic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self.assertTrue(features.write_snapshot(settings(), folder, 1.0))
+            self.assertTrue(features.write_snapshot(settings(recaps_on=True), folder, 2.0))
+            self.assertEqual(sorted(p.name for p in folder.iterdir()), ["features.json"])
+            body = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+            self.assertEqual(body["writtenAt"], 2)
+            # A failure at the rename leaves the old file whole and no temporary file behind.
+            with (
+                unittest.mock.patch("os.replace", side_effect=OSError("x")),
+                self.assertLogs(features.log, level="WARNING"),
+            ):
+                self.assertFalse(features.write_snapshot(settings(), folder, 3.0))
+            self.assertEqual(sorted(p.name for p in folder.iterdir()), ["features.json"])
+            again = json.loads((folder / "features.json").read_text(encoding="utf-8"))
+        self.assertEqual(again["writtenAt"], 2)
 
 
 if __name__ == "__main__":

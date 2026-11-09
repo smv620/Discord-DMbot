@@ -33,7 +33,9 @@ class FakeAI:
 
 
 def bot_with(*points: tuple[str, str], status: str = "draft", state: str = "ready") -> Any:
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+    )
     return SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=SimpleNamespace(

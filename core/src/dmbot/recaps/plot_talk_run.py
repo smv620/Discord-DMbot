@@ -35,6 +35,10 @@ RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 CALL_TIMEOUT_S = RETAKE_AFTER_S - 30  # the call always ends before its claim can be taken back
 PER_ROUND = 5  # messages answered in one round in one server
 GIVE_UP_S = 600  # a message older than this is not retaken: a crash costs one call, not one a pass
+SAVING_GIVE_UP_S = 1800  # a Save not made in half an hour (the bot was off) is given up
+# The words a given-up row carries: the page prints them as they are (the same as its doors').
+NOT_ANSWERED = "PlotBot didn't answer. Ask it again."
+NOT_SAVED = "PlotBot didn't save this in time. Ask it again."
 KEEP_S = 30 * 24 * 3600  # a talk is kept this long, then goes
 
 
@@ -95,6 +99,32 @@ class TalkStore:
             )
             return int(cur.rowcount)
 
+    async def expire(self, guild_id: int) -> int:
+        """Give up what the bot did not get to in time, in the same plain words the website's
+        doors use, so a wait that stopped says so and never stays "waiting" or "saving" for ever
+        (#2545). A message older than `GIVE_UP_S` that is still waiting or working, and a Save
+        the bot has not made in `SAVING_GIVE_UP_S`, become `failed`; the DM can ask again. Returns
+        how many rows changed."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE plot_chat SET state = 'failed', error = %s WHERE guild_id = %s"
+                " AND role = 'dm' AND state IN ('waiting', 'working') AND created_at < %s",
+                (NOT_ANSWERED, guild_id, now - GIVE_UP_S),
+            )
+            changed = int(cur.rowcount)
+            cur = await conn.execute(
+                "UPDATE plot_chat SET proposals = (SELECT jsonb_agg(CASE WHEN e->>'state' ="
+                " 'saving' AND COALESCE((e->>'saving_at')::BIGINT, created_at) < %s"
+                " THEN e || jsonb_build_object('state', 'failed', 'error', %s::text) ELSE e END"
+                " ORDER BY ord) FROM jsonb_array_elements(proposals) WITH ORDINALITY AS t(e, ord))"
+                " WHERE guild_id = %s AND role = 'bot' AND EXISTS (SELECT 1"
+                " FROM jsonb_array_elements(proposals) x WHERE x->>'state' = 'saving'"
+                " AND COALESCE((x->>'saving_at')::BIGINT, created_at) < %s)",
+                (now - SAVING_GIVE_UP_S, NOT_SAVED, guild_id, now - SAVING_GIVE_UP_S),
+            )
+            return changed + int(cur.rowcount)
+
     async def claim_next(self, guild_id: int) -> Message | None:
         """The oldest waiting message (or a stalled one), marked as being worked on."""
         now = int(self._now() * 1000)  # milliseconds: the claim is the token that lets one write
@@ -103,11 +133,11 @@ class TalkStore:
                 "UPDATE plot_chat SET state = 'working', claimed_at = %s"
                 " WHERE (guild_id, campaign_id, id) = (SELECT guild_id, campaign_id, id"
                 " FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
-                " (state = 'waiting' OR (state = 'working' AND claimed_at < %s"
-                " AND created_at > %s))"
+                " created_at >= %s AND (state = 'waiting' OR (state = 'working'"
+                " AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, session_at, issue_id, user_id, body",
-                (now, guild_id, now - RETAKE_AFTER_S * 1000, now // 1000 - GIVE_UP_S),
+                (now, guild_id, now // 1000 - GIVE_UP_S, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
         if row is None:
@@ -304,6 +334,7 @@ class TalkRunner:
     async def round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
         """Answer the messages that wait in one server, at most `limit`. Returns how many."""
         done = 0
+        await self._store.expire(guild_id)  # first: nothing old is answered or saved late
         for _ in range(limit):
             m = await self._store.claim_next(guild_id)
             if m is None:
@@ -315,6 +346,7 @@ class TalkRunner:
     async def apply_round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
         """Make the changes the DM saved, at most `limit`. Returns how many were looked at."""
         done = 0
+        await self._store.expire(guild_id)  # a Save past its half hour is given up, not made late
         for s in await self._store.saving(guild_id, limit=limit):
             done += 1
             await self._apply(guild_id, s)

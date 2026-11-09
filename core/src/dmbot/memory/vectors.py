@@ -33,7 +33,10 @@ log = logging.getLogger(__name__)
 # What is embedded. Campaign text (the first four) stays with the campaign like the rest of its
 # generated content; a line is a person's words, kept only while the line exists.
 ASSERTION, EVENT_NOTE, DM_NOTE, LORE, LINE = "assertion", "event_note", "dm_note", "lore", "line"
-KINDS = (ASSERTION, EVENT_NOTE, DM_NOTE, LORE, LINE)
+# A story role the campaign's readings added (#3172): its description and examples, matched by
+# `role_match` only; meaning search never reads it (it names its kinds).
+ROLE = "role"
+KINDS = (ASSERTION, EVENT_NOTE, DM_NOTE, LORE, LINE, ROLE)
 SIZE_WARNING = 20_000  # rows in one campaign for one read: the day to plan something better
 MAX_DIMS = 4096  # the table's CHECK
 
@@ -72,7 +75,7 @@ class VectorStore:
         """Keep these vectors for the campaign's own text (every kind but a line). One for a kind
         and owner already kept replaces it. How many were kept."""
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for item in items:
                 if item.kind == LINE or item.kind not in KINDS or not _fits(item.vector):
                     continue
@@ -99,7 +102,7 @@ class VectorStore:
         this campaign's sessions, is skipped: the statement selects the line, so a line deleted
         while its text was being embedded leaves nothing behind. How many were kept."""
         kept = 0
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             for item in items:
                 line_id = item.owner_id.split("#", 1)[0]  # "12" or "12#2": a long line in parts
                 if item.kind != LINE or not line_id.isdecimal() or not _fits(item.vector):
@@ -153,6 +156,20 @@ class VectorStore:
                 (str(r["owner_kind"]), str(r["owner_id"])): str(r["text_hash"])
                 for r in await cur.fetchall()
             }
+
+    async def vectors(self, guild_id: int, campaign_id: str, model: str, kind: str) -> list[Item]:
+        """Every kept vector of one kind for this model, in one campaign (a small kind: roles)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT owner_kind, owner_id, text_hash, vector FROM memory_vectors"
+                " WHERE guild_id = %s AND campaign_id = %s AND model = %s AND owner_kind = %s"
+                " ORDER BY owner_id",
+                (guild_id, campaign_id, model, kind),
+            )
+            return [
+                Item(str(r["owner_kind"]), str(r["owner_id"]), str(r["text_hash"]), r["vector"])
+                for r in await cur.fetchall()
+            ]
 
     async def nearest(
         self,
