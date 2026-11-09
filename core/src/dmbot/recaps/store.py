@@ -296,7 +296,7 @@ _SCRIPT_PENDING = (
     " LEFT JOIN session_imports i ON i.guild_id = ts.guild_id AND i.session_id = ts.id"
     " WHERE ts.guild_id = recap_jobs.guild_id AND ts.campaign_id = recap_jobs.campaign_id"
     " AND ts.started_at = recap_jobs.session_at AND ts.line_count > 0"
-    " AND ts.ended_at IS NOT NULL AND ts.transcripts_deleted_at IS NULL"
+    " AND ts.ended_at > 0 AND COALESCE(ts.transcripts_deleted_at, 0) = 0"
     " AND COALESCE(tr.state, 'none') IN ('none', 'running')"
     " AND COALESCE(i.imported_at, ts.ended_at) >= %s"  # the same window as the script round
     " AND GREATEST(ts.ended_at, recap_jobs.created_at) + %s > %s)"
