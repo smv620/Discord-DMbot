@@ -2,7 +2,7 @@
 // The ten pages of the start-up wizard (#3956), one small component each. Each step saves what the person chose through
 // `onPatch` as soon as they choose it, so a reload or a later visit picks up where they were; the shell (Wizard.tsx) owns Back,
 // Next, Skip and the finish. Nothing here shows a document's words: only file names, counts and the person's own choices.
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
@@ -11,13 +11,15 @@ export interface StepProps {
   api: WizardApi;
   guild: string;
   draft: WizardDraft;
-  /** Save a change to the answers now. */
-  onPatch(patch: Partial<WizardAnswers>): Promise<void>;
+  /** Save a change to the answers now, keeping the step the person is on. A function gets the latest answers (so a slow
+   * step never builds on an old list). */
+  onPatch(patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)): Promise<void>;
   /** Replace the draft with a newer one (after a document or the rights changed). */
   onDraft(draft: WizardDraft): void;
 }
 
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
+const MAX_TEXT = 262_144; // characters a document may hold (docs/WIZARD_DESIGN.md)
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
@@ -29,6 +31,9 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
   const [sheetNote, setSheetNote] = useState("");
   const [paste, setPaste] = useState("");
   const [pasteNote, setPasteNote] = useState("");
+  const [working, setWorking] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
   const t = w.where;
 
   async function saveInvite() {
@@ -39,39 +44,48 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
   }
   async function addSheet() {
     const url = sheet.trim();
+    if (working) return;
     if (!SHEET.test(url)) return setSheetNote(t.sheetNotFound);
+    setWorking(true);
     setSheetNote(t.sheetWaiting);
     try {
       const id = await api.sheet(guild, url);
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 30 && mounted.current; i++) {
         const got = await api.sheetState(guild, id);
+        if (!mounted.current) return;
         if (got.state === "done") {
           const next: WizardCharacter = { full: got.name, partyName: got.name.split(" ")[0] ?? got.name, sheetUrl: url, player: "pending" };
-          await onPatch({ characters: [...a.characters, next].slice(0, 12) });
+          await onPatch((latest) => ({ characters: [...latest.characters, next].slice(0, 12) }));
           setSheet("");
           return setSheetNote(t.sheetFound(got.name));
         }
         if (got.state === "failed") return setSheetNote(got.error === "private" ? t.sheetPrivate : got.error === "slow" ? t.sheetSlow : t.sheetNotFound);
         await new Promise((r) => setTimeout(r, 1000));
       }
-      setSheetNote(t.sheetSlow);
+      if (mounted.current) setSheetNote(t.sheetSlow);
     } catch {
-      setSheetNote(w.failed);
+      if (mounted.current) setSheetNote(w.failed);
+    } finally {
+      if (mounted.current) setWorking(false);
     }
   }
   async function readPaste() {
+    if (working) return;
+    setWorking(true);
     try {
       const got = await api.pageText(guild, paste);
       if (got.characters.length === 0) return setPasteNote(t.pasteNone);
-      await onPatch({
+      await onPatch((latest) => ({
         pageTextUsed: true,
-        ...(a.name ? {} : { name: got.name }),
-        characters: [...a.characters, ...got.characters.map((c) => ({ full: c.full, partyName: c.partyName, sheetUrl: "", player: "pending" }))].slice(0, 12),
-      });
+        ...(latest.name ? {} : { name: got.name }),
+        characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyName: c.partyName, sheetUrl: "", player: "pending" }))].slice(0, 12),
+      }));
       setPaste("");
       setPasteNote(t.pasteFound(got.characters.length));
     } catch {
       setPasteNote(w.failed);
+    } finally {
+      if (mounted.current) setWorking(false);
     }
   }
 
@@ -103,7 +117,7 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
             <input type="url" value={sheet} onInput={(e) => setSheet((e.target as HTMLInputElement).value)} />
           </label>
           <p class="small">{t.sheetHint}</p>
-          <button type="button" class="button secondary" disabled={!sheet.trim()} onClick={() => void addSheet()}>
+          <button type="button" class="button secondary" disabled={working || !sheet.trim()} onClick={() => void addSheet()}>
             {t.sheetAdd}
           </button>
           {sheetNote && <p role="status">{sheetNote}</p>}
@@ -112,7 +126,7 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
             <textarea rows={4} value={paste} onInput={(e) => setPaste((e.target as HTMLTextAreaElement).value)} />
           </label>
           <p class="small">{t.pasteHint}</p>
-          <button type="button" class="button secondary" disabled={!paste.trim()} onClick={() => void readPaste()}>
+          <button type="button" class="button secondary" disabled={working || !paste.trim()} onClick={() => void readPaste()}>
             {t.pasteRead}
           </button>
           {pasteNote && <p role="status">{pasteNote}</p>}
@@ -129,12 +143,18 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   const [name, setName] = useState(a.name);
   const [full, setFull] = useState("");
   const [party, setParty] = useState("");
+  const [adding, setAdding] = useState(false);
   const add = async () => {
     const f = full.trim();
-    if (!f || a.characters.length >= 12) return;
-    await onPatch({ characters: [...a.characters, { full: f, partyName: party.trim() || f, sheetUrl: "", player: "pending" }] });
-    setFull("");
-    setParty("");
+    if (!f || adding || a.characters.length >= 12) return;
+    setAdding(true);
+    try {
+      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyName: party.trim() || f, sheetUrl: "", player: "pending" }].slice(0, 12) }));
+      setFull("");
+      setParty("");
+    } finally {
+      setAdding(false);
+    }
   };
   return (
     <section>
@@ -151,7 +171,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
           {a.characters.map((c, i) => (
             <li key={`${c.full}-${i}`}>
               {c.full} {c.partyName !== c.full && <span class="small">({c.partyName})</span>}{" "}
-              <button type="button" class="link" onClick={() => void onPatch({ characters: a.characters.filter((_, j) => j !== i) })}>
+              <button type="button" class="link" onClick={() => void onPatch((latest) => ({ characters: latest.characters.filter((_, j) => j !== i) }))}>
                 {t.remove}
               </button>
             </li>
@@ -170,7 +190,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
             {t.partyLabel}
             <input type="text" maxLength={100} value={party} onInput={(e) => setParty((e.target as HTMLInputElement).value)} />
           </label>
-          <button type="button" class="button secondary" disabled={!full.trim()} onClick={() => void add()}>
+          <button type="button" class="button secondary" disabled={adding || !full.trim()} onClick={() => void add()}>
             {t.add}
           </button>
         </div>
@@ -202,7 +222,7 @@ export function PlayersStep({ draft, onPatch }: StepProps) {
                   value={c.player === "pending" ? "" : c.player}
                   onChange={(e) => {
                     const v = (e.target as HTMLInputElement).value.trim();
-                    void onPatch({ characters: a.characters.map((x, j) => (j === i ? { ...x, player: /^[1-9][0-9]{0,18}$/.test(v) ? v : "pending" } : x)) });
+                    void onPatch((latest) => ({ characters: latest.characters.map((x, j) => (j === i ? { ...x, player: /^[1-9][0-9]{0,18}$/.test(v) ? v : "pending" } : x)) }));
                   }}
                 />
               </label>
@@ -221,6 +241,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const [ticking, setTicking] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const kind = slot === "ruleset" ? "ruleset" : "shared";
   const ticked = draft.rights[kind];
@@ -240,14 +261,37 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   }
   async function addFile(file: File) {
     // A text or Markdown file is read here; the server's check reads PDF and Word from the bytes (wired with the real calls).
-    const text = /\.(txt|md|markdown)$/i.test(file.name) ? await file.text() : undefined;
-    await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", ...(text !== undefined ? { text } : {}) }));
+    try {
+      const text = /\.(txt|md|markdown)$/i.test(file.name) ? await file.text() : undefined;
+      if (text !== undefined && text.length > MAX_TEXT) return setProblem(t.unreadable["too_big"]!);
+      await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", ...(text !== undefined ? { text } : {}) }));
+    } catch {
+      setProblem(w.failed);
+    }
   }
   async function tick(on: boolean) {
-    if (!on) return;
-    await api.rights(guild, kind);
-    const next = await api.get(guild);
-    if (next) onDraft(next);
+    if (!on || ticking) return;
+    setTicking(true);
+    setProblem("");
+    try {
+      await api.rights(guild, kind);
+      const next = await api.get(guild);
+      if (next) onDraft(next);
+    } catch {
+      setProblem(w.failed); // (the box stays as it was: the draft says whether it is ticked)
+    } finally {
+      setTicking(false);
+    }
+  }
+  async function remove(id: string) {
+    setProblem("");
+    try {
+      await api.docRemove(guild, id);
+      const next = await api.get(guild);
+      if (next) onDraft(next);
+    } catch {
+      setProblem(w.failed);
+    }
   }
   return (
     <section>
@@ -255,7 +299,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
       <p>{lead}</p>
       <p class="small">{t.checkOnly}</p>
       <label class="row">
-        <input type="checkbox" checked={ticked} disabled={ticked} onChange={(e) => void tick((e.target as HTMLInputElement).checked)} />{" "}
+        <input type="checkbox" checked={ticked} disabled={ticked || ticking} onChange={(e) => void tick((e.target as HTMLInputElement).checked)} />{" "}
         {slot === "ruleset" ? w.rules.ownRights : t.rights}
       </label>
       <p class="small">{t.rightsNote}</p>
@@ -267,16 +311,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
             <li key={d.id}>
               {d.name}{" "}
               {d.status === "ok" ? <span class="small">{d.source === "upload" ? t.counts(d.pages, d.words) : ""}</span> : <span role="alert">{t.unreadable[d.reason] ?? w.failed}</span>}{" "}
-              <button
-                type="button"
-                class="link"
-                onClick={() =>
-                  void api.docRemove(guild, d.id).then(async () => {
-                    const next = await api.get(guild);
-                    if (next) onDraft(next);
-                  })
-                }
-              >
+              <button type="button" class="link" onClick={() => void remove(d.id)}>
                 {t.remove}
               </button>
             </li>
@@ -299,7 +334,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           {t.linkLabel}
           <input type="url" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} />
         </label>
-        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
+        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
           {t.addLink}
         </button>
       </div>

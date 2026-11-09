@@ -19,6 +19,7 @@ const problemWords = (error: unknown): string => {
     if (error.kind === "expired") return w.expired;
     if (error.kind === "not_allowed") return w.notAllowed;
     if (error.kind === "rights_needed") return w.docs.rightsNeeded;
+    if (error.kind === "bad_value" && error.key === "fallback") return w.rules.same;
   }
   return w.failed;
 };
@@ -31,8 +32,20 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
   const [problem, setProblem] = useState("");
   const [skipping, setSkipping] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [busy, setBusy] = useState(false);
   const live = useRef(true);
+  const seq = useRef(0); // the newest save: an older answer arriving late is ignored, so the page never jumps back
+  const latest = useRef<WizardDraft | null>(null);
+  const lastStep = useRef(0);
   useEffect(() => () => void (live.current = false), []);
+  if (draft !== "loading" && draft !== null) latest.current = draft;
+
+  // Move focus to the new page's heading when the step changes, so a screen reader hears where it is.
+  const stepNow = draft !== "loading" && draft !== null ? draft.step : 0;
+  useEffect(() => {
+    if (stepNow && lastStep.current && stepNow !== lastStep.current) document.querySelector<HTMLElement>("section h2")?.focus();
+    lastStep.current = stepNow;
+  }, [stepNow]);
 
   useEffect(() => {
     api.get(guild).then(
@@ -64,30 +77,41 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     );
   }
 
+  async function discard() {
+    try {
+      await api.discard(guild);
+      if (live.current) (setDiscarding(false), setDraft(null));
+    } catch {
+      if (live.current) (setDiscarding(false), setProblem(w.failed));
+    }
+  }
+
   const current: WizardDraft = draft;
   const step = Math.min(Math.max(current.step, 1), WIZARD_STEPS.length);
   const id = WIZARD_STEPS[step - 1]!;
 
-  async function go(to: number, patch: Partial<WizardAnswers> = {}) {
+  /** One save at a time in effect: the newest answer wins, and the buttons wait while one is out. */
+  async function save(to: number | null, patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)) {
+    const mine = ++seq.current;
+    setBusy(true);
     setProblem("");
     try {
-      setDraft(await api.set(guild, to, patch));
+      const base = latest.current;
+      const body = typeof patch === "function" ? patch(base ? base.answers : current.answers) : patch;
+      const next = await api.set(guild, to ?? base?.step ?? step, body);
+      if (live.current && mine === seq.current) setDraft(next);
     } catch (error) {
-      setProblem(problemWords(error));
+      if (live.current && mine === seq.current) setProblem(problemWords(error));
+    } finally {
+      if (live.current && mine === seq.current) setBusy(false);
     }
   }
+  const go = (to: number) => save(to, {});
   const props: StepProps = {
     api,
     guild,
     draft: current,
-    onPatch: async (patch) => {
-      try {
-        setProblem("");
-        setDraft(await api.set(guild, step, patch));
-      } catch (error) {
-        setProblem(error instanceof WizardError && error.kind === "bad_value" && error.key === "fallback" ? w.rules.same : problemWords(error));
-      }
-    },
+    onPatch: (patch) => save(null, patch),
     onDraft: (next) => setDraft(next),
   };
 
@@ -110,20 +134,20 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
 
       {!skipping && !discarding && (
         <div class="row">
-          <button type="button" class="button secondary" disabled={step === 1} onClick={() => void go(step - 1)}>
+          <button type="button" class="button secondary" disabled={busy || step === 1} onClick={() => void go(step - 1)}>
             {w.back}
           </button>
           {step < WIZARD_STEPS.length && (
-            <button type="button" class="button" onClick={() => void go(step + 1)}>
+            <button type="button" class="button" disabled={busy} onClick={() => void go(step + 1)}>
               {w.next}
             </button>
           )}
           {step < WIZARD_STEPS.length && (
-            <button type="button" class="button secondary" onClick={() => setSkipping(true)}>
+            <button type="button" class="button secondary" disabled={busy} onClick={() => setSkipping(true)}>
               {w.skip}
             </button>
           )}
-          <button type="button" class="link" onClick={() => setDiscarding(true)}>
+          <button type="button" class="link" disabled={busy} onClick={() => setDiscarding(true)}>
             {w.discard}
           </button>
         </div>
@@ -134,7 +158,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
         <div role="alertdialog" aria-label={w.discardAsk}>
           <p>{w.discardAsk}</p>
           <div class="row">
-            <button type="button" class="button" onClick={() => void api.discard(guild).then(() => live.current && (setDiscarding(false), setDraft(null)))}>
+            <button type="button" class="button" onClick={() => void discard()}>
               {w.discardYes}
             </button>
             <button type="button" class="button secondary" onClick={() => setDiscarding(false)}>
@@ -151,7 +175,10 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
 function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { step: number; onCancel(): void; onMade(next: WizardDraft): void }) {
   const [name, setName] = useState(draft.answers.name);
   const [problem, setProblem] = useState("");
+  const [working, setWorking] = useState(false);
   async function skipAndMake() {
+    if (working) return;
+    setWorking(true);
     setProblem("");
     try {
       const next = await api.set(guild, 10, { name: name.trim() });
@@ -159,7 +186,8 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
       await api.finish(guild);
       onMade(next);
     } catch (error) {
-      setProblem(problemWords(error));
+      setWorking(false);
+      setProblem(error instanceof WizardError && error.kind === "rights_needed" ? w.skipRights : problemWords(error));
     }
   }
   return (
@@ -170,7 +198,7 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
         <input type="text" maxLength={100} value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
       </label>
       <div class="row">
-        <button type="button" class="button" disabled={!name.trim()} onClick={() => void skipAndMake()}>
+        <button type="button" class="button" disabled={working || !name.trim()} onClick={() => void skipAndMake()}>
           {w.skipYes}
         </button>
         <button type="button" class="button secondary" onClick={onCancel}>
@@ -196,25 +224,47 @@ function FinishStep({ api, guild, draft }: StepProps) {
     void api.finishState(guild).then((got) => got && live.current && (setRun(got), setStarted(true)), () => undefined);
   }, [api, guild]);
 
+  // Poll until it is done or failed. One failed look is tried again; five in a row say the wait has stopped.
+  const misses = useRef(0);
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!started || (run && (run.state === "done" || run.state === "failed"))) return;
     const timer = setTimeout(() => {
       api.finishState(guild).then(
-        (got) => live.current && setRun(got),
-        () => live.current && setProblem(w.failed),
+        (got) => {
+          if (!live.current) return;
+          misses.current = 0;
+          setRun(got);
+          setTick((n) => n + 1);
+        },
+        () => {
+          if (!live.current) return;
+          misses.current += 1;
+          if (misses.current >= 5) {
+            const now = Math.floor(Date.now() / 1000);
+            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
+          } else setTick((n) => n + 1);
+        },
       );
     }, POLL_MS);
     return () => clearTimeout(timer);
-  }, [api, guild, started, run]);
+  }, [api, guild, started, run, tick]);
 
+  const [pressing, setPressing] = useState(false);
   async function press() {
+    if (pressing) return;
+    setPressing(true);
     setProblem("");
+    misses.current = 0;
     try {
       await api.finish(guild);
+      setRun(null); // (a retry starts from a fresh look, not the old failed row)
       setStarted(true);
-      setRun(await api.finishState(guild));
+      setTick((n) => n + 1);
     } catch (error) {
       setProblem(problemWords(error));
+    } finally {
+      if (live.current) setPressing(false);
     }
   }
 
@@ -222,7 +272,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
     return (
       <section>
         <h2>{t.done}</h2>
-        <a class="button" href={campaignHref(run.campaignRef)}>{t.open}</a>
+        <a class="button" href={run.campaignRef ? campaignHref(run.campaignRef) : "/account/campaigns"}>{t.open}</a>
       </section>
     );
   }
@@ -241,6 +291,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
             updatedAt={run.movedAt}
             serverNow={run.serverNow}
             state={failed ? "failed" : stalled ? "stalled" : "running"}
+            frozen={failed}
             reason={failed ? t.errors[run.error] ?? t.errors["failed"]! : null}
           />
         )}
@@ -248,7 +299,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
         {run && !failed && <p class="small">{t.quiet}</p>}
         {failed && run && run.campaignRef && <a class="button secondary" href={campaignHref(run.campaignRef)}>{t.open}</a>}
         {failed && run && run.error !== "no-key" && (
-          <button type="button" class="button" onClick={() => void press()}>
+          <button type="button" class="button" disabled={pressing} onClick={() => void press()}>
             {t.retry}
           </button>
         )}
@@ -271,7 +322,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
         <li>{t.summaryFiles(draft.documents.length)}</li>
         {a.skipped.length > 0 && <li>{t.summarySkipped}</li>}
       </ul>
-      <button type="button" class="button" disabled={!a.name.trim()} onClick={() => void press()}>
+      <button type="button" class="button" disabled={pressing || !a.name.trim()} onClick={() => void press()}>
         {t.button}
       </button>
       {problem && <p role="alert">{problem}</p>}

@@ -161,4 +161,67 @@ describe("the wizard", () => {
     await screen.findByRole("button", { name: w.start });
     expect(api.calls.some((c) => c.startsWith("discard:"))).toBe(true);
   });
+
+  it("pressing Next twice moves one page, not two", async () => {
+    const api = await start();
+    const button = screen.getByRole("button", { name: w.next });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await screen.findByText(w.step(2, 10));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(w.step(3, 10))).toBeNull();
+    expect(api.calls.filter((c) => c.startsWith("set:")).length).toBe(1);
+  });
+
+  it("a rights box that could not be saved says so and stays unticked", async () => {
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    api.rights = async () => Promise.reject(new Error("down"));
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.failed);
+    expect((screen.getByLabelText(w.docs.rights) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("a link must be https", async () => {
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.input(screen.getByLabelText(w.docs.linkLabel), { target: { value: "http://example.com/x" } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.linkBad);
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+  });
+
+  it("one failed look at the finish is tried again, and the wait goes on", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    const real = api.finishState.bind(api);
+    let looks = 0;
+    api.finishState = async (g) => {
+      looks += 1;
+      if (looks === 2) throw new Error("blip"); // (the first look is the page's, the second is the first poll)
+      return real(g);
+    };
+    render(<Wizard api={api} guild={G} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByText(w.finish.done)).toBeTruthy();
+  });
+
+  it("a campaign made but the lore waiting for a key links to the campaign and offers no retry", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={`${G}.nokey`} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 20 && !screen.queryByRole("link", { name: w.finish.open }); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getAllByText(w.finish.errors["no-key"]!).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+  });
 });

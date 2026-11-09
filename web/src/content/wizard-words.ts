@@ -42,6 +42,7 @@ export const wizardWords = {
   skipAsk: "Skip the rest of the setup?",
   skipName: "What is the campaign called?",
   skipYes: "Skip and make the campaign",
+  skipRights: "A file needs its box ticked first. Go back to the page with the file, tick the box, then try again.",
   skipNo: "Keep going",
 
   discard: "Throw this setup away",
@@ -114,6 +115,7 @@ export const wizardWords = {
     addLink: "Add a link",
     addDrive: "Choose from Google Drive",
     linkLabel: "A link",
+    linkBad: "A link must start with https://.",
     remove: "Remove",
     none: "Nothing added.",
     counts: (pages: number, words: number): string =>

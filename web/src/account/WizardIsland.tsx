@@ -23,6 +23,7 @@ export default function WizardIsland() {
   }, []);
 
   if (!WIZARD_LIVE) return <p class="muted">{w.notYet}</p>;
+  if (base !== "mock") return <p class="muted">{w.notYet}</p>; // (the real calls come with the wizard's doors, #3955)
   if (guild === "") return <p class="muted">{w.noServer}</p>;
   if (!api || guild === null) return <p class="muted" role="status">{w.loading}</p>;
   return (
