@@ -51,12 +51,14 @@ def notice(counts: Mapping[str, int], *, named: bool = False) -> str:
             f"📜 {total} {noun} {verb} ready to check.\n"
             "Press the button to keep or skip each one. Nothing goes to players."
         )
-    named = sorted(((k, n) for k, n in counts.items() if k and n > 0), key=lambda i: (-i[1], i[0]))
-    if len(named) == 1 and named[0][1] == total:
-        head = f"📜 {_short(named[0][0])}: {total} {noun} {verb} ready to check."
+    uploads = sorted(
+        ((k, n) for k, n in counts.items() if k and n > 0), key=lambda i: (-i[1], i[0])
+    )
+    if len(uploads) == 1 and uploads[0][1] == total:
+        head = f"📜 {_short(uploads[0][0])}: {total} {noun} {verb} ready to check."
     else:
-        shown = [f"{n} from {_short(k)}" for k, n in named[:MAX_PARTS]]
-        rest = total - sum(n for _, n in named[:MAX_PARTS])
+        shown = [f"{n} from {_short(k)}" for k, n in uploads[:MAX_PARTS]]
+        rest = total - sum(n for _, n in uploads[:MAX_PARTS])
         if rest and shown:
             shown.append(f"{rest} more")
         head = f"📜 {total} {noun} {verb} ready to check" + (

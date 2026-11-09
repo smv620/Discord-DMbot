@@ -540,6 +540,7 @@ class WhenKept(NamesTest):
             await self.bot._links_ready_look(self.campaign.id)  # one more became ready
         self.bot.post_message.assert_awaited_once()
         edit.assert_awaited_once()
+        assert edit.await_args is not None
         self.assertIn("3 connections are ready to check", edit.await_args.kwargs["content"])
 
     async def look_with(self, campaign: Any, *, post: Any = None, channel: Any = None) -> None:
