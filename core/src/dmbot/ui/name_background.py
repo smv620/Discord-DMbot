@@ -668,6 +668,11 @@ class BackgroundRead:
     # What the DM should know about "who knows it" (#2959), else "": it could not be sorted, or no
     # player character is confirmed yet. Words only, nothing from the text.
     knowledge_note: str = ""
+    # What was added by itself when the campaign does not ask first (#3878): the upload's notice and
+    # the number of questions left. None while "Ask me before adding" is on, or if it could not be
+    # kept; the DM then has today's Add all summary.
+    notice: Any = None
+    questions_left: int = 0
 
 
 async def read_background(
@@ -695,6 +700,7 @@ async def read_background(
     memory = bot.memory
     ai = bot.background_ai
     guild = campaign.guild_id
+    label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -827,7 +833,7 @@ async def read_background(
         dropped=read.stats.dropped,
         questions=questions,
         keys=keys,
-        upload=upload_label(upload.label, time.time()),
+        upload=label,
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
@@ -872,10 +878,18 @@ async def read_background(
             note = KNOWS_UNSORTED
         elif not pcs:
             note = KNOWS_NO_PLAYERS
-    return BackgroundRead(
+    done = BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
     )  # fmt: skip
+    if not campaign.ask_before_adding and not read.cut:
+        # (a read that was cut off is not finished: nothing is added until the DM has seen it)
+        from dmbot.ui.upload_notice import add_sure
+
+        added = await add_sure(bot, campaign, stored, label)
+        if added is not None:
+            done.notice, done.questions_left = added
+    return done
 
 
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:

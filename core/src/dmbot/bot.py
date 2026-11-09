@@ -624,6 +624,9 @@ from dmbot.ui.transcripts import (
     lookup_members,
     transcript_command,
 )
+from dmbot.ui.upload_notice import UndoUploadButton, notice_text, notice_view
+from dmbot.upload_notices import Notice as UploadNotice
+from dmbot.upload_notices import UploadNotices
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -959,6 +962,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             gap=self._off_record_gap,
         )
         self.campaigns = campaigns
+        # What each lore upload added by itself, for its notice and Undo (#3878).
+        self.upload_notices: UploadNotices | None = (
+            UploadNotices(campaigns.db) if hasattr(campaigns, "db") else None
+        )
         self.sessions = sessions
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
         # an in-memory copy of each campaign's names, kept up to date by notifications.
@@ -1689,6 +1696,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # Consent buttons in private messages, likewise.
         self.add_dynamic_items(*CONSENT_BUTTONS)
+        self.add_dynamic_items(UndoUploadButton)  # "Undo this upload" on a lore upload (#3878)
         # "Check new names" on the DM screen after a session.
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
@@ -11305,6 +11313,45 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if screen is not None and on_sent is not None:
             on_sent(screen)
         return [screen] if screen is not None else []
+
+    async def post_upload_notice(
+        self,
+        campaign: Campaign,
+        notice: UploadNotice,
+        questions: int,
+        asks: Sequence[Callable[[], discord.ui.Item[Any]]] = (),
+    ) -> discord.Message | None:
+        """A lore upload added what DMbot was sure of (#3878): the live notice in the DM Bot
+        channel (counts only, the DM screen is for live play), and the same words privately to
+        every DM. Returns the channel message, or None when it could not be posted there (no DM Bot
+        channel, no permission): the DM's own card then carries it. Never raises."""
+        text = notice_text(notice.label, notice.counts, questions)
+        site = self.settings.site_url
+        posted: discord.Message | None = None
+        try:
+            if campaign.dm_bot_channel_id and self.upload_notices is not None:
+                posted = await self.post_message(
+                    campaign.dm_bot_channel_id,
+                    text,
+                    notice_view(notice, site_url=site, asks=[make() for make in asks]),
+                )
+                if posted is not None:
+                    await self.upload_notices.attach(
+                        campaign.guild_id, notice.id, posted.channel.id, posted.id
+                    )
+            who = discord.utils.escape_markdown(campaign.name)
+            for user_id in sorted(campaign.dm_accounts):
+                try:  # one DM failing must not stop the others
+                    await self.sidebar_send_dm(
+                        user_id,
+                        f"**{who}**\n{text}",
+                        notice_view(notice, site_url=site, asks=[make() for make in asks]),
+                    )
+                except Exception:
+                    log.exception("Couldn't send a DM the upload notice")
+        except Exception:
+            log.exception("Couldn't post the upload notice")
+        return posted
 
     async def tell_dms(self, table: Table, text: str) -> None:
         """One plain line, with no buttons, to every DM's private chat (#3210); on the DM screen
