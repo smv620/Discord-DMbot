@@ -42,6 +42,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Ask the website a question: a short answer under the search box, written from the site's own public words (website-only on purpose, as the search) | site header | built, switched off | `SEARCH_ASK_LIVE` (#3855; core #3856) |
 | After-session report, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `PRESENT_PER_SCENE_LIVE` |
 | Session notes and the script, read on a session's Transcripts page (Script and Session notes tabs, game masters only) and saved | `/account/transcripts` | live (#3898) | `SESSION_NOTES_LIVE`, `THEATRE_DOWNLOAD_LIVE` |
+| Make a session's script from the website (Discord offers it after a live session; imported sessions get the offer too, CloudDev's half of #3899) | `/account/transcripts` Script tab | page built, switched off; the door is next | `SCRIPT_MAKE_LIVE` (#3899) |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |

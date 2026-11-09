@@ -21,9 +21,11 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
+import MakeScript from "./MakeScript";
 import SessionNotesPanel, { Beats, beatsToText, type Opened } from "./SessionNotes";
 import SpeakerRemovalPanel from "./SpeakerRemoval";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
+import { SCRIPT_MAKE_LIVE } from "../content/make-script-switch";
 import { SESSION_NOTES_LIVE } from "../content/session-notes-switch";
 import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
 
@@ -362,9 +364,14 @@ function ScriptTab({ api, campaignRef, number }: { api: AccountApi; campaignRef:
       <Shell load={load}>
         {(got) =>
           "none" in got ? (
-            <p class="panel" role="status">
-              {text.scriptNone}
-            </p>
+            <>
+              <p class="panel" role="status">
+                {text.scriptNone}
+              </p>
+              {SCRIPT_MAKE_LIVE && api.scriptOffer && api.makeScript && (
+                <MakeScript api={api} campaignRef={campaignRef} number={number} onMade={() => setTries((n) => n + 1)} />
+              )}
+            </>
           ) : (
             <>
               <ScriptDownload api={api} campaignRef={campaignRef} view={{ number, fileName: `session-${number}-cleaned.txt` } as TranscriptView} />

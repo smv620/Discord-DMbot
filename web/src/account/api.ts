@@ -1469,6 +1469,17 @@ export type TranscriptVersion = "cleaned" | "heard";
 
 /** One session to read: the file's header lines (`notes`) and its transcript, one string per line,
  * both made by the bot's own export, with the file's name for the download. */
+/** Where a session's script stands (#3899): `none` offers the button, `exists` says it was already made, `running` is the wait. */
+export interface ScriptOffer {
+  state: "none" | "exists" | "running";
+  /** The same cost line Discord's "Make a script of this session?" gives; null when there is none to give. */
+  cost: string | null;
+  /** False when it cannot be made now (a plan without it, or scripts off), with the reason in `why`. */
+  allowed: boolean;
+  why: "plan" | "off" | null;
+  progress?: JobProgress | null;
+}
+
 export interface TranscriptView {
   number: number;
   version: TranscriptVersion;
@@ -2406,6 +2417,8 @@ export type ApiErrorKind =
   | "no-free-slot" // accepting a hand-over: you have no free campaign slot
   | "not-allowed" // not your campaign, or not allowed right now
   | "no-script" // the session has no script yet (#3244)
+  | "script-already" // the script was already made (#3899)
+  | "script-off" // scripts are switched off on the server (#3899)
   | "nothing" // the speaker has no lines left to remove (#3305)
   | "permanent-full" // the permanent pictures are full (400 MB): unmark one to make room (#3275)
   | "refused" // the bot refused a picture action; the error's `note` says why (#3275)
@@ -2905,6 +2918,11 @@ export interface AccountApi {
     number: number,
     version: TranscriptVersion,
   ): Promise<Blob>;
+  /** Whether this session's script can be made from the website, and what it would cost (#3899). A game master only. */
+  scriptOffer?(campaignRef: string, number: number): Promise<ScriptOffer>;
+  /** Make this session's script (#3899): one press, queued for the bot, which runs the same job as Discord's button; resolves
+   * when the script is made. Refusals: "plan-needed" (Try It), "script-already", "script-off", "not-allowed". */
+  makeScript?(campaignRef: string, number: number, onLook?: (progress: JobProgress | null) => void): Promise<void>;
   /** A session's script as a text file (#3244), for game masters. A session with none throws "no-script". */
   transcriptScript?(campaignRef: string, number: number): Promise<Blob>;
   /** Send one settings choice to the bot (#2484): the answer to poll. A shorter transcript limit
@@ -3298,7 +3316,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
