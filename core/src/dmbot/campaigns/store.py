@@ -379,6 +379,7 @@ MAX_DMS = 5  # a campaign's game masters at most (#1600)
 TOO_MANY_DMS = (
     f"A campaign can have at most {MAX_DMS} game masters. Remove one before adding another."
 )
+NOT_A_LOGIN = "That Discord account was taken off its DMbot account, so it can't be added here."
 LAST_DM = "A campaign needs at least one game master. Add another first."
 OWNER_STAYS = (
     "The campaign's owner can't be removed. Hand the campaign over first (only the owner can)."
@@ -408,6 +409,10 @@ class CampaignStore:
         restore_needs_slot: bool = False,
     ) -> None:
         self._db = db
+        # Whether the schema has the account doors (0392, 0395, #2533). Always true once migrated;
+        # a test that opens an older schema on purpose has neither, and then every person is their
+        # own account. Asked once, then remembered.
+        self._accounts: bool | None = None
         self._clock = clock
         self._has_free_slot = has_free_slot
         # Restoring makes the importer an owner, which takes a slot. Checked only when the
@@ -501,7 +506,7 @@ class CampaignStore:
             )
             rows = await cur.fetchall()
             dms = await self._dms_for(conn, guild_id)
-        return [_to_campaign(r, dms.get(r["id"], set())) for r in rows]
+        return [_to_campaign(r, dms.get(r["id"], _Roster())) for r in rows]
 
     async def guilds_with_campaigns(self) -> list[int]:
         """Every server that has held a campaign, from the database and not from the bot's
@@ -693,7 +698,13 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             # Read with the row locked (#77: one read), so two adds cannot pass the cap.
             current = await self._require(conn, guild_id, campaign_id, lock=True)
-            if user_id not in current.dm_user_ids and len(current.dm_user_ids) >= MAX_DMS:
+            # The table holds the DM's account number, never a second Discord ID (#2533).
+            account = user_id if user_id in current.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
+            if account is None:
+                raise CampaignError(NOT_A_LOGIN)
+            if account not in current.dm_accounts and len(current.dm_accounts) >= MAX_DMS:
                 raise CampaignError(TOO_MANY_DMS)
             # One statement: the row is added and, only if it was new, the story's number moves
             # (who the DMs are changes what a viewer sees, #3294).
@@ -702,27 +713,31 @@ class CampaignStore:
                 " VALUES (%s, %s, %s) ON CONFLICT DO NOTHING RETURNING 1)"
                 " UPDATE campaigns SET memory_version = memory_version + 1"
                 " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM added)",
-                (campaign_id, guild_id, user_id, guild_id, campaign_id),
+                (campaign_id, guild_id, account, guild_id, campaign_id),
             )
-            # (no read after: the locked row cannot change under this transaction)
-            return dataclasses.replace(current, dm_user_ids=current.dm_user_ids | {user_id})
+            # (the locked row cannot change under this transaction; read for the new roster)
+            return await self._require(conn, guild_id, campaign_id)
 
     async def remove_dm(self, guild_id: int, campaign_id: str, user_id: int) -> Campaign:
         async with self._db.guild(guild_id) as conn:
             # Lock the campaign row so two removals can't leave it with no DM.
             campaign = await self._require(conn, guild_id, campaign_id, lock=True)
-            if user_id == campaign.owner_user_id:  # whose plan it uses (#437)
+            # (an account number from the list of game masters, or a Discord ID of one of them)
+            account = user_id if user_id in campaign.dm_accounts else None
+            if account is None:
+                account = await self._account_of(conn, user_id)
+            if account == campaign.owner_user_id:  # whose plan it uses (#437)
                 raise CampaignError(OWNER_STAYS)
-            if user_id in campaign.dm_user_ids and len(campaign.dm_user_ids) == 1:
+            if account in campaign.dm_accounts and len(campaign.dm_accounts) == 1:
                 raise CampaignError(LAST_DM)
             await conn.execute(
                 "WITH gone AS (DELETE FROM campaign_dms"
                 " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s RETURNING 1)"
                 " UPDATE campaigns SET memory_version = memory_version + 1"
                 " WHERE guild_id = %s AND id = %s AND EXISTS (SELECT 1 FROM gone)",
-                (guild_id, campaign_id, user_id, guild_id, campaign_id),
+                (guild_id, campaign_id, account, guild_id, campaign_id),
             )
-            return dataclasses.replace(campaign, dm_user_ids=campaign.dm_user_ids - {user_id})
+            return await self._require(conn, guild_id, campaign_id)
 
     async def set_dm_screen(
         self, guild_id: int, campaign_id: str, channel_id: int | None
@@ -2009,7 +2024,7 @@ class CampaignStore:
                 raise CampaignError(NOT_HERE)
             return await self._require(conn, guild_id, campaign_id)  # the condition did not hold
         dms = await self._dms_for(conn, guild_id, campaign_id)
-        return _to_campaign(row, dms.get(campaign_id, set()))
+        return _to_campaign(row, dms.get(campaign_id, _Roster()))
 
     async def _get(
         self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
@@ -2023,7 +2038,7 @@ class CampaignStore:
         if row is None:
             return None
         dms = await self._dms_for(conn, guild_id, campaign_id)
-        return _to_campaign(row, dms.get(campaign_id, set()))
+        return _to_campaign(row, dms.get(campaign_id, _Roster()))
 
     async def _require(
         self, conn: Conn, guild_id: int, campaign_id: str, *, lock: bool = False
@@ -2035,21 +2050,78 @@ class CampaignStore:
 
     async def _dms_for(
         self, conn: Conn, guild_id: int, campaign_id: str | None = None
-    ) -> dict[str, set[int]]:
-        """DMs per campaign for one server (or one campaign), in a single query."""
-        if campaign_id is None:
-            cur = await conn.execute(
-                "SELECT campaign_id, user_id FROM campaign_dms WHERE guild_id = %s", (guild_id,)
-            )
-        else:
-            cur = await conn.execute(
-                "SELECT campaign_id, user_id FROM campaign_dms"
-                " WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
-            )
-        result: dict[str, set[int]] = {}
+    ) -> dict[str, _Roster]:
+        """Who is a DM and who is the owner, per campaign for one server (or one campaign), in a
+        single query. The tables hold account numbers; each is expanded into the Discord IDs that
+        can act as it (`dmbot_account_logins`, 0395, #2533)."""
+        if not await self._has_accounts(conn):
+            return await self._plain_dms_for(conn, guild_id, campaign_id)
+        scope = "" if campaign_id is None else " AND campaign_id = %s"
+        owner_scope = "" if campaign_id is None else " AND c.id = %s"
+        args: tuple[Any, ...] = (guild_id,) if campaign_id is None else (guild_id, campaign_id)
+        cur = await conn.execute(
+            "SELECT d.campaign_id, 'dm' AS kind, d.user_id AS account, l AS login"
+            " FROM campaign_dms d"
+            " LEFT JOIN LATERAL dmbot_account_logins(d.user_id) AS l ON true"
+            " WHERE d.guild_id = %s" + scope.replace("campaign_id", "d.campaign_id") + " UNION ALL"
+            " SELECT c.id, 'owner', c.owner_user_id, l FROM campaigns c"
+            " LEFT JOIN LATERAL dmbot_account_logins(c.owner_user_id) AS l ON true"
+            " WHERE c.guild_id = %s AND c.owner_user_id IS NOT NULL" + owner_scope,
+            args + args,
+        )
+        result: dict[str, _Roster] = {}
         for r in await cur.fetchall():
-            result.setdefault(r["campaign_id"], set()).add(int(r["user_id"]))
+            roster = result.setdefault(r["campaign_id"], _Roster())
+            if r["kind"] == "dm":
+                roster.dm_accounts.add(int(r["account"]))
+                if r["login"] is not None:
+                    roster.dm_ids.add(int(r["login"]))
+                    roster.login_accounts[int(r["login"])] = int(r["account"])
+            elif r["login"] is not None:
+                roster.owner_ids.add(int(r["login"]))
+        return result
+
+    async def _account_of(self, conn: Conn, user_id: int) -> int | None:
+        """The account number a Discord user is stored as in the campaign tables (#2533): the
+        account they belong to, else their own ID (someone who has never signed in to the website
+        is their own account). None for a first Discord ID its account took off itself: it is
+        nobody's login any more and must not be stored as anyone."""
+        if not await self._has_accounts(conn):
+            return user_id
+        cur = await conn.execute(
+            "SELECT dmbot_account_of(%s) AS account, dmbot_account_taken_off(%s) AS gone",
+            (user_id, user_id),
+        )
+        row = await cur.fetchone()
+        if row is not None and row["account"] is not None:
+            return int(row["account"])
+        return None if row is not None and row["gone"] else user_id
+
+    async def _has_accounts(self, conn: Conn) -> bool:
+        if self._accounts is None:
+            cur = await conn.execute(
+                "SELECT to_regprocedure('dmbot_account_logins(bigint)') IS NOT NULL AS yes"
+            )
+            row = await cur.fetchone()
+            if not (row and row["yes"]):
+                return False  # (not remembered: the schema may be migrated a moment later)
+            self._accounts = True
+        return self._accounts
+
+    async def _plain_dms_for(
+        self, conn: Conn, guild_id: int, campaign_id: str | None
+    ) -> dict[str, _Roster]:
+        """The roster of a schema older than the accounts doors: everyone is their own account."""
+        cur = await conn.execute(
+            "SELECT campaign_id, user_id FROM campaign_dms WHERE guild_id = %s"
+            + ("" if campaign_id is None else " AND campaign_id = %s"),
+            (guild_id,) if campaign_id is None else (guild_id, campaign_id),
+        )
+        result: dict[str, _Roster] = {}
+        for r in await cur.fetchall():
+            roster = result.setdefault(r["campaign_id"], _Roster())
+            roster.dm_accounts.add(int(r["user_id"]))
+            roster.dm_ids.add(int(r["user_id"]))
         return result
 
     async def _insert(
@@ -2110,7 +2182,18 @@ async def _scope(conn: Conn, guild_id: int) -> None:
     await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),))
 
 
-def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
+@dataclasses.dataclass
+class _Roster:
+    """The people of one campaign as the store loads them (#2533): the DM accounts, every Discord
+    ID that can act as one, and the owner's Discord IDs."""
+
+    dm_accounts: set[int] = dataclasses.field(default_factory=set)
+    dm_ids: set[int] = dataclasses.field(default_factory=set)
+    owner_ids: set[int] = dataclasses.field(default_factory=set)
+    login_accounts: dict[int, int] = dataclasses.field(default_factory=dict)
+
+
+def _to_campaign(row: dict[str, Any], roster: _Roster) -> Campaign:
     return Campaign(
         id=row["id"],
         guild_id=int(row["guild_id"]),
@@ -2120,7 +2203,10 @@ def _to_campaign(row: dict[str, Any], dms: set[int]) -> Campaign:
         target_ruleset=row["target_ruleset"],
         fallback_ruleset=row["fallback_ruleset"],
         optional_rules_default=bool(row["optional_rules_default"]),
-        dm_user_ids=frozenset(dms),
+        dm_user_ids=frozenset(roster.dm_ids),
+        dm_accounts=frozenset(roster.dm_accounts),
+        owner_ids=frozenset(roster.owner_ids),
+        login_accounts=dict(roster.login_accounts),
         dm_screen_channel_id=row_int(row, "dm_screen_channel_id"),
         last_voice_channel_id=row_int(row, "last_voice_channel_id"),
         dm_screen_visibility=row["dm_screen_visibility"],

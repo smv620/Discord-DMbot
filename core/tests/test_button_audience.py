@@ -52,7 +52,12 @@ DM_CHECKS = {
     "_require_dm",
     "_locked_dm_state",
 }
-OWNER_CHECKS = {"owner_user_id", "from_user_id", "refusal"}  # from_user_id: the offer's maker
+OWNER_CHECKS = {
+    "owner_user_id",
+    "is_owner",
+    "from_user_id",
+    "refusal",
+}  # from_user_id: the offer's maker
 # What a function listed in CHECKED_ELSEWHERE may use: a DM check, an owner check, or the filter
 # that keeps secret names out of what a non-DM sees.
 ANY_CHECK = DM_CHECKS | OWNER_CHECKS

@@ -39,7 +39,9 @@ class ReviewTextTest(unittest.TestCase):
         held = Held()
         held.put(5, "a" * 32, "The abbot secretly pays them.")
         client = SimpleNamespace(lore_context=held)
-        campaign = SimpleNamespace(guild_id=5, dm_user_ids=frozenset({9}))
+        campaign = SimpleNamespace(
+            guild_id=5, dm_user_ids=frozenset({9}), dm_accounts=frozenset({9})
+        )
 
         def seen(user_id: int) -> str:
             who = SimpleNamespace(client=client, user=SimpleNamespace(id=user_id))

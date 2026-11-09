@@ -17,7 +17,12 @@ CID = "ab" * 16
 
 def campaign(days: int | None = None, dms: tuple[int, ...] = (7,)) -> Any:
     return SimpleNamespace(
-        id=CID, guild_id=1, name="Frost", dm_user_ids=set(dms), transcript_keep_days=days
+        id=CID,
+        guild_id=1,
+        name="Frost",
+        dm_user_ids=set(dms),
+        dm_accounts=set(dms),
+        transcript_keep_days=days,
     )
 
 

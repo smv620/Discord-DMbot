@@ -226,7 +226,10 @@ class Gates(unittest.IsolatedAsyncioTestCase):
     def table(self) -> Any:
         return SimpleNamespace(
             campaign_id="c", transcript_session_id="s", guild_id=1, dm_user_id=DM,
-            dm_user_ids=frozenset(), steward_tally=None, screen_channel_id=5,
+dm_user_ids=frozenset(),
+            dm_accounts=frozenset(),
+            steward_tally=None,
+            screen_channel_id=5,
         )  # fmt: skip
 
     async def test_the_family_only_mode_reaches_the_extractor(self) -> None:
@@ -400,7 +403,9 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         visibility: str = "private",
         dm: list[str] | None = None,
     ) -> Any:
-        campaign = SimpleNamespace(id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8])
+        campaign = SimpleNamespace(
+            id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8], dm_accounts=[7, 8]
+        )
         return SimpleNamespace(
             settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
             memory=SimpleNamespace(_db=object()),

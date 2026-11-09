@@ -24,7 +24,9 @@ def suggestion(status: str = "open", known: bool = False) -> PackSuggestion:
 
 
 def campaign(dms: tuple[int, ...] = (7,)) -> Any:
-    return SimpleNamespace(guild_id=1, id=CID, dm_user_ids=set(dms), dm_screen_channel_id=55)
+    return SimpleNamespace(
+        guild_id=1, id=CID, dm_user_ids=set(dms), dm_accounts=set(dms), dm_screen_channel_id=55
+    )
 
 
 def store(**kw: Any) -> Any:

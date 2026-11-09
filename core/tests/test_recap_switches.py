@@ -85,7 +85,11 @@ def campaign(**kw: Any) -> Any:
         "owner_user_id": DM, "recaps_text": True, "recaps_audio": True, "recaps_email": True,
         "dm_screen_channel_id": 66,
     }  # fmt: skip
-    return SimpleNamespace(**{**base, **kw})
+    data = {**base, **kw}
+    data.setdefault("dm_accounts", data["dm_user_ids"])
+    made = SimpleNamespace(**data)
+    made.is_owner = lambda user_id: user_id == made.owner_user_id
+    return made
 
 
 ALICE_ID = 7

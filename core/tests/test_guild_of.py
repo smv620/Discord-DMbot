@@ -39,7 +39,7 @@ class AskPrivatelyTest(unittest.IsolatedAsyncioTestCase):
     def bot(self, dms: set[int], results: dict[int, Any]) -> Any:
         from unittest.mock import AsyncMock
 
-        campaign = SimpleNamespace(name="The *Test* Table", dm_user_ids=dms)
+        campaign = SimpleNamespace(name="The *Test* Table", dm_user_ids=dms, dm_accounts=dms)
         sent: list[tuple[int, str]] = []
 
         async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
@@ -106,7 +106,9 @@ class AskPrivatelyLinksTest(unittest.IsolatedAsyncioTestCase):
 
         me = SimpleNamespace(
             campaigns=SimpleNamespace(
-                get=AsyncMock(return_value=SimpleNamespace(name="T", dm_user_ids={7, 8}))
+                get=AsyncMock(
+                    return_value=SimpleNamespace(name="T", dm_user_ids={7, 8}, dm_accounts={7, 8})
+                )
             ),
             sidebar_send_dm=send_dm,
             settings=SimpleNamespace(site_url="https://dmbot.example.com"),
@@ -134,7 +136,7 @@ class LiveLinksTest(unittest.IsolatedAsyncioTestCase):
             return "sent"
 
         campaign = SimpleNamespace(
-            name="T", dm_user_ids={7}, owner_user_id=7, guild_id=1, id="ab12"
+            name="T", dm_user_ids={7}, dm_accounts={7}, owner_user_id=7, guild_id=1, id="ab12"
         )
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
