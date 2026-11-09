@@ -202,10 +202,18 @@ def campaign_back(predicate: str) -> str | None:
 
 
 def back_words(
-    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+    predicate: str,
+    detail: str,
+    directional: bool = False,
+    subject_kind: str = "",
+    *,
+    knows_how: str | None = None,
 ) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
-    niece". None for one that reads the same either way, or has no fixed reading back."""
+    niece". None for one that reads the same either way, or has no fixed reading back.
+    `knows_how` (#3881): two people who met read "has met" from either side."""
+    if predicate == "knows" and knows_how:
+        return KNOWS_HOW_BACK.get(knows_how) or CONNECTION_BACK.get(predicate)
     if predicate == "located_in":
         return place_words.backward(detail, subject_kind)
     if predicate == KIN and directional and kin.directional(detail):

@@ -36,6 +36,7 @@ from dmbot.memory.models import (
     CLAIM_REJECTED,
     CONFIRMED,
     DM,
+    KNOWS_HOWS,
     LIVE,
     MERGE_MANY_MAX,
     MERGED,
@@ -72,6 +73,10 @@ EXISTS = "exists"  # the spelling is already another name's
 # unchanged) as `feeling:<word>`; applying it is the same change as typing "knows (<word>)" but only
 # on a `knows` connection (#3606), so the picker can never turn another kind of connection into one.
 FEELING_TEXT = "feeling:"
+# The website's "have they met?" on a knows line (#3882): its own queued action, applied by `_link`
+# through `MemoryStore.set_knows_how`. The door's allowed-actions list holds it (WebDev's
+# migration).
+KNOWS_HOW_ACTION = "link-knows-how"
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -994,6 +999,13 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 first=other_end if swapped else entity_id,
                 dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
+        elif a.action == KNOWS_HOW_ACTION:
+            # whether two people have met (#3881, #3882): the DM's word, either way, through the
+            # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
+            # A retried job finds it already so, which changes nothing.
+            if link.predicate != "knows" or a.text not in KNOWS_HOWS:
+                return _failed(BAD_TARGET)
+            await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
         else:
             return _failed(FAILED)
     except MemoryRuleError as exc:

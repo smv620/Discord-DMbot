@@ -386,6 +386,34 @@ class TheEdits(Editing):
         self.assertEqual(done["state"], "done")
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
 
+    async def test_have_they_met_is_set_and_cleared_through_the_store(self) -> None:
+        # (#3882: the website's "Have they met?" is applied by the store's own call; the door's
+        # action is WebDev's, so the queued row is made here as the door will make it)
+        link = self.links["mira-keep"]
+
+        async def set_how(how: str) -> wa.Outcome:
+            action = wa.Action("x" * 32, self.one.id, self.mira, ALICE.id, wa.KNOWS_HOW_ACTION,
+                               target_id=link, text=how)  # fmt: skip
+            return await wa.apply(self.memory, self.g, {ALICE.id}, action, None)
+
+        self.assertEqual((await set_how("met")).error, "")
+        got = await self.memory.relation(self.g, self.one.id, link)
+        assert got is not None
+        self.assertEqual(got.knows_how, "met")
+        self.assertEqual((await set_how("met")).error, "")  # (a retried job: already so)
+        self.assertEqual((await set_how("")).error, "")  # (the DM clears it)
+        got = await self.memory.relation(self.g, self.one.id, link)
+        assert got is not None
+        self.assertEqual(got.knows_how, "")
+        self.assertNotEqual((await set_how("best friends")).error, "")
+
+    async def test_the_doors_send_whether_they_met(self) -> None:
+        link = self.links["mira-keep"]
+        await self.memory.set_knows_how(self.g, self.one.id, link, "met", source=DM_SOURCE)
+        web = await relationships.read_web(self.web, self.session, self.cref, center=self.mira)
+        found = [x for e in web["edges"] for x in e["links"] if x["id"] == link]
+        self.assertEqual([(x["words"][:7], x["knowsHow"]) for x in found], [("has met", "met")])
+
     async def test_a_dm_pins_and_unpins_a_connection_and_a_retry_is_done(self) -> None:
         link = await self.free_link("sworn to")
         pinned = await self.edit(link, action="pin", pinned=True)
