@@ -1099,6 +1099,19 @@ characters know is always their own rows.
 Most "spoilers" are simply unknown to one or more player characters, not secret.
 
 **4. How knowledge gets in. DMbot makes its best guess live and asks nobody during play.**
+- **What is said at the table is known to the party** (owner, 2026-11-09, #3963): "If the info was given at the
+  table, unless the DM or players state explicitly that something is unknown to character X, anything revealed
+  at the table should be considered known to the party and therefore known to the individual player characters
+  by default." So after a live session or an import, a held-back name that is said is shown, and a held-back
+  connection is shown when both its ends are shown and the session reader states that same connection (its own
+  extracted claim; two names said near each other are not enough). The DM's or a player's explicit "X doesn't
+  know" (who learned what, "Who knows this?") is the exception. One change per session, with Undo, counted to
+  the DM.
+- **Uploads, the party's own story** (#3963): the smart guess sorts each lore statement into three kinds, not
+  two: **world** (any inhabitant knows it), **party** (what the player characters did, saw, heard or were told
+  together: the party's history, a job given to "the party"; known to every player character) and **spoiler**.
+  A backstory section in campaign lore (headed by a player character's name) is known to that character, as a
+  backstory upload is.
 - **In a scene:** what is said or shown in a scene is learned by **every character in the scene**, player
   characters and NPCs. Whether the *player* came to the session doesn't matter; whether the *character* is in the
   scene does. Who is in a scene: the party together unless the game clock says it is split (#1614), plus the NPCs
