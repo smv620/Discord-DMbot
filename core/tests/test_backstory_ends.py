@@ -581,7 +581,7 @@ class WhenKept(NamesTest):
         await self.confirm_all()
         campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
         await self.look_with(campaign)  # the first post, remembered
-        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id], (777, 9001))
+        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id][:2], (777, 9001))
 
         async def another(error: Exception) -> AsyncMock:
             channel = MagicMock(spec=discord.TextChannel)
@@ -589,6 +589,8 @@ class WhenKept(NamesTest):
                 edit=AsyncMock(side_effect=error)
             )
             await self.untell_all()
+            cid = self.campaign.id
+            self.bot._links_ready_msgs[cid] = (*self.bot._links_ready_msgs[cid][:2], "older")
             post = AsyncMock(return_value=SimpleNamespace(id=9002))
             await self.look_with(campaign, post=post, channel=channel)
             return post
@@ -596,11 +598,34 @@ class WhenKept(NamesTest):
         gone = discord.NotFound(MagicMock(status=404, reason="x"), "gone")
         post = await another(gone)
         post.assert_awaited_once()  # (replaced)
-        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id], (777, 9002))
+        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id][:2], (777, 9002))
         blip = discord.HTTPException(MagicMock(status=503, reason="x"), "busy")
         post = await another(blip)
         post.assert_not_awaited()  # (no second message; said again next time)
         self.assertTrue(all(not w.told for w in await self.waiting()))
+
+    async def test_when_everything_is_answered_the_message_ends_all_answered(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        await self.look_with(campaign)  # the post, remembered
+        edit = AsyncMock()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.get_partial_message.return_value = SimpleNamespace(edit=edit)
+        async with self.db.guild(GUILD) as conn:  # (the DM answered them all)
+            await conn.execute("DELETE FROM backstory_links")
+        await self.look_with(campaign, channel=channel)
+        edit.assert_awaited_once()
+        assert edit.await_args is not None
+        self.assertEqual(edit.await_args.kwargs["content"], links_ready.ALL_ANSWERED)
+        self.assertIsNone(edit.await_args.kwargs["view"])  # (no button left)
+        self.assertNotIn(self.campaign.id, self.bot._links_ready_msgs)  # (the next one is new)
+
+    async def test_with_no_message_on_screen_nothing_is_edited_when_none_wait(self) -> None:
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        channel = MagicMock(spec=discord.TextChannel)
+        await self.look_with(campaign, channel=channel)
+        channel.get_partial_message.assert_not_called()
 
     async def untell_all(self) -> None:
         async with self.db.guild(GUILD) as conn:
