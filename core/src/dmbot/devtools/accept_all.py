@@ -26,13 +26,11 @@ import asyncio
 import logging
 import os
 import sys
-from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dmbot.db import Database
-from dmbot.memory import backstory_keep
+from dmbot.memory import auto_accept as auto
 from dmbot.memory.backstory_links import DONE, BackstoryLinks
-from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError
 from dmbot.memory.store import MemoryStore
 from dmbot.ui.names import background_kind
 
@@ -46,15 +44,8 @@ KINDS = (NAMES, OTHER_NAMES, CONNECTIONS, QUESTIONS, SAME_PERSON)
 
 
 @dataclass
-class Counts:
-    accepted: Counter[str] = field(default_factory=Counter)
-    waiting: Counter[str] = field(default_factory=Counter)  # left for a person to answer
-    refused: Counter[str] = field(default_factory=Counter)  # a rule said no (it stays waiting)
-    batches: list[int] = field(default_factory=list)  # the changes made, to undo a run by hand
-
-    def add_batch(self, batch: int | None) -> None:
-        if batch is not None:
-            self.batches.append(batch)
+class Counts(auto.Tally):
+    """The shared tally, with this tool's one-line report."""
 
     def line(self, dry_run: bool) -> str:
         parts = [
@@ -88,44 +79,20 @@ async def accept_names(
     memory: MemoryStore, guild: int, campaign: str, counts: Counts, dry_run: bool
 ) -> None:
     """The DM's one-press Yes: only a name that was read with its kind (`background_kind`) is
-    confirmed as that kind. One that needs the kind chosen, or who plays it, is for a person."""
-    for entity in await memory.entities(guild, campaign, statuses=("proposed",)):
-        kind = background_kind(entity)
-        if not kind or entity.role == PLAYER_CHARACTER:
-            counts.waiting[NAMES] += 1
-            continue
-        if dry_run:
-            counts.accepted[NAMES] += 1
-            continue
-        try:
-            written = await memory.confirm_entity(guild, campaign, entity.id, kind, source=DM)
-            counts.accepted[NAMES] += 1
-            counts.add_batch(written.batch)
-        except Exception as exc:  # a rule, or anything else: counted, the run goes on
-            _refused(counts, NAMES, exc)
+    confirmed as that kind. One that needs the kind chosen, or who plays it, is for a person. The
+    shared step, un-narrowed: this tool keeps counting what Add all would add (#3878)."""
+    await auto.accept_names(
+        memory, guild, campaign, counts, dry_run=dry_run, narrow=False, kind_of=background_kind
+    )
 
 
-def _refused(counts: Counts, kind: str, exc: Exception) -> None:
-    counts.refused[kind] += 1
-    if not isinstance(exc, MemoryRuleError):
-        log.warning("accept_all: a %s could not be accepted (%s)", kind, type(exc).__name__)
+_refused = auto.refused
 
 
 async def accept_other_names(
     memory: MemoryStore, guild: int, campaign: str, counts: Counts, dry_run: bool
 ) -> None:
-    for alias, _entry in await memory.suggested_names(guild, campaign):
-        if dry_run:
-            counts.accepted[OTHER_NAMES] += 1
-            continue
-        try:
-            written = await memory.update_alias(
-                guild, campaign, alias.id, source=DM, status=CONFIRMED
-            )
-            counts.accepted[OTHER_NAMES] += 1
-            counts.add_batch(written.batch)
-        except Exception as exc:
-            _refused(counts, OTHER_NAMES, exc)
+    await auto.accept_other_names(memory, guild, campaign, counts, dry_run=dry_run)
 
 
 async def accept_connections(
@@ -138,24 +105,7 @@ async def accept_connections(
 ) -> None:
     """Keeps the connections that are ready (both names answered), as the DM's keep-all does; the
     rest wait for a name or an answer."""
-    onto = await memory.ontology(guild, campaign)
-    symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
-    every = await links.waiting(guild, campaign, symmetric=symmetric)
-    ready = [w for w in every if w.ready]
-    counts.waiting[CONNECTIONS] += len(every) - len(ready)
-    if dry_run:
-        counts.accepted[CONNECTIONS] += len(ready)
-        return
-    try:
-        done = await backstory_keep.keep_all(memory, links, guild, campaign, ready)
-    except Exception as exc:  # the connections kept before it stay kept
-        counts.refused[CONNECTIONS] += len(ready)
-        log.warning("accept_all: keeping connections stopped (%s)", type(exc).__name__)
-        return
-    counts.accepted[CONNECTIONS] += len(done.kept)
-    counts.refused[CONNECTIONS] += done.refused
-    for _link, batch in done.kept:
-        counts.add_batch(batch)
+    await auto.accept_connections(memory, links, guild, campaign, counts, dry_run=dry_run)
 
 
 async def accept_questions(
