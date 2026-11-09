@@ -177,7 +177,7 @@ async def add_sure(
 
     try:
         memory, links, notices = bot.memory, bot.backstory_links, bot.upload_notices
-        if memory is None or links is None or notices is None:
+        if memory is None or notices is None:
             return None
         guild, cid = campaign.guild_id, campaign.id
         ids = {i for group in stored.values() for i in group}
@@ -186,7 +186,8 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
-        await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
+        if links is not None:  # (a bot without the connections store adds the names only)
+            await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
         if bot.lookup is not None:
             bot.lookup.drop([cid])
         counts = {**tally.kinds}
@@ -199,7 +200,7 @@ async def add_sure(
             + tally.waiting[auto.CONNECTIONS]
             + tally.refused[auto.NAMES]
             + tally.refused[auto.CONNECTIONS]
-            + await links.count_which(guild, cid)
+            + (await links.count_which(guild, cid) if links is not None else 0)
             + len(await memory.same_person_offers(guild, cid))
         )
         notice = await notices.add(guild, cid, label, counts, tally.batches)
