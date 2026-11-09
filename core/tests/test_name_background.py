@@ -341,6 +341,10 @@ class ThePath(NamesTest):
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.confirmed = AsyncMock()
         self.bot.campaigns.record_confirmation = self.confirmed  # type: ignore[method-assign]
+        # These tests are of the Add all flow: "Ask me before adding" is on. The default (off) adds
+        # what DMbot is sure of by itself, which `test_upload_notice.py` and the tests marked
+        # "by itself" below cover (#3878).
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
 
     async def asyncTearDown(self) -> None:
         _ai_busy.clear()  # module state: other tests' document reads must not see ours
@@ -363,6 +367,65 @@ class ThePath(NamesTest):
 
     async def entities(self, status: str = PROPOSED) -> list[Any]:
         return await self.memory.entities(GUILD, self.campaign.id, statuses=[status])
+
+    async def read_by_itself(self, channel_id: int | None = None) -> tuple[Any, Any]:
+        """The reading with "Ask me before adding" off (the default): what DMbot is sure of is added
+        by itself. The bot's posts are stood in; returns the DM's card press and the stand-in."""
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        if channel_id is not None:
+            await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
+        sent = SimpleNamespace(
+            id=9,
+            channel=SimpleNamespace(id=channel_id),
+            jump_url=f"https://discord.com/channels/{GUILD}/{channel_id}/9",
+            edit=AsyncMock(),
+        )
+        self.bot.post_message = AsyncMock(return_value=sent if channel_id else None)  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = AsyncMock(return_value="sent")  # type: ignore[method-assign]
+        return await self.read(), sent
+
+    async def test_by_itself_what_is_sure_is_added_and_the_notice_counts_it(self) -> None:
+        press, sent = await self.read_by_itself(77)
+        names = {e.name: e.status for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.assertEqual(
+            {n: names[n] for n in ("Brannoch", "Vale Keep", "Oakmere", "Heartseeker")},
+            {n: "confirmed" for n in ("Brannoch", "Vale Keep", "Oakmere", "Heartseeker")},
+        )
+        channel, text, view = cast(Any, self.bot.post_message).await_args.args
+        self.assertEqual(channel, 77)  # the DM Bot channel
+        self.assertIn("Added **", text)
+        self.assertNotIn("Brannoch", text)  # counts only: no name, no word of the text
+        self.assertTrue(any("up:undo" in str(getattr(c, "custom_id", "")) for c in view.children))
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn(sent.jump_url, card["content"])
+        self.assertIsNone(card["view"])
+        self.assertEqual(
+            cast(Any, self.bot.sidebar_send_dm).await_count, 1
+        )  # (the DM's private copy)
+
+    async def test_by_itself_without_a_channel_the_notice_stays_on_the_dms_card(self) -> None:
+        press, _ = await self.read_by_itself(None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("Added **", card["content"])
+        self.assertTrue(
+            any("up:undo" in str(getattr(c, "custom_id", "")) for c in card["view"].children)
+        )
+
+    async def test_by_itself_the_notice_is_kept_for_undo(self) -> None:
+        await self.read_by_itself(77)
+        notices = self.bot.upload_notices
+        assert notices is not None
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT id, changes, message_id FROM upload_notices")
+            rows = await cur.fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["changes"])
+        self.assertEqual(rows[0]["message_id"], 9)
+
+    async def test_with_ask_me_before_adding_on_nothing_is_added_by_itself(self) -> None:
+        press = await self.read()  # (the setting is on in this class's setUp)
+        self.assertEqual(await self.entities(CONFIRMED), [])
+        self.assertIn("to check** from", press.edit_original_response.await_args.kwargs["content"])
 
     async def test_the_offer_says_what_it_costs_and_what_it_is_for(self) -> None:
         it, view = await self.offer()

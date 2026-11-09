@@ -88,6 +88,7 @@ from dmbot.ui.name_lists import (
 )
 from dmbot.ui.names import (
     REVIEW_LABEL_MAX,
+    RecapNamesButton,
     _campaign_for,
     _md,
     _memory,
@@ -611,21 +612,24 @@ class BackgroundOffer(_Menu):
                     choice=knows,
                 )
             stored, queued, cut = done.stored, done.queued, done.cut
-            posted = await summary(
-                interaction,
-                campaign,
-                self.upload.label,
-                stored,
-                queued,
-                cut=cut,
-                links_found=done.links_found,
-                ready=done.ready,
-                dropped=done.dropped,
-                questions=done.questions,
-                changes=done.changes,
-                suggested=done.suggested,
-                knowledge_note=done.knowledge_note,
-            )
+            if done.notice is not None:  # it added what it was sure of (#3878)
+                posted = await announce(interaction, bot, campaign, done)
+            else:
+                posted = await summary(
+                    interaction,
+                    campaign,
+                    self.upload.label,
+                    stored,
+                    queued,
+                    cut=cut,
+                    links_found=done.links_found,
+                    ready=done.ready,
+                    dropped=done.dropped,
+                    questions=done.questions,
+                    changes=done.changes,
+                    suggested=done.suggested,
+                    knowledge_note=done.knowledge_note,
+                )
             # What waits for the DM also comes once to their private chat, like a live session's
             # (#3314). When the summary above was posted in the DM Bot channel, its names and
             # connections buttons open it (#3873).
@@ -672,6 +676,11 @@ class BackgroundRead:
     # What the DM should know about "who knows it" (#2959), else "": it could not be sorted, or no
     # player character is confirmed yet. Words only, nothing from the text.
     knowledge_note: str = ""
+    # What was added by itself when the campaign does not ask first (#3878): the upload's notice and
+    # the number of questions left. None while "Ask me before adding" is on, or if it could not be
+    # kept; the DM then has today's Add all summary.
+    notice: Any = None
+    questions_left: int = 0
 
 
 async def read_background(
@@ -699,6 +708,7 @@ async def read_background(
     memory = bot.memory
     ai = bot.background_ai
     guild = campaign.guild_id
+    label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -836,7 +846,7 @@ async def read_background(
         dropped=read.stats.dropped,
         questions=questions,
         keys=keys,
-        upload=upload_label(upload.label, time.time()),
+        upload=label,
         speaker=speaker,
         known_by=known_by,
         unsettled=read.stats.unsettled or (),
@@ -881,10 +891,18 @@ async def read_background(
             note = KNOWS_UNSORTED
         elif not pcs:
             note = KNOWS_NO_PLAYERS
-    return BackgroundRead(
+    done = BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
     )  # fmt: skip
+    if not campaign.ask_before_adding and not read.cut:
+        # (a read that was cut off is not finished: nothing is added until the DM has seen it)
+        from dmbot.ui.upload_notice import add_sure
+
+        added = await add_sure(bot, campaign, stored, label)
+        if added is not None:
+            done.notice, done.questions_left = added
+    return done
 
 
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:
@@ -1368,8 +1386,44 @@ async def summary(
     )
 
 
+async def announce(
+    interaction: discord.Interaction, bot: Any, campaign: Campaign, done: BackgroundRead
+) -> discord.Message | None:
+    """The upload added what DMbot was sure of by itself (#3878): its notice goes live in the DM
+    Bot channel (and privately), the DM's own card says the same and points to it. What is left
+    to answer keeps its button on the notice. Returns the channel message, or None."""
+    from dmbot.ui.upload_notice import notice_text, notice_view
+
+    notice = done.notice
+    asks: list[Callable[[], discord.ui.Item[Any]]] = []
+    if done.questions_left:
+        waiting = await bot.count_waiting(campaign.guild_id, campaign.id)
+        if waiting.names:
+            asks.append(partial(RecapNamesButton, campaign.guild_id, campaign.id))
+        if waiting.connections:
+            from dmbot.dm_screen import links_ready  # (it imports this module's neighbours)
+
+            asks.append(partial(links_ready.ReadyButton, campaign.id))
+    posted: discord.Message | None = await bot.post_upload_notice(
+        campaign, notice, done.questions_left, asks
+    )
+    text = notice_text(notice.label, notice.counts, done.questions_left)
+    if posted is not None:
+        card = f"{text}\n{NOTICE_IN_THE_CHANNEL.format(link=posted.jump_url)}"
+        view = None
+    else:  # (no DM Bot channel, or it could not be posted there: the notice stays on this card)
+        card = text
+        view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
+    if done.knowledge_note:
+        card += done.knowledge_note
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.edit_original_response(content=card, view=view, allowed_mentions=NO_PINGS)
+    return posted
+
+
 SHARED_TIMEOUT_S = 24 * 3600  # a summary in the channel stays usable for a day
 ALL_ANSWERED = "✅ All answered."
+NOTICE_IN_THE_CHANNEL = "📜 The notice, with Undo this upload, is in {link}."
 IN_THE_CHANNEL = (
     "📜 The list is in {link}: the names to check, with **Add all**. Only game masters can use "
     "its buttons."
@@ -2187,7 +2241,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional, feeling=True)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2204,7 +2258,11 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
+        how = link_words(
+            c.predicate, c.detail, kin.directional(c.detail), feeling=True,
+            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
+        )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -2323,6 +2381,8 @@ class ConnectionOffer(_Menu):
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret,
+                    # whether they've met, from the quote's own words (#3881)
+                    knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong
