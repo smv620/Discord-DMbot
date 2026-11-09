@@ -669,16 +669,18 @@ class Stored(ConfirmedMemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         self.assertEqual(done.claim.fact_id, rel)
         self.assertFalse(await self.unrevealed(rel))
+        self.assertTrue(done.shown)  # (the DM is told)
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch)
         self.assertTrue(await self.unrevealed(rel))
 
-    async def test_a_secret_claim_or_an_unseen_end_shows_nothing(self) -> None:
+    async def test_a_secret_claim_shows_nothing(self) -> None:
         rel = await self.held_back()
         await self.propose(said("Bram", "is in", "Veldmoor"))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
-        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=True)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=True)
         self.assertTrue(await self.unrevealed(rel))
+        self.assertFalse(done.shown)
 
     async def test_an_end_the_players_have_not_seen_keeps_it_held_back(self) -> None:
         rel = await self.held_back(end_hidden=True)
@@ -686,6 +688,31 @@ class Stored(ConfirmedMemoryTest):
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_back_secret_or_ended_connection_stays_held_back(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET secret = TRUE WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        for waiting in await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE):
+            done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+            self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    def test_the_all_true_line_counts_what_it_showed(self) -> None:
+        from dmbot.ui import claims_review
+
+        self.assertIn("1 of them was said at the table", claims_review.shown_line(1))
+        self.assertIn("3 of them were said at the table", claims_review.shown_line(3))
+
+    async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertFalse(done.shown)
 
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")

@@ -285,6 +285,9 @@ class Confirmed:
     claim: Claim
     flags: tuple[Flag, ...]  # problems the store's checks raised for the DM
     batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
+    # A connection the story held back that this claim stated, now shown to the players (#3963 c):
+    # the caller says so to the DM.
+    shown: bool = False
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -2126,6 +2129,7 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
+            shown = False
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2151,13 +2155,12 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
-                if not secret and await reveal_stated_in(w, relation.id):
-                    # (the table said it: a connection the story held back is the party's now)
-                    logger.info("A held-back connection the table stated is shown")
+                # (the table said it: a connection the story held back is the party's now)
+                shown = not secret and await reveal_stated_in(w, relation.id)
             row = await w.update(
                 CLAIMS,
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown)
