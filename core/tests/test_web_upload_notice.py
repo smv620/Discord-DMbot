@@ -41,9 +41,9 @@ class UploadNoticeRead(Script):
     ) -> dict[str, Any]:
         return await upload_notice.read(self.web, who or self.session, self.cref, kind, source_id)
 
-    async def refused(self, **kw: str) -> str:  # type: ignore[override]
+    async def refused(self, kind: str = "lore", source_id: str = "up1") -> str:
         with self.assertRaises(RecapError) as caught:
-            await self.read(**kw)
+            await self.read(kind, source_id)
         return caught.exception.code
 
     async def test_a_notice_is_found_by_its_source_with_counts_and_the_label(self) -> None:
