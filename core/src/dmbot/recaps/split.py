@@ -178,7 +178,9 @@ class Part:
 class Split:
     parts: tuple[Part, ...]
     unsure: bool = False  # a "recap" the comparison could not back up: kept, used as play
-    method: str = "none"  # none (no earlier session), ai, code or fallback: what decided it
+    # none (no earlier session), ai, code, fallback or rule (a spoken recap found with no earlier
+    # session, `spoken_recap`): what decided it
+    method: str = "none"
 
     def label_of(self, number: int) -> str:
         for part in self.parts:
@@ -206,6 +208,47 @@ def all_play(said: Sequence[Said], method: str = "none") -> Split:
     if not said:
         return Split((), False, method)
     return Split((Part(PLAY, said[0].number, said[-1].number),), False, method)
+
+
+# A spoken recap with no earlier session to compare it with (#3298; Supervisor's ruling of
+# 2026-11-09): a campaign's first imported session often starts with the DM retelling what came
+# before, and with no earlier session the AI split has nothing to check it against. So code alone
+# marks it: in the opening only, the DM's line (or unbroken run of the DM's lines) that starts with
+# one of these openings and is long. A short "Previously, you…" mid-scene stays play.
+SPOKEN_RECAP_OPENINGS = (
+    "previously", "last time", "last session", "when we left off", "when we last left",
+)  # fmt: skip
+SPOKEN_RECAP_MIN_CHARS = 400
+_LEAD_IN = re.compile(r"^(?:(?:ok(?:ay)?|so|alright|all right|right|well|um+|uh+)[\s,.!:-]+)+")
+RULE = "rule"  # the split's method when this rule made it
+
+
+def _opens_recap(text: str) -> bool:
+    words = _LEAD_IN.sub("", " ".join(text.casefold().split()))
+    return any(words.startswith(o) for o in SPOKEN_RECAP_OPENINGS)
+
+
+def spoken_recap(said: Sequence[Said], dm_ids: Collection[int]) -> Split | None:
+    """The split when the session opens with a spoken recap and there is no earlier session: the
+    recap's lines marked `RECAP`, the rest play. None when there is none: the first DM line of the
+    opening must start with a recap opening, and that line and the DM's lines straight after it
+    must come to `SPOKEN_RECAP_MIN_CHARS`. Pure; no AI."""
+    opening = opening_of(said)
+    first = next((i for i, s in enumerate(opening) if s.user_id in dm_ids), None)
+    if first is None or not _opens_recap(opening[first].text):
+        return None
+    last = first
+    while last + 1 < len(opening) and opening[last + 1].user_id in dm_ids:
+        last += 1
+    if sum(len(s.text) for s in opening[first : last + 1]) < SPOKEN_RECAP_MIN_CHARS:
+        return None
+    a, b = opening[first].number, opening[last].number
+    parts = [Part(RECAP, a, b)]
+    if said[0].number < a:
+        parts.insert(0, Part(PLAY, said[0].number, a - 1))
+    if said[-1].number > b:
+        parts.append(Part(PLAY, b + 1, said[-1].number))
+    return Split(tuple(parts), False, RULE)
 
 
 def from_json(data: object) -> Split | None:
