@@ -1382,6 +1382,35 @@ the website's **Names** page and one to the **Story Graph**, and **Undo this upl
 notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
 one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
 
+**What "sure" means for an import, and who it reads (Supervisor, 2026-11-09, #3897, #3602, #3918).** An import's
+sure step adds its scans' names and, **since #3897, the connections the DM's own lines state**: a claim that is stated
+(not worked out), labelled as the DM's, **every cited line spoken by one of the campaign's DMs** (checked in code, never
+the AI's label alone), still waiting with both its names answered, and from this import's sessions. It goes through the
+claims review's own yes, in the notice's batch, so Undo covers it. Players' claims, plans, worked-out readings, lore's
+worked-out family ties and secret choices stay questions. Before the sure step, an import runs the same steps as a live
+session, each behind its own switch with its own stage on the import's progress card: the story read, the scenes, then
+"who is this?". Every step of an import reads **the people the import recorded** (`recorded_in`: those who agree, plus
+the speakers the uploader confirmed, minus anyone with a "no" on record), asked again after each AI call, never only
+the live agreed list; a live session still reads only those who agree now.
+
+**Who can see a campaign's channels (owner, 2026-11-09, #3891).** A per-campaign setting in ⚙️ Settings, **"Who can see
+this campaign's channels"**: **Everyone in the server**, or **Only this campaign's people** (the default, for new and existing
+campaigns). It covers the campaign's DM Bot and transcript channels; the DM screen keeps its own visibility rules. The
+campaign's people are its DMs, the members who play its player characters, the members recorded at its sessions, and anyone a
+DM adds by hand. DMbot keeps the channels' member permissions in step, the way it already does for the DM screen. Someone who
+can't see a channel gets no unread marks or notifications from it. Transcripts on the website follow the same setting. This
+replaces "anyone in the Discord server" for transcripts (2026-10-05) and "everyone in the server can see" the DM Bot channel
+(2026-10-17) with the campaign's choice. Backups are unchanged: anyone in the server may still download a paid campaign's
+backup, so a campaign survives its DM.
+
+**A script for every session (owner, 2026-11-09, #3901).** With `DMBOT_THEATRE_ON` on and story memory in the plan, every
+session, live or imported, gets its script (the theatrical transcript, #3244) by itself. The after-session "make a script?"
+question goes away, and the DM sees one line, "📜 Script made", with a link to it. The recap waits for the script for at most
+10 minutes, then goes on without it and says so. The recap's "did we miss anything important" check and its fact check read the
+script as well as the beat sheet and the cleaned transcript, behind `DMBOT_RECAP_READS_SCRIPT`, scored before and after like
+any recap change. Same rules as the script today: consenting speakers only, what the party knows, DM-only, counted in the
+session's AI spend.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything

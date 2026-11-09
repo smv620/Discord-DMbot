@@ -47,7 +47,8 @@ class TheRule(unittest.TestCase):
                 self.assertEqual(rule([("e1", name)], f"{name} left. Then {first} spoke."), [])
 
     def test_a_creature_kind_a_rules_word_or_table_word_is_not_one(self) -> None:
-        for name in ("Goblin Grik", "Dragon Bruno", "Wizard Shela", "Dwarf Tran", "Monday Hale"):
+        for name in ("Goblin Grik", "Dragon Bruno", "Wizard Shela", "Dwarf Tran", "Monday Hale",
+                     "Naga Shela", "Wraith Tran"):  # fmt: skip
             with self.subTest(name):
                 first = name.split()[0]
                 self.assertEqual(rule([("e1", name)], f"{name} left. Then {first} spoke."), [])

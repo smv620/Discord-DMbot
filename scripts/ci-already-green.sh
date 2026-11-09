@@ -14,9 +14,16 @@
 # cannot resolve is skipped over, never a reason to skip the run. A new commit with new files has no
 # earlier run, so it is never skipped; any failure to ask GitHub means "done=false".
 #
+# A commit that is no longer its feature branch's head (a newer push replaced it) prints "done=true"
+# and "superseded_by=<sha>" and needs no earlier run: the newer run is the one that counts, so the
+# old one must not use the test runners (#3723). Never on development, beta or main (those keep
+# every run, #3703), never for a pull request run, and never when the head cannot be read: then
+# everything runs.
+#
 # Usage: scripts/ci-already-green.sh   (reads GH_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, GITHUB_RUN_ID,
 # and NEED_CORE / NEED_EARS / NEED_WEB / NEED_DOCKER = "false" for a job this push does not need)
 # CI_API_DIR (tests only): a folder of canned answers, runs.json and jobs-<id>.json, used instead of GitHub.
+# CI_REMOTE_HEAD (tests only): the branch's head sha, used instead of asking git; "unreadable" for none.
 set -u
 
 no() {
@@ -53,6 +60,29 @@ tree_of() { # tree_of <sha>: its git tree, or nothing when this clone does not h
 }
 
 [ -n "${GITHUB_SHA:-}" ] || no
+
+# The sha at the head of this feature branch, read from origin; nothing if it cannot be read.
+branch_head() {
+  if [ -n "${CI_REMOTE_HEAD+x}" ]; then
+    echo "$CI_REMOTE_HEAD"
+  else
+    # a stalled network must not stall the reuse step: no answer in 20 s means everything runs
+    timeout 20 git ls-remote origin "refs/heads/${GITHUB_REF#refs/heads/}" 2>/dev/null | head -1 | cut -f1
+  fi
+}
+
+case "${GITHUB_REF:-}" in
+  refs/heads/development | refs/heads/beta | refs/heads/main) ;; # these keep every run (#3703)
+  refs/heads/?*)
+    head=$(branch_head) || head=""
+    # Only a real sha counts; anything else (an empty answer, "unreadable", an error) runs everything.
+    if [[ "$head" =~ ^[0-9a-f]+$ ]] && [ "$head" != "$GITHUB_SHA" ]; then
+      echo "done=true"
+      echo "superseded_by=$head"
+      exit 0
+    fi
+    ;;
+esac
 
 # 1. An earlier green run of this very commit.
 runs=$(api "actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=success&per_page=20") || no

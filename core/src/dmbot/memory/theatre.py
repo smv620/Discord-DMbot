@@ -64,7 +64,12 @@ _EVERYDAY = frozenset(
 # A form of address or title is said with a capital ("Hello, Friend", "Thank you, Father"): it is an
 # everyday word here, so it is not rewritten before its bracket (#3385).
 _EVERYDAY = frozenset(
-    (*_EVERYDAY, *(w for w in not_names.ADDRESS_ALONE if " " not in w and "'" not in w))
+    (
+        *_EVERYDAY,
+        # (the same list the name questions use, #3385; it holds ADDRESS_ALONE's single words. A
+        # capitalised "Major" outside a bracket is never taken for a made-up name by this)
+        *(w for w in not_names.TITLES_ALONE if "'" not in w),
+    )
 )  # (single words only: "good", "young" or "grace" from a phrase would hide a real name)
 
 

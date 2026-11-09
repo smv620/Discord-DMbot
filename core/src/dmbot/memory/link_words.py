@@ -47,6 +47,14 @@ CONNECTION_BACK = {
     "contains": "is inside",
     "disguised_as": "is impersonated by",
 }
+# How two people know each other (#3881), on a `knows`: the words for "met", "aware" and "" (the
+# story doesn't say). Shown only where the caller passes the row's `knows_how`.
+# "Knows" stays the words when the story doesn't say (the ux-critic on #3881: "knows of" already
+# means "only heard of" in plain English, and would claim they never met).
+KNOWS_HOW_WORDS = {"met": "has met", "aware": "has heard of", "": "knows"}
+# The same, read from the other name's card. Two people who met have both met; one who is only
+# heard of is still "known to" the other, which is true and plain.
+KNOWS_HOW_BACK = {"met": "has met", "aware": "is known to", "": "is known to"}
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
 # The old friend and enemy connections are the same thing as a `knows` with a feeling: how a name
@@ -126,6 +134,7 @@ def link_words(
     subject_kind: str = "",
     *,
     feeling: bool = False,
+    knows_how: str | None = None,
 ) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
@@ -135,8 +144,15 @@ def link_words(
 
     `feeling` says the reader is the DM: how a name feels about another is the DM's Reputation, so
     "knows (hostile)" is worded only for a DM-only screen, and everyone else reads plain "knows"
-    (#3610)."""
+    (#3610). `knows_how` (#3881): the row's word on whether they've met, so a `knows` reads "has
+    met", "has heard of" or plain "knows" (the story doesn't say); None where the caller has no row
+    (a menu of kinds), which is plain "knows" too."""
     predicate, detail = for_reader(predicate, detail, feeling=feeling)
+    knows = (
+        KNOWS_HOW_WORDS.get(knows_how, "knows")
+        if predicate == "knows" and knows_how is not None
+        else "knows"
+    )
     if predicate == "located_in":
         return place_words.forward(detail, subject_kind)
     if predicate == FALLBACK_PREDICATE and detail:
@@ -147,11 +163,13 @@ def link_words(
         and predicate == "knows"
         and reputation_words.word_of(detail) in reputation_words.WORDS
     ):
-        return f"knows ({detail})"
+        return f"{knows} ({detail})"
     # A role true of both names (sibling, cousin, spouse) reads the same from either card, so it is
     # shown whatever its stored direction is (#3102). A one-way role is shown only when directional.
     if predicate == KIN and (role := kin.role_of(detail)) and (directional or role in kin.MUTUAL):
         return kin.forward(role)
+    if predicate == "knows":
+        return knows
     return connection_words(predicate)
 
 
@@ -184,10 +202,18 @@ def campaign_back(predicate: str) -> str | None:
 
 
 def back_words(
-    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+    predicate: str,
+    detail: str,
+    directional: bool = False,
+    subject_kind: str = "",
+    *,
+    knows_how: str | None = None,
 ) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
-    niece". None for one that reads the same either way, or has no fixed reading back."""
+    niece". None for one that reads the same either way, or has no fixed reading back.
+    `knows_how` (#3881): two people who met read "has met" from either side."""
+    if predicate == "knows" and knows_how:
+        return KNOWS_HOW_BACK.get(knows_how) or CONNECTION_BACK.get(predicate)
     if predicate == "located_in":
         return place_words.backward(detail, subject_kind)
     if predicate == KIN and directional and kin.directional(detail):
