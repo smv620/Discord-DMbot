@@ -10800,6 +10800,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None = None,
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> int:
         """PlotBot's name pass (#2628): once per session, when its transcript is complete and before
         its recap, a word the cleaner left as heard that PlotBot is sure means a name on the list
@@ -10808,10 +10809,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         happened (a pass that could not run must not hold the recap back); the DM can still fix a
         spelling by hand. `hold`: an import's pass (#2649) puts its report there instead of posting
         it, and the import posts one report for all its sessions. `game_only`: read only the lines
-        the off-topic filter kept as game talk, as the import's name scan does."""
+        the off-topic filter kept as game talk, as the import's name scan does. `recheck`: who may
+        still be read, asked again after the AI call; the server's consent unless given (an
+        import passes `recorded_in`, its own rule for who is recorded in it, #3962)."""
         fixed = 0
         try:
-            fixed = await self._repair_names(gid, cid, session_id, users, agreed, hold, game_only)
+            fixed = await self._repair_names(
+                gid, cid, session_id, users, agreed, hold, game_only, recheck
+            )
         except Exception:
             log.exception("The name pass failed")
         finally:
@@ -10831,6 +10836,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None,
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> int:
         if (
             self.transcripts is None
@@ -10845,6 +10851,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         lookup = await self.lookup.get(gid, cid)
         people: set[str] = set()
         for uid in users:
+            if uid < 0:  # (an imported speaker's stand-in label, "a player without Discord")
+                continue
             name = self.name_of(gid, uid)
             if not name.startswith("<@"):
                 people.add(name_key(name))
@@ -10861,7 +10869,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.transcripts, lookup, ask, gid, cid, session_id,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
-            consenting=lambda: self.consent.consenting(gid),
+            consenting=recheck or (lambda: self.consent.consenting(gid)),
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
@@ -10939,6 +10947,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # each word of them ("Mia Stone" → "Mia", "Stone").
         skip = set(await self.memory.known_keys(gid, cid))
         for uid in users:
+            if uid < 0:  # (an imported speaker's stand-in label, never a name: #3962)
+                continue
             name = self.name_of(gid, uid)
             if not name.startswith("<@"):
                 skip.add(name_key(name))
@@ -12269,12 +12279,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return []
         rows = await self.import_job.store.scan_lines(gid, ready.session_id)
         agreed = await self.consent.recorded_in(gid, ready.campaign_id)
+
+        def recorded() -> Awaitable[Collection[int]]:
+            # (the name pass asks again after its AI call, by the same rule: #3962)
+            return self.consent.recorded_in(gid, ready.campaign_id)
+
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
             await self.repair_names(
                 gid, ready.campaign_id, ready.session_id, (), agreed,
                 self._import_reports.setdefault((gid, ready.campaign_id), []),
-                game_only=True,
+                game_only=True, recheck=recorded,
             )  # (marks it)  # fmt: skip
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
@@ -12286,7 +12301,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the lines are read again when it fixed something.
         held = self._import_reports.setdefault((gid, ready.campaign_id), [])
         if await self.repair_names(
-            gid, ready.campaign_id, ready.session_id, users, agreed, held, game_only=True
+            gid,
+            ready.campaign_id,
+            ready.session_id,
+            users,
+            agreed,
+            held,
+            game_only=True,
+            recheck=recorded,
         ):
             rows = await self.import_job.store.scan_lines(gid, ready.session_id)
             lines = [(uid, text) for uid, text in rows if uid in agreed] or lines
