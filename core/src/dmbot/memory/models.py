@@ -31,12 +31,15 @@ WORKED_OUT_SOURCE = "worked_out"
 # DMbot's own answer to "Who is this?" (#3602, slice 4): the one join it may make without the DM,
 # through `MemoryStore.join_by_ai` only; the DM confirms or undoes it, and `merge` stays DM-only.
 WHO_SOURCE = "who"
+# A person's first name added as their short name by rule (#3880, `short_names.py`): proposed only.
+SHORT_NAME_SOURCE = "short_name"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
     PARTY_SOURCE,
     WORKED_OUT_SOURCE,
     WHO_SOURCE,
+    SHORT_NAME_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals

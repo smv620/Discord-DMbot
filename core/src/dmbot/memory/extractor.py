@@ -205,6 +205,16 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     ]
 
 
+def heard_texts(
+    lines: Sequence[Line], agreed: Collection[int | None], recap_lines: Collection[int] = ()
+) -> list[str]:
+    """What the reader may look at for a short name (#3880): the lines `readable` keeps, from
+    people who still agree, without last time's recap read aloud. The same lines the batches send,
+    so nothing someone said after they stopped recording reaches memory this way either."""
+    left_out = set(recap_lines)
+    return [s.text for s in readable(lines) if s.user_id in agreed and s.number not in left_out]
+
+
 def recap_numbers(split: Mapping[str, Any] | None) -> frozenset[int]:
     """The line numbers a stored split (`recaps.split.Split.to_json()`) labels as last time's recap
     (#3298), or none: no split, one that cannot be read, or one whose recap the comparison could

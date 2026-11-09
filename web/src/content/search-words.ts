@@ -6,4 +6,13 @@ export const searchWords = {
   hint: "Type a few words, like “how much does it cost”.",
   best: "Best match:",
   none: "No page matches that. Try other words.",
+  // Line 2 (#3855): the short answer. These words are the owner's and docs/PLAN.md's ("Search the website"), exactly.
+  ask: "Ask",
+  thinking: "[... thinking ...]",
+  thinkingFor: (n: number): string => `[... thinking ... ${n} s]`,
+  cant: "DMbot can't answer right now. Try again in a little while.",
+  limit: {
+    hour: "Too many requests to process, try again in about an hour.",
+    day: "Too many requests to process, try again tomorrow.",
+  },
 } as const;

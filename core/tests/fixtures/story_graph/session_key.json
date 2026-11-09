@@ -582,6 +582,16 @@
    "must_find": false,
    "line": 0,
    "note": "player characters who play together know each other (#3036); the feeling words above are read from the lines"
+  },
+  {
+   "id": "s034",
+   "a": "Garret Velryn",
+   "relation": "associate",
+   "b": "Dwarven Valley",
+   "tier": "stated",
+   "must_find": false,
+   "line": 204,
+   "note": "the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b)"
   }
  ],
  "events": [

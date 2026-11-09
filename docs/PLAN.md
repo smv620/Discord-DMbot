@@ -1356,6 +1356,32 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**Which channel gets what (owner, 2026-11-09, #3874).** The **DM screen** is for the game while it is being played:
+anything that needs or asks for the DM's attention in the flow of play, such as conditions at the table, game-mechanics
+notices, rules alerts, answers to questions, the sidebar and the clock. The DM should only have to watch the DM screen
+during play. **Everything else goes to the DM Bot channel** (`dmb-dm-bot-<short name>`): campaign setup, pre-game items,
+post-game items, and anything that needs the DM's attention eventually but not now. That includes names, connections and
+claims to check, upload results, after-session reviews and notes, and recap readiness. Because the DM Bot channel is public
+(above), what DMbot posts there is **counts only** ("66 names to check: 30 NPCs, 24 places", "60 connections"), with no
+names, quotes or story words. Every button checks the presser is a DM of the campaign, and the cards that show the words open
+privately. Each upload or session gets **one live message** that DMbot edits as items are answered, ending as "✅ All
+answered" with its buttons removed, never a new message for each batch. **Private messages to the DM jump to the right
+message:** a question's "Open in Discord" and its review buttons open that live message in the DM Bot channel (or, for a
+live-play item, the DM screen). With no DM Bot channel, or no permission to post there, DMbot falls back to the private
+card as before.
+**Uploads and imports apply what DMbot is sure of (owner, 2026-11-09, #3878).** After about ten deploys of accepting every
+suggestion as it was, the owner's rule: when DMbot reads **background lore** or **imports earlier sessions**, it **adds what it
+found by itself** and only asks about what it is unsure of. "Sure" means what the **Add all** buttons would add today: new
+names, other names and spellings, and connections found in the text (family roles and feelings included), each through the
+store's own DM calls, so every rule is checked again (`devtools/accept_all` is the pattern). Still **asked**, never guessed:
+"Which one?", same-person questions, a name that needs to know who plays it, anything with no suggestion, and anything a rule
+refuses. What was added follows the usual rules: secret only when uploaded with spoilers, nothing revealed to players because
+it was added, and nothing anyone confirmed is overwritten. Afterwards the DM gets one notice, in the DM Bot channel (counts
+only) and privately: "Added 62 names and 48 connections from <label>", the few questions left with their buttons, a link to
+the website's **Names** page and one to the **Story Graph**, and **Undo this upload**. That undoes the whole batch, from the
+notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
+one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything

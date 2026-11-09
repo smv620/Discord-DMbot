@@ -810,6 +810,11 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
     )
+    # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
+    # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
+    short = getattr(bot, "add_short_names", None)
+    if short is not None:
+        await short(guild, campaign.id, [upload.text])
     await save_place_spellings(
         memory,
         campaign,

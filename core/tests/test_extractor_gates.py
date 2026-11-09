@@ -216,6 +216,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
             plan_allows=AsyncMock(return_value=allowed),
             _recap_lines=AsyncMock(return_value=frozenset()),  # (no split yet: every line is play)
+            add_short_names=AsyncMock(),  # (#3880: tested in test_short_names)
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7}))),
             name_of=lambda gid, uid: f"<@{uid}>",
             post=AsyncMock(),

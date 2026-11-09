@@ -59,6 +59,7 @@ from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
+from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
@@ -140,6 +141,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     ROLES,
+    SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
     WHO_SOURCE,
@@ -3213,6 +3215,62 @@ class MemoryStore:
                 ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
             return Written(_alias(row), w.batch)
+
+    async def add_short_names(
+        self, guild_id: int, campaign_id: str, texts: Sequence[str]
+    ) -> Written[list[Alias]]:
+        """A person's first name as their short name, by rule (#3880, `short_names.py`): "Tran"
+        for Tran Vosk when the text uses "Tran" alone and nothing else in the campaign is called
+        that. Proposed other names, never a merge, all in one batch so one Undo takes them back.
+
+        The names are read and the rule run outside the write, so a long lore text never holds
+        the campaign's write lock (every DM button waits on it); the write opens only when there
+        is something to add, and checks each word again inside it, so two runs at once never add
+        the same name twice. A word taken from the public main name is never secret."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            entities = await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            live = {str(e["id"]) for e in entities}
+            aliases = [a for a in await scope.select(ALIASES) if str(a["entity_id"]) in live]
+            # A short name the DM undid stays undone (while the change log keeps it): read back
+            # as a name the entry already has, so the rule never adds it again.
+            cur = await scope.conn.execute(
+                "SELECT c.after->>'entity_id' AS entity_id, c.after->>'text' AS text"
+                " FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+                " AND c.table_name = 'memory_aliases' AND c.op = 'insert' AND c.source = %s"
+                " AND EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)",
+                (*scope.ids, SHORT_NAME_SOURCE),
+            )
+            undone = [(str(r["entity_id"]), str(r["text"])) for r in await cur.fetchall()]
+        people = [(str(e["id"]), str(e["name"])) for e in entities if e["type"] == "character"]
+        # Every name and other name of a live entry, turned-down other names too: one the DM
+        # rejected for this entry is never added again, and a word another entry is called is
+        # never taken. An entry the DM rejected outright ("Not a name") blocks nothing.
+        names = [(str(e["id"]), str(e["name"])) for e in entities]
+        names += [(str(a["entity_id"]), str(a["text"])) for a in aliases]
+        found = short_names_mod.short_names(people, [*names, *undone], texts)
+        if not found:
+            return Written([], None)
+        async with self._write(guild_id, campaign_id, SHORT_NAME_SOURCE) as w:
+            keys = sorted({lookup_key(word) for _, word in found})
+            rows = await w.select(ALIASES, " AND key = ANY(%s)", [keys])
+            owners = sorted({str(a["entity_id"]) for a in rows})
+            alive = {
+                str(e["id"])
+                for e in await w.select(
+                    ENTITIES, " AND id = ANY(%s) AND status IN ('proposed', 'confirmed')", [owners]
+                )
+            }  # (a name of an entry the DM rejected outright blocks nothing, as in the read)
+            taken = {str(a["key"]) for a in rows if str(a["entity_id"]) in alive}
+            added = []
+            for entity_id, word in found:
+                if lookup_key(word) in taken or await w.get(ENTITIES, entity_id) is None:
+                    continue  # (named since the read, or gone)
+                row = await w.insert(
+                    ALIASES, _new_alias(w, entity_id, word, "short", PROPOSED, False, None)
+                )
+                added.append(_alias(row))
+            return Written(added, w.batch if added else None)
 
     async def update_alias(
         self,
