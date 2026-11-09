@@ -840,6 +840,14 @@ async def read_background(
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
+    # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
+    # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
+    link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
+    if getattr(getattr(bot, "settings", None), "story_npc_guess_on", False):
+        link_guesses = await _npc_guesses(
+            memory, campaign, found, read.links, upload.text, player_keys, ai,
+            until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        )  # fmt: skip
     queued = await queue_links(
         bot,
         memory,
@@ -866,6 +874,7 @@ async def read_background(
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
+        npc_guesses=link_guesses,
     )
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
@@ -1103,6 +1112,7 @@ async def store(
     fold_secret: bool = False,
     source: str = "",
     traits: Mapping[str, Sequence[Trait]] | None = None,
+    made: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -1167,6 +1177,8 @@ async def store(
     for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
+            if made is not None:  # (each new name's key to its entry, for the NPC guesses)
+                made[name_key(item.name)] = entity_id
             if held is not None and text:
                 held.put(
                     campaign.guild_id,
@@ -1185,6 +1197,65 @@ def inferred_line(reason: str) -> str:
     if not reason:
         return ""
     return f"🤔 **DMbot's guess:** {_md(reason)} (your lore doesn't say so)\n"
+
+
+async def _npc_guesses(
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: Sequence[bg.Found],
+    links: Sequence[bg.Connection],
+    text: str,
+    players: Collection[str],
+    ai: Any,
+    *,
+    until: float | None = None,
+) -> dict[tuple[str, str, str], dict[str, float]]:
+    """DMbot's guess of which of the read's own NPCs and groups know each name and connection
+    (`lore_knowledge.guess_npcs`, #2959 slice 3), after the names are stored. A name's guesses wait
+    for the DM's yes (`MemoryStore.add_npc_guesses`); the connections' are returned, by their ends'
+    keys and kind, to ride on their waiting rows. Never a player character, never someone outside
+    the read, and never a reason to stop the read: a failure is logged by its type."""
+    people = [f for f in found if f.kind in ("npc", "faction") and name_key(f.name) not in players]
+    if not people or ai is None:
+        return {}
+    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
+        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
+    ]
+    try:
+        got = await lore_knowledge.guess_npcs(ai, text, lines, [p.name for p in people], until)
+        if not got:
+            return {}
+        ids = {
+            name_key(e.name): e.id
+            for e in await memory.entities(
+                campaign.guild_id, campaign.id, statuses=("proposed", "confirmed")
+            )
+        }
+        knower = [ids.get(name_key(p.name)) for p in people]
+        waiting: list[tuple[str, str, float]] = []
+        out: dict[tuple[str, str, str], dict[str, float]] = {}
+        for i, who in got.items():
+            mine: dict[str, float] = {}
+            for j, sure in who.items():
+                k = knower[j] if j < len(knower) else None
+                if k is not None:
+                    mine[k] = sure
+            if not mine:
+                continue
+            if i < len(found):
+                entry = ids.get(name_key(found[i].name))
+                if entry is not None:
+                    waiting.extend((entry, k, c) for k, c in mine.items() if k != entry)
+            elif i - len(found) < len(links):
+                c = links[i - len(found)]
+                out[(name_key(c.a), c.how, name_key(c.b))] = mine
+        if waiting:
+            await memory.add_npc_guesses(campaign.guild_id, campaign.id, waiting)
+        log.info("NPC guesses: %d for names, %d for connections", len(waiting), len(out))
+        return out
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("NPC guesses stopped (%s)", type(exc).__name__)
+        return {}
 
 
 def _traits_of(
@@ -1562,6 +1633,7 @@ async def queue_links(
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
+    npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -1774,6 +1846,10 @@ async def queue_links(
                 known_by,
                 world,
                 inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
+                # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
+                npc_guesses=dict(
+                    (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})
+                ),
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
@@ -2464,6 +2540,7 @@ class ConnectionOffer(_Menu):
                     log.warning(
                         "A kept connection's source could not be stored (%s)", type(exc).__name__
                     )
+            await keep.keep_guesses(memory, campaign.guild_id, campaign.id, c, made, now)
             # (only a connection made just now: an older twin's rows are the DM's, not a guess's)
             if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
                 await keep.mark_guess(
