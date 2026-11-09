@@ -42,7 +42,9 @@ class Score:
     right_spoiler: int = 0
     leaked: int = 0  # a spoiler called world knowledge: the players would be told it
     held_back: int = 0  # world knowledge called a spoiler: hidden that needn't be
-    unsorted: int = 0  # a part the AI could not sort (all spoilers, by the rule)
+    # statements of a document the AI could not sort: left out of the counts above, so a failed
+    # call never reads as a safe answer (the bot would keep them all as spoilers)
+    unsorted: int = 0
 
     @property
     def total(self) -> int:
@@ -61,21 +63,34 @@ class Score:
         return (
             f"{name}: agrees on {agree} of {self.total} ({rate}); spoilers called world "
             f"knowledge {self.leaked}; world knowledge called a spoiler {self.held_back}"
-            + (f"; parts not sorted {self.unsorted}" if self.unsorted else "")
+            + (f"; NOT SORTED (left out) {self.unsorted}" if self.unsorted else "")
         )
 
 
 def lines_of(doc: Mapping[str, Any]) -> list[str]:
-    """A document's statements as the sort is given them."""
-    return [
-        lore_knowledge.line(str(s["kind"]), str(s["text"]), str(s.get("quote", "")))
-        for s in doc["statements"]
-    ]
+    """A document's statements as the lore read gives them to the sort (the same helpers)."""
+    out = []
+    for s in doc["statements"]:
+        quote = str(s.get("quote", ""))
+        if "name" in s:
+            out.append(
+                lore_knowledge.name_line(
+                    str(s["name"]), s.get("also", ()), s.get("secret", ()), quote
+                )
+            )
+        else:
+            out.append(
+                lore_knowledge.connection_line(str(s["a"]), str(s["how"]), str(s["b"]), quote)
+            )
+    return out
 
 
 def score(doc: Mapping[str, Any], world: set[int], answered: bool) -> Score:
-    """The AI's answer (`world`: the indexes it called world knowledge) against the key."""
-    got = Score(unsorted=0 if answered else 1)
+    """The AI's answer (`world`: the indexes it called world knowledge) against the key. A
+    document the AI could not sort is counted only as not sorted."""
+    if not answered:
+        return Score(unsorted=len(doc["statements"]))
+    got = Score()
     for i, s in enumerate(doc["statements"]):
         said, key = i in world, bool(s["world"])
         if said and key:
@@ -102,7 +117,7 @@ async def run(key: Mapping[str, Any], ai: lore_knowledge.Client) -> list[str]:
     return out
 
 
-def _client(environ: Mapping[str, str]) -> tuple[Any, Any]:
+def _client(environ: Mapping[str, str]) -> tuple[Any, Any, str]:
     """The tier the bot's lore read sorts with, as the bot's own settings name it."""
     from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
     from dmbot.config import parse_ai_models
@@ -110,17 +125,26 @@ def _client(environ: Mapping[str, str]) -> tuple[Any, Any]:
     models, _ = parse_ai_models(lambda name: environ.get(name, ""))
     client = AnthropicClient(environ.get("ANTHROPIC_API_KEY", ""), models)
     feature = Feature.NAMES_BACKGROUND
-    return client.tier(FEATURE_TIERS[feature], feature), client.close
+    tier = FEATURE_TIERS[feature]
+    return client.tier(tier, feature), client.close, str(client.model_for(tier))
 
 
 async def _main(key: Mapping[str, Any]) -> int:
-    ai, close = _client(os.environ)
+    from dmbot.config import ConfigError
+
     try:
-        for line in await run(key, ai):
-            print(line)
+        ai, close, model = _client(os.environ)
+    except ConfigError as exc:
+        print(f"smart_guess_score: {exc}", file=sys.stderr)
+        return 2
+    print(f"model: {model}")  # (so results compare across model changes)
+    try:
+        lines = await run(key, ai)
     finally:
         await close()
-    return 0
+    for line in lines:
+        print(line)
+    return 1 if "NOT SORTED" in lines[-1] else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

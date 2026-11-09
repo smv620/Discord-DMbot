@@ -1,41 +1,40 @@
 {
-  "about": "The smart-guess measure (#2959 item 4 of 2026-10-29): three short invented lore documents, each split into the statements a lore read would give, with a hand-written answer, world (any ordinary inhabitant would know it) or spoiler (the player characters would have to discover it). Every name and place here is invented for this fixture.",
+  "about": "The smart-guess measure (#2959, the owner's item 4 of 2026-10-29): three short invented lore documents, each split into the statements a lore read gives (a name with its other names and hidden identity, or a connection with its stored kind), with a hand-written answer: world (any ordinary inhabitant would know it) or spoiler (the player characters would have to discover it). Every name and place here is invented for this fixture.",
   "documents": [
     {
-      "id": "saltmarsh-harbour",
+      "id": "harrowgate-harbour",
       "statements": [
-        {"kind": "name", "text": "Harrowgate", "quote": "the harbour town of Harrowgate", "world": true},
-        {"kind": "connection", "text": "Mayor Ilsa Venn — leads — Harrowgate", "quote": "Mayor Ilsa Venn has governed Harrowgate for twenty years", "world": true},
-        {"kind": "connection", "text": "The Gull and Lantern — in — Harrowgate", "quote": "The Gull and Lantern, the busiest tavern on the Harrowgate docks", "world": true},
-        {"kind": "connection", "text": "Mayor Ilsa Venn — works for — the Black Tide smugglers", "quote": "in secret the mayor takes her orders from the Black Tide smugglers", "world": false},
-        {"kind": "name", "text": "the Black Tide smugglers", "quote": "the Black Tide smugglers", "world": false},
-        {"kind": "connection", "text": "Old Corin — knows (wary) — Mayor Ilsa Venn", "quote": "Old Corin the ferryman distrusts the mayor", "world": true},
-        {"kind": "name", "text": "the sea cave beneath the lighthouse", "quote": "a sea cave beneath the lighthouse where the contraband is kept", "world": false},
-        {"kind": "connection", "text": "Harrowgate Watch — serves — Mayor Ilsa Venn", "quote": "The Harrowgate Watch answers to the mayor", "world": true}
+        {"name": "Harrowgate", "quote": "the harbour town of Harrowgate", "world": true},
+        {"a": "Mayor Ilsa Venn", "how": "leads", "b": "Harrowgate", "quote": "Mayor Ilsa Venn has governed Harrowgate for twenty years", "world": true},
+        {"a": "The Gull and Lantern", "how": "located_in", "b": "Harrowgate", "quote": "The Gull and Lantern, the busiest tavern on the Harrowgate docks", "world": true},
+        {"a": "Mayor Ilsa Venn", "how": "serves", "b": "the Black Tide smugglers", "quote": "in secret the mayor takes her orders from the Black Tide smugglers", "world": false},
+        {"name": "the Black Tide smugglers", "quote": "the Black Tide smugglers", "world": false},
+        {"a": "Old Corin", "how": "knows", "b": "Mayor Ilsa Venn", "quote": "Old Corin the ferryman openly mocks the mayor at every market day", "world": true},
+        {"name": "the sea cave beneath the lighthouse", "quote": "a sea cave beneath the lighthouse where the contraband is kept", "world": false},
+        {"a": "Harrowgate Watch", "how": "serves", "b": "Mayor Ilsa Venn", "quote": "The Harrowgate Watch answers to the mayor", "world": true}
       ]
     },
     {
-      "id": "the-hollow-abbey",
+      "id": "the-still-bell-abbey",
       "statements": [
-        {"kind": "name", "text": "the Abbey of the Still Bell", "quote": "the Abbey of the Still Bell, known across the valley", "world": true},
-        {"kind": "connection", "text": "Abbess Morwen — leads — the Abbey of the Still Bell", "quote": "Abbess Morwen leads the abbey", "world": true},
-        {"kind": "name", "text": "Brother Tamsin (also called the Pale Hand)", "quote": "Brother Tamsin, whom no one suspects is the Pale Hand", "world": false},
-        {"kind": "connection", "text": "Brother Tamsin — member of — the Abbey of the Still Bell", "quote": "Brother Tamsin keeps the abbey's library", "world": true},
-        {"kind": "connection", "text": "Brother Tamsin — is disguised as — the Pale Hand", "quote": "whom no one suspects is the Pale Hand", "world": false},
-        {"kind": "name", "text": "the Still Bell's yearly feast", "quote": "pilgrims come every spring for the Still Bell's feast", "world": true},
-        {"kind": "connection", "text": "Abbess Morwen — rival of — Brother Tamsin", "quote": "the abbess quietly plans to expel Brother Tamsin", "world": false}
+        {"name": "the Abbey of the Still Bell", "quote": "the Abbey of the Still Bell, known across the valley", "world": true},
+        {"a": "Abbess Morwen", "how": "leads", "b": "the Abbey of the Still Bell", "quote": "Abbess Morwen leads the abbey", "world": true},
+        {"name": "Brother Tamsin", "secret": ["the Pale Hand"], "quote": "Brother Tamsin, whom no one suspects is the Pale Hand", "world": false},
+        {"a": "Brother Tamsin", "how": "member_of", "b": "the Abbey of the Still Bell", "quote": "Brother Tamsin keeps the abbey's library", "world": true},
+        {"name": "the Still Bell's yearly feast", "quote": "pilgrims come every spring for the Still Bell's feast", "world": true},
+        {"a": "Abbess Morwen", "how": "rival_of", "b": "Brother Tamsin", "quote": "the abbess quietly plans to expel Brother Tamsin", "world": false}
       ]
     },
     {
       "id": "the-iron-road",
       "statements": [
-        {"kind": "name", "text": "the Iron Road", "quote": "the Iron Road, the trade road between the two cities", "world": true},
-        {"kind": "name", "text": "the Ostler Company", "quote": "the Ostler Company runs every coach on the Iron Road", "world": true},
-        {"kind": "connection", "text": "the Ostler Company — leads — the Iron Road", "quote": "the Ostler Company runs every coach on the Iron Road", "world": true},
-        {"kind": "connection", "text": "Dara Holt — works for — the Ostler Company", "quote": "Dara Holt drives the night coach for the Ostler Company", "world": true},
-        {"kind": "connection", "text": "Dara Holt — works for — the Grey Riders", "quote": "Dara is paid by the Grey Riders to tell them which coaches carry gold", "world": false},
-        {"kind": "name", "text": "the Grey Riders", "quote": "the bandits everyone calls the Grey Riders", "world": true},
-        {"kind": "connection", "text": "the Grey Riders — in — the old toll fort", "quote": "the Grey Riders hide in the old toll fort", "world": false}
+        {"name": "the Iron Road", "quote": "the Iron Road, the trade road between the two cities", "world": true},
+        {"name": "the Ostler Company", "quote": "the Ostler Company runs every coach on the Iron Road", "world": true},
+        {"a": "the Ostler Company", "how": "leads", "b": "the Iron Road", "quote": "the Ostler Company runs every coach on the Iron Road", "world": true},
+        {"a": "Dara Holt", "how": "serves", "b": "the Ostler Company", "quote": "Dara Holt drives the night coach for the Ostler Company", "world": true},
+        {"a": "Dara Holt", "how": "serves", "b": "the Grey Riders", "quote": "Dara is paid by the Grey Riders to tell them which coaches carry gold", "world": false},
+        {"name": "the Grey Riders", "quote": "the bandits everyone calls the Grey Riders", "world": true},
+        {"a": "the Grey Riders", "how": "located_in", "b": "the old toll fort", "quote": "the Grey Riders hide in the old toll fort", "world": false}
       ]
     }
   ]
