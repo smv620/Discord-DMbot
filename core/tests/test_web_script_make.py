@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
-from dmbot import entitlements
+from dmbot import entitlements, plan_rules
 from dmbot.web import script_make
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW
@@ -70,14 +70,14 @@ class ScriptMake(Script):
         self,
     ) -> None:
         # The story rule is its own door: patched to deny, the rest of the plan being allowed.
-        real = script_make.plan_rules.allowed
+        real = plan_rules.allowed
 
         def deny_story(rule: Any, access: Any) -> bool:
-            return bool(rule != script_make.plan_rules.RULE_OF["story"] and real(rule, access))
+            return bool(rule != plan_rules.RULE_OF["story"] and real(rule, access))
 
         entitlements.configure_free_users({ALICE.id})
         self.addCleanup(entitlements.configure_free_users, ())
-        with patch.object(script_make.plan_rules, "allowed", deny_story):
+        with patch.object(plan_rules, "allowed", deny_story):
             got = await self.offer(enforce_plans=True)
             self.assertEqual((got["allowed"], got["why"]), (False, "plan"))
             self.assertEqual(await self.refused(self.press, enforce_plans=True), "script_plan")
