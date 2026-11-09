@@ -424,6 +424,22 @@ class Confirming(WithImports):
             self.assertEqual(await cur.fetchall(), [])
         self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
         self.assertIn(MIRA, await consent.recorded_in(THURSDAY.id, self.one.id))  # others stay
+        await consent.grant(THURSDAY.id, TOMAS)  # saying yes again lifts the hold
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+
+    async def test_a_stop_that_arrives_while_the_read_runs_still_wins(self) -> None:
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        real = consent.consenting
+
+        async def stop_during(guild_id: int) -> frozenset[int]:
+            consent.stop_now(guild_id, TOMAS)
+            consent._held_back[guild_id].discard(TOMAS)  # (its revoke finished meanwhile)
+            return await real(guild_id)
+
+        consent.consenting = stop_during  # type: ignore[method-assign]
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
 
 
 class TheBackup(WithImports):
