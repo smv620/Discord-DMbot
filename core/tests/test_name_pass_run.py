@@ -284,7 +284,10 @@ class ThePass(NamesTest):
         from dmbot.transcript.import_job import ImportStore, Ready
 
         self.bot.import_job = SimpleNamespace(store=ImportStore(self.db))  # type: ignore[assignment]
-        self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={PLAYER}))  # type: ignore[assignment]
+        self.bot.consent = SimpleNamespace(  # type: ignore[assignment]
+            consenting=AsyncMock(return_value={PLAYER}),
+            recorded_in=AsyncMock(return_value={PLAYER}),
+        )
         self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
         self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
         ready = Ready(self.campaign.id, self.session, START, False, "imp")

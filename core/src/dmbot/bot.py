@@ -12255,16 +12255,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return await DMBot._scan_import_lines(self, gid, ready)
 
     async def _scan_import_lines(self, gid: int, ready: Ready) -> list[str]:
-        """The name scan of one imported session: the lines of people who still agree (asked after
+        """The name scan of one imported session: the lines of people recorded in it (asked after
         the lines are read, since a person can stop at any moment) and nobody else's. Returns the
-        names proposed."""
+        names proposed. Recorded is `recorded_in`, as the import's claim reader reads it (#3305):
+        the people who agree, plus the speakers the uploader confirmed for this campaign (a speaker
+        without Discord has a negative number), minus anyone with a "no" on record. `consenting`
+        alone skipped every imported speaker, so a session with none in Discord was never scanned,
+        and the names it said were never shown (#3962)."""
         assert self.import_job is not None
         campaign = await self.campaigns.get(gid, ready.campaign_id)
         if self.memory is None or campaign is None:
             log.info("Import: no name scan (names are off, or the campaign is gone)")
             return []
         rows = await self.import_job.store.scan_lines(gid, ready.session_id)
-        agreed = await self.consent.consenting(gid)
+        agreed = await self.consent.recorded_in(gid, ready.campaign_id)
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
             await self.repair_names(
