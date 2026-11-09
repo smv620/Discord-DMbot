@@ -220,6 +220,7 @@ from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
 from dmbot.dm_screen.settings import (
+    AskBeforeAddingButton,
     BackToSettingsButton,
     FeaturesButton,
     HomebrewButton,
@@ -1679,6 +1680,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             BackToSettingsButton,
             RuleLookupButton,
             RulesCardsButton,
+            AskBeforeAddingButton,
             HouseFileButton,
             SharedRulesButton,
             HomebrewButton,
