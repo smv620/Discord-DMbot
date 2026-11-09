@@ -85,6 +85,7 @@ from dmbot.web import (
     theatre_script,
     timeline,
     tokens,
+    upload_notice,
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
@@ -3435,6 +3436,17 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    # What one upload or import added, for the Lore and Import pages' notice (#3879). DMs only.
+    @app.get("/me/campaigns/{ref}/upload-notice")
+    async def me_upload_notice(ref: str, kind: str, id: str, signed: Signed) -> dict[str, Any]:
+        """The notice for one upload (`kind` lore or import, and its `id`): counts and times."""
+        session, _token = signed
+        try:
+            return await upload_notice.read(db, session, ref, kind, id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     # Make a session's script from the website (#3899): the offer, one press, the wait. DMs only.
     @app.get("/me/campaigns/{ref}/transcripts/{number}/script-offer")
