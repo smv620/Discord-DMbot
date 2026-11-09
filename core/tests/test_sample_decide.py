@@ -294,14 +294,26 @@ class TheOwnMatches(unittest.IsolatedAsyncioTestCase):
     async def test_dmbot_s_own_matches_are_scored_against_the_key(self) -> None:
         joins = [
             SimpleNamespace(spelling="Tran", keep_name="Tran Vosk"),  # (the key agrees)
-            SimpleNamespace(spelling="unnamed - guard at the gate", keep_name="Bruno Hale"),
+            SimpleNamespace(spelling="Shela Marr", keep_name="Bruno Hale"),  # (two people)
             SimpleNamespace(spelling="Someone", keep_name="Bruno Hale"),  # (not in the key)
         ]
         memory = SimpleNamespace(waiting_joins=AsyncMock(return_value=joins))
-        (line,) = await d.own_matches(memory, j.Key(KEY), 1, "c1")
+        with patch.object(accept_all, "check_campaign", AsyncMock()) as check:
+            line = await d.own_matches("db", memory, j.Key(KEY), 1, "c1")
+        check.assert_awaited_once_with("db", 1, "c1")
         self.assertEqual(
             line, "DMbot's own matches: 3 (the key agrees with 1, keeps apart 1, doesn't hold 1)"
         )
+
+    async def test_another_campaign_is_refused_before_anything_is_read(self) -> None:
+        memory = SimpleNamespace(waiting_joins=AsyncMock())
+        wrong = AsyncMock(side_effect=accept_all.WrongCampaign("not a sample campaign"))
+        with (
+            patch.object(accept_all, "check_campaign", wrong),
+            self.assertRaises(accept_all.WrongCampaign),
+        ):
+            await d.own_matches("db", memory, j.Key(KEY), 1, "c1")
+        memory.waiting_joins.assert_not_awaited()
 
 
 class TheSteps(unittest.IsolatedAsyncioTestCase):

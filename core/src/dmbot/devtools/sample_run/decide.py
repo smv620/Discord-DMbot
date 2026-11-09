@@ -401,16 +401,20 @@ async def run(
     return asker.run
 
 
-async def own_matches(memory: Any, key: Key, guild: int, campaign: str) -> list[str]:
-    """DMbot's own matches (#3602: a waiting name it joined to an entry by itself, with
-    `DMBOT_STORY_WHO_APPLY` on), scored against the key: the measure Supervisor set for switching
-    them on. Read before the AI's decisions, so they are the readers' alone. Counts only."""
+async def own_matches(db: Any, memory: Any, key: Key, guild: int, campaign: str) -> str:
+    """DMbot's own matches (#3602: a waiting name the import's who step joined to an entry by
+    itself, with `DMBOT_STORY_WHO_APPLY` on), scored against the key: the measure Supervisor set
+    for switching it on. Read after the session import and before its sure step, so they are the
+    who step's alone. Only on a sample campaign (`check_campaign`). Counts only."""
+    from dmbot.devtools.accept_all import check_campaign
+
+    await check_campaign(db, guild, campaign)  # (raises WrongCampaign: no override)
     joins = await memory.waiting_joins(guild, campaign)
     said = Counter(key.same_says(j.spelling, j.keep_name) for j in joins)
-    return [
+    return (
         f"DMbot's own matches: {len(joins)} (the key agrees with {said[YES]},"
         f" keeps apart {said[NO]}, doesn't hold {said[None]})"
-    ]
+    )
 
 
 def fixed(says: str | None) -> Callable[[dict[str, Any]], str | None]:
