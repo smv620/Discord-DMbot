@@ -1907,7 +1907,7 @@ class CampaignStore:
             # The "Ask me before adding" choice (#3878); a backup from before it says nothing: off.
             await conn.execute(
                 "UPDATE campaigns SET ask_before_adding = %s WHERE guild_id = %s AND id = %s",
-                (bool(info.get("ask_before_adding", False)), guild_id, campaign_id),
+                (info["ask_before_adding"], guild_id, campaign_id),
             )
             # A restore keeps the stamp each row was made with, NULL included, and never stamps a
             # row with the build that loaded it (#3739, `dmbot.lineage`).
@@ -2516,6 +2516,11 @@ def _validate_backup(
     if not isinstance(table_chat, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the upload notices existed have "Ask me before adding" off.
+    ask_before_adding = campaign.get("ask_before_adding", False)
+    if not isinstance(ask_before_adding, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
     if invite is not None:
@@ -2552,5 +2557,6 @@ def _validate_backup(
         **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
+        "ask_before_adding": ask_before_adding,
     }
     return info, {name: list(rows) for name, rows in sections.items()}
