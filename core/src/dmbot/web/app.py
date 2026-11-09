@@ -37,6 +37,8 @@ from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
+from dmbot.site_ask import answer as answer_words
+from dmbot.site_ask.service import Limited, SiteAsk
 from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
@@ -219,6 +221,7 @@ def create_app(
     smart_names: names_smart.SmartNames | None = None,
     said_as_ai: TierClient | None = None,
     smart_limit: RateLimit | None = None,
+    site_ask: SiteAsk | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -4314,6 +4317,32 @@ def create_app(
         current = await user_of_dmbot_id(db, uid)
         await mail.unsubscribe(db, current or user_id, now=int(clock()))
         return {"ok": True}
+
+    @app.post("/site/ask")
+    async def site_ask_route(request: Request) -> JSONResponse:
+        """The search bar's short answer (#3856): `{q}` in, `{answer, link}` out. No sign-in. Off
+        (404) unless the switch and both Cloudflare settings are set. Over a limit: 429 with
+        `{"limit": "hour" | "day"}` so the page picks its words. Neither the question nor the
+        answer nor the address is logged."""
+        if site_ask is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > 2048:
+                raise HTTPException(status_code=413, detail="too_long")
+        try:
+            raw = json.loads(body)
+        except (ValueError, RecursionError):
+            raw = None
+        question = answer_words.read_question(raw.get("q") if isinstance(raw, dict) else None)
+        if question is None:
+            raise HTTPException(status_code=400, detail="bad_question")
+        try:
+            reply = await site_ask.ask(client_address(request), question)
+        except Limited as limited:
+            return JSONResponse({"limit": limited.limit}, status_code=429)
+        return JSONResponse({"answer": reply.answer, "link": reply.link})
 
     @app.post("/feedback")
     async def send_feedback(request: Request) -> dict[str, str]:
