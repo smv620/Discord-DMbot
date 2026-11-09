@@ -128,6 +128,8 @@ services:
       # The bot's switch for "🎤 Say it" (#2316), so the route can say it is off. The model's
       # folder (SAID_AS_MODEL) stays with the bot.
       SAID_AS_VOICE: ${SAID_AS_VOICE:-0}
+      # The bot's switch for scripts (#3244), so the route can say "Make the script" is off (#3899).
+      DMBOT_THEATRE_ON: ${DMBOT_THEATRE_ON:-0}
       # The website search bar's short answer (#3856): off unless DMBOT_SITE_ASK=1 and both
       # Cloudflare settings are set. The token is a secret, read here and nowhere else.
       DMBOT_SITE_ASK: ${DMBOT_SITE_ASK:-0}
