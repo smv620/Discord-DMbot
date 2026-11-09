@@ -207,6 +207,8 @@ async def show_one(
 # the website's line panel uses for the same line.
 WHY_LINE = 'Why: your lore "{label}" says \u201c{quote}\u201d'
 WHY_NO_QUOTE = 'Read from your lore "{label}". DMbot didn\'t keep the words.'
+# A connection DMbot inferred from the lore and the DM kept (#2959 item 5): never the DM's own word.
+WHY_INFERRED = 'Why: DMbot\'s guess from your lore "{label}": {reason}'
 
 
 async def why_line(found: Found) -> str:
@@ -226,7 +228,9 @@ async def why_line(found: Found) -> str:
         return ""
     if got is None:
         return ""
-    label, quote = _md(got[0]), _md(got[1])
+    label, quote, inferred = _md(got[0]), _md(got[1]), _md(got[2])
+    if inferred:  # (DMbot's inference, never the DM's own words: #2959 item 5)
+        return WHY_INFERRED.format(label=label, reason=inferred) + "\n"
     return (
         WHY_LINE.format(label=label, quote=quote) if quote else WHY_NO_QUOTE.format(label=label)
     ) + "\n"

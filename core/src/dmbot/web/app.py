@@ -73,6 +73,7 @@ from dmbot.web import (
     report,
     restores,
     rule_sharing,
+    script_make,
     see_as,
     session_notes,
     sessions,
@@ -879,6 +880,12 @@ def create_app(
 
     recap_refusals = {
         "not_found": (404, "not_found"),
+        "script_plan": (
+            409,
+            "plan",
+        ),  # Make the script: the owner's plan has no story memory (#3899)
+        "script_off": (409, "off"),  # Make the script: scripts are off on this server (#3899)
+        "script_already": (409, "already"),  # Make the script: the session has one (#3899)
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
@@ -3428,6 +3435,56 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    # Make a session's script from the website (#3899): the offer, one press, the wait. DMs only.
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/script-offer")
+    async def me_script_offer(ref: str, number: int, signed: Signed) -> dict[str, Any]:
+        """Whether the session's script can be made now, and what it would cost."""
+        session, _token = signed
+        try:
+            return await script_make.offer(
+                db,
+                session,
+                ref,
+                number,
+                theatre_on=settings.theatre_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/script")
+    async def me_script_make(ref: str, number: int, signed: Signed) -> dict[str, str]:
+        """Queue the script of a session for the bot; answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await script_make.queue(
+                db,
+                session,
+                ref,
+                number,
+                theatre_on=settings.theatre_on,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"id": made}
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/script/{make}")
+    async def me_script_make_read(
+        ref: str, number: int, make: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where one press stands (any DM of the campaign): state, error word and progress."""
+        session, _token = signed
+        try:
+            return await script_make.read(db, session, ref, make)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     # A campaign's house rules, for anyone in the server (#1521): the table's rules, which every
     # member may read in Discord; no plan rule, as the bot has none for them.
