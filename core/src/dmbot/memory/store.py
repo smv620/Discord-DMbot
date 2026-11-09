@@ -6731,40 +6731,19 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
         await w.update_rows(ENTITIES, changed)
 
 
-def kind_covers(onto: Ontology, general: str, specific: str) -> bool:
-    """Whether a connection of kind `specific` says at least what `general` does (#3975): the same
-    kind, one of its narrower kinds (by the ontology's `parent`), or anything when `general` is
-    the catch-all, which a reader uses for a connection it can't name more exactly. Pure."""
-    if general in (specific, FALLBACK_PREDICATE):
-        return True
-    seen: set[str] = set()
-    current: str | None = specific
-    while current is not None and current not in seen:
-        seen.add(current)
-        term = onto.predicates.get(current)
-        current = term.parent if term is not None else None
-        if current == general:
-            return True
-    return False
-
-
-async def held_back_match(
-    w: Changes, onto: Ontology, kind: str, subject_id: str, object_id: str, symmetric: bool
-) -> dict[str, Any] | None:
-    """The connection the story holds back (#2404) that a session's claim states (#3975): live,
-    confirmed, between the same two ends (either way round for a two-way kind), of the claim's
-    kind or a narrower one (`kind_covers`), a catch-all label or not. The oldest, or None."""
+async def held_back_between(w: Changes, a: str, b: str) -> bool:
+    """Whether the story holds back (#2404) a live, confirmed connection between these two entries,
+    either way round (#3975). A session claim the reader could only file under the catch-all is
+    then written held back too: it may be that same connection in other words, and a second, shown
+    row would show it whatever its ends. DMbot never guesses which held-back one it means (a
+    "brother" claim is not the "father" row); the DM shows it with 👁️ Reveal."""
     rows = await w.select(
         RELATIONS,
         " AND status = %s AND unrevealed AND to_session_at IS NULL"
         " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))",
-        [CONFIRMED, subject_id, object_id, object_id, subject_id],
+        [CONFIRMED, a, b, b, a],
     )
-    same = [
-        r for r in rows
-        if (symmetric or r["subject_id"] == subject_id) and kind_covers(onto, kind, r["predicate"])
-    ]  # fmt: skip
-    return min(same, key=lambda r: (r["created_at"], r["id"])) if same else None
+    return bool(rows)
 
 
 async def reveal_stated_in(w: Changes, relation_id: str) -> bool:

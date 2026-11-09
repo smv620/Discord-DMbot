@@ -714,36 +714,58 @@ class Stored(ConfirmedMemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         self.assertFalse(done.shown)
 
-    async def test_a_catch_all_claim_over_a_held_back_row_shows_that_row_and_adds_none(
-        self,
-    ) -> None:
-        """#3975: the claim says it under the catch-all ("is blood-bound to"); the story holds it
-        back as "is in". It is the same connection: shown, never a second row."""
+    async def catch_all_over_held_back(self, *, secret: bool = False) -> tuple[str, Any, Any]:
+        """Confirms "Bram is blood-bound to Veldmoor" (the catch-all) where the story holds "Bram
+        is in Veldmoor" back; returns the held row's id, the new row and what confirm said."""
         rel = await self.held_back()
-        before = len(await self.memory.relations(GUILD_A, self.c, include_secret=True))
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=secret)
+        (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id != rel]  # fmt: skip
+        return rel, new, done
+
+    async def test_a_catch_all_claim_over_a_held_back_row_is_written_held_back_too(self) -> None:
+        """#3975: it may be the held-back connection in other words, so it is never shown beside
+        it; it keeps its own words and Undo, and the held row is untouched."""
+        rel, new, done = await self.catch_all_over_held_back()
+        self.assertEqual(done.claim.fact_id, new.id)
+        self.assertFalse(done.shown)
+        self.assertEqual((new.predicate, new.detail), ("associated_with", "is blood-bound to"))
+        self.assertTrue(new.unrevealed)
+        self.assertFalse(new.secret)
+        self.assertTrue(await self.unrevealed(rel))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        live = [r.id for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)]
+        self.assertEqual(live, [rel])
+
+    async def test_a_secret_catch_all_claim_over_a_held_back_row_stays_secret(self) -> None:
+        rel, new, done = await self.catch_all_over_held_back(secret=True)
+        self.assertEqual((new.secret, new.unrevealed, done.shown), (True, True, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_back_row_the_other_way_round_holds_the_catch_all_back_too(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET subject_id = object_id, object_id = subject_id"
+                " WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
         await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
-        self.assertEqual((done.claim.fact_id, done.shown), (rel, True))
-        self.assertFalse(await self.unrevealed(rel))
-        after = await self.memory.relations(GUILD_A, self.c, include_secret=True)
-        self.assertEqual(len(after), before)
+        (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id != rel]  # fmt: skip
+        self.assertEqual((new.unrevealed, done.shown), (True, False))
 
-    def test_a_kind_covers_itself_its_narrower_kinds_and_the_catch_all_covers_all(self) -> None:
-        from types import SimpleNamespace
-
-        from dmbot.memory.store import kind_covers
-
-        onto: Any = SimpleNamespace(predicates={
-            "sworn_to": SimpleNamespace(parent="serves"),
-            "serves": SimpleNamespace(parent=None),
-            "enemy_of": SimpleNamespace(parent=None),
-        })  # fmt: skip
-        self.assertTrue(kind_covers(onto, "serves", "serves"))
-        self.assertTrue(kind_covers(onto, "serves", "sworn_to"))  # (narrower)
-        self.assertTrue(kind_covers(onto, "associated_with", "enemy_of"))  # (the catch-all)
-        self.assertFalse(kind_covers(onto, "sworn_to", "serves"))  # (wider: not stated)
-        self.assertFalse(kind_covers(onto, "enemy_of", "serves"))  # (unrelated)
+    async def test_a_catch_all_claim_with_nothing_held_back_is_shown_as_before(self) -> None:
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        (new,) = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        self.assertFalse(new.unrevealed)
 
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
