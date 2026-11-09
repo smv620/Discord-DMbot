@@ -216,6 +216,27 @@ class Cards(base.NamesTest):
     def labels(self, page: Any) -> list[str]:
         return [getattr(c, "label", "") for c in page.children]
 
+    async def test_the_dm_sees_where_a_kept_lore_connection_came_from(self) -> None:
+        # (#3606: the DM's "Why?", as the website's line panel shows it)
+        await self.know("Kesh")
+        (rel,) = await self.relations()
+        await self.memory.record_link_source(
+            GUILD, self.campaign.id, rel.id, "Notes, 9 Nov", "a heated debate about mithril"
+        )
+        found = await connection_edit._find(self.it(), self.campaign.id, self.bell.id, rel.id)
+        assert found is not None
+        line = await connection_edit.why_line(found)
+        self.assertEqual(
+            line, "From your notes: Notes, 9 Nov \u2014 \u201ca heated debate about mithril\u201d\n"
+        )
+
+    async def test_nothing_recorded_says_nothing(self) -> None:
+        await self.know("Kesh")
+        found = await connection_edit._find(self.it(), self.campaign.id, self.bell.id,
+                                            (await self.relations())[0].id)  # fmt: skip
+        assert found is not None
+        self.assertEqual(await connection_edit.why_line(found), "")
+
     async def test_change_the_words_keeps_who_sees_it_and_says_what_it_reads_now(self) -> None:
         await self.know("Kesh", secret=True)
         (old,) = await self.relations()

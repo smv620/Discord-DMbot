@@ -10,6 +10,7 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -46,6 +47,8 @@ from dmbot.ui.name_card import (
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
+
+log = logging.getLogger(__name__)
 
 WHO_BUTTON = "👁️ Who knows this?"
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
@@ -186,6 +189,7 @@ async def show_one(
         + (" 📌" if found.pinned else "")
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
+        + (await why_line(found) if found.secrets else "")  # DMs only: the DM's own text
         + (
             (
                 "Change the words, say if they've met, hide it, or remove it."
@@ -197,6 +201,27 @@ async def show_one(
         ),
         view,
     )
+
+
+WHY_FROM = "From your notes: "  # (#3606: where a kept lore connection came from)
+
+
+async def why_line(found: Found) -> str:
+    """Where the connection was kept from and the reader's short quote, for the DM's "Why?"
+    (#3606), as the website's line panel shows it: the upload's own label and up to 240 characters
+    of the DM's own text. Empty when nothing is recorded (a connection from a session reads its
+    lines through "Where was it said?"), or when it can't be read: it never stops the page."""
+    c = found.campaign
+    try:
+        got = await found.memory.link_source(c.guild_id, c.id, found.relation.id)
+    except Exception:
+        log.exception("Couldn't read where a connection came from")
+        return ""
+    if got is None:
+        return ""
+    label, quote = got
+    line = f"{WHY_FROM}{_md(label)}"
+    return line + (f" \u2014 \u201c{_md(quote)}\u201d" if quote else "") + "\n"
 
 
 class OneConnection(_Menu):
