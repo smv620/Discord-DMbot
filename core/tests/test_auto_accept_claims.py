@@ -5,7 +5,8 @@ stopped being recorded all stay asked or are dropped. Invented names."""
 from __future__ import annotations
 
 from dmbot.memory import auto_accept as auto
-from dmbot.memory.claims import CLAIM_CONFIRMED, ClaimStore, Extracted
+from dmbot.memory.claims import ClaimStore, Extracted
+from dmbot.memory.models import CLAIM_CONFIRMED
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
 SPEAKER, STRANGER = 7, 99
