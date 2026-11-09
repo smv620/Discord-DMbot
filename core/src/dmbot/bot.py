@@ -12109,7 +12109,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if anyone whose lines were read (`speakers`) has stopped since, nothing is added and the
         usual list is posted instead. Returns True when the notice went out (the old post is then
         not needed), False when nothing was added. Never raises; counts only in the log."""
-        from dmbot.ui.name_background import RecapNamesButton
+        from dmbot.ui.names import RecapNamesButton
         from dmbot.ui.upload_notice import add_sure
 
         try:
