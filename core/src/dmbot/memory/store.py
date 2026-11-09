@@ -5358,6 +5358,28 @@ class MemoryStore:
             changed = await knowers.learn(w, kind, statement_id, character_id)
             return Written(changed, w.batch)
 
+    async def learn_statements(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        pairs: Sequence[tuple[str, str]],
+        *,
+        source: str,
+    ) -> Written[int]:
+        """Several (statement, character) pairs learned at once (#3963 b: a backstory section's
+        names, by their own character), each as `learn_statement`, in ONE change, so one Undo
+        takes them all back. A pair that is refused (a name gone meanwhile) is skipped and the
+        rest are kept. Only the DM. Returns how many changed."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            changed = 0
+            for statement_id, character_id in pairs:
+                try:  # (`learn` checks before it writes: a refused one leaves the others)
+                    changed += int(await knowers.learn(w, kind, statement_id, character_id))
+                except MemoryRuleError:
+                    continue
+            return Written(changed, w.batch if changed else None)
+
     async def tell_character(
         self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
     ) -> Written[bool]:

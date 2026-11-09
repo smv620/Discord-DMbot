@@ -218,13 +218,36 @@ def section_of(text: str, quote: str) -> str:
     return Sections(text).of(quote)
 
 
+# A backstory heading's tail after the character's name: "(Elf Wizard)", ": the early years",
+# " — Bonds", ", a ranger"; or the name's possessive with one of these words ("Tavin's Story").
+_OWNER_TAIL = re.compile(r"\s*(?:[(:—–,]|\s-\s|/).*$")
+_OWNER_POSSESSIVE = re.compile(
+    r"^(.+?)[’']s?\s+(?:backstory|back story|story|past|background|history)$", re.IGNORECASE
+)
+
+
 def section_owner(heading: str, owners: Mapping[str, str]) -> str:
-    """The player character a section is about, from its heading (#3963 b: "Okthandom Korran
-    (Shadar-kai Blood-Hunter)" is Okthandom's backstory), or "". `owners`: each player character's
-    name keys to its entry id. Whole names only, and only when the heading names exactly one player
-    character: "How Our Heroes Met" names none, and a heading naming two is not one's own."""
-    said = f" {name_key(heading)} "
-    found = {pc for key, pc in owners.items() if key and f" {key} " in said}
+    """The player character a section is about, from its heading (#3963 b), or "". The heading,
+    up to a tail ("(Shadar-kai Blood-Hunter)", ": …", "— …"), or its possessive ("Tavin's
+    Story"), must be exactly one player character's name or confirmed other name: never a heading
+    that only mentions one ("Why Vecna Hunts Tavin", the DM's own secret section) or an NPC who
+    shares a first name ("Tavin Blackwood (Innkeeper)"), because a wrong owner shows that
+    character's player a secret. `owners`: name key to entry id, without a key two characters
+    share. Every part of "Claude Ambere / Major Ursa" that is a name must be the same one's."""
+    text = heading.strip()
+    own = _OWNER_POSSESSIVE.match(text)
+    if own:
+        text = own.group(1)
+    parts = [text, *heading.split("/")[1:]] if "/" in heading and not own else [text]
+    found: set[str] = set()
+    for n, part in enumerate(parts):
+        head = _OWNER_TAIL.sub("", part).strip() if n == 0 or "(" in part else part.strip()
+        head = _OWNER_TAIL.sub("", head).strip()
+        pc = owners.get(name_key(head))
+        if pc:
+            found.add(pc)
+        elif n == 0:
+            return ""  # (the heading does not start with a player character's own name)
     return next(iter(found)) if len(found) == 1 else ""
 
 

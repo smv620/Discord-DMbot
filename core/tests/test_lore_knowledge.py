@@ -115,12 +115,22 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertIn("still a SPOILER", lk.SYSTEM)
         self.assertEqual(lk.line("name", "X", section="[fake] mark"), "[fake mark] name: X")
 
-    def test_a_section_is_one_player_character_s_when_its_heading_names_only_them(self) -> None:
-        owners = {"tavin": "t1", "tavin ash": "t1", "brin": "b1"}
-        self.assertEqual(lk.section_owner("Tavin Ash (Elf Wizard)", owners), "t1")
-        self.assertEqual(lk.section_owner("How Our Heroes Met", owners), "")
-        self.assertEqual(lk.section_owner("Tavin and Brin", owners), "")  # (two: nobody's own)
-        self.assertEqual(lk.section_owner("Tavinwood Keep", owners), "")  # (whole names only)
+    def test_a_section_is_one_player_character_s_when_its_heading_is_their_name(self) -> None:
+        owners = {"tavin ash": "t1", "tavin": "t1", "brin": "b1", "major ursa": "b1"}
+        for heading, who in (
+            ("Tavin Ash (Elf Wizard)", "t1"),
+            ("Tavin: the early years", "t1"),
+            ("Tavin's Story", "t1"),
+            ("Brin / Major Ursa (Ursine Rogue)", "b1"),
+            ("How Our Heroes Met", ""),
+            ("Tavin and Brin", ""),  # (two: nobody's own)
+            ("Tavinwood Keep", ""),  # (whole names only)
+            ("Tavin Blackwood (Innkeeper)", ""),  # (an NPC who shares a first name)
+            ("Why Vecna Hunts Tavin", ""),  # (the DM's own secret section about him)
+            ("Brin / Tavin", ""),  # (two characters' names)
+        ):
+            with self.subTest(heading):
+                self.assertEqual(lk.section_owner(heading, owners), who)
 
     def test_prose_is_never_mined_for_numbers_but_a_bare_list_is_read(self) -> None:
         self.assertIsNone(lk.parse("5 is a spoiler, 3 is secret", 10))
@@ -431,10 +441,33 @@ class TheUpload(Fixture):
         self.assertTrue(waiting)
         self.assertTrue(all(w.known_by == self.tavin for w in waiting))
 
-    async def test_spoilers_and_a_section_naming_no_one_teach_nobody(self) -> None:
+    async def test_spoilers_teaches_nobody_even_in_a_character_s_section(self) -> None:
         await self.read(lk.SPOILERS, "Tavin (Elf Wizard)\n\n" + TEXT + "\n")
         names = await self.proposed()
         self.assertEqual(await self.known("entry", [e.id for e in names.values()]), {})
+        self.assertFalse(any(w.known_by for w in await self.store.waiting(GUILD, self.campaign.id)))
+
+    async def test_a_character_s_section_stays_theirs_after_the_dm_adds_it(self) -> None:
+        """End to end: confirmed and kept, Tavin's backstory is still Tavin's alone; another
+        player's character learns nothing of it."""
+        brin = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Brin", type="character", role="player_character",
+                played_by=1002, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        await self.smart_nothing_known()
+        await self.read(lk.SMART, "Tavin (Elf Wizard)\n\n" + TEXT + "\n")
+        names = await self.confirm_all()
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
+        knowers = await self.known("entry", [e.id for e in names.values()])
+        self.assertTrue(knowers)
+        self.assertTrue(all(who == [self.tavin] for who in knowers.values()), knowers)
+        kept = [r for w in waiting for r in await self.mine(w)]
+        links = await self.known("connection", [r.id for r in kept])
+        self.assertTrue(links)
+        self.assertFalse(any(brin in who for who in links.values()))
 
     async def test_a_section_naming_no_player_character_teaches_nobody(self) -> None:
         await self.smart_nothing_known()
