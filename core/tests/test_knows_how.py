@@ -1,6 +1,6 @@
-"""How two people know each other (#3881): "has met", "is aware of" or "knows of". The words read
-from a quote, the card's wording, and the store's only-up rule. Invented names (Tran Vosk, Bruno
-Hale, Shela Marr)."""
+"""How two people know each other (#3881): "has met", "has heard of" or plain "knows". The words
+read from a quote, the card's wording, and the store's only-up rule. Invented names (Tran Vosk,
+Bruno Hale, Shela Marr)."""
 
 from __future__ import annotations
 
@@ -31,9 +31,27 @@ class TheWords(unittest.TestCase):
             with self.subTest(said):
                 self.assertEqual(how_from(said), KNOWS_AWARE)
 
-    def test_never_met_is_aware_even_with_a_meeting_word(self) -> None:
+    def test_never_met_is_aware(self) -> None:
         self.assertEqual(how_from("Tran has never met Bruno, only heard of him."), KNOWS_AWARE)
         self.assertEqual(how_from("They haven't yet met."), KNOWS_AWARE)
+
+    def test_never_met_and_met_together_is_unsure(self) -> None:
+        self.assertEqual(how_from("Tran had never met the king, but met Bruno often."), "")
+
+    def test_what_can_be_done_from_afar_is_no_meeting(self) -> None:
+        for said in ("Tran hired an assassin to kill Bruno.", "Bruno employs spies to watch Tran.",
+                     "Tran sent goblins that attacked Bruno's caravan.",
+                     "Bruno saved the town; Tran admires him.", "Tran captured the fort.",
+                     "Tran attended a meeting about Bruno.", "Bruno met with resistance.",
+                     "Tran met his end in the snow.",
+                     "Bruno gave his word of honour."):  # fmt: skip
+            with self.subTest(said):
+                self.assertEqual(how_from(said, a="Tran Vosk", b="Bruno Hale"), "")
+
+    def test_only_sentences_naming_both_are_read(self) -> None:
+        said = "The party met Bruno at dawn. Tran was absent; Tran knows Bruno."
+        self.assertEqual(how_from(said, a="Tran Vosk", b="Bruno Hale"), "")
+        self.assertEqual(how_from(said, a="Shela", b="Bruno"), KNOWS_MET)  # (no sentence: all)
 
     def test_no_sign_says_nothing(self) -> None:
         for said in ("Tran is wary of Bruno.", "The metal was cold.", "", "Shela trusts Tran."):
@@ -49,8 +67,8 @@ class TheWords(unittest.TestCase):
 class TheCard(unittest.TestCase):
     def test_a_knows_says_whether_they_met(self) -> None:
         self.assertEqual(link_words("knows", "", knows_how="met"), "has met")
-        self.assertEqual(link_words("knows", "", knows_how="aware"), "is aware of")
-        self.assertEqual(link_words("knows", "", knows_how=""), "knows of")
+        self.assertEqual(link_words("knows", "", knows_how="aware"), "has heard of")
+        self.assertEqual(link_words("knows", "", knows_how=""), "knows")
 
     def test_the_dm_s_feeling_rides_along(self) -> None:
         self.assertEqual(
@@ -138,9 +156,64 @@ class TheStore(DatabaseTest):
                 GUILD, self.campaign.id, written.value[0].id, KNOWS_MET, source=DM_SOURCE
             )
 
+    async def test_a_secret_meeting_never_shows_on_a_public_row(self) -> None:
+        back = await self.knows(self.bruno, self.tran, KNOWS_AWARE)
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, self.tran, "knows", self.bruno, source=DM_SOURCE,
+            confidence=1.0, status=CONFIRMED, knows_how=KNOWS_MET, secret=True,
+        )  # fmt: skip
+        self.assertEqual(await self.how(back), KNOWS_AWARE)
+
+    async def test_a_new_feeling_keeps_whether_they_met(self) -> None:
+        rid = await self.knows(self.tran, self.bruno, KNOWS_MET)
+        moved = await self.memory.change_relation_words(
+            GUILD, self.campaign.id, rid, "knows", "wary", source=DM_SOURCE
+        )
+        self.assertEqual(moved.value.knows_how, KNOWS_MET)
+
+    async def test_a_merge_keeps_the_higher(self) -> None:
+        rid = await self.knows(self.tran, self.bruno, KNOWS_AWARE)
+        other = await self.person("Tran the Elder")
+        await self.knows(other, self.bruno, KNOWS_MET)
+        await self.memory.merge(GUILD, self.campaign.id, self.tran, other, source=DM_SOURCE)
+        self.assertEqual(await self.how(rid), KNOWS_MET)
+
+    async def test_a_place_or_a_thing_is_never_met(self) -> None:
+        inn = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="place", name="The Lucky Liar", source=DM_SOURCE,
+            status=CONFIRMED,
+        )  # fmt: skip
+        written = await self.memory.add_relation(
+            GUILD, self.campaign.id, self.tran, "knows", inn.value.id, source=DM_SOURCE,
+            confidence=1.0, status=CONFIRMED, knows_how=KNOWS_MET,
+        )  # fmt: skip
+        self.assertEqual(written.value[0].knows_how, "")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_knows_how(
+                GUILD, self.campaign.id, written.value[0].id, KNOWS_MET, source=DM_SOURCE
+            )
+
     async def test_an_old_row_reads_as_not_said(self) -> None:
         rid = await self.knows(self.tran, self.bruno)
         self.assertEqual(await self.how(rid), "")
+
+
+class TheBackup(unittest.TestCase):
+    def test_met_on_another_connection_is_damaged(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+        from dmbot.memory.backup import _checked_rows
+
+        row = {
+            "table": "relation", "id": "a" * 32, "subject_id": "b" * 32, "predicate": "owns",
+            "object_id": "c" * 32, "detail": "", "confidence": 1.0, "status": "confirmed",
+            "source": "dm", "mention_ids": [], "from_session_at": None, "to_session_at": None,
+            "from_game_time": None, "to_game_time": None, "secret": False, "created_at": 1,
+            "definition_version": 1, "unrevealed": False, "directional": False, "decided": None,
+            "via_alias_id": None, "knows_how": "met",
+        }  # fmt: skip
+        with self.assertRaises(CampaignError):
+            _checked_rows([row])
+        _checked_rows([{**row, "predicate": "knows"}])  # (a knows may carry it)
 
 
 if __name__ == "__main__":

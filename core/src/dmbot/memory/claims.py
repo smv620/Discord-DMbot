@@ -2143,7 +2143,9 @@ class ClaimStore:
                     from_session_at=claim.session_started_at,
                     secret=secret,
                     # whether they've met, from the reader's own words for it (#3881)
-                    knows_how=knows_how.how_from(claim.relationship, claim.details)
+                    knows_how=knows_how.how_from(
+                        claim.relationship, claim.details, a=claim.subject, b=claim.object
+                    )
                     if term.key == KNOWS_PREDICATE
                     else "",
                 )  # fmt: skip

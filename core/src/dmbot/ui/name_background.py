@@ -29,7 +29,6 @@ from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
     descriptions,
     kin,
-    knows_how,
     lore_context,
     lore_knowledge,
     lore_pc_names,
@@ -50,7 +49,6 @@ from dmbot.memory.backstory_links import (
     Waiting,
     WhichWaiting,
 )
-from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.end_match import bare, usable_alias
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
@@ -2206,7 +2204,11 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
+        how = link_words(
+            c.predicate, c.detail, kin.directional(c.detail), feeling=True,
+            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
+        )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -2326,7 +2328,7 @@ class ConnectionOffer(_Menu):
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret,
                     # whether they've met, from the quote's own words (#3881)
-                    knows_how=knows_how.how_from(c.quote) if c.predicate == KNOWS_PREDICATE else "",
+                    knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong

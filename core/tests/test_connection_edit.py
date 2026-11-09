@@ -63,15 +63,15 @@ class Cards(base.NamesTest):
         await self.know("Kesh")
         await self.know("Vessa", secret=True)
         text, _ = await self.card()
-        self.assertIn("• knows of **Kesh**\n", text + "\n")  # (no icon at the end of a known one)
-        self.assertIn("• knows of **Vessa** 🤫", text)
+        self.assertIn("• knows **Kesh**\n", text + "\n")  # (no icon at the end of a known one)
+        self.assertIn("• knows **Vessa** 🤫", text)
         self.assertEqual(text.count("🤫"), 1)  # a known connection has no icon
 
     async def test_a_player_card_view_never_names_a_secret_connection(self) -> None:
         await self.know("Kesh")
         await self.know("Vessa", secret=True)
         text, _ = await self.card(MANAGER)  # (someone who is not a DM)
-        self.assertIn("• knows of **Kesh**", text)
+        self.assertIn("• knows **Kesh**", text)
         self.assertNotIn("Vessa", text)
         self.assertNotIn("🤫", text)
 
@@ -83,15 +83,11 @@ class Cards(base.NamesTest):
         lines = [ln for ln in text.split("\n") if ln.startswith("• ")]
         self.assertEqual(
             sorted(lines),
-            sorted(["• knows of **Kesh**", "• knows of **Orla**", "• works for **Hollis**"]),
+            sorted(["• knows **Kesh**", "• knows **Orla**", "• works for **Hollis**"]),
         )
         reading = [ln.split(" **")[0] for ln in lines]
         self.assertIn(
-            reading,
-            (
-                ["• knows of", "• knows of", "• works for"],
-                ["• works for", "• knows of", "• knows of"],
-            ),
+            reading, (["• knows", "• knows", "• works for"], ["• works for", "• knows", "• knows"])
         )
 
     async def fill(self, n: int) -> None:

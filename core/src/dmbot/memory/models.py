@@ -461,7 +461,8 @@ class Relation:
     # sees this connection on that name's own node, whatever else it knows. None for the rest.
     via_alias_id: str | None = None
     # How two people know each other, on a `knows` only (#3881): "met", "aware" (heard of them, a
-    # tale, a vision) or "" (the story doesn't say, shown as "knows of"). It only moves up.
+    # tale, a vision) or "" (the story doesn't say, shown as plain "knows"). Between two people
+    # only. It only moves up, except by the DM.
     knows_how: str = ""
 
 

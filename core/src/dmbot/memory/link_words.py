@@ -49,10 +49,12 @@ CONNECTION_BACK = {
 }
 # How two people know each other (#3881), on a `knows`: the words for "met", "aware" and "" (the
 # story doesn't say). Shown only where the caller passes the row's `knows_how`.
-KNOWS_HOW_WORDS = {"met": "has met", "aware": "is aware of", "": "knows of"}
+# "Knows" stays the words when the story doesn't say (the ux-critic on #3881: "knows of" already
+# means "only heard of" in plain English, and would claim they never met).
+KNOWS_HOW_WORDS = {"met": "has met", "aware": "has heard of", "": "knows"}
 # The same, read from the other name's card. Two people who met have both met; one who is only
-# heard of is "known of by" the other.
-KNOWS_HOW_BACK = {"met": "has met", "aware": "is known of by", "": "is known to"}
+# heard of is still "known to" the other, which is true and plain.
+KNOWS_HOW_BACK = {"met": "has met", "aware": "is known to", "": "is known to"}
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
 CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
 # The old friend and enemy connections are the same thing as a `knows` with a feeling: how a name
@@ -143,11 +145,11 @@ def link_words(
     `feeling` says the reader is the DM: how a name feels about another is the DM's Reputation, so
     "knows (hostile)" is worded only for a DM-only screen, and everyone else reads plain "knows"
     (#3610). `knows_how` (#3881): the row's word on whether they've met, so a `knows` reads "has
-    met", "is aware of" or "knows of"; None where the caller has no row (a menu of kinds), which
-    keeps plain "knows"."""
+    met", "has heard of" or plain "knows" (the story doesn't say); None where the caller has no row
+    (a menu of kinds), which is plain "knows" too."""
     predicate, detail = for_reader(predicate, detail, feeling=feeling)
     knows = (
-        KNOWS_HOW_WORDS.get(knows_how, "knows of")
+        KNOWS_HOW_WORDS.get(knows_how, "knows")
         if predicate == "knows" and knows_how is not None
         else "knows"
     )

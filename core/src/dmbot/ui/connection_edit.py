@@ -62,11 +62,19 @@ WORDS_MAX = 100  # the longest "other words": the same as the website's and the 
 HOW_PLACEHOLDER = "Have they met?"
 # (a menu's value can't be empty, so "not said" travels as NOT_SAID)
 NOT_SAID = "not-said"
+# (each says it all without the question: a menu with a choice made never shows its placeholder)
 HOW_CHOICES = (
-    ("met", "They've met"),
-    ("aware", "Only heard of them"),
-    (NOT_SAID, "The story doesn't say"),
+    ("met", "Yes, they've met"),
+    ("aware", "No, only heard of them"),
+    (NOT_SAID, "Not said if they've met"),
 )
+
+
+def meets(found: Found) -> bool:
+    """Whether this connection can say if they've met: a `knows` between two people (#3881)."""
+    r = found.relation
+    ends = [found.names.entities.get(r.subject_id), found.names.entities.get(r.object_id)]
+    return r.predicate == "knows" and all(e is not None and e.type == "character" for e in ends)
 
 
 def plain(row: Row) -> str:
@@ -179,7 +187,11 @@ async def show_one(
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
         + (
-            "Change the words, hide it, or remove it."
+            (
+                "Change the words, say if they've met, hide it, or remove it."
+                if meets(found)
+                else "Change the words, hide it, or remove it."
+            )
             if found.secrets
             else "Change the words or remove it."
         ),
@@ -230,7 +242,7 @@ class OneConnection(_Menu):
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
-        if r.predicate == "knows" and found.secrets:  # whether they've met: the DM's word (#3881)
+        if meets(found) and found.secrets:  # whether they've met: the DM's word (#3881)
             self.how = _Select(
                 self._how_picked,
                 placeholder=HOW_PLACEHOLDER,
@@ -337,6 +349,9 @@ class OneConnection(_Menu):
             )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, "It already says that. Press Back to see the card.")
             return
         reads = _md(self._now_reads(found, written.value, self.entity_id))
         await self._changed(

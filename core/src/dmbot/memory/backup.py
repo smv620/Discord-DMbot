@@ -417,6 +417,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raise CampaignError(DAMAGED)
         if table is RELATIONS and raw["mention_ids"]:
             raise CampaignError(DAMAGED)
+        # whether two people met is a `knows` thing only (#3881): the database refuses it elsewhere,
+        # so a hand-edited file says "damaged" here instead of failing mid-restore
+        if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:

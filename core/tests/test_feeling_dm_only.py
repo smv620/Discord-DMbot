@@ -62,8 +62,8 @@ class TheWords(unittest.TestCase):
             from_session_at=None, to_session_at=None, from_game_time=None,
             to_game_time=None, secret=False, created_at=0,
         )  # fmt: skip
-        self.assertEqual(fact_words(r), "knows of")
-        self.assertEqual(fact_words(r, feeling=True), "knows of (hostile)")
+        self.assertEqual(fact_words(r), "knows")
+        self.assertEqual(fact_words(r, feeling=True), "knows (hostile)")
 
     def test_the_website_lines_follow_it_too(self) -> None:
         row = {
@@ -96,10 +96,10 @@ class TheDiscordCardRows(unittest.TestCase):
         return [row.words for row in _rows(lookup, mira.id, [r], secrets)]
 
     def test_a_player_reads_plain_knows(self) -> None:
-        self.assertEqual(self.rows(secrets=False), ["knows of"])
+        self.assertEqual(self.rows(secrets=False), ["knows"])
 
     def test_the_dm_reads_the_feeling(self) -> None:
-        self.assertEqual(self.rows(secrets=True), ["knows of (hostile)"])
+        self.assertEqual(self.rows(secrets=True), ["knows (hostile)"])
 
 
 class TheOldFriendAndEnemy(unittest.TestCase):

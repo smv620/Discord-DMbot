@@ -75,18 +75,18 @@ class TheCardRows(unittest.TestCase):
 
     def test_the_dm_s_word_wins_on_the_dm_s_card(self) -> None:
         said = self.words(secrets=True, scores={(MIRA, KESH): -80}, r=_knows("friendly"))
-        self.assertEqual(said, ["knows of (hostile)"])
+        self.assertEqual(said, ["knows (hostile)"])
 
     def test_either_direction_counts(self) -> None:
         said = self.words(secrets=True, scores={(KESH, MIRA): -40}, r=_knows(""))
-        self.assertEqual(said, ["knows of (distrusts)"])
+        self.assertEqual(said, ["knows (distrusts)"])
 
     def test_a_player_never_sees_it(self) -> None:
         said = self.words(secrets=False, scores={(MIRA, KESH): -80}, r=_knows(""))
-        self.assertEqual(said, ["knows of"])
+        self.assertEqual(said, ["knows"])
 
     def test_no_standing_keeps_the_line_s_own_word(self) -> None:
-        self.assertEqual(self.words(secrets=True, scores={}, r=_knows()), ["knows of (friendly)"])
+        self.assertEqual(self.words(secrets=True, scores={}, r=_knows()), ["knows (friendly)"])
 
     def test_only_a_knows_line_takes_it(self) -> None:
         said = self.words(secrets=True, scores={(MIRA, KESH): -80}, r=_knows("", "rival_of"))
@@ -105,7 +105,7 @@ class TheCardRows(unittest.TestCase):
         lines = sections(
             _lookup(), MIRA, [_knows()], secrets=True, standing={(MIRA, KESH): 80}
         ).get("links")
-        self.assertEqual(lines, ["knows of (devoted) **Kesh**"])
+        self.assertEqual(lines, ["knows (devoted) **Kesh**"])
 
 
 class ThePlayerGuard(unittest.IsolatedAsyncioTestCase):
@@ -193,9 +193,9 @@ class TheStoreReader(NamesTest):
         dm = card_text(lookup.for_viewer(True), self.bel, links, secrets=True, standing=scores)
         seen = lookup.for_viewer(False)
         players = card_text(seen, self.bel, links, secrets=False, standing=scores)
-        self.assertIn("knows of (hostile)", dm or "")
+        self.assertIn("knows (hostile)", dm or "")
         self.assertNotIn("friendly", dm or "")
-        self.assertIn("knows of **Cerric**", players or "")
+        self.assertIn("knows **Cerric**", players or "")
         for word in ("hostile", "friendly"):
             self.assertNotIn(word, players or "")
 

@@ -153,7 +153,7 @@ class TheChange(NamesTest):
         changed = shown(await self.read("friend"))
         self.assertIn("1 change ready to check", changed)  # (the opposite feeling is a change)
         view = await self.card()
-        self.assertIn("Now: **Belleros** knows of (hostile) **Cerric**", view.text())
+        self.assertIn("Now: **Belleros** knows (hostile) **Cerric**", view.text())
         self.assertIn("Your text: **Belleros** knows (friendly) **Cerric**", view.text())
 
     async def test_after_a_change_the_old_kind_can_be_offered_back(self) -> None:

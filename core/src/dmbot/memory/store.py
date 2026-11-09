@@ -26,6 +26,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -213,7 +214,10 @@ TRAVELS_WITH = "travels_with"  # a companion goes along with a player character 
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
 # How two people know each other is a `knows` thing only (#3881).
-KNOWS_HOW_ONLY = 'Only a "knows" connection says whether they\'ve met.'
+KNOWS_HOW_ONLY = (
+    "That connection isn't about two people knowing each other any more."
+    " Open the name card again to see it."
+)
 ANALYZE_AFTER_NAMES = 500  # a list this long refreshes the planner's statistics (#2376)
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
@@ -4907,7 +4911,8 @@ class MemoryStore:
             tuple(mention_ids), from_session_at, to_session_at, None, None,
             secret or pred.key == DISGUISED_AS, w.now,
             pred.version, unrevealed, directional, (decided or None),
-            knows_how=knows_how if pred.key == KNOWS else "",
+            # (between two people only: a character "knows" a place or a secret, never "met" it)
+            knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -4926,10 +4931,13 @@ class MemoryStore:
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": s, "object_id": o,
                 }  # fmt: skip
-            if knows_rank(new.knows_how) > knows_rank(same.knows_how):  # only ever up (#3881)
+            # only ever up (#3881), and never on a fact that stays rejected
+            live = (upgrade.get("status") or same.status) != REJECTED
+            if live and knows_rank(new.knows_how) > knows_rank(same.knows_how):
                 upgrade = {**upgrade, "knows_how": new.knows_how}
-            if new.knows_how == KNOWS_MET:
-                await _met_back(w, s, o, existing)
+            if live and new.knows_how == KNOWS_MET:
+                hidden = bool(upgrade.get("secret", same.secret)) or same.unrevealed
+                await _met_back(w, s, o, existing, hidden=hidden)
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
@@ -4937,7 +4945,7 @@ class MemoryStore:
             return revived, []
         await w.insert(RELATIONS, _relation_row(new))
         if new.knows_how == KNOWS_MET:
-            await _met_back(w, s, o, existing)
+            await _met_back(w, s, o, existing, hidden=new.secret or new.unrevealed)
         # An item has one current whereabouts (#3363): see `whereabouts`
         new, ended = await _settle_whereabouts(w, new, types, by_hand=by_hand)
         existing = [r for r in existing if r.id not in ended]
@@ -4962,7 +4970,9 @@ class MemoryStore:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
                 raise MemoryRuleError(NOT_FOUND)
-            if current["predicate"] != KNOWS:
+            ends = [str(current["subject_id"]), str(current["object_id"])]
+            kinds = [str((await _entity_row(w, e))["type"]) for e in ends]
+            if current["predicate"] != KNOWS or not _people(kinds):
                 raise MemoryRuleError(KNOWS_HOW_ONLY)
             row = current
             if how != current["knows_how"] and (
@@ -4970,8 +4980,11 @@ class MemoryStore:
             ):
                 row = await w.update(RELATIONS, relation_id, {"knows_how": how})
             if how == KNOWS_MET:
-                s_id, o_id = str(current["subject_id"]), str(current["object_id"])
-                await _met_back(w, s_id, o_id, await _relations_touching(w, s_id, o_id))
+                s_id, o_id = ends
+                await _met_back(
+                    w, s_id, o_id, await _relations_touching(w, s_id, o_id),
+                    hidden=bool(current["secret"]) or bool(current["unrevealed"]),
+                )  # fmt: skip
             return Written(_relation(row), w.batch)
 
     async def update_relation(
@@ -5437,6 +5450,8 @@ class MemoryStore:
                 w, first, predicate, second, confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
                 unrevealed=bool(current["unrevealed"]), directional=directional,
+                # new words or a new feeling keep whether they met (#3881)
+                knows_how=str(current["knows_how"] or "") if predicate == KNOWS else "",
             )  # fmt: skip
             if dm_feeling and predicate == "knows" and source == DM:
                 await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
@@ -6904,18 +6919,32 @@ async def _load_ontology(scope: Scope) -> Ontology:
     return Ontology.build(types, predicates)
 
 
+def _people(types: Iterable[str]) -> bool:
+    """Both ends are characters: only two people can have met (#3881)."""
+    return all(t == "character" for t in types)
+
+
 async def _met_back(
-    w: Changes, subject_id: str, object_id: str, existing: Collection[Relation]
+    w: Changes,
+    subject_id: str,
+    object_id: str,
+    existing: Collection[Relation],
+    *,
+    hidden: bool,
 ) -> None:
     """Two people who met have both met (#3881, Supervisor's ruling): the other's existing `knows`
     toward the first moves up to "met". One is never made: the story may say nothing of how the
-    other feels, and a feeling is never invented."""
+    other feels, and a feeling is never invented. `hidden`: the fact saying they met is secret or
+    held back from the players, so a row the players can read is left alone (DM authority: a
+    secret meeting never shows on their card). A rejected or ended row is history and stays."""
     for r in existing:
         if (
             r.predicate == KNOWS
             and r.subject_id == object_id
             and r.object_id == subject_id
             and r.status != REJECTED
+            and r.to_session_at is None
+            and not (hidden and not r.secret and not r.unrevealed)
             and knows_rank(r.knows_how) < knows_rank(KNOWS_MET)
         ):
             await w.update(RELATIONS, r.id, {"knows_how": KNOWS_MET})
@@ -7331,6 +7360,8 @@ async def _move_relations(
                     **upgrade, "directional": True, "subject_id": moved.subject_id,
                     "object_id": moved.object_id,
                 }  # fmt: skip
+            if knows_rank(moved.knows_how) > knows_rank(twin.knows_how):  # (#3881: only up)
+                upgrade = {**upgrade, "knows_how": moved.knows_how}
             gone_rows.append(moved.id)
             folded[moved.id] = twin.id
             forget(moved)
