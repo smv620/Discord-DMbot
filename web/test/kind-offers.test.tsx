@@ -3,13 +3,14 @@
 // "Words DMbot stopped asking about" (#3577), against the pretend API: the list with each answer in plain words, a button
 // that lifts one (the sentence is the issue's), a refusal worded, the empty sentence, and never a word for someone who is
 // not a game master of the campaign.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
 import KindOffersPanel from "../src/account/KindOffersPanel";
 import { kindOffersWords as w } from "../src/content/kind-offers-words";
+import { savingWait } from "../src/content/work-progress";
 
 afterEach(cleanup);
 
@@ -37,6 +38,23 @@ describe("the words DMbot stopped asking about", () => {
     expect(lifts(api)).toEqual([`liftKindOffer:${REF}:sworn on the ashes of`]);
     expect(screen.queryByRole("button", { name: w.liftFor("sworn on the ashes of") })).toBeNull();
     expect(screen.getByRole("button", { name: w.liftFor("carries the lantern for") })).toBeTruthy();
+  });
+
+  it("shows DMbot's stage while a lift is out, and clears it when it is answered", async () => {
+    const api = mockApi("table");
+    const real = api.liftKindOffer!.bind(api);
+    let finish!: () => void;
+    api.liftKindOffer = (...args: Parameters<typeof real>) =>
+      new Promise((resolve) => {
+        finish = () => resolve(real(...args));
+      });
+    await open(REF, api);
+    fireEvent.click(await screen.findByRole("button", { name: w.liftFor("sworn on the ashes of") }));
+    expect(await screen.findByText(savingWait.stage)).toBeTruthy();
+    expect(screen.getByText(/Running for/)).toBeTruthy();
+    await act(async () => finish());
+    await screen.findByText(w.lifted("sworn on the ashes of"));
+    expect(screen.queryByText(savingWait.stage)).toBeNull();
   });
 
   it("says the empty sentence when every answer is lifted", async () => {

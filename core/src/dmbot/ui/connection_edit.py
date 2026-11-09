@@ -10,6 +10,7 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -19,7 +20,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory import link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
+from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.who_resolve import checked_line
 from dmbot.mentions import NO_PINGS
@@ -47,6 +48,8 @@ from dmbot.ui.name_card import (
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
+log = logging.getLogger(__name__)
+
 WHO_BUTTON = "👁️ Who knows this?"
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
@@ -58,6 +61,23 @@ WEBSITE_LINE = (
 GONE_LINK = "That connection isn't there any more. Open the name card again to see the list."
 UNDO_NOTE = "Wrong? Press **Undo** within 10 minutes."
 WORDS_MAX = 100  # the longest "other words": the same as the website's and the store's
+# Whether two people have met (#3881): the DM's word, on a `knows` only.
+HOW_PLACEHOLDER = "Have they met?"
+# (a menu's value can't be empty, so "not said" travels as NOT_SAID)
+NOT_SAID = "not-said"
+# (each says it all without the question: a menu with a choice made never shows its placeholder)
+HOW_CHOICES = (
+    ("met", "Yes, they've met"),
+    ("aware", "No, only heard of them"),
+    (NOT_SAID, "Not said if they've met"),
+)
+
+
+def meets(found: Found) -> bool:
+    """Whether this connection can say if they've met: a `knows` between two people (#3881)."""
+    r = found.relation
+    ends = [found.names.entities.get(r.subject_id), found.names.entities.get(r.object_id)]
+    return r.predicate == "knows" and all(e is not None and e.type == "character" for e in ends)
 
 
 def plain(row: Row) -> str:
@@ -169,13 +189,47 @@ async def show_one(
         + (" 📌" if found.pinned else "")
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
+        + await why_line(found)  # DMs only: the DM's own text
         + (
-            "Change the words, hide it, or remove it."
+            (
+                "Change the words, say if they've met, hide it, or remove it."
+                if meets(found)
+                else "Change the words, hide it, or remove it."
+            )
             if found.secrets
             else "Change the words or remove it."
         ),
         view,
     )
+
+
+# The DM's "Why?" (#3606), in the words Discord uses for the upload ("📜 Upload campaign lore") and
+# the website's line panel uses for the same line.
+WHY_LINE = 'Why: your lore "{label}" says \u201c{quote}\u201d'
+WHY_NO_QUOTE = 'Read from your lore "{label}". DMbot didn\'t keep the words.'
+
+
+async def why_line(found: Found) -> str:
+    """Where a kept lore connection came from and the reader's short quote of the DM's own text,
+    for the DM alone (#3606), as the website's line panel shows it. Empty for anyone else (a second
+    lock: the page checks too), when nothing is recorded (a connection from a session reads its
+    lines through "Where was it said?"), or when it can't be read: it never stops the page."""
+    if not found.secrets:
+        return ""
+    c = found.campaign
+    try:
+        got = await found.memory.link_source(c.guild_id, c.id, found.relation.id)
+    except MemoryRuleError:
+        return ""  # (the campaign went since the page was found: nothing to say)
+    except Exception:
+        log.exception("Couldn't read where a connection came from")
+        return ""
+    if got is None:
+        return ""
+    label, quote = _md(got[0]), _md(got[1])
+    return (
+        WHY_LINE.format(label=label, quote=quote) if quote else WHY_NO_QUOTE.format(label=label)
+    ) + "\n"
 
 
 class OneConnection(_Menu):
@@ -221,6 +275,21 @@ class OneConnection(_Menu):
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
+        if meets(found) and found.secrets:  # whether they've met: the DM's word (#3881)
+            self.how = _Select(
+                self._how_picked,
+                placeholder=HOW_PLACEHOLDER,
+                options=[
+                    discord.SelectOption(
+                        label=label,
+                        value=how,
+                        default=(how == NOT_SAID and not r.knows_how) or how == r.knows_how,
+                    )
+                    for how, label in HOW_CHOICES
+                ],
+                row=3,
+            )
+            self.add_item(self.how)
 
     async def _changed(
         self, interaction: discord.Interaction, found: Found, note: str, *, undo: int | None = None
@@ -290,8 +359,37 @@ class OneConnection(_Menu):
             stored.directional,
             subject.type if subject else "",
             feeling=True,
+            knows_how=stored.knows_how,
         )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
+
+    async def _how_picked(self, interaction: discord.Interaction) -> None:
+        how = "" if self.how.values[0] == NOT_SAID else self.how.values[0]
+        if how not in KNOWS_HOWS:
+            await _tell(interaction, NOTHING_MORE)
+            return
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # (only the campaign's DMs say this; checked again on every press)
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.set_knows_how(
+                c.guild_id, c.id, self.relation_id, how, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, "It already says that. Press Back to see the card.")
+            return
+        reads = _md(self._now_reads(found, written.value, self.entity_id))
+        await self._changed(
+            interaction, found, f"Changed to: {reads}. {UNDO_NOTE}", undo=written.batch
+        )
 
     async def _other_words(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(

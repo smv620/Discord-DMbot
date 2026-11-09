@@ -957,6 +957,8 @@ def respelled(
     setting: str | None = None,
     transcript: str = "",
     aliases: Mapping[str, str] | None = None,
+    who_and_what: Sequence[str] = (),
+    story: Sequence[str] = (),
 ) -> tuple[Prose, tuple[str, ...]]:
     """The prose with a character's misheard spelling put back to its name (#2573), and what is
     too close to a secret name (#2591). Since #2628 the names of the transcript are settled by
@@ -986,7 +988,7 @@ def respelled(
         summary,
         names=sorted(names),
         secret_names=secret_names,
-        known_words=_known(beats, allowed_names, previous, setting),
+        known_words=_known(beats, allowed_names, previous, setting, who_and_what, story),
         ordinary_words=plain_words,
     )
     return Prose(summary, prose.music), strict.refused  # (the text is not used: no respelling)
@@ -1225,11 +1227,12 @@ def check_prose(
     aliases: Mapping[str, str] | None = None,
     who_and_what: Sequence[str] = (),
     story: Sequence[str] = (),
+    advisory: list[str] | None = None,
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
     `who_and_what`, `story` (#2954): the sheet and the earlier recaps the writer was given. Their
     words are known (a name only they give is not refused, and the DM's name check sees it), and a
-    run of 6 words taken from an earlier recap is a copy, like one from the table.
+    run of 6 words taken from an earlier recap is counted as advisory, never a retry (#2965).
     `name_counts`: filled with how many words taken for names outside the beat sheet there are of
     each kind (`NAME_CATEGORIES`), for a report that never shows the names (#2741).
     `identity_ties`: a 🤫 spelling and its entry's public names: a sentence naming both says who is
@@ -1314,14 +1317,11 @@ def check_prose(
             f"it copies the table word for word{hint}: tell that part in your own words"
         )
     for earlier in story:  # an earlier recap is facts, not wording (#2954)
-        taken = copied_run(narration, earlier)
-        if taken:
-            hint = (
-                "" if names_a_secret(taken, secret_names, allowed_names) else f' starting "{taken}"'
-            )
-            problems.append(
-                f"it copies an earlier recap word for word{hint}: say it in your own words"
-            )
+        if copied_run(narration, earlier):
+            # Advisory (#2965): counted in the job's report, never a reason to retry; a run of six
+            # words is too often a fixed phrase ("the Dark Forest") to fail a recap for it.
+            if advisory is not None:
+                advisory.append("earlier")
             break
     # The style examples are for how it sounds only (#2075): a run taken from one is a copy.
     for example in style:
@@ -1693,8 +1693,13 @@ def facts_message(
     *,
     who_and_what: Sequence[str] = (),
     story: Sequence[str] = (),
+    previous: str = "",
 ) -> str:
     numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(sentences_of(summary), start=1))
+    # The earlier recaps the writer was given; with none trimmed to the story (#2965 item 3),
+    # the bridge recap stands in for them, so a name only it mentions is not called invented.
+    recaps = list(story) or [" ".join(previous.split())[:PREVIOUS_MAX]]
+    recaps = [r for r in recaps if r]
     confirmed = (
         f"\n<confirmed>\n{_data(chr(10).join(corrections))}\n</confirmed>" if corrections else ""
     )
@@ -1708,9 +1713,9 @@ def facts_message(
     )
     earlier = (
         "\n<story_so_far>\n"
-        + "\n".join(f"<recap>{_data(r)}</recap>" for r in story)
+        + "\n".join(f"<recap>{_data(r)}</recap>" for r in recaps)
         + "\n</story_so_far>"
-        if story
+        if recaps
         else ""
     )
     return (

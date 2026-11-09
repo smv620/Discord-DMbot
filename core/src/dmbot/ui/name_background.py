@@ -899,7 +899,13 @@ async def read_background(
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
-        added = await add_sure(bot, campaign, stored, label)
+        added = await add_sure(
+            bot,
+            campaign,
+            stored,
+            label,
+            source=("lore", upload.source_id) if upload.source_id else None,
+        )
         if added is not None:
             done.notice, done.questions_left = added
     return done
@@ -2241,7 +2247,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional, feeling=True)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2258,7 +2264,11 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail, kin.directional(c.detail), feeling=True)
+        how = link_words(
+            c.predicate, c.detail, kin.directional(c.detail), feeling=True,
+            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
+        )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -2377,6 +2387,8 @@ class ConnectionOffer(_Menu):
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret,
+                    # whether they've met, from the quote's own words (#3881)
+                    knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong

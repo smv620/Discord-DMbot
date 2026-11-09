@@ -27,18 +27,9 @@ from collections.abc import Iterable, Sequence
 from dmbot.memory.models import name_key
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
+from dmbot.names.not_names import CREATURE_KINDS
 
 MIN_LETTERS = 3
-# What a creature is, said with a capital before a name ("Goblin Grik", "Dragon Queen"): the kind,
-# never the person's own name. The species and classes the table says are in scan.GAME_TERMS.
-CREATURE_KINDS = frozenset(
-    {
-        *("aberration", "beast", "celestial", "construct", "dragon", "elemental", "fey", "fiend"),
-        *("giant", "humanoid", "monstrosity", "ooze", "plant", "undead", "goblin", "hobgoblin"),
-        *("bugbear", "kobold", "ogre", "troll", "yeti", "wolf", "bear", "duergar", "drow", "lich"),
-        *("vampire", "zombie", "skeleton", "ghost", "ghoul", "demon", "devil", "golem", "hag"),
-    }
-)
 # Words an epithet starts with ("Red Ilsa", "Black Grim", "Mad Tom"): said alone they name a colour
 # or a mood, or another name that starts with them ("the Red Wizards"), never this one person.
 EPITHETS = frozenset(

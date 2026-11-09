@@ -32,7 +32,7 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import channel_sync, messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
@@ -502,4 +502,10 @@ async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign
         except Exception:
             log.exception("A running session could not take the new game masters")
             return ACCESS_LATE
+    # The DM Bot and transcript channels follow the DMs too (#3891): a removed game master stops
+    # seeing them now, not at the next hourly look. Its own failure is the sweep's to heal.
+    try:
+        await channel_sync.reconcile(guild, result.campaign, store, getattr(client, "memory", None))
+    except Exception:
+        log.exception("Game masters changed but the channels could not be put in step")
     return ""

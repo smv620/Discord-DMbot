@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import discord
@@ -124,68 +124,94 @@ class UndoUploadButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
-        campaign = await bot.campaigns.get(self.guild_id, self.campaign_id)
-        if campaign is None or bot.memory is None or bot.upload_notices is None:
-            await _tell(interaction, GONE)
-            return
-        if interaction.user.id not in campaign.dm_user_ids:  # checked on every press
-            await _tell(interaction, NOT_YOURS)
-            return
-        notices = bot.upload_notices
-        found = await notices.get(self.guild_id, self.notice_id)
-        if found is None:
-            await _tell(interaction, GONE)
-            return
-        if found.undone_at is not None:
-            await _tell(interaction, ALREADY)
-            return
-        if not found.can_undo(int(time.time())):
-            await _tell(interaction, TOO_LATE)
-            return
-        claimed = await notices.claim_undo(self.guild_id, self.notice_id)
-        if claimed is None:  # (a second press at the same moment)
-            await _tell(interaction, ALREADY)
-            return
-        await interaction.response.defer()
-        done = 0
-        broke = False
-        for batch in reversed(claimed.changes):  # newest first, as one chain of Undos
+
+        async def started() -> None:  # (the undo takes a while: answer Discord first)
+            await interaction.response.defer()
+
+        text = await undo_upload(
+            bot, self.guild_id, self.campaign_id, self.notice_id, interaction.user.id,
+            started=started,
+        )  # fmt: skip
+        if interaction.response.is_done() and text != COULD_NOT:  # (that one keeps its button)
             try:
-                await bot.memory.undo(campaign.guild_id, campaign.id, batch)
-                done += 1
-            except (TooLateToUndo, MemoryRuleError):
-                continue  # changed since: left as it is
-            except Exception:  # something unexpected: stop here, say so, never lose the button
-                log.exception("Undoing an upload stopped")
-                broke = True
-                break
-        if bot.lookup is not None:
-            bot.lookup.drop([campaign.id])
-        total = len(claimed.changes)
-        if broke and done == 0:
-            await notices.give_back_undo(self.guild_id, self.notice_id)  # nothing changed: again
-            await _tell(interaction, COULD_NOT)
-            return
-        if broke:
-            text = STOPPED.format(done=done, total=total)
-        else:
-            text = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
-        with_suppress = discord.HTTPException
+                await interaction.edit_original_response(
+                    content=text, view=None, allowed_mentions=NO_PINGS
+                )
+                return
+            except discord.HTTPException:
+                pass
+        await _tell(interaction, text)
+
+
+async def undo_upload(
+    bot: Any,
+    guild_id: int,
+    campaign_id: str,
+    notice_id: str,
+    user_id: int,
+    *,
+    started: Callable[[], Awaitable[None]] | None = None,
+) -> str:
+    """Undo one upload's changes for a game master, from the Discord button or the website's
+    queue action: every check, the claim, the changes undone newest first as one chain, and the
+    plain-words answer. `started` runs once the undo is claimed (the button answers Discord with
+    it). Counts only in the log."""
+    campaign = await bot.campaigns.get(guild_id, campaign_id)
+    if campaign is None or bot.memory is None or bot.upload_notices is None:
+        return GONE
+    if user_id not in campaign.dm_user_ids:  # checked on every press
+        return NOT_YOURS
+    notices = bot.upload_notices
+    found = await notices.get(guild_id, notice_id)
+    if found is None:
+        return GONE
+    if found.undone_at is not None:
+        return ALREADY
+    if not found.can_undo(int(time.time())):
+        return TOO_LATE
+    claimed = await notices.claim_undo(guild_id, notice_id)
+    if claimed is None:  # (a second press at the same moment)
+        return ALREADY
+    if started is not None:
+        await started()
+    done = 0
+    broke = False
+    for batch in reversed(claimed.changes):  # newest first, as one chain of Undos
         try:
-            await interaction.edit_original_response(
-                content=text, view=None, allowed_mentions=NO_PINGS
-            )
-        except with_suppress:
-            await _tell(interaction, text)
+            await bot.memory.undo(campaign.guild_id, campaign.id, batch)
+            done += 1
+        except (TooLateToUndo, MemoryRuleError):
+            continue  # changed since: left as it is
+        except Exception as exc:  # something unexpected: stop here, say so, never lose the button
+            log.warning("Undoing an upload stopped (%s)", type(exc).__name__)
+            broke = True
+            break
+    if bot.lookup is not None:
+        bot.lookup.drop([campaign.id])
+    total = len(claimed.changes)
+    if broke and done == 0:
+        await notices.give_back_undo(guild_id, notice_id)  # nothing changed: again
+        return COULD_NOT
+    if broke:
+        return STOPPED.format(done=done, total=total)
+    return NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
 
 
 async def add_sure(
-    bot: Any, campaign: Any, stored: Mapping[str, Sequence[str]], label: str
+    bot: Any,
+    campaign: Any,
+    stored: Mapping[str, Sequence[str]],
+    label: str,
+    *,
+    connections: bool = True,
+    source: tuple[str, str] | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
-    None when nothing could be kept (no store). Never raises."""
+    None when nothing could be kept (no store). `connections=False`: names only (an import's).
+    `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
+    by it (#3879). Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -200,7 +226,9 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
-        if links is not None:  # (a bot without the connections store adds the names only)
+        if (
+            links is not None and connections
+        ):  # (a bot without the connections store adds the names only)
             await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
         if bot.lookup is not None:
             bot.lookup.drop([cid])
@@ -217,7 +245,15 @@ async def add_sure(
             + (await links.count_which(guild, cid) if links is not None else 0)
             + len(await memory.same_person_offers(guild, cid))
         )
-        notice = await notices.add(guild, cid, label, counts, tally.batches)
+        notice = await notices.add(
+            guild,
+            cid,
+            label,
+            counts,
+            tally.batches,
+            source_kind=source[0] if source else None,
+            source_id=source[1] if source else None,
+        )
         return notice, questions
     except Exception:
         log.exception("Couldn't add what an upload was sure of")

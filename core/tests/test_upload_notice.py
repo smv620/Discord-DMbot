@@ -205,3 +205,116 @@ class Undoing(NamesTest):
         self.assertFalse(any(getattr(c, "url", "") for c in plain.children))
         self.assertTrue(plain.children)  # (Undo is still there)
         _ = AsyncMock
+
+
+class ImportAdds(NamesTest):
+    """The end of an import adds what its scans were sure of (#3878); consent is checked again."""
+
+    MIRA = 7
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.notices = UploadNotices(self.db)
+        self.bot.upload_notices = self.notices
+        self.bot.lookup = None
+        self.bot.post_upload_notice = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={self.MIRA}))  # type: ignore[assignment]
+        self.place = await self.scanned("Karsk", "place")
+        self.idea = await self.scanned("Wondering", "concept")
+
+    async def scanned(self, name: str, kind: str) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type=kind, name=name, source="scan"
+        )
+        return made.value.id
+
+    async def status(self, entry: str) -> str:
+        found = await self.memory.entities(
+            GUILD, self.campaign.id, statuses=("proposed", "confirmed")
+        )
+        return next(e.status for e in found if e.id == entry)
+
+    async def test_a_name_with_a_kind_is_added_and_one_without_stays_a_question(self) -> None:
+        from dmbot.bot import DMBot
+
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA}, {self.place, self.idea}, {"imp1"}
+        )
+        self.assertTrue(done)
+        self.assertEqual(await self.status(self.place), "confirmed")
+        self.assertEqual(await self.status(self.idea), "proposed")
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertEqual(notice.counts, {"place": 1})
+        self.assertEqual(self.bot.post_upload_notice.await_args.args[2], 1)  # type: ignore[attr-defined]
+
+    async def test_if_a_speaker_stopped_since_nothing_is_added(self) -> None:
+        from dmbot.bot import DMBot
+
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA, 8}, {self.place}, {"imp1"}
+        )
+        self.assertFalse(done)
+        self.assertEqual(await self.status(self.place), "proposed")
+        self.bot.post_upload_notice.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def test_the_shared_undo_function_takes_back_what_the_import_added(self) -> None:
+        from dmbot.bot import DMBot
+
+        await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1"})
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        text = await un.undo_upload(self.bot, GUILD, self.campaign.id, notice.id, DM)
+        self.assertEqual(text, un.NOTHING_LEFT)
+        self.assertEqual(await self.status(self.place), "proposed")
+        again = await un.undo_upload(self.bot, GUILD, self.campaign.id, notice.id, DM)
+        self.assertEqual(again, un.ALREADY)
+        other = await un.undo_upload(self.bot, GUILD, self.campaign.id, notice.id, MANAGER)
+        self.assertEqual(other, un.NOT_YOURS)
+
+    async def test_a_same_named_entry_already_waiting_is_not_the_imports(self) -> None:
+        from dmbot.bot import DMBot
+
+        await self.scanned("Karsk", "place")  # (a second, from elsewhere: not in the import's set)
+        before = await self.memory.entities(GUILD, self.campaign.id, statuses=("proposed",))
+        other = next(e.id for e in before if e.name == "Karsk" and e.id != self.place)
+        await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1"})
+        self.assertEqual(await self.status(self.place), "confirmed")
+        self.assertEqual(await self.status(other), "proposed")
+
+    async def test_when_nothing_was_added_the_usual_list_is_left_to_post(self) -> None:
+        from dmbot.bot import DMBot
+
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA}, {self.idea}, {"imp1"}
+        )
+        self.assertFalse(done)  # (no kind: a question, not an empty notice)
+        self.bot.post_upload_notice.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def test_an_import_notice_records_its_import_and_a_lore_one_its_upload(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.ui.upload_notice import add_sure
+
+        await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1"})
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        found = await self.notices.get(GUILD, notice.id)
+        assert found is not None
+        self.assertEqual((found.source_kind, found.source_id), ("import", "imp1"))
+        later = await self.scanned("Orrin", "place")
+        done = await add_sure(
+            self.bot, self.campaign, {"names": [later]}, "a file", source=("lore", "up42")
+        )
+        assert done is not None
+        again = await self.notices.get(GUILD, done[0].id)
+        assert again is not None
+        self.assertEqual((again.source_kind, again.source_id), ("lore", "up42"))
+
+    async def test_two_batches_in_one_report_name_no_source(self) -> None:
+        from dmbot.bot import DMBot
+
+        await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA}, {self.place}, {"imp1", "imp2"}
+        )
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        found = await self.notices.get(GUILD, notice.id)
+        assert found is not None
+        self.assertIsNone(found.source_kind)
+        self.assertIsNone(found.source_id)

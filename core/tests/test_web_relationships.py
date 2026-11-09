@@ -291,6 +291,25 @@ class Shaping(unittest.TestCase):
         return {"id": tag, "a": a, "b": b, "predicate": predicate, "detail": "", "secret": False,
                 "at": at, **kw}  # fmt: skip
 
+    def test_a_knows_line_leads_with_whether_they_met(self) -> None:
+        # (#3882: the door sends knows_how; the words lead with it, the DM's feeling kept)
+        rows = [self.row("1", "a", "b", "knows", 1, detail="wary", knows_how="met")]
+        (edge,) = relationships.edges_from(rows, can_edit=True, is_dm=True)
+        (link,) = edge["links"]
+        self.assertEqual((link["words"], link["back"], link["knowsHow"]),
+                         ("has met (wary)", "has met", "met"))  # fmt: skip
+        heard = [self.row("2", "a", "b", "knows", 1, knows_how="aware")]
+        (edge,) = relationships.edges_from(heard, can_edit=False)
+        self.assertEqual(edge["links"][0]["words"], "has heard of")
+        plain = [self.row("3", "a", "b", "knows", 1)]  # (an older door, or not said)
+        (edge,) = relationships.edges_from(plain, can_edit=False)
+        self.assertEqual((edge["links"][0]["words"], edge["links"][0]["knowsHow"]), ("knows", ""))
+
+    def test_a_player_never_reads_the_dm_s_feeling_beside_it(self) -> None:
+        rows = [self.row("1", "a", "b", "knows", 1, detail="hostile", knows_how="met")]
+        (edge,) = relationships.edges_from(rows, can_edit=False, is_dm=False)
+        self.assertEqual(edge["links"][0]["words"], "has met")
+
     def test_a_pair_is_one_edge_with_the_latest_known_label_and_the_others_counted(self) -> None:
         rows = [
             self.row("1", "b", "a", "knows", 1),
