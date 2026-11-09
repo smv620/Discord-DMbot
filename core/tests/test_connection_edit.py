@@ -221,7 +221,7 @@ class Cards(base.NamesTest):
         await self.know("Kesh")
         (rel,) = await self.relations()
         await self.memory.record_link_source(GUILD, self.campaign.id, rel.id, "Notes, 9 Nov", quote)
-        return rel.id
+        return str(rel.id)
 
     async def test_the_dm_sees_where_a_kept_lore_connection_came_from_and_nobody_else(self) -> None:
         # (#3606: the DM's "Why?", as the website's line panel shows it)
