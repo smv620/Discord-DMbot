@@ -162,6 +162,41 @@ class Undoing(NamesTest):
         self.assertIn("Took back 1 of 2", content)
         self.assertEqual(calls, sorted(notice.changes, reverse=True))  # newest first
 
+    async def test_an_unexpected_error_with_nothing_done_gives_the_button_back(self) -> None:
+        notice = await self.added()
+
+        async def boom(guild: int, campaign: str, batch: int, **kw: Any) -> Any:
+            raise RuntimeError("down")
+
+        cast(Any, self.memory).undo = boom
+        press = self.it(DM)
+        await self.button(notice).callback(press)
+        sent = [t for t, _ in press.response.sent] + [
+            c.args[0] for c in press.followup.send.await_args_list
+        ]
+        self.assertIn(un.COULD_NOT, sent)
+        again = await self.notices.get(GUILD, notice.id)
+        assert again is not None
+        self.assertIsNone(again.undone_at)  # (the claim is given back: it can be pressed again)
+        self.assertEqual(set((await self.statuses()).values()), {"confirmed"})
+
+    async def test_an_unexpected_error_after_some_were_undone_says_how_many(self) -> None:
+        notice = await self.added()
+        real = self.memory.undo
+        calls: list[int] = []
+
+        async def undo(guild: int, campaign: str, batch: int, **kw: Any) -> Any:
+            calls.append(batch)
+            if len(calls) == 2:
+                raise RuntimeError("down")
+            return await real(guild, campaign, batch, **kw)
+
+        cast(Any, self.memory).undo = undo
+        press = self.it(DM)
+        await self.button(notice).callback(press)
+        content = press.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("Took back 1 of 2; press Undo on each name's card", content)
+
     async def test_the_notice_view_has_the_links_and_undo_and_no_words(self) -> None:
         notice = await self.added()
         view = un.notice_view(notice, site_url="https://getdmbot.com")

@@ -39,6 +39,8 @@ PARTLY = (
     "↩️ Took back {done} of {total} changes from this upload. The rest were changed since, so "
     "they stay."
 )
+COULD_NOT = "Couldn't undo this upload just now. Nothing was changed; press again."
+STOPPED = "↩️ Took back {done} of {total}; press Undo on each name's card for the rest."
 NOTHING_LEFT = "↩️ Took back this upload. Its names and connections are gone."
 
 NAMES_KEYS = ("npc", "place", "faction", "item", "event")
@@ -146,16 +148,28 @@ class UndoUploadButton(
             return
         await interaction.response.defer()
         done = 0
+        broke = False
         for batch in reversed(claimed.changes):  # newest first, as one chain of Undos
             try:
                 await bot.memory.undo(campaign.guild_id, campaign.id, batch)
                 done += 1
             except (TooLateToUndo, MemoryRuleError):
                 continue  # changed since: left as it is
+            except Exception:  # something unexpected: stop here, say so, never lose the button
+                log.exception("Undoing an upload stopped")
+                broke = True
+                break
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
         total = len(claimed.changes)
-        text = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
+        if broke and done == 0:
+            await notices.give_back_undo(self.guild_id, self.notice_id)  # nothing changed: again
+            await _tell(interaction, COULD_NOT)
+            return
+        if broke:
+            text = STOPPED.format(done=done, total=total)
+        else:
+            text = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
         with_suppress = discord.HTTPException
         try:
             await interaction.edit_original_response(
