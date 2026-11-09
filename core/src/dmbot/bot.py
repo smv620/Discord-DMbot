@@ -505,6 +505,7 @@ from dmbot.transcript.name_pass_log import NamePassLog
 from dmbot.transcript.name_pass_log import undo_for_web as name_pass_undo_for_web
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.suggestions import SuggestionStore
+from dmbot.transcript.theatre_store import TheatreStore
 from dmbot.transcript.topic_ai import classify
 from dmbot.transcript.topics import GAME, OFF_TOPIC, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
@@ -1355,6 +1356,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 unchecked=self.recap_unchecked,
                 allowance=self.recap_text_allowance,
                 names_ready=self.recap_names_ready,
+                script_for=self.recap_script if settings.recap_reads_script else None,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
@@ -13788,6 +13790,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the transcript channel")
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
+
+    async def recap_script(self, gid: int, cid: str, job: Any) -> list[tuple[Sequence[int], str]]:
+        """The session's script for the recap's two checks (#3901, part 2): (who each line draws
+        on, the line). Only the campaign's own session; the pipeline keeps the lines everyone in
+        them still agrees to."""
+        stored = await TheatreStore(self.campaigns.db).read_by_start(gid, cid, job.session_at)
+        return [(line.user_ids, line.text) for line in stored]
 
     async def _auto_script_loop(self) -> None:
         """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A

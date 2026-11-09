@@ -146,6 +146,28 @@ class TheatreStore:
                 for r in await cur.fetchall()
             ]  # fmt: skip
 
+    async def read_by_start(self, guild_id: int, campaign_id: str, session_at: int) -> list[Stored]:
+        """The script of the session that started at `session_at` (what a recap job is keyed by),
+        for the recap's checks (#3901): only the campaign's own session, in order. Nothing is
+        returned for a session with no script."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.position, l.user_id, l.user_ids, l.source_ids, l.text"
+                " FROM theatre_lines l JOIN transcript_sessions s"
+                " ON s.guild_id = l.guild_id AND s.id = l.session_id"
+                " WHERE l.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s"
+                " ORDER BY l.position",
+                (guild_id, campaign_id, session_at),
+            )
+            return [
+                Stored(
+                    int(r["position"]), int(r["user_id"]),
+                    tuple(int(x) for x in r["user_ids"]),
+                    tuple(int(x) for x in r["source_ids"]), str(r["text"]),
+                )
+                for r in await cur.fetchall()
+            ]  # fmt: skip
+
 
 async def forget_person(
     conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
