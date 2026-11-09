@@ -3498,9 +3498,10 @@ def create_app(
     async def me_wizard_get(guild: int, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await wizard.get(db, session, guild) or {}
+            found = await wizard.get(db, session, guild)
         except RecapError as err:
             raise wizard_refusal(err) from None
+        return {**found, "answers": wizard.to_page(found["answers"])} if found else {}
 
     @app.post("/me/wizard/{guild}")
     async def me_wizard_start(guild: int, signed: Signed, request: Request) -> dict[str, str]:
@@ -3525,7 +3526,13 @@ def create_app(
             if not isinstance(answers, dict):
                 raise RecapError("bad_patch")
             step = body.get("step")
-            await wizard.update(db, session, guild, step, answers)  # type: ignore[arg-type]
+            await wizard.update(
+                db,
+                session,
+                guild,
+                step,  # type: ignore[arg-type]
+                wizard.from_page(answers),
+            )
         except RecapError as err:
             raise wizard_refusal(err) from None
         return {"status": "ok"}
