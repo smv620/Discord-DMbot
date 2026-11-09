@@ -3,6 +3,8 @@ a reading found, as the DM's own calls, and leaves the unsure ones as questions.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from dmbot.memory import auto_accept as auto
 from dmbot.memory.backstory_links import NewLink, NewWhich
 from dmbot.memory.models import DM as DM_SOURCE
