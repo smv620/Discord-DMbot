@@ -116,8 +116,10 @@ def bot_for(*, on: bool = True, plan: bool = True, ok: bool = True) -> Any:
 
 
 class Round(NamesTest):
-    async def run_with(self, me: Any, due: list[tuple[str, str]]) -> tuple[int, AsyncMock]:
-        make = AsyncMock(return_value=me.outcome)
+    async def run_with(
+        self, me: Any, due: list[tuple[str, str]], make: AsyncMock | None = None
+    ) -> tuple[int, AsyncMock]:
+        make = make or AsyncMock(return_value=me.outcome)
         me.campaigns.db = self.db
         with (
             patch.object(TheatreRuns, "sessions_without_script", AsyncMock(return_value=due)),
@@ -163,3 +165,32 @@ class Round(NamesTest):
         me.outcome = job.Outcome(job.ALREADY, started=False)
         await self.run_with(me, [("c" * 32, "s" * 32)])
         me.post_message.assert_not_awaited()
+
+    async def test_a_campaign_that_is_gone_is_left_alone(self) -> None:
+        me = bot_for()
+        me.campaigns.get = AsyncMock(return_value=None)
+        tried, make = await self.run_with(me, [("c" * 32, "s" * 32)])
+        self.assertEqual((tried, make.await_count), (0, 0))
+        me.post_message.assert_not_awaited()
+        me.plan_allows.assert_not_awaited()  # the early return comes before the plan check
+
+    async def test_a_session_with_no_lines_is_left_alone(self) -> None:
+        me = bot_for()
+        me.transcripts.session = AsyncMock(return_value=SimpleNamespace(lines=0, number=3))
+        tried, make = await self.run_with(me, [("c" * 32, "s" * 32)])
+        self.assertEqual((tried, make.await_count), (0, 0))
+        me.post_message.assert_not_awaited()
+        me.plan_allows.assert_not_awaited()  # the early return comes before the plan check
+
+    async def test_a_failing_post_does_not_stop_the_round(self) -> None:
+        me = bot_for()
+        me.post_message = AsyncMock(side_effect=RuntimeError("x"))
+        due = [("c" * 32, "s" * 32), ("c" * 32, "t" * 32)]
+        tried, make = await self.run_with(me, due)
+        self.assertEqual((tried, make.await_count), (2, 2))  # both runs begun; the lines are lost
+
+    async def test_a_session_that_raises_does_not_stop_the_next(self) -> None:
+        me = bot_for()
+        make = AsyncMock(side_effect=[RuntimeError("x"), me.outcome])
+        tried, make = await self.run_with(me, [("c" * 32, "s" * 32), ("c" * 32, "t" * 32)], make)
+        self.assertEqual((tried, make.await_count), (1, 2))  # the second one still runs
