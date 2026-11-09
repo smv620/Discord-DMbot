@@ -993,6 +993,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.backstory_links = backstory_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
+        if recaps is not None:  # scripts are made by themselves, so a recap waits for its (#3901)
+            recaps.script_wait = settings.theatre_on
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         # The DM's answers to a recap's names to check, from its page (#2113).
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
