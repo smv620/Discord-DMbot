@@ -1097,6 +1097,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
         # campaign -> who spoke in the lines its import scans read (checked again before adding)
         self._import_speakers: dict[str, set[int]] = {}
+        # campaign -> the entries its import scans proposed (the only ones the import may add)
+        self._import_entries: dict[str, set[str]] = {}
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         self._import_party: dict[str, int] = {}  # campaign -> player characters linked (#3036)
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
@@ -12032,18 +12034,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is not None and campaign.dm_screen_channel_id is not None:
                 await self.post(campaign.dm_screen_channel_id, party_notice(characters))
-        for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
+        over = self._import_names.keys() | self._import_unchecked.keys()
+        for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
             names = self._import_names.pop(cid, [])
             skipped = self._import_unchecked.pop(cid, 0)
+            # (taken now so none outlives its import, whichever way the report below goes)
+            speakers = self._import_speakers.pop(cid, set())
+            entries = self._import_entries.pop(cid, set())
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or campaign.dm_screen_channel_id is None:
                 continue
             if (
                 names
                 and not campaign.ask_before_adding
-                and await self._add_sure_import(campaign, names)
+                and await self._add_sure_import(campaign, speakers, entries)
             ):
                 names = []  # added what it was sure of; the notice carries what is left to answer
             text = after_session_text(names, where="your imported sessions") if names else ""
@@ -12092,43 +12098,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             elif reasons:
                 await self.post(channel, f"📜 {missed}")
 
-    async def _add_sure_import(self, campaign: Campaign, names: Sequence[str]) -> bool:
+    async def _add_sure_import(
+        self, campaign: Campaign, speakers: set[int], entries: set[str]
+    ) -> bool:
         """An import's scans are over and the DM has not asked to be asked first (#3878): add the
         names and other names DMbot is sure of, as the DM's own calls (`memory.auto_accept`), and
-        post the live notice with Undo in the DM Bot channel. Only these scans' names; connections
+        post the live notice with Undo in the DM Bot channel. Only `entries`, the names these
+        scans proposed (never something already waiting from an upload or a session); connections
         and players' claims stay questions. Consent is checked once more just before the batch:
-        if anyone whose lines were read has stopped since, nothing is added and the usual list is
-        posted instead. Returns True when the notice went out (the old post is then not needed).
-        Never raises; counts only in the log."""
+        if anyone whose lines were read (`speakers`) has stopped since, nothing is added and the
+        usual list is posted instead. Returns True when the notice went out (the old post is then
+        not needed), False when nothing was added. Never raises; counts only in the log."""
         from dmbot.ui.name_background import RecapNamesButton
         from dmbot.ui.upload_notice import add_sure
 
         try:
-            memory = self.memory
-            speakers = self._import_speakers.pop(campaign.id, set())
             agreed = await self.consent.consenting(campaign.guild_id)
-            if memory is None or not speakers <= agreed:
-                log.info("Import: names left as questions (consent changed or no store)")
+            if self.memory is None or not entries or not speakers <= agreed:
+                log.info("Import: names left as questions (consent changed, none, or no store)")
                 return False
-            keys = {name_key(n) for n in names}
-            ids = [
-                e.id
-                for e in await memory.entities(
-                    campaign.guild_id, campaign.id, statuses=("proposed",)
-                )
-                if name_key(e.name) in keys
-            ]
-            done = await add_sure(self, campaign, {"names": ids}, "your imported sessions")
-            if done is None:
-                return False
+            done = await add_sure(
+                self, campaign, {"names": sorted(entries)}, "your imported sessions",
+                connections=False,
+            )  # fmt: skip
+            if done is None or not done[0].counts:
+                return False  # nothing was added: the usual list of new names is posted
             notice, questions = done
             asks: list[Callable[[], discord.ui.Item[Any]]] = []
             if questions and (await self.count_waiting(campaign.guild_id, campaign.id)).names:
                 asks.append(partial(RecapNamesButton, campaign.guild_id, campaign.id))
             await self.post_upload_notice(campaign, notice, questions, asks)
             log.info(
-                "Import: added what was sure from %d names, %d questions left", len(ids), questions
-            )
+                "Import: added what was sure from %d names, %d questions left",
+                len(entries), questions,
+            )  # fmt: skip
             return True
         except Exception:
             log.exception("Import: couldn't add what was sure")
@@ -12179,10 +12182,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception(
                 "Import: showing the names the session said failed"
             )  # never stops the scan
+        before = {
+            e.id for e in await self.memory.entities(gid, ready.campaign_id, statuses=("proposed",))
+        }
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
             agreed=set(agreed), game_only=True,
         )  # fmt: skip
+        self._import_entries.setdefault(ready.campaign_id, set()).update(
+            e.id
+            for e in await self.memory.entities(gid, ready.campaign_id, statuses=("proposed",))
+            if e.id not in before
+        )  # (what was waiting before is not this import's, whatever its name)
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
         return added
 

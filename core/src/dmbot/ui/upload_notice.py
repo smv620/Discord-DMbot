@@ -198,12 +198,18 @@ async def undo_upload(
 
 
 async def add_sure(
-    bot: Any, campaign: Any, stored: Mapping[str, Sequence[str]], label: str
+    bot: Any,
+    campaign: Any,
+    stored: Mapping[str, Sequence[str]],
+    label: str,
+    *,
+    connections: bool = True,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
-    None when nothing could be kept (no store). Never raises."""
+    None when nothing could be kept (no store). `connections=False`: names only (an import's).
+    Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -218,7 +224,9 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
-        if links is not None:  # (a bot without the connections store adds the names only)
+        if (
+            links is not None and connections
+        ):  # (a bot without the connections store adds the names only)
             await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
         if bot.lookup is not None:
             bot.lookup.drop([cid])
