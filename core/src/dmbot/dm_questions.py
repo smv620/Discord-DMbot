@@ -35,7 +35,8 @@ ORDER = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, FAMILY, KINDS, DEEDS, REVEALS, SCRI
 @dataclass(frozen=True, slots=True)
 class Ask:
     """One question for the DM: what to say alone, what to say as a line in a list, its button,
-    and the words for the DM screen if no DM can be reached."""
+    and the words for the fallback channel if no DM can be reached (counts only: the DM Bot
+    channel is read by the campaign's people)."""
 
     kind: str
     alone: str  # the whole message when this is the only question
@@ -47,7 +48,7 @@ class Ask:
     # question has a screen button that finds the server from the press, the private one has it in
     # its id).
     screen_button: Callable[[], discord.ui.Item[Any]]
-    screen: str  # the DM screen's words, if the private message could not be sent
+    screen: str  # counts-only words for the fallback channel, if the private message fails
 
 
 def ordered(asks: list[Ask]) -> list[Ask]:
