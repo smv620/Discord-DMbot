@@ -182,6 +182,13 @@ class TheSplitForASession(unittest.IsolatedAsyncioTestCase):
         assert store.kept is not None
         self.assertEqual(sp.from_json(store.kept), got)  # (kept: the DM sees the count, can undo)
 
+    async def test_the_closing_line_ends_the_recap_and_the_dm_s_next_words_are_play(self) -> None:
+        words = [*RECAP_WORDS, "And so we continue the tale.", "You stand at the mill door."]
+        got = await self.ask(self.splitter(FakeStore(), FakeClient(), first_session(words)))
+        assert got is not None
+        self.assertEqual(got.label_of(4), sp.RECAP)  # (the closing line)
+        self.assertEqual(got.label_of(5), sp.PLAY)  # (the DM's next line is play)
+
     async def test_each_ruled_opening_and_a_lead_in_count(self) -> None:
         for opening in ("Last time, ", "Last session ", "When we left off, ", "When we last left ",
                         "Okay, so, previously "):  # fmt: skip

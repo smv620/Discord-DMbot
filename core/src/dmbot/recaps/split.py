@@ -238,7 +238,12 @@ def spoken_recap(said: Sequence[Said], dm_ids: Collection[int]) -> Split | None:
     if first is None or not _opens_recap(opening[first].text):
         return None
     last = first
-    while last + 1 < len(opening) and opening[last + 1].user_id in dm_ids:
+    while (
+        last + 1 < len(opening)
+        and opening[last + 1].user_id in dm_ids
+        # (a closing line, "and so we continue…", ends the recap: what the DM says next is play)
+        and not _CLOSING_HEARD.search(opening[last].text)
+    ):
         last += 1
     if sum(len(s.text) for s in opening[first : last + 1]) < SPOKEN_RECAP_MIN_CHARS:
         return None
