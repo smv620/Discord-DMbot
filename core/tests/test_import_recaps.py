@@ -134,6 +134,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
         dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
+        ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True),
@@ -148,6 +149,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         recap_holds=None,
         post=AsyncMock(return_value=True),
         _import_names={},
+        _import_speakers={},
         _import_reports={},
         _import_unhonoured={},
         _import_party={},

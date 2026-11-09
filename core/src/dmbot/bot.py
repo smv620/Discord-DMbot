@@ -1095,6 +1095,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # scanned and then posted as one (#2649).
         self._import_reports: dict[tuple[int, str], list[name_pass_logic.Report]] = {}
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
+        # campaign -> who spoke in the lines its import scans read (checked again before adding)
+        self._import_speakers: dict[str, set[int]] = {}
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         self._import_party: dict[str, int] = {}  # campaign -> player characters linked (#3036)
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
@@ -12038,6 +12040,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or campaign.dm_screen_channel_id is None:
                 continue
+            if (
+                names
+                and not campaign.ask_before_adding
+                and await self._add_sure_import(campaign, names)
+            ):
+                names = []  # added what it was sure of; the notice carries what is left to answer
             text = after_session_text(names, where="your imported sessions") if names else ""
             if skipped:
                 one = skipped == 1
@@ -12084,6 +12092,48 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             elif reasons:
                 await self.post(channel, f"📜 {missed}")
 
+    async def _add_sure_import(self, campaign: Campaign, names: Sequence[str]) -> bool:
+        """An import's scans are over and the DM has not asked to be asked first (#3878): add the
+        names and other names DMbot is sure of, as the DM's own calls (`memory.auto_accept`), and
+        post the live notice with Undo in the DM Bot channel. Only these scans' names; connections
+        and players' claims stay questions. Consent is checked once more just before the batch:
+        if anyone whose lines were read has stopped since, nothing is added and the usual list is
+        posted instead. Returns True when the notice went out (the old post is then not needed).
+        Never raises; counts only in the log."""
+        from dmbot.ui.name_background import RecapNamesButton
+        from dmbot.ui.upload_notice import add_sure
+
+        try:
+            memory = self.memory
+            speakers = self._import_speakers.pop(campaign.id, set())
+            agreed = await self.consent.consenting(campaign.guild_id)
+            if memory is None or not speakers <= agreed:
+                log.info("Import: names left as questions (consent changed or no store)")
+                return False
+            keys = {name_key(n) for n in names}
+            ids = [
+                e.id
+                for e in await memory.entities(
+                    campaign.guild_id, campaign.id, statuses=("proposed",)
+                )
+                if name_key(e.name) in keys
+            ]
+            done = await add_sure(self, campaign, {"names": ids}, "your imported sessions")
+            if done is None:
+                return False
+            notice, questions = done
+            asks: list[Callable[[], discord.ui.Item[Any]]] = []
+            if questions and (await self.count_waiting(campaign.guild_id, campaign.id)).names:
+                asks.append(partial(RecapNamesButton, campaign.guild_id, campaign.id))
+            await self.post_upload_notice(campaign, notice, questions, asks)
+            log.info(
+                "Import: added what was sure from %d names, %d questions left", len(ids), questions
+            )
+            return True
+        except Exception:
+            log.exception("Import: couldn't add what was sure")
+            return False
+
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
@@ -12110,6 +12160,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )  # (marks it)  # fmt: skip
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
+        self._import_speakers.setdefault(ready.campaign_id, set()).update(uid for uid, _ in lines)
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
         held = self._import_reports.setdefault((gid, ready.campaign_id), [])
