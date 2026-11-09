@@ -238,7 +238,7 @@ class ImportAdds(NamesTest):
 
         done = await DMBot._add_sure_import(
             self.bot, self.campaign, {self.MIRA}, {self.place, self.idea}
-        )  # type: ignore[arg-type]
+        )
         self.assertTrue(done)
         self.assertEqual(await self.status(self.place), "confirmed")
         self.assertEqual(await self.status(self.idea), "proposed")
@@ -249,7 +249,7 @@ class ImportAdds(NamesTest):
     async def test_if_a_speaker_stopped_since_nothing_is_added(self) -> None:
         from dmbot.bot import DMBot
 
-        done = await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA, 8}, {self.place})  # type: ignore[arg-type]
+        done = await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA, 8}, {self.place})
         self.assertFalse(done)
         self.assertEqual(await self.status(self.place), "proposed")
         self.bot.post_upload_notice.assert_not_awaited()  # type: ignore[attr-defined]
@@ -257,7 +257,7 @@ class ImportAdds(NamesTest):
     async def test_the_shared_undo_function_takes_back_what_the_import_added(self) -> None:
         from dmbot.bot import DMBot
 
-        await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place})  # type: ignore[arg-type]
+        await DMBot._add_sure_import(self.bot, self.campaign, {self.MIRA}, {self.place})
         notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
         text = await un.undo_upload(self.bot, GUILD, self.campaign.id, notice.id, DM)
         self.assertEqual(text, un.NOTHING_LEFT)
