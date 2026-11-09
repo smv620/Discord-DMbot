@@ -45,8 +45,8 @@ class Words(NamesTest):
     def test_a_connection_kept_hidden_beside_a_hidden_one_is_said(self) -> None:
         """#3979: an import's claims kept hidden beside a connection DMbot already hides."""
         text = un.notice_text("a session", {"held": 1}, 0)
-        self.assertIn("**1 connection** is hidden from your players for now", text)
-        self.assertIn("👁️ Reveal when they should see it", text)
+        self.assertIn("**1 connection** is kept hidden from your players", text)
+        self.assertIn("To show it: open either name, ✏️ Edit a connection…", text)
         self.assertNotIn("held", text)
 
 

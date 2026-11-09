@@ -38,10 +38,10 @@ REFUSAL_MAX = (
 YES, NO, HIDE = "✅", "❌", "🤫"
 # A held-back connection the table stated, now shown to the players (#3963 c): said every time.
 SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
-# Kept hidden beside a connection DMbot already hides between the same two (#3975, #3979).
+# Kept hidden beside a connection the story already hides between the same two (#3975, #3979).
 HELD_NOW = (
-    "🙈 Hidden from your players for now: DMbot already hides another connection between these "
-    "two. Open the name and press 👁️ Reveal when they should see it."
+    "🙈 Kept hidden from your players, so it can't give away another hidden connection between "
+    "these two names. To show it: open either name, ✏️ Edit a connection…, then 👁️ Who knows this?"
 )
 
 
@@ -55,11 +55,12 @@ def shown_line(n: int) -> str:
 
 def held_line(n: int) -> str:
     """The "All true" summary's line for the connections kept hidden beside a hidden one (#3979)."""
+    one = n == 1
     return (
-        f"🙈 {n} of them {'is' if n == 1 else 'are'} hidden from your players for now: DMbot "
-        f"already hides another connection between the same two. Press 👁️ Reveal when they "
-        f"should see "
-        f"{'it' if n == 1 else 'them'}."
+        f"🙈 {n} of them {'is' if one else 'are'} kept hidden from your players, so "
+        f"{'it' if one else 'they'} can't give away another hidden connection between the same "
+        f"two names. To show {'it' if one else 'them'}: open either name, ✏️ Edit a connection…, "
+        f"then 👁️ Who knows this?"
     )
 
 

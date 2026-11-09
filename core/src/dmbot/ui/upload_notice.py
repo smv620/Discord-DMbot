@@ -82,11 +82,12 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
         )
     held = counts.get("held", 0)
     if held:  # (an import's: kept hidden beside a connection DMbot already hides, #3979)
+        one = held == 1
         text += (
-            f"\n🙈 **{held} connection{'' if held == 1 else 's'}** "
-            f"{'is' if held == 1 else 'are'} hidden from your players for now: DMbot already hides "
-            f"another connection between the same two. Press 👁️ Reveal when they should see "
-            f"{'it' if held == 1 else 'them'}."
+            f"\n🙈 **{held} connection{'' if one else 's'}** {'is' if one else 'are'} kept hidden "
+            f"from your players, so {'it' if one else 'they'} can't give away another hidden "
+            f"connection between the same two names. To show {'it' if one else 'them'}: open "
+            f"either name, ✏️ Edit a connection…, then 👁️ Who knows this?"
         )
     if questions:
         text += (

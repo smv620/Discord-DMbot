@@ -707,8 +707,8 @@ class Stored(ConfirmedMemoryTest):
 
         self.assertIn("1 of them was said at the table", claims_review.shown_line(1))
         self.assertIn("3 of them were said at the table", claims_review.shown_line(3))
-        self.assertIn("1 of them is hidden from your players", claims_review.held_line(1))
-        self.assertIn("2 of them are hidden from your players", claims_review.held_line(2))
+        self.assertIn("1 of them is kept hidden from your players", claims_review.held_line(1))
+        self.assertIn("To show them: open either name", claims_review.held_line(2))
 
     async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
         await self.propose(said("Bram", "is in", "Veldmoor"))

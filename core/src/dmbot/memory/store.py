@@ -6737,7 +6737,7 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
     under the catch-all, beside a held-back one, may be that same connection in other words, so it
     is written held back too; a second, shown row would show it whatever its ends. DMbot never
     guesses which held-back one it means (a "brother" claim is not the "father" row); the DM shows
-    it with 👁️ Reveal."""
+    it when the players should see it."""
     rows = await w.select(
         RELATIONS,
         " AND status = %s AND to_session_at IS NULL"

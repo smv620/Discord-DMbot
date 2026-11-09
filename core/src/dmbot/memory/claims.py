@@ -290,7 +290,8 @@ class Confirmed:
     # the caller says so to the DM.
     shown: bool = False
     # Written held back beside a connection the story already holds back between the same two
-    # (#3975): the caller tells the DM, who shows it with 👁️ Reveal when the players should see it.
+    # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
+    # players on the website) when the players should see it.
     held: bool = False
 
 
@@ -2146,7 +2147,7 @@ class ClaimStore:
                 # A claim the reader could only file under the catch-all, between two entries the
                 # story already holds a connection back for, may be that connection in other
                 # words: it is written held back too, never shown beside it (#3975). The DM
-                # decides with 👁️ Reveal; DMbot never guesses which one it means.
+                # decides when to show it; DMbot never guesses which one it means.
                 live = await live_between(w, subject_id, object_id)
                 hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
