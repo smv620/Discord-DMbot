@@ -64,6 +64,41 @@ class TheStore(DatabaseTest):
         await self.memory.merge(GUILD, cid, self.tran, other, source=DM_SOURCE, dm_said_same=True)
         self.assertEqual(await self.memory.name_sources(GUILD, cid, self.tran), [("up2", "Map")])
 
+    async def test_undoing_the_merge_gives_the_uploads_back(self) -> None:
+        cid = self.campaign.id
+        other = await self.person("Tran the Elder")
+        await self.memory.record_name_sources(GUILD, cid, [other], upload_key="up2", label="Map")
+        merged = await self.memory.merge(
+            GUILD, cid, self.tran, other, source=DM_SOURCE, dm_said_same=True
+        )
+        assert merged.batch is not None
+        await self.memory.undo(GUILD, cid, merged.batch)
+        self.assertEqual(await self.memory.name_sources(GUILD, cid, self.tran), [])
+        self.assertEqual(await self.memory.name_sources(GUILD, cid, other), [("up2", "Map")])
+
+    async def test_a_chain_of_merges_reads_through(self) -> None:
+        cid = self.campaign.id
+        a, b = await self.person("Old Tran"), await self.person("Tran the Elder")
+        await self.memory.record_name_sources(GUILD, cid, [a], upload_key="up5", label="Notes")
+        await self.memory.merge(GUILD, cid, b, a, source=DM_SOURCE, dm_said_same=True)
+        await self.memory.merge(GUILD, cid, self.tran, b, source=DM_SOURCE, dm_said_same=True)
+        self.assertEqual(await self.memory.name_sources(GUILD, cid, self.tran), [("up5", "Notes")])
+
+    async def test_a_list_split_into_names_keeps_its_upload_on_each(self) -> None:
+        cid = self.campaign.id
+        written = await self.memory.add_entity(
+            GUILD, cid, type="place", name="Aldmoor, Quillgate, Fenwick", source=DM_SOURCE,
+            status="proposed",
+        )  # fmt: skip
+        listed = written.value.id
+        await self.memory.record_name_sources(GUILD, cid, [listed], upload_key="up6", label=LORE)
+        split = await self.memory.split_waiting_name(GUILD, cid, listed, source=DM_SOURCE)
+        data = await self.memory.lookup_data(GUILD, cid)
+        parts = [e.id for e in data.entities if e.name in split.value.made]
+        self.assertEqual(len(parts), 3)
+        for part in parts:
+            self.assertEqual(await self.memory.name_sources(GUILD, cid, part), [("up6", LORE)])
+
     async def test_another_campaign_s_rows_are_never_read(self) -> None:
         second = await self.campaigns.create(GUILD, "Another", DM)
         theirs = await self.person("Tran Vosk", second.id)
@@ -78,6 +113,31 @@ class TheStore(DatabaseTest):
             ),
             0,
         )
+
+
+class TheUnnamed(unittest.IsolatedAsyncioTestCase):
+    """`name_background._unnamed_rows` hands back the unnamed people it made (not one it found),
+    so the read records their upload too."""
+
+    async def test_only_a_person_made_now_is_collected(self) -> None:
+        from dmbot.memory.models import Entity
+
+        def entry(eid: str) -> Entity:
+            return Entity(eid, "character", "x", "", "proposed", None, "background", 0)
+
+        made_one = SimpleNamespace(entity=entry("u" * 32), created=True)
+        found_one = SimpleNamespace(entity=entry("v" * 32), created=False)
+        memory: Any = SimpleNamespace(add_unnamed=AsyncMock(side_effect=[made_one, found_one]))
+        link: Any = SimpleNamespace(
+            fixed="Tran Vosk", what="a hooded figure", anchored=False, role="", how="knows",
+            fixed_is_a=True, quote="", secret=False, words="", decided=None,
+        )  # fmt: skip
+        campaign: Any = SimpleNamespace(guild_id=GUILD, id="c")
+        made: list[str] = []
+        await name_background._unnamed_rows(
+            memory, campaign, [link, link], lambda _n: "t" * 32, False, LORE, None, made=made
+        )
+        self.assertEqual(made, ["u" * 32])
 
 
 class TheLoreRead(unittest.IsolatedAsyncioTestCase):

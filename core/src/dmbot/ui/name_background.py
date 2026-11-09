@@ -836,6 +836,7 @@ async def read_background(
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
+    made_unnamed: list[str] = []
     queued = await queue_links(
         bot,
         memory,
@@ -862,7 +863,10 @@ async def read_background(
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
+        made_unnamed=made_unnamed,
     )
+    # (the people the read could not name, made while queueing: the same upload, #3675)
+    await _record_sources(memory, campaign, {"unnamed": made_unnamed}, upload, label)
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
     log.info(
@@ -1544,6 +1548,7 @@ async def queue_links(
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
+    made_unnamed: list[str] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -1771,6 +1776,7 @@ async def queue_links(
             dropped,
             known_by,
             world_level if world_all else 0,
+            made_unnamed,
         )
         held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
         for r in made_rows:  # (two lines about one unnamed person are one row)
@@ -1807,10 +1813,12 @@ async def _unnamed_rows(
     dropped: bg.Dropped | None,
     known_by: str = "",
     world: int = 0,
+    made: list[str] | None = None,
 ) -> list[NewLink]:
     """The relationships kept with a person the read could not name (#2790): each makes (or finds)
     the unnamed entry, hung off the named end when the story gave a relationship word. A named end
-    that is not an entry of the campaign after all is counted as not found."""
+    that is not an entry of the campaign after all is counted as not found. `made` collects the
+    unnamed entries this read made (not one it found), for which upload they came from (#3675)."""
     rows: list[NewLink] = []
     read: dict[str, str] = {}  # this read's own record: two "a hooded figure" are one person
     for u in links:
@@ -1840,6 +1848,8 @@ async def _unnamed_rows(
                 dropped["name_not_found"] += 1
             continue
         other = added.entity.id
+        if added.created and made is not None:
+            made.append(other)
         a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
         rows.append(
             NewLink(

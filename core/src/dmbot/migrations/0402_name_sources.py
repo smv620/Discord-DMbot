@@ -16,7 +16,9 @@ from dmbot.migrations._shared import _isolate
 # (`campaigns/tables.py`): it is provenance, rebuilt by the next read, and reads as "Not known yet"
 # after a restore. A merge leaves the rows on the merged-away entry: a reader follows
 # `memory_entities.merged_into` (as `MemoryStore.name_sources` does), so an Undo of the merge needs
-# nothing here.
+# nothing here. A door asking "the names this upload gave" must follow it forward the same way, to
+# the live entry, or a merged name drops out of the filter. A list split into names copies its
+# rows to each part (`_copy_name_sources`).
 SQL = r"""
     CREATE TABLE memory_name_sources (
         guild_id       BIGINT NOT NULL,

@@ -229,6 +229,22 @@ _LIVE_ENTITY_IDS = (
 )
 
 
+async def _copy_name_sources(w: Scope, from_id: str, to_ids: Sequence[str]) -> None:
+    """The uploads one entry was read from, given to entries made out of it in the same change (a
+    list split into its names, #3383): each part was read from the same upload (#3675). Not in the
+    change log: an Undo removes the parts, and their rows go with them (the foreign key)."""
+    if not to_ids:
+        return
+    await w.conn.execute(
+        "INSERT INTO memory_name_sources (guild_id, campaign_id, entity_id, upload_key, label,"
+        " created_at) SELECT s.guild_id, s.campaign_id, t.id, s.upload_key, s.label, s.created_at"
+        " FROM memory_name_sources s CROSS JOIN unnest(%s::text[]) AS t(id)"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+        " ON CONFLICT DO NOTHING",
+        (list(to_ids), *w.ids, from_id),
+    )
+
+
 async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[str]:
     """The campaign's live entries (proposed or confirmed), or those of `among`, to filter
     its names and facts by in Python: plain reads, never a join that can go quadratic
@@ -2983,6 +2999,7 @@ class MemoryStore:
                 lookup_key(str(e["name"]))
                 for e in await w.select(ENTITIES, " AND status = 'rejected'")
             }
+            new_ids: list[str] = []
             for part in parts:
                 key = lookup_key(part)
                 if by_key.get(key) in live:
@@ -3010,6 +3027,7 @@ class MemoryStore:
                 await w.insert(
                     ALIASES, _new_alias(w, str(row["id"]), part, "full", PROPOSED, False, None)
                 )
+                new_ids.append(str(row["id"]))
                 by_key[key] = str(row["id"])
                 made.append(part)
             old_key = lookup_key(str(current["name"]))
@@ -3041,6 +3059,7 @@ class MemoryStore:
             await _let_go_of_anchored(w, entity_id)
             for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
                 await w.update(ALIASES, alias["id"], {"status": REJECTED})
+            await _copy_name_sources(w, entity_id, new_ids)  # (each part is from the list's upload)
             return Written(SplitName(tuple(parts), tuple(made), tuple(joined)), w.batch)
 
     async def undo_split(
@@ -3251,6 +3270,7 @@ class MemoryStore:
                 )
                 member_id = str(row["id"])
                 made.append(part)
+                await _copy_name_sources(w, str(current["id"]), [member_id])  # (the list's upload)
                 waiting = True
             # The DM decided this by pressing the button. For a name still waiting it is held as a
             # proposal the DM is not asked about: `set_entity_status` confirms it when the name is
