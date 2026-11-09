@@ -3253,7 +3253,15 @@ class MemoryStore:
             return Written([], None)
         async with self._write(guild_id, campaign_id, SHORT_NAME_SOURCE) as w:
             keys = sorted({lookup_key(word) for _, word in found})
-            taken = {str(a["key"]) for a in await w.select(ALIASES, " AND key = ANY(%s)", [keys])}
+            rows = await w.select(ALIASES, " AND key = ANY(%s)", [keys])
+            owners = sorted({str(a["entity_id"]) for a in rows})
+            alive = {
+                str(e["id"])
+                for e in await w.select(
+                    ENTITIES, " AND id = ANY(%s) AND status IN ('proposed', 'confirmed')", [owners]
+                )
+            }  # (a name of an entry the DM rejected outright blocks nothing, as in the read)
+            taken = {str(a["key"]) for a in rows if str(a["entity_id"]) in alive}
             added = []
             for entity_id, word in found:
                 if lookup_key(word) in taken or await w.get(ENTITIES, entity_id) is None:
