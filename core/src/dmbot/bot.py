@@ -134,6 +134,8 @@ from dmbot.dm_screen import (
     PeekButton,
     StopListeningButton,
     VisibilityButton,
+    channel_sync,
+    channel_sync_ui,
     delete_campaign,
     dm_bot_buttons,
     ensure_dm_screen,
@@ -685,6 +687,8 @@ FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after th
 IDLE_SWEEP_INTERVAL_S = 1
 OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked at (#1214)
 OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
+CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
+CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
@@ -1099,6 +1103,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._import_speakers: dict[str, set[int]] = {}
         # campaign -> the entries its import scans proposed (the only ones the import may add)
         self._import_entries: dict[str, set[str]] = {}
+        # campaign -> the import batches whose scans ended in this report (the notice's source)
+        self._import_batches: dict[str, set[str]] = {}
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         self._import_party: dict[str, int] = {}  # campaign -> player characters linked (#3036)
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
@@ -1685,6 +1691,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            channel_sync_ui.ChannelsMenuButton,
+            channel_sync_ui.ChannelsChoiceButton,
+            channel_sync_ui.PeopleButton,
             HouseFileButton,
             SharedRulesButton,
             HomebrewButton,
@@ -1846,6 +1855,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.import_job is not None
                 else []
             ),
+            self._watched(self._channel_sync_loop(), "channel-sync"),
             *(
                 [self._watched(self._retention_loop(), "retention")]
                 if self.retention or self.keep_job
@@ -12043,13 +12053,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (taken now so none outlives its import, whichever way the report below goes)
             speakers = self._import_speakers.pop(cid, set())
             entries = self._import_entries.pop(cid, set())
+            batches = self._import_batches.pop(cid, set())
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or campaign.dm_screen_channel_id is None:
                 continue
             if (
                 names
                 and not campaign.ask_before_adding
-                and await self._add_sure_import(campaign, speakers, entries)
+                and await self._add_sure_import(campaign, speakers, entries, batches)
             ):
                 names = []  # added what it was sure of; the notice carries what is left to answer
             text = after_session_text(names, where="your imported sessions") if names else ""
@@ -12099,7 +12110,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(channel, f"📜 {missed}")
 
     async def _add_sure_import(
-        self, campaign: Campaign, speakers: set[int], entries: set[str]
+        self, campaign: Campaign, speakers: set[int], entries: set[str], batches: set[str]
     ) -> bool:
         """An import's scans are over and the DM has not asked to be asked first (#3878): add the
         names and other names DMbot is sure of, as the DM's own calls (`memory.auto_accept`), and
@@ -12120,6 +12131,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             done = await add_sure(
                 self, campaign, {"names": sorted(entries)}, "your imported sessions",
                 connections=False,
+                # (the website finds the notice by its import; with several batches in one report
+                # there is no single one to name, so none is: it shows no notice, never a wrong one)
+                source=("import", next(iter(batches))) if len(batches) == 1 else None,
             )  # fmt: skip
             if done is None or not done[0].counts:
                 return False  # nothing was added: the usual list of new names is posted
@@ -12164,6 +12178,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         self._import_speakers.setdefault(ready.campaign_id, set()).update(uid for uid, _ in lines)
+        if ready.import_id:
+            self._import_batches.setdefault(ready.campaign_id, set()).add(ready.import_id)
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
         held = self._import_reports.setdefault((gid, ready.campaign_id), [])
@@ -13778,6 +13794,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaign.id,
                 self.campaigns,
                 category=category if isinstance(category, discord.CategoryChannel) else None,
+                people=await self._channel_people(guild, campaign),
             )
         except TranscriptChannelError as exc:
             return None, screen_messages.transcript_failed(str(exc))
@@ -13785,6 +13802,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the transcript channel")
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
+
+    async def _channel_people(self, guild: discord.Guild, campaign: Campaign) -> frozenset[int]:
+        """Who may see the campaign's DM Bot and transcript channels (#3891)."""
+        me = guild.me
+        try:
+            return await channel_sync.campaign_people(
+                self.campaigns, self.memory, campaign, me.id if me is not None else 0
+            )
+        except Exception:
+            # The channels are made whatever the lookup does; the DMs are always among the people.
+            log.exception("Couldn't work out who may see a campaign's channels")
+            return frozenset(campaign.dm_user_ids)
+
+    async def _channel_sync_loop(self) -> None:
+        """Keep every campaign's DM Bot and transcript channels in step with who may see them
+        (#3891): a look at start-up and then every hour, so a missed update heals. It reads the
+        channels Discord's cache holds and calls Discord only for a channel that differs. A
+        campaign's failure never stops the rest; counts only in the log."""
+        await asyncio.sleep(CHANNEL_SYNC_FIRST_S)
+        while True:
+            looked = 0
+            for guild in list(self.guilds):
+                try:
+                    for campaign in await self.campaigns.list_campaigns(guild.id):
+                        with log_context(guild_id=guild.id, campaign_id=campaign.id):
+                            await channel_sync.reconcile(
+                                guild, campaign, self.campaigns, self.memory
+                            )
+                        looked += 1
+                        await asyncio.sleep(OWNER_CHECK_GAP_S)
+                except Exception:
+                    log.exception("Channel sync: a server's look failed")
+            log.info("Channel sync: %d campaign(s) looked at", looked)
+            await asyncio.sleep(CHANNEL_SYNC_EVERY_S)
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is
@@ -13818,6 +13869,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaign.id,
                 self.campaigns,
                 category=category if isinstance(category, discord.CategoryChannel) else None,
+                people=await self._channel_people(guild, campaign),
             )
             fresh = await self.campaigns.get(guild.id, campaign.id)
             if fresh is not None:

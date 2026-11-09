@@ -1036,6 +1036,18 @@ class MemoryStore:
 
     # ---- story threads the DM keeps (#1662) ----
 
+    async def players_of(self, guild_id: int, campaign_id: str) -> set[int]:
+        """The members who play a confirmed character in this campaign (#3891: they may see its
+        channels). Ids only; a speaker without Discord has a negative number and is left out."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT DISTINCT played_by FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND played_by > 0 AND type = 'character'"
+                " AND status = 'confirmed'",
+                scope.ids,
+            )
+            return {int(r["played_by"]) for r in await cur.fetchall()}
+
     async def is_player_here(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
         """Whether this person is tied to this campaign (#1666): the player of a confirmed
         character in it, or heard saying a known name in one of its sessions. A merged or
@@ -2818,6 +2830,21 @@ class MemoryStore:
                     relation_id,
                 ),
             )
+
+    async def link_source(
+        self, guild_id: int, campaign_id: str, relation_id: str
+    ) -> tuple[str, str] | None:
+        """(the upload's label, the reader's quote) a connection was kept from (#2946, #3606), or
+        None. A DM-only reader, as the website's link-sources door is: the quote is the DM's own
+        text. Read by Discord's connection page for its "Why?"."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT label, quote FROM memory_link_sources"
+                " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s",
+                (*scope.ids, relation_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["label"]), str(row["quote"] or ""))
 
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it

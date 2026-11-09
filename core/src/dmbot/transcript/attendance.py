@@ -24,3 +24,18 @@ async def session_speakers(
             (guild_id, campaign_id, session_id),
         )
         return {int(r["user_id"]) for r in await cur.fetchall()}
+
+
+async def campaign_speakers(db: Database, guild_id: int, campaign_id: str) -> set[int]:
+    """Everyone who spoke at the table in any stored session of this campaign, imported ones
+    included (#3891: they may see its channels). Ids only, table speech only (as above), and a
+    speaker without a Discord account (a negative number) is left out."""
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT DISTINCT l.user_id FROM transcript_lines l"
+            " JOIN transcript_sessions s ON s.id = l.session_id AND s.guild_id = l.guild_id"
+            " WHERE l.guild_id = %s AND s.campaign_id = %s"
+            " AND l.sidebar IS NULL AND NOT l.typed AND l.user_id > 0",
+            (guild_id, campaign_id),
+        )
+        return {int(r["user_id"]) for r in await cur.fetchall()}
