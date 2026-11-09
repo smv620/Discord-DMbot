@@ -2272,6 +2272,7 @@ class MemoryStore:
                 check_named(n.type, n.name)
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
+                is_character = onto.is_a(kind, "character")  # (`kind` is reused for aliases below)
                 _check_role(onto, kind, role, None)
                 # A waiting suggestion may be read as a player character (#3553: the text says so);
                 # it is confirmed only once the DM says who plays it. Anything else needs a player.
@@ -2315,7 +2316,7 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(entity_id)
-                if n.traits and onto.is_a(kind, "character"):
+                if n.traits and is_character:
                     links.extend(_trait_rows(w, entity_id, n.traits))
             # Two statements however long the list (#253): the entries, then all their
             # names, so the campaign's write lock is held for a moment, not seconds.
@@ -2338,7 +2339,8 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
-                " ('memory_entities', 'memory_aliases', 'memory_rule_links')) AS names_only,"
+                " ('memory_entities', 'memory_aliases', 'memory_rule_links'))"
+                " AND bool_or(table_name = 'memory_entities') AS names_only,"
                 " count(*) AS n"
                 " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
                 (*w.ids, batch),

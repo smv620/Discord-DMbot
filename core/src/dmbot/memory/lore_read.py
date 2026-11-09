@@ -199,6 +199,22 @@ NAMES
 UNNAMED
 - Tavin | knows (neutral) | barmaid with red hair | quote: "a barmaid with red hair warned Tavin about the smugglers"
 - Three Flags Sailing | works in | barmaid with red hair | quote: "At the Three Flags Sailing, a barmaid with red hair warned Tavin"
+
+Example 9. Input (a character's lineage and class; a god they serve is a relationship, not a class):
+<document>
+Mira Vell is a half-elf paladin who serves Torm.
+</document>
+Output:
+NAMES
+- Mira Vell | person | quote: "Mira Vell is a half-elf paladin"
+- Torm | god | quote: "who serves Torm"
+
+RELATIONSHIPS
+- Mira Vell — serves — Torm | quote: "Mira Vell is a half-elf paladin who serves Torm"
+
+TRAITS
+- Mira Vell | lineage | half-elf | quote: "Mira Vell is a half-elf paladin"
+- Mira Vell | class | paladin | quote: "Mira Vell is a half-elf paladin"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 

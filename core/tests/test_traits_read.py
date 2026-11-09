@@ -18,9 +18,10 @@ from tests.pg import DatabaseTest
 
 TEXT = (
     "Torvin Ashgrove is a dwarf and a cleric of Lathander. His friend Mira Vell is a half-elf "
-    "paladin. Old Brannoc, a scholar, lives in the tower."
+    "paladin. Old Brannoc, a scholar, lives in the tower. The captain's first mate, an elf, "
+    "sails with Captain Rell Dorn."
 )
-NAMES = ["Torvin Ashgrove", "Mira Vell", "Old Brannoc"]
+NAMES = ["Torvin Ashgrove", "Mira Vell", "Old Brannoc", "Captain Rell Dorn"]
 
 
 def found_by_rules(words: str) -> tuple[str, str, str | None] | None:
@@ -51,7 +52,7 @@ class TheLines(unittest.TestCase):
             "- Torvin Ashgrove | class | cleric of Lathander | quote: "
             '"Torvin Ashgrove is a dwarf and a cleric of Lathander"'
         )
-        self.assertEqual(got.trait, Trait(CLASS, "Cleric", "SRD 5.2.1", None, True))
+        self.assertEqual(got.trait, Trait(CLASS, "Cleric", "SRD 5.2.1", "2024", True))
         none, dropped = read('- Old Brannoc | class | scholar | quote: "Old Brannoc, a scholar"')
         self.assertEqual((none, dropped["trait_not_a_class"]), ([], 1))
 
@@ -75,6 +76,18 @@ class TheLines(unittest.TestCase):
             with self.subTest(line):
                 got, dropped = read(line)
                 self.assertEqual((got, dropped[reason]), ([], 1))
+
+    def test_a_title_alone_never_ties_someone_else_s_lineage(self) -> None:
+        got, dropped = read(
+            '- Captain Rell Dorn | lineage | elf | quote: "The captain\'s first mate, an elf"'
+        )
+        self.assertEqual((got, dropped["trait_not_in_text"]), ([], 1))
+
+    def test_a_lineage_and_class_written_as_one_is_no_lineage(self) -> None:
+        got, dropped = read(
+            '- Mira Vell | lineage | half-elf paladin | quote: "Mira Vell is a half-elf paladin"'
+        )
+        self.assertEqual((got, dropped["trait_kind"]), ([], 1))
 
     def test_an_existing_name_is_left_alone_and_counted(self) -> None:
         got, dropped = read(

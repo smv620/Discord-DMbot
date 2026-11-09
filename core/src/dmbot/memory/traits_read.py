@@ -88,14 +88,16 @@ def _class(words: str) -> Trait | None:
         found = _CLASSES.get(word.casefold())
         if found is not None:
             known = found in SRD_CLASSES
-            return Trait(CLASS, found, CLASS_SOURCE if known else "", None, known)
+            return Trait(
+                CLASS, found, CLASS_SOURCE if known else "", "2024" if known else None, known
+            )
     return None
 
 
 def _lineage(words: str, resolve: Resolve) -> Trait | None:
     plain = _plain(words)
-    if not 0 < len(plain) <= LINEAGE_WORDS:
-        return None
+    if not 0 < len(plain) <= LINEAGE_WORDS or any(w.casefold() in _CLASSES for w in plain):
+        return None  # (a phrase, or "half-elf paladin" written as one: the class is its own line)
     said = " ".join(plain)
     hit = resolve(said)
     if hit is None:
@@ -118,8 +120,8 @@ def read_traits(
     (`trait_kind`, `trait_not_a_class`), is about no name of the read (`trait_no_name`), or its
     quote is not in the text or doesn't hold the name and the words (`trait_not_in_text`).
     `existing`: the keys of names the campaign already has. Their traits are counted
-    (`trait_existing_name`) and left alone: a change to an existing character is the DM's to
-    make, never a silent one (Supervisor's ruling on #2959)."""
+    (`trait_existing_name`) and left alone, never changed silently. Supervisor's ruling asks the DM
+    about them; that question is a follow-up (#3926), so until it ships they are only counted."""
     counts = dropped if dropped is not None else Counter()
     haystack = bg._squash(text)
     keys = {name_key(n) for n in names}
@@ -141,10 +143,12 @@ def read_traits(
         if name_key(name) not in keys:
             counts["trait_no_name"] += 1
             continue
-        first, said = name.split()[0], bg._squash(quote)  # (squashed as the text is)
+        said = bg._squash(quote)  # (squashed as the text is)
+        # (the name whole or a word of its own, never a title alone: "the captain's first mate,
+        # an elf" is not Captain Rell Dorn's lineage)
         if (
             not bg._has(haystack, quote)
-            or not (bg._in_quote(said, name) or bg._in_quote(said, first))
+            or not bg._in_quote(said, name)
             or not all(bg._in_quote(said, w) for w in _plain(words))
         ):
             counts["trait_not_in_text"] += 1
