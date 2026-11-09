@@ -26,6 +26,9 @@ class Card(DatabaseTest):
         self.guild.id = GUILD
         self.guild.me = SimpleNamespace(id=2000)
         self.guild.get_member = lambda _i: None
+        self.guild.fetch_member = AsyncMock(
+            return_value=SimpleNamespace(display_name="Eve Stone")
+        )  # (no members intent: the cache is empty)
         self.client = SimpleNamespace(campaigns=self.store, memory=None)
 
     def press(self, user_id: int) -> Any:
@@ -82,7 +85,7 @@ class Card(DatabaseTest):
         self.assertEqual(press.response.send_message.await_count, 2)  # (told, twice)
 
     async def test_adding_and_removing_someone_by_hand(self) -> None:
-        view = ui.PeopleView(self.campaign.id, [], self.guild)
+        view = ui.PeopleView(self.campaign.id, {})
         person = MagicMock(spec=discord.Member)
         person.id, person.bot, person.display_name = EVE, False, "Eve"
         with (
@@ -93,7 +96,7 @@ class Card(DatabaseTest):
         ):
             await view._added(self.press(DM))
         self.assertEqual(await self.store.channel_people_by_hand(GUILD, self.campaign.id), [EVE])
-        again = ui.PeopleView(self.campaign.id, [EVE], self.guild)
+        again = ui.PeopleView(self.campaign.id, {EVE: "Eve"})
         with (
             patch.object(ui.channel_sync, "reconcile", new=AsyncMock(return_value=None)),
             patch.object(
@@ -104,7 +107,7 @@ class Card(DatabaseTest):
         self.assertEqual(await self.store.channel_people_by_hand(GUILD, self.campaign.id), [])
 
     async def test_a_bot_cannot_be_added(self) -> None:
-        view = ui.PeopleView(self.campaign.id, [], self.guild)
+        view = ui.PeopleView(self.campaign.id, {})
         bot = MagicMock(spec=discord.Member)
         bot.id, bot.bot = 5, True
         press = self.press(DM)
@@ -114,3 +117,16 @@ class Card(DatabaseTest):
             await view._added(press)
         self.assertEqual(press.response.send_message.await_args.args[0], ui.NOT_A_PERSON)
         self.assertEqual(await self.store.channel_people_by_hand(GUILD, self.campaign.id), [])
+
+    async def test_names_come_from_discord_when_the_cache_is_empty(self) -> None:
+        names = await ui._names(self.guild, [EVE])
+        self.assertEqual(names, {EVE: "Eve Stone"})
+        gone = discord.NotFound(MagicMock(status=404, reason="x"), "gone")
+        self.guild.fetch_member = AsyncMock(side_effect=gone)
+        self.assertEqual(await ui._names(self.guild, [EVE]), {EVE: "Someone who left"})
+
+    def test_the_list_and_labels_are_short_and_plain(self) -> None:
+        self.assertIn("Eve Stone", ui.people_text({EVE: "Eve Stone"}))
+        self.assertIn(ui.NOBODY, ui.people_text({}))
+        for label in ui.CHOICES.values():
+            self.assertLessEqual(len(label) + 2, 25)  # (room for the tick on a phone)

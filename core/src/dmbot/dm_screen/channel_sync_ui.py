@@ -18,7 +18,7 @@ from typing import Any
 
 import discord
 
-from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CHANNELS_EVERYONE, CHANNELS_PEOPLE
 from dmbot.dm_screen import channel_people as cp
 from dmbot.dm_screen import channel_sync
@@ -32,17 +32,21 @@ _ID = r"(?P<campaign>[0-9a-f]{32})"
 MAX_BY_HAND = 25  # one Remove list holds this many (Discord's limit for a select)
 
 CHOICES = {
-    CHANNELS_PEOPLE: "Only this campaign's people",
+    CHANNELS_PEOPLE: "Campaign people only",
     CHANNELS_EVERYONE: "Everyone in the server",
 }
 EVERYONE_HELP = "Everyone in the server can see its channels."
 FAILED = "Sorry, that didn't save. Please try again."
-NOT_A_PERSON = "That's a bot, not a person."
-LIST_FULL = f"The list is full ({MAX_BY_HAND} people). Take someone off first."
-NOBODY = "Nobody was added by hand yet."
-ADD_PLACEHOLDER = "Add someone to see the channels"
-REMOVE_PLACEHOLDER = "Take someone off the list"
+NOT_A_PERSON = "Bots can't be added. Pick a person."
+LIST_FULL = f"The list is full ({MAX_BY_HAND} people). Remove someone first."
+NOBODY = "Nobody added yet."
+ADD_PLACEHOLDER = "Add a person"
+REMOVE_PLACEHOLDER = "Remove a person"
 BACK_TO = "Tap a choice to change it."
+ROLE_EXPOSES = (
+    "\n⚠️ A role in this server still lets its members see these channels. "
+    "Ask a server admin to take it off the channels' permissions."
+)
 
 
 def channels_text(campaign: Campaign) -> str:
@@ -52,7 +56,8 @@ def channels_text(campaign: Campaign) -> str:
     return (
         f"🔒 **Who can see {discord.utils.escape_markdown(campaign.name)}'s channels**\n"
         f"{help_line}\n"
-        f"These are its DM Bot and transcript channels; the DM screen has its own choice. {BACK_TO}"
+        "This covers the DM Bot and transcript channels. The DM screen has its own setting. "
+        f"{BACK_TO}"
     )
 
 
@@ -84,7 +89,14 @@ async def _problem_line(
         bot.campaigns,
         getattr(bot, "memory", None),  # type: ignore[attr-defined]
     )
-    return f"\n⚠️ {problem}" if problem else ""
+    if problem:
+        return (
+            f"\n⚠️ Saved, but the channels haven't changed yet. {problem} "
+            "Fix that, then tap the choice again."
+        )
+    if channel_sync.exposed_roles(guild, campaign):
+        return ROLE_EXPOSES
+    return ""
 
 
 class ChannelsMenuButton(
@@ -156,7 +168,7 @@ class ChannelsChoiceButton(
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             try:
                 saved = await store.set_channels_visibility(guild.id, campaign.id, self.choice)
-            except (CampaignError, Exception):
+            except Exception:
                 log.exception("Couldn't change who sees the channels")
                 await interaction.followup.send(FAILED, ephemeral=True)
                 return
@@ -179,7 +191,7 @@ class PeopleButton(
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Who can see",
+                label="Add or remove people",
                 emoji="👥",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:chpeople:{campaign_id}",
@@ -198,27 +210,39 @@ class PeopleButton(
         if allowed is None:
             return
         campaign, guild, store = allowed
+        await interaction.response.defer(ephemeral=True)
         by_hand = await store.channel_people_by_hand(guild.id, campaign.id)
-        await interaction.response.send_message(
-            people_text(campaign, by_hand, guild),
-            view=PeopleView(campaign.id, by_hand, guild),
+        names = await _names(guild, by_hand)
+        await interaction.followup.send(
+            people_text(names),
+            view=PeopleView(campaign.id, names),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
 
 
-def _name(guild: discord.Guild, user_id: int) -> str:
-    member = guild.get_member(user_id)
-    return member.display_name if member is not None else "Someone who left"
+async def _names(guild: discord.Guild, ids: list[int]) -> dict[int, str]:
+    """Display names for the list. The bot has no members intent, so the cache rarely holds a
+    member: ask Discord for each one. Names are shown only, never stored."""
+    names: dict[int, str] = {}
+    for user_id in ids:
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except discord.HTTPException:
+                member = None
+        names[user_id] = member.display_name if member is not None else "Someone who left"
+    return names
 
 
-def people_text(campaign: Campaign, by_hand: list[int], guild: discord.Guild) -> str:
+def people_text(names: dict[int, str]) -> str:
     """Who was added by hand (names only; the list the DM built)."""
-    lines = [f"- {discord.utils.escape_markdown(_name(guild, i))}" for i in by_hand] or [NOBODY]
+    lines = [f"- {discord.utils.escape_markdown(name)}" for name in names.values()] or [NOBODY]
     return (
         "👥 **Who can see this campaign's channels**\n"
-        "Always: its game masters, the players of its characters and anyone recorded at its "
-        "sessions. Added by hand:\n" + "\n".join(lines)
+        "These people always see the channels: the DMs, the players who have a character here, "
+        "and anyone recorded at a session.\nYou added:\n" + "\n".join(lines)
     )
 
 
@@ -226,7 +250,7 @@ class PeopleView(discord.ui.View):
     """An Add picker and, when anyone was added, a Remove picker. Both are checked again when
     used: the DM may have lost the right, or the list may have changed, since it was opened."""
 
-    def __init__(self, campaign_id: str, by_hand: list[int], guild: discord.Guild) -> None:
+    def __init__(self, campaign_id: str, names: dict[int, str]) -> None:
         super().__init__(timeout=10 * 60)
         self.campaign_id = campaign_id
         self.add_pick: discord.ui.UserSelect[PeopleView] = discord.ui.UserSelect(
@@ -234,12 +258,12 @@ class PeopleView(discord.ui.View):
         )
         self.add_pick.callback = self._added  # type: ignore[method-assign]
         self.add_item(self.add_pick)
-        if by_hand:
+        if names:
             self.remove_pick: discord.ui.Select[PeopleView] = discord.ui.Select(
                 placeholder=REMOVE_PLACEHOLDER,
                 options=[
-                    discord.SelectOption(label=_name(guild, i)[:100], value=str(i))
-                    for i in by_hand[:MAX_BY_HAND]
+                    discord.SelectOption(label=name[:100], value=str(i))
+                    for i, name in list(names.items())[:MAX_BY_HAND]
                 ],
             )
             self.remove_pick.callback = self._removed  # type: ignore[method-assign]
@@ -262,13 +286,14 @@ class PeopleView(discord.ui.View):
         store = interaction.client.campaigns  # type: ignore[attr-defined]
         campaign = await store.get(guild.id, self.campaign_id)
         if campaign is None:
+            await interaction.followup.send(FAILED, ephemeral=True)
             return
         note = await _problem_line(guild, campaign, interaction)
-        by_hand = await store.channel_people_by_hand(guild.id, campaign.id)
+        names = await _names(guild, await store.channel_people_by_hand(guild.id, campaign.id))
         self.stop()
         await interaction.edit_original_response(
-            content=f"{text}{note}\n\n{people_text(campaign, by_hand, guild)}",
-            view=PeopleView(campaign.id, by_hand, guild),
+            content=f"{text}{note}\n\n{people_text(names)}",
+            view=PeopleView(campaign.id, names),
             allowed_mentions=NO_PINGS,
         )
 
@@ -303,7 +328,7 @@ class PeopleView(discord.ui.View):
         campaign, guild, store = allowed
         user_id = int(self.remove_pick.values[0])
         await interaction.response.defer()
-        name = discord.utils.escape_markdown(_name(guild, user_id))
+        name = discord.utils.escape_markdown((await _names(guild, [user_id]))[user_id])
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             await store.remove_channel_person(guild.id, campaign.id, user_id)
             log.info("A person was taken off those who see the channels")
@@ -314,8 +339,8 @@ class PeopleView(discord.ui.View):
             guild.me.id if guild.me else 0,
         )
         still = (
-            " They can still see them as a game master, a player or someone recorded here."
+            f" {name} still sees the channels as a DM, a player or someone recorded here."
             if user_id in people
             else ""
         )
-        await self._finish(interaction, guild, f"Took {name} off the list.{still}")
+        await self._finish(interaction, guild, f"Removed {name} from the list.{still}")

@@ -56,6 +56,10 @@ RECENT_SCAN = 10  # an unpinned card is looked for among this many recent messag
 PIN_REASON = "DMbot: transcript channel card"
 
 
+class ChannelNotThere(Exception):
+    """The channel to put in step is gone, and the caller asked not to make a new one (#3891)."""
+
+
 class TranscriptChannelError(Exception):
     """Why the transcript channel couldn't be set up, as a plain cause for the DM."""
 
@@ -191,6 +195,7 @@ async def setup_transcript_channel(
     *,
     category: discord.CategoryChannel | None = None,
     people: Iterable[int] = (),
+    create: bool = True,
 ) -> discord.TextChannel:
     """Create the campaign's transcript channel, or make an existing one view-only again.
 
@@ -220,6 +225,8 @@ async def setup_transcript_channel(
             )
             reason = f"DMbot: live transcript for {campaign.name}"
             channel = await _fresh(guild, campaign)
+            if channel is None and not create:
+                raise ChannelNotThere
             if channel is None:
                 channel = await guild.create_text_channel(
                     transcript_channel_name(campaign),

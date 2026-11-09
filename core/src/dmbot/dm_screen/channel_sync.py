@@ -10,6 +10,7 @@ logged, only counts.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterable
 
 import discord
@@ -19,11 +20,45 @@ from dmbot.dm_screen import channel_people as cp
 from dmbot.dm_screen.channel import current_overwrites, held_permissions
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.rules import Perms, Target, merge_overwrites, restrict
-from dmbot.dm_screen.transcript_channel import TranscriptChannelError, setup_transcript_channel
+from dmbot.dm_screen.transcript_channel import (
+    ChannelNotThere,
+    TranscriptChannelError,
+    setup_transcript_channel,
+)
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.attendance import campaign_speakers
 
 log = logging.getLogger(__name__)
+
+MEMBER_CHECK_S = 6 * 3600  # how long "still in the server" or "gone" is believed
+_seen: dict[tuple[int, int], tuple[bool, float]] = {}  # (server, member) -> here?, checked at
+
+
+async def present_only(guild: discord.Guild, ids: Iterable[int]) -> frozenset[int]:
+    """The ids that are still members of the server. Discord may refuse an overwrite for someone
+    who left, and one such id would block every later change for the campaign, so a member the
+    cache does not hold is asked for once (and believed for a few hours). A failure other than
+    "not a member" keeps the id: only a clear NotFound drops one."""
+    here: set[int] = set()
+    now = time.monotonic()
+    for user_id in ids:
+        if guild.get_member(user_id) is not None:
+            here.add(user_id)
+            continue
+        known = _seen.get((guild.id, user_id))
+        if known is not None and now - known[1] < MEMBER_CHECK_S:
+            if known[0]:
+                here.add(user_id)
+            continue
+        try:
+            await guild.fetch_member(user_id)
+            _seen[(guild.id, user_id)] = (True, now)
+            here.add(user_id)
+        except discord.NotFound:
+            _seen[(guild.id, user_id)] = (False, now)
+        except discord.HTTPException:
+            here.add(user_id)  # (could not tell: keep them rather than hide a channel)
+    return frozenset(here)
 
 
 async def campaign_people(
@@ -84,7 +119,9 @@ async def reconcile(
     if me is None:
         return None  # (still starting: the next sweep looks again)
     try:
-        people = await campaign_people(campaigns, memory, campaign, me.id)
+        people = await present_only(
+            guild, await campaign_people(campaigns, memory, campaign, me.id)
+        )
         plan = cp.channel_plan(
             campaign.channels_visibility,
             guild_id=guild.id,
@@ -100,7 +137,10 @@ async def reconcile(
             channel = guild.get_channel(channel_id) if channel_id else None
             if channel is None or in_step(channel, plan, held, guild.id):
                 continue
-            await setup(guild, campaign.id, campaigns, people=people)
+            try:
+                await setup(guild, campaign.id, campaigns, people=people, create=False)
+            except ChannelNotThere:
+                continue  # (gone: a session start makes a new one, never a sweep)
             changed += 1
         if changed:
             log.info("Channel sync: %d channel(s) of a campaign put in step", changed)
@@ -110,3 +150,24 @@ async def reconcile(
     except Exception:
         log.exception("Channel sync: couldn't put a campaign's channels in step")
         return None
+
+
+def exposed_roles(guild: discord.Guild, campaign: Campaign) -> int:
+    """How many server roles can see the campaign's channels although only its people should.
+    The server's role overwrites are never changed here, only counted so the DM can be told."""
+    if campaign.channels_visibility != cp.PEOPLE:
+        return 0
+    roles: set[int] = set()
+    for channel_id in (campaign.transcript_channel_id, campaign.dm_bot_channel_id):
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if channel is None:
+            continue
+        found = cp.find_exposure(
+            campaign.channels_visibility,
+            current_overwrites(channel),
+            guild_id=guild.id,
+            bot_id=guild.me.id if guild.me is not None else 0,
+            people=(),
+        )
+        roles.update(found.roles)
+    return len(roles)

@@ -86,7 +86,7 @@ class TranscriptChannelTests(DatabaseTest):
         self.assertTrue(person.view_channel)
         self.assertFalse(person.send_messages)
         self.assertTrue(self.overwrite_for(BOT).send_messages)
-        self.assertIn("The people in this campaign can read it", self.created()["topic"])
+        self.assertIn("Only this campaign's people can read it", self.created()["topic"])
 
     async def test_the_card_is_posted_and_pinned(self) -> None:
         await setup_transcript_channel(self.guild, self.campaign.id, self.store)

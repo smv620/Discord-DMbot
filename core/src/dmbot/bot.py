@@ -13798,9 +13798,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _channel_people(self, guild: discord.Guild, campaign: Campaign) -> frozenset[int]:
         """Who may see the campaign's DM Bot and transcript channels (#3891)."""
         me = guild.me
-        return await channel_sync.campaign_people(
-            self.campaigns, self.memory, campaign, me.id if me is not None else 0
-        )
+        try:
+            return await channel_sync.campaign_people(
+                self.campaigns, self.memory, campaign, me.id if me is not None else 0
+            )
+        except Exception:
+            # The channels are made whatever the lookup does; the DMs are always among the people.
+            log.exception("Couldn't work out who may see a campaign's channels")
+            return frozenset(i for i in campaign.dm_user_ids if i > 0)
 
     async def _channel_sync_loop(self) -> None:
         """Keep every campaign's DM Bot and transcript channels in step with who may see them

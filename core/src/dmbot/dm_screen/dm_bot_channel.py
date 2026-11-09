@@ -33,7 +33,7 @@ from dmbot.dm_screen.channel import (
 )
 from dmbot.dm_screen.channel_people import channel_plan
 from dmbot.dm_screen.names import PREFIX, sub_channel_name
-from dmbot.dm_screen.transcript_channel import _repair
+from dmbot.dm_screen.transcript_channel import ChannelNotThere, _repair
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ async def setup_dm_bot_channel(
     *,
     category: discord.CategoryChannel | None = None,
     people: Iterable[int] = (),
+    create: bool = True,
 ) -> discord.TextChannel:
     """Create the campaign's DM Bot channel, or make an existing one view-only again.
 
@@ -101,6 +102,8 @@ async def setup_dm_bot_channel(
             topic = messages.dm_bot_topic(campaign.name)
             reason = f"DMbot: settings for {campaign.name}"
             channel = await _fresh(guild, campaign)
+            if channel is None and not create:
+                raise ChannelNotThere
             if channel is None:
                 channel = await guild.create_text_channel(
                     dm_bot_channel_name(campaign),

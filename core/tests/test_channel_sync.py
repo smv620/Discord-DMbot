@@ -115,3 +115,40 @@ class Access(DatabaseTest):
         self.transcript.overwrites = {role: discord.PermissionOverwrite(view_channel=True)}
         found = channel_sync.exposure(self.transcript, self.campaign, BOT, [DM])
         self.assertEqual(found.roles, (777,))
+
+    async def test_a_person_taken_off_the_list_loses_the_overwrite(self) -> None:
+        await self.store.add_channel_person(GUILD, self.campaign.id, EVE, DM, 1)
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
+        for channel in (self.transcript, self.dm_bot):
+            channel.overwrites = self.edited(channel)
+            channel.edit.reset_mock()
+        await self.store.remove_channel_person(GUILD, self.campaign.id, EVE)
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
+        sent = self.edited(self.transcript)
+        assert sent is not None
+        self.assertNotIn(EVE, {key.id for key in sent})
+
+    async def test_someone_who_left_the_server_is_not_given_an_overwrite(self) -> None:
+        await self.store.add_channel_person(GUILD, self.campaign.id, EVE, DM, 1)
+        gone = discord.NotFound(MagicMock(status=404, reason="x"), "gone")
+        self.guild.fetch_member = AsyncMock(side_effect=gone)
+        channel_sync._seen.clear()
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
+        sent = self.edited(self.transcript)
+        assert sent is not None
+        self.assertNotIn(EVE, {key.id for key in sent})
+        self.assertIn(DM, {key.id for key in sent})  # (the DM is always one)
+
+    async def test_the_sweep_never_makes_a_channel(self) -> None:
+        self.guild.get_channel = lambda _cid: self.transcript  # (cached) ...
+        self.guild.fetch_channel = AsyncMock(side_effect=discord.NotFound(MagicMock(), "gone"))
+        await channel_sync.reconcile(self.guild, self.campaign, self.store, self.memory)
+        self.guild.create_text_channel.assert_not_called()
+
+    async def test_a_role_that_can_see_the_channels_is_counted(self) -> None:
+        role = MagicMock(spec=discord.Role)
+        role.id = 777
+        self.transcript.overwrites = {role: discord.PermissionOverwrite(view_channel=True)}
+        self.assertEqual(channel_sync.exposed_roles(self.guild, self.campaign), 1)
+        opened = await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")
+        self.assertEqual(channel_sync.exposed_roles(self.guild, opened), 0)

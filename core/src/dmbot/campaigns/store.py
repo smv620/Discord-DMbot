@@ -979,7 +979,7 @@ class CampaignStore:
     ) -> Campaign:
         """Who can see the DM Bot and transcript channels (#3891): "people" or "everyone". Who may
         change it is checked by the caller (the campaign's DMs); applying it to the channels is
-        `dm_screen.channel_people`'s job."""
+        `dm_screen.channel_sync.reconcile`'s job."""
         if choice not in CHANNELS_CHOICES:
             raise CampaignError("Please pick who can see the channels from the list.")
         return await self._set(guild_id, campaign_id, "channels_visibility", choice)
@@ -997,8 +997,7 @@ class CampaignStore:
     async def add_channel_person(
         self, guild_id: int, campaign_id: str, user_id: int, added_by: int, now: int
     ) -> bool:
-        """Let one more member see the campaign's channels. False when they already could by
-        being on the list."""
+        """Let one more member see the campaign's channels. False when already on the list."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO campaign_channel_people"

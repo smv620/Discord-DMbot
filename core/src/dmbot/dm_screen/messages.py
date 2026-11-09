@@ -237,10 +237,10 @@ def transcript_discord_error(detail: str) -> str:
 
 def transcript_topic(campaign_name: str, *, everyone: bool = True) -> str:
     """The channel's topic. `everyone`: whether the whole server may read it (#3891)."""
-    who = "Anyone in this server" if everyone else "The people in this campaign"
+    who = "Anyone in this server" if everyone else "Only this campaign's people"
     return (
-        f"Live transcript for {campaign_name}. {who} can read it; only "
-        "DMbot posts here. Only people who said yes to recording are recorded."
+        f"Live transcript for {campaign_name}. {who} can read it. Only DMbot posts here. "
+        "Only people who said yes are recorded."
     )
 
 
