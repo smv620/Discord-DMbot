@@ -40,6 +40,7 @@ from dmbot import (
     accounts,
     ai_feed,
     alerts,
+    auto_script,
     campaign_cap,
     entitlements,
     features,
@@ -687,6 +688,8 @@ FINAL_FLUSH_TIMEOUT_S = 15.0  # at stop or shutdown, give up on posting after th
 IDLE_SWEEP_INTERVAL_S = 1
 OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked at (#1214)
 OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
+AUTO_SCRIPT_FIRST_S = 150  # the first look for sessions due a script (#3901)
+AUTO_SCRIPT_EVERY_S = 60
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
@@ -1856,6 +1859,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
+            *(
+                [self._watched(self._auto_script_loop(), "auto-scripts")]
+                if self.settings.theatre_on
+                and self.theatre_ai is not None
+                and self.memory is not None
+                and self.transcripts is not None
+                else []
+            ),
             *(
                 [self._watched(self._retention_loop(), "retention")]
                 if self.retention or self.keep_job
@@ -3225,8 +3236,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
             ("family links", lambda: self.warn_about_family(table)),
-            # The script of the session, if the DM wants it (#3244): only a question here.
-            ("script offer", lambda: self.offer_script(table)),
+            # (The script of the session is made by itself, #3901: `auto_script`'s round.)
             # Words the table keeps using for a connection can become a kind (#3033).
             ("kind offer", lambda: self.offer_kind(table)),
             # Deeds the party did, noticed in the session, for the DM to record (#3175).
@@ -10306,30 +10316,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.info("Kind offer: words said %d times offered to the DM", offer.count)
             await self.ask_dm(table, kind_offer.ask_for(gid, cid, offer))
 
-    async def offer_script(self, table: Table) -> None:
-        """After a session (#3244), only with DMBOT_THEATRE_ON: one more question for the DM,
-        "make a script of this session?", with a button. Nothing is spent until the DM confirms.
-        Not offered to a campaign whose plan has no story memory (checked closed), or for a
-        session with no lines. No AI call here."""
-        if (
-            not self.settings.theatre_on
-            or self.theatre_ai is None
-            or self.memory is None
-            or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
-        ):
-            return
-        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
-        with log_context(guild_id=gid, campaign_id=cid):
-            session = await self.transcripts.session(gid, sid)
-            campaign = await self.campaigns.get(gid, cid)
-            if session is None or session.lines == 0 or campaign is None:
-                return
-            if not await self.plan_allows("story", gid, campaign, fail_open=False):
-                return
-            await self.ask_dm(table, theatre_button.ask_for(gid, sid, session.lines))
-
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
         (#1320), the DM screen says how many, never what, with a button only the DM can use.
@@ -13802,6 +13788,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the transcript channel")
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
+
+    async def _auto_script_loop(self) -> None:
+        """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A
+        server's trouble never stops the others."""
+        if self.recaps is not None:  # a recap waits for its script only while this round runs
+            self.recaps.script_wait = True
+        await asyncio.sleep(AUTO_SCRIPT_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    await auto_script.run_round(self, guild.id)
+                except Exception:
+                    log.exception("Auto scripts: a server's round failed")
+            await asyncio.sleep(AUTO_SCRIPT_EVERY_S)
 
     async def _channel_people(self, guild: discord.Guild, campaign: Campaign) -> frozenset[int]:
         """Who may see the campaign's DM Bot and transcript channels (#3891)."""
