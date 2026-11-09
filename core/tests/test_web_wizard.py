@@ -368,6 +368,30 @@ class TheRoutes(Wizard):
         state = await c.get(f"{base}/finish")
         self.assertEqual(state.json()["id"], run.json()["id"])
 
+    async def test_the_page_speaks_camel_case_and_the_database_snake_case(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        await c.post(base, json={"name": "x"})
+        put = await c.put(
+            f"{base}/step",
+            json={"step": 9, "answers": {
+                "dataUse": True, "pageTextUsed": False,
+                "characters": [{"full": "Cerric Vale", "partyName": "Cerric", "sheetUrl": "",
+                                "player": "pending"}],
+            }},
+        )  # fmt: skip
+        self.assertEqual(put.status_code, 200)
+        shown = (await c.get(base)).json()["answers"]
+        self.assertEqual((shown["dataUse"], shown["pageTextUsed"]), (True, False))
+        self.assertEqual(shown["characters"][0]["partyName"], "Cerric")
+        [row] = await self.rows("SELECT answers FROM wizard_drafts")
+        self.assertIn("data_use", row["answers"])  # (stored in the database's spelling)
+        self.assertNotIn("dataUse", row["answers"])
+        bad = await c.put(f"{base}/step", json={"step": 9, "answers": {"data_use": True}})
+        self.assertEqual((bad.status_code, bad.json()), (422, {"error": "bad_key"}))
+
     async def test_a_bad_file_body_and_a_stranger_are_refused(self) -> None:
         from tests.test_web_api import ALICE
 
