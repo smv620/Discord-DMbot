@@ -150,6 +150,19 @@ def _ok(found: dict[str, Any] | None) -> dict[str, Any]:
     return found
 
 
+async def has_room(db: Database, session: Session, *, now: int, enforce_plans: bool) -> bool:
+    """Whether the signed-in account's plan has room for one more campaign: the check the + New
+    campaign button makes (`campaign_cap.room`), made when a draft starts so the DM is told
+    before nine steps, and again by the bot at Finish. With plans not enforced there is always
+    room."""
+    if not enforce_plans:
+        return True
+    from dmbot import campaign_cap
+
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        return (await campaign_cap.room(conn, session.user_id, now)).fits(1)
+
+
 async def get(db: Database, session: Session, guild_id: int) -> dict[str, Any] | None:
     """The caller's draft in this server, or None. Never a document's text."""
     return await _door(db, session, guild_id, "SELECT dmbot_web_wizard_get(%s) AS found", ())

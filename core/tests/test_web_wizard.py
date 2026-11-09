@@ -303,3 +303,111 @@ class TheFinish(Wizard):
         self.assertNotEqual(first, second)
         [row] = await self.rows("SELECT state, error FROM wizard_finishes WHERE id = %s", first)
         self.assertEqual((row["state"], row["error"]), ("failed", "lost"))
+
+
+class TheRoutes(Wizard):
+    """The same doors over HTTP: the body caps, the check-only documents and the refusals."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+        from tests.test_web_api import FakeDiscord, settings
+
+        self.app = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+
+    async def client(self, user: Any) -> Any:
+        import httpx
+
+        from tests.test_web_api import THURSDAY
+
+        token = await sessions.sign_in(self.web, user, [THURSDAY], now=NOW, days=30)
+        c = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        c.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        self.addAsyncCleanup(c.aclose)
+        return c
+
+    async def test_start_save_add_a_file_and_finish_over_http(self) -> None:
+        import base64
+
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        self.assertEqual((await c.get(base)).json(), {})
+        self.assertEqual((await c.post(base, json={"name": "Frostmaiden"})).status_code, 200)
+        put = await c.put(f"{base}/step", json={"step": 6, "answers": {"target": "2024"}})
+        self.assertEqual(put.status_code, 200)
+        data = base64.b64encode(b"Mirelle Vane hides the red door. " * 40).decode()
+        doc = await c.post(
+            f"{base}/documents", json={"slot": "secrets", "name": "s.txt", "data": data}
+        )
+        self.assertEqual(doc.status_code, 200)
+        self.assertEqual((doc.json()["status"], doc.json()["words"]), ("ok", 40 * 6))
+        self.assertNotIn("Mirelle", doc.text)  # the text is never given back
+        self.assertNotIn("Mirelle", (await c.get(base)).text)
+        needs = await c.post(f"{base}/finish")
+        self.assertEqual((needs.status_code, needs.json()), (409, {"error": "needs_rights"}))
+        self.assertEqual((await c.post(f"{base}/rights", json={"kind": "shared"})).status_code, 200)
+        run = await c.post(f"{base}/finish")
+        self.assertEqual(run.status_code, 200)
+        state = await c.get(f"{base}/finish")
+        self.assertEqual(state.json()["id"], run.json()["id"])
+
+    async def test_a_bad_file_body_and_a_stranger_are_refused(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        await c.post(base, json={"name": "x"})
+        bad = await c.post(f"{base}/documents", json={"slot": "lore", "name": "a", "data": "!!"})
+        self.assertEqual((bad.status_code, bad.json()), (422, {"error": "bad_document"}))
+        big = await c.post(
+            f"{base}/documents",
+            content=b'{"data": "' + b"A" * 15_000_000 + b'"}',
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual(big.status_code, 413)
+        bob = await self.client(BOB)
+        self.assertEqual((await bob.get(base)).json(), {})  # Bob has no draft: Alice's is hers
+        gone = await bob.post(f"{base}/documents", json={"slot": "lore", "name": "a", "text": "w"})
+        self.assertEqual((gone.status_code, gone.json()), (404, {"error": "no_draft"}))
+
+    async def test_the_pasted_page_gives_a_name_and_characters_and_stores_nothing(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        await c.post(base, json={"name": "x"})
+        page = "Rime\nCharacters\nCerric Vale - Bob - Fighter\n"
+        got = await c.post(f"{base}/page-text", json={"text": page})
+        self.assertEqual(got.json(), {"name": "Rime", "characters": ["Cerric Vale"]})
+        self.assertEqual((await c.get(base)).json()["answers"], {"name": "x"})
+
+    async def test_an_unknown_server_is_not_found(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        self.assertEqual((await c.get("/me/wizard/999")).status_code, 404)
+
+
+class ThePlanRoom(Wizard):
+    async def test_a_plan_with_no_room_is_told_before_nine_steps_and_plans_off_always_fit(
+        self,
+    ) -> None:
+        from dmbot import entitlements
+        from tests.test_web_api import ALICE
+
+        self.assertTrue(await wizard.has_room(self.web, self.session, now=NOW, enforce_plans=False))
+        # Alice already owns "One" and has no plan: the free Try It allowance is spent
+        self.assertFalse(await wizard.has_room(self.web, self.session, now=NOW, enforce_plans=True))
+        entitlements.configure_free_users({ALICE.id})
+        self.addCleanup(entitlements.configure_free_users, ())
+        self.assertTrue(await wizard.has_room(self.web, self.session, now=NOW, enforce_plans=True))
