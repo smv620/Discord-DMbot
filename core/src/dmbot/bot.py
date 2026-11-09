@@ -53,6 +53,7 @@ from dmbot import (
     owner_presence,
     plan_rules,
     retention,
+    script_make,
     sheet_reread,
     table_chat,
     trial_jobs,
@@ -690,6 +691,8 @@ OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked a
 OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 AUTO_SCRIPT_FIRST_S = 150  # the first look for sessions due a script (#3901)
 AUTO_SCRIPT_EVERY_S = 60
+SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered (#3899)
+SCRIPT_MAKE_EVERY_S = 5
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
@@ -1870,7 +1873,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
             *(
-                [self._watched(self._auto_script_loop(), "auto-scripts")]
+                [
+                    self._watched(self._auto_script_loop(), "auto-scripts"),
+                    self._watched(self._script_make_loop(), "script-presses"),
+                ]
                 if self.settings.theatre_on
                 and self.theatre_ai is not None
                 and self.memory is not None
@@ -13905,6 +13911,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the transcript channel")
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
+
+    async def _script_make_loop(self) -> None:
+        """Every few seconds: answer the website's "Make the script" presses (#3899;
+        `script_make`). A server's trouble never stops the others."""
+        await asyncio.sleep(SCRIPT_MAKE_FIRST_S)
+        running: dict[int, asyncio.Task[int]] = {}
+        while True:
+            for guild in list(self.guilds):
+                # One script at a time for a server, but a long one never holds up another
+                # server's presses (a run takes minutes), so each runs as its own task.
+                task = running.get(guild.id)
+                if task is not None and not task.done():
+                    continue
+                running[guild.id] = asyncio.create_task(
+                    script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
+                )
+            await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
 
     async def _auto_script_loop(self) -> None:
         """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A
