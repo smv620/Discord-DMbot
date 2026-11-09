@@ -484,7 +484,8 @@ function Download({
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.downloading : text.download}
       </button>{" "}
-      <span role="status" class="warn">
+      {/* The status stays on the page so a failure is read out; it is only drawn as a warning while it has words. */}
+      <span role="status" class={state === "failed" ? "warn" : undefined}>
         {state === "failed" ? text.downloadFailed : ""}
       </span>
     </p>
@@ -535,7 +536,7 @@ function ScriptDownload({
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.scriptSaving : text.scriptDownload}
       </button>{" "}
-      <span role="status" class="warn">
+      <span role="status" class={said ? "warn" : undefined}>
         {said}
       </span>
       <details class="small muted">

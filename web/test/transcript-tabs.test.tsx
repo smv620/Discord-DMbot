@@ -54,6 +54,16 @@ describe("the views", () => {
   });
 });
 
+describe("the save buttons' status lines", () => {
+  it("draw no empty warning box beside Save as a text file or Save the script", async () => {
+    await open(asRole(mockApi("table"), "owner"), 1);
+    await screen.findByRole("button", { name: text.download });
+    for (const status of Array.from(document.querySelectorAll('main [role="status"]'))) {
+      if ((status.textContent ?? "").trim() === "") expect(status.classList.contains("warn"), "an empty status is not drawn as a warning").toBe(false);
+    }
+  });
+});
+
 describe("the Script view", () => {
   it("reads the script on the page, with Save, in the transcript's own list", async () => {
     await open(asRole(mockApi("table"), "owner"), 1);
