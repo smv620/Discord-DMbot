@@ -9312,12 +9312,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
-            if report.joined and campaign.dm_screen_channel_id is not None:
+            joins_to = self._upkeep_channel(campaign)[0] if report.joined else None
+            if joins_to is not None:
                 from dmbot.ui.joined_review import summary_line  # (the ui imports this module)
 
-                try:  # a count on the DM screen: players never see it, and a failure only logs
+                try:  # a count in the DM Bot channel (#3874); a failure only logs
                     await self.post(
-                        campaign.dm_screen_channel_id,
+                        joins_to,
                         f"{summary_line(report.joined)} Press **Check guesses** in "
                         "**/dmbot names**.",
                     )
@@ -11772,13 +11773,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _tell_imports_left(self, gid: int, store: ImportStore, left: dict[str, int]) -> None:
         """Say, once for each change, how many imported sessions the story read has not reached
         (its call limits ran out): they are read on a later round, so nothing is lost. Only when
-        the import's scans are over, on the DM screen; counts only."""
+        the import's scans are over, in the DM Bot channel (#3874); counts only."""
         for cid in list(self._import_left_told.keys() | left.keys()):
             now = left.get(cid, 0)
             if now == self._import_left_told.get(cid, 0) or await store.pending_scans(gid, cid):
                 continue
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if channel is None:
                 self._import_left_told.pop(cid, None)
                 continue
             if now:
@@ -11788,7 +11790,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"📖 The story read has not finished {what} yet. It tries again later on its "
                     "own; nothing is lost."
                 )
-                await self.post(campaign.dm_screen_channel_id, text)
+                await self.post(channel, text)
             self._import_left_told[cid] = now
             if not now:
                 self._import_left_told.pop(cid, None)
