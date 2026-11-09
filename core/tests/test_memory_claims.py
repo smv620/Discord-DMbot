@@ -714,6 +714,37 @@ class Stored(ConfirmedMemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         self.assertFalse(done.shown)
 
+    async def test_a_catch_all_claim_over_a_held_back_row_shows_that_row_and_adds_none(
+        self,
+    ) -> None:
+        """#3975: the claim says it under the catch-all ("is blood-bound to"); the story holds it
+        back as "is in". It is the same connection: shown, never a second row."""
+        rel = await self.held_back()
+        before = len(await self.memory.relations(GUILD_A, self.c, include_secret=True))
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual((done.claim.fact_id, done.shown), (rel, True))
+        self.assertFalse(await self.unrevealed(rel))
+        after = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        self.assertEqual(len(after), before)
+
+    def test_a_kind_covers_itself_its_narrower_kinds_and_the_catch_all_covers_all(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.store import kind_covers
+
+        onto: Any = SimpleNamespace(predicates={
+            "sworn_to": SimpleNamespace(parent="serves"),
+            "serves": SimpleNamespace(parent=None),
+            "enemy_of": SimpleNamespace(parent=None),
+        })  # fmt: skip
+        self.assertTrue(kind_covers(onto, "serves", "serves"))
+        self.assertTrue(kind_covers(onto, "serves", "sworn_to"))  # (narrower)
+        self.assertTrue(kind_covers(onto, "associated_with", "enemy_of"))  # (the catch-all)
+        self.assertFalse(kind_covers(onto, "sworn_to", "serves"))  # (wider: not stated)
+        self.assertFalse(kind_covers(onto, "enemy_of", "serves"))  # (unrelated)
+
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
         await self.propose(said("Bram", "is blood-bound to", "Hesper"))
