@@ -139,6 +139,9 @@ SQL = (
         IF me IS NULL THEN
             RETURN NULL;
         END IF;
+        -- an expired draft (and its documents, by the cascade) is removed, not only hidden
+        DELETE FROM wizard_drafts w
+            WHERE w.guild_id = g AND w.user_id = me AND w.expires_at <= now_s;
         SELECT * INTO d FROM wizard_drafts w
             WHERE w.guild_id = g AND w.user_id = me AND w.expires_at > now_s;
         IF NOT FOUND THEN
@@ -205,6 +208,9 @@ SQL = (
         IF bad IS NOT NULL THEN
             RETURN jsonb_build_object('status', 'bad_key', 'key', left(bad, 40));
         END IF;
+        IF patch ? 'skipped' AND jsonb_typeof(patch->'skipped') <> 'array' THEN
+            RETURN jsonb_build_object('status', 'bad_patch');
+        END IF;
         SELECT w.answers || patch INTO merged FROM wizard_drafts w
             WHERE w.guild_id = g AND w.user_id = me AND w.expires_at > now_s FOR UPDATE;
         IF merged IS NULL THEN
@@ -236,8 +242,10 @@ SQL = (
         UPDATE wizard_drafts w SET
             answers = jsonb_set(w.answers, '{skipped}',
                 (SELECT coalesce(jsonb_agg(DISTINCT s ORDER BY s), '[]'::jsonb) FROM
-                    jsonb_array_elements_text(coalesce(w.answers->'skipped', '[]'::jsonb) ||
-                                              to_jsonb(st)) AS s)),
+                    jsonb_array_elements(
+                        CASE WHEN jsonb_typeof(w.answers->'skipped') = 'array'
+                             THEN w.answers->'skipped' ELSE '[]'::jsonb END
+                        || to_jsonb(st)) AS s)),
             step = LEAST(st + 1, 9), updated_at = now_s, expires_at = now_s + 604800
             WHERE w.guild_id = g AND w.user_id = me AND w.expires_at > now_s;
         IF NOT FOUND THEN
@@ -345,8 +353,12 @@ SQL = (
 
     -- Queue the finish run. The draft needs a name (or Skip taken, with the name typed) and the
     -- right-to-use confirmation for every slot that needs it; a second press while one runs gets
-    -- that run's id; at most 3 presses a minute. The plan's room is checked by the wrapper (it can
-    -- call the plan code) and again by the bot at its first stage.
+    -- that run's id; at most 3 presses a minute. The plan's room is checked by the bot at its first
+    -- stage; the page-side early check (`campaign_cap.room`) comes with the routes, in the next PR.
+    -- A run taken as lost here may still be working: the bot's stage writes must be conditional on
+    -- state = 'working', and its first stage must look for a campaign already made from this
+    -- draft (`made_campaign`), so a lost-and-retried run never makes a second one. The
+    -- right-to-use times are carried, with this account as the "who", onto the campaign.
     CREATE FUNCTION dmbot_web_wizard_finish(g BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -361,7 +373,10 @@ SQL = (
         END IF;
         PERFORM pg_advisory_xact_lock(
             hashtextextended('wizard_finish:' || g::TEXT || ':' || me::TEXT, 0));
-        DELETE FROM wizard_finishes f WHERE f.guild_id = g AND f.created_at < now_s - 86400;
+        DELETE FROM wizard_drafts w
+            WHERE w.guild_id = g AND w.user_id = me AND w.expires_at <= now_s;
+        DELETE FROM wizard_finishes f
+            WHERE f.guild_id = g AND f.user_id = me AND f.created_at < now_s - 86400;
         UPDATE wizard_finishes f SET state = 'failed', error = 'lost'
             WHERE f.guild_id = g AND f.user_id = me AND f.state IN ('waiting', 'working')
               AND greatest(f.created_at, f.moved_at) < now_s - 1800;

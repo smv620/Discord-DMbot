@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import FALLBACK_NONE, RULESETS, CampaignError
 from dmbot.db import Database
@@ -43,9 +45,17 @@ KNOWN = frozenset(
 
 
 def _text(value: Any, limit: int, key: str) -> str:
-    if not isinstance(value, str) or len(value) > limit:
+    # A NUL character is refused: the database cannot hold it, and it would come back as a crash
+    # instead of a word the page shows.
+    if not isinstance(value, str) or len(value) > limit or "\x00" in value:
         raise RecapError(f"bad_{key}")
     return value.strip()
+
+
+def _count(value: Any, key: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise RecapError(f"bad_{key}")
+    return value
 
 
 def check_patch(patch: dict[str, Any]) -> dict[str, Any]:
@@ -159,8 +169,7 @@ async def update(
     db: Database, session: Session, guild_id: int, step: int, patch: dict[str, Any]
 ) -> None:
     """Save the answers of a step and move to it."""
-    from psycopg.types.json import Jsonb
-
+    _count(step, "patch")
     _ok(
         await _door(
             db, session, guild_id, "SELECT dmbot_web_wizard_set(%s, %s, %s) AS found",
@@ -170,6 +179,7 @@ async def update(
 
 
 async def skip(db: Database, session: Session, guild_id: int, step: int) -> None:
+    _count(step, "patch")
     _ok(
         await _door(db, session, guild_id, "SELECT dmbot_web_wizard_skip(%s, %s) AS found", (step,))
     )
@@ -197,6 +207,11 @@ async def add_document(
         or status not in STATUSES
         or reason not in REASONS
     ):
+        raise RecapError("bad_document")
+    name = _text(name, 200, "document")
+    drive_id = _text(drive_id, 200, "document")
+    pages, words = _count(pages, "document"), _count(words, "document")
+    if not isinstance(text, str) or "\x00" in text or not name:
         raise RecapError("bad_document")
     found = _ok(
         await _door(

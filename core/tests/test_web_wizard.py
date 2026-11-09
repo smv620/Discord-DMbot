@@ -86,6 +86,44 @@ class TheDraft(Wizard):
                     await c.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
                     await c.execute(f"SELECT * FROM {table}")
 
+    async def test_an_expired_draft_is_removed_with_its_documents_not_only_hidden(self) -> None:
+        await self.draft()
+        await self.doc(text=SECRET_TEXT)
+        await self.rows("UPDATE wizard_drafts SET expires_at = 1 RETURNING 1")
+        self.assertIsNone(await self.call(wizard.get))
+        counts = await self.rows(
+            "SELECT (SELECT count(*) FROM wizard_drafts) AS d,"
+            " (SELECT count(*) FROM wizard_documents) AS x"
+        )
+        self.assertEqual((counts[0]["d"], counts[0]["x"]), (0, 0))
+
+    async def test_an_expired_draft_takes_no_more_documents_answers_or_finish(self) -> None:
+        await self.draft()
+        await self.rows("UPDATE wizard_drafts SET expires_at = 1 RETURNING 1")
+        for call in (wizard.skip, wizard.confirm_rights):
+            arg = 3 if call is wizard.skip else "shared"
+            self.assertEqual(await self.refused(call, arg), "no_draft")
+        self.assertEqual(await self.refused(wizard.finish), "no_draft")
+        self.assertEqual(
+            await self.refused(wizard.add_document, slot="lore", name="a", source="link"),
+            "no_draft",
+        )
+
+    async def test_a_nul_character_or_a_wrong_type_is_a_word_not_a_crash(self) -> None:
+        await self.draft()
+        self.assertEqual(await self.refused(wizard.update, 2, {"name": "a\x00b"}), "bad_name")
+        self.assertEqual(await self.refused(wizard.update, "2", {}), "bad_patch")
+        add = wizard.add_document
+        for bad in (
+            {"name": "a\x00"},
+            {"name": "   "},
+            {"pages": True},
+            {"words": "3"},
+            {"text": "a\x00"},
+        ):
+            args = {"slot": "lore", "name": "a", "source": "upload", **bad}
+            self.assertEqual(await self.refused(add, **args), "bad_document")
+
     async def test_discard_removes_the_draft_and_its_documents(self) -> None:
         await self.draft()
         await self.doc(text=SECRET_TEXT, words=5)
@@ -95,6 +133,34 @@ class TheDraft(Wizard):
 
 
 class TheAccount(Wizard):
+    async def test_a_person_with_drafts_in_two_servers_loses_both(self) -> None:
+        from dmbot import accounts
+        from tests.test_web_api import ALICE
+
+        await self.draft()
+        await self.rows(
+            "INSERT INTO wizard_drafts (guild_id, user_id, created_at, updated_at, expires_at)"
+            " VALUES (%s, %s, 1, 1, 99999999999) RETURNING 1",
+            self.g,
+            ALICE.id + 1,
+        )  # (someone else's, same server)
+        async with self.db.guild(222) as conn:
+            await conn.execute(
+                "INSERT INTO wizard_drafts (guild_id, user_id, created_at, updated_at, expires_at)"
+                " VALUES (222, %s, 1, 1, 99999999999)",
+                (ALICE.id,),
+            )
+        await accounts.delete_person(self.db, ALICE.id)
+        [mine] = await self.rows(
+            "SELECT count(*) AS n FROM wizard_drafts WHERE user_id = %s", ALICE.id
+        )
+        self.assertEqual(mine["n"], 0)
+        async with self.db.guild(222) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM wizard_drafts")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
     async def test_deleting_the_account_deletes_the_draft_its_documents_and_runs(self) -> None:
         from dmbot import accounts
         from tests.test_web_api import ALICE
@@ -157,7 +223,7 @@ class TheAnswers(Wizard):
         await self.call(wizard.skip, 4)
         await self.call(wizard.skip, 4)
         got = await self.call(wizard.get)
-        self.assertEqual((got["step"], got["answers"]["skipped"]), (5, ["4"]))
+        self.assertEqual((got["step"], got["answers"]["skipped"]), (5, [4]))
 
 
 class TheDocuments(Wizard):
