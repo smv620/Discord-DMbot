@@ -1003,9 +1003,11 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
             # A retried job finds it already so, which changes nothing.
+            # (the store also refuses a knows to a place or a thing: only two people meet)
             if link.predicate != "knows" or a.text not in KNOWS_HOWS:
                 return _failed(BAD_TARGET)
-            await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
+            if link.knows_how != a.text:  # a retried job finds it already so: nothing to write
+                await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
         else:
             return _failed(FAILED)
     except MemoryRuleError as exc:

@@ -153,9 +153,12 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
                 "directional": link["directional"],
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
-                # whether two people have met (#3882): it rides on a connection this viewer is
-                # already shown, so a secret meeting is as hidden as its line
-                "knowsHow": str(link.get("knows_how") or "") if predicate == "knows" else "",
+                # whether two people have met (#3882), under the door's own key, as
+                # `relationships.edges_from` reads both views: it rides on a connection this viewer
+                # is already shown, so a secret meeting is as hidden as its line
+                **(
+                    {"knows_how": str(link.get("knows_how") or "")} if predicate == "knows" else {}
+                ),
             }
         )  # fmt: skip
     for via in sorted(touched):

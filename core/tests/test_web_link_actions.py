@@ -386,29 +386,46 @@ class TheEdits(Editing):
         self.assertEqual(done["state"], "done")
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
 
+    async def two_people_who_know(self, *, secret: bool = False) -> tuple[str, str]:
+        """A knows between Mira (a character) and a new character: only two people can meet."""
+        rook = await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="Rook Hale", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        written = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", rook.value.id, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", secret=secret,
+        )  # fmt: skip
+        return written.value[0].id, rook.value.id
+
+    async def set_how(self, link: str, how: str) -> wa.Outcome:
+        action = wa.Action("x" * 32, self.one.id, self.mira, ALICE.id, wa.KNOWS_HOW_ACTION,
+                           target_id=link, text=how)  # fmt: skip
+        return await wa.apply(self.memory, self.g, {ALICE.id}, action, None)
+
     async def test_have_they_met_is_set_and_cleared_through_the_store(self) -> None:
         # (#3882: the website's "Have they met?" is applied by the store's own call; the door's
         # action is WebDev's, so the queued row is made here as the door will make it)
-        link = self.links["mira-keep"]
-
-        async def set_how(how: str) -> wa.Outcome:
-            action = wa.Action("x" * 32, self.one.id, self.mira, ALICE.id, wa.KNOWS_HOW_ACTION,
-                               target_id=link, text=how)  # fmt: skip
-            return await wa.apply(self.memory, self.g, {ALICE.id}, action, None)
-
-        self.assertEqual((await set_how("met")).error, "")
+        link, _rook = await self.two_people_who_know()
+        self.assertEqual((await self.set_how(link, "met")).error, "")
         got = await self.memory.relation(self.g, self.one.id, link)
         assert got is not None
         self.assertEqual(got.knows_how, "met")
-        self.assertEqual((await set_how("met")).error, "")  # (a retried job: already so)
-        self.assertEqual((await set_how("")).error, "")  # (the DM clears it)
+        before = await self.memory.version(self.g, self.one.id)
+        self.assertEqual((await self.set_how(link, "met")).error, "")  # (a retry: already so)
+        self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+        self.assertEqual((await self.set_how(link, "")).error, "")  # (the DM clears it)
         got = await self.memory.relation(self.g, self.one.id, link)
         assert got is not None
         self.assertEqual(got.knows_how, "")
-        self.assertNotEqual((await set_how("best friends")).error, "")
+        self.assertNotEqual((await self.set_how(link, "best friends")).error, "")
+
+    async def test_a_knows_to_a_place_is_never_met(self) -> None:
+        got = await self.set_how(self.links["mira-keep"], "met")  # (Greywater Keep is a place)
+        self.assertEqual(got.error, wa.BAD_TARGET)
 
     async def test_the_doors_send_whether_they_met(self) -> None:
-        link = self.links["mira-keep"]
+        link, _rook = await self.two_people_who_know()
         await self.memory.set_knows_how(self.g, self.one.id, link, "met", source=DM_SOURCE)
         web = await relationships.read_web(self.web, self.session, self.cref, center=self.mira)
         found = [x for e in web["edges"] for x in e["links"] if x["id"] == link]
