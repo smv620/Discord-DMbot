@@ -12,6 +12,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from dmbot.web import sessions, wizard
+from dmbot.web.discord import DiscordUser
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
 from tests.test_web_api import THURSDAY
@@ -22,7 +23,13 @@ SECRET_TEXT = "Mirelle Vane hides the red door."
 class Wizard(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        token = await sessions.sign_in(
+            self.web,
+            DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email),
+            [THURSDAY],
+            now=NOW,
+            days=30,
+        )
         found = await sessions.find(self.web, token, now=NOW)
         assert found is not None
         self.bob = found
