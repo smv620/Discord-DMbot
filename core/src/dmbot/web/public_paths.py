@@ -40,6 +40,11 @@ def _public(pattern: str, reason: str, *examples: str) -> PublicPath:
 
 
 PUBLIC: tuple[PublicPath, ...] = (
+    _public(
+        r"/site/ask$",
+        "the search bar's short answer: no sign-in, limited per visitor and for the site (#3856)",
+        "/site/ask",
+    ),
     _public(r"/admin(/|$)", "the admin page and its Google sign-in (#836)", "/admin/auth/ways"),
     _public(
         r"/webhooks/stripe$",

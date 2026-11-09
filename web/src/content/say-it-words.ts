@@ -22,6 +22,13 @@ export const sayIt = {
   again: "Record again",
   useThis: "Use this",
   sending: "Turning it into letters…",
+  // The bot does the listening and may be busy, so the wait says where the clip is (#3828; the #2564 rule).
+  voiceWaiting: "Waiting its turn",
+  voiceWorking: "Turning your clip into letters",
+  voiceBusy: "DMbot is busy with the table. Your clip is waiting its turn. Keep this page open, or type it.",
+  voiceQuiet: "Nothing new yet. Keep waiting, or type it instead.",
+  typing: "Clip dropped. Type how it's said, then save.",
+  typeInstead: "Type it instead",
   hear: "🔊 Hear it",
   // Hear it in the recap narrator's voice (#3807): the words go to DMbot's voice service, so it is said once, and the
   // wait shows DMbot is working. With no narration set up the browser's own voice reads it, and that is said too.
@@ -30,7 +37,7 @@ export const sayIt = {
   hearQuiet: "Still working. You can keep going: your spelling stays in the box. If no sound comes, press 🔊 Hear it again.",
   browserVoice: "This is your browser's voice, not the narrator's. Recaps will sound different.",
   // Said once, near the buttons.
-  how: "DMbot only listens while you press 🎤 Say it. DMbot turns what you say into letters. Check them before you save. Your recording is deleted once it's turned into letters.",
+  how: "🎤 Say it records in your browser. Nothing is sent until you press Use this. Then DMbot turns it into letters, and the clip is deleted right away. Nobody else hears it. Check the letters, then save.",
   filled: "Here is what DMbot heard, as letters. Change them if they're not right, then save.",
   suggested: "Here is a suggestion. Change it if it's not right, then save.",
   playbackLabel: (name: string): string => `Your recording of ${name}`,
@@ -38,6 +45,8 @@ export const sayIt = {
     "voice-off": "Saying it isn't available right now. You can type how to say it instead.",
     "too-soon": "That was pressed a moment ago. Wait a few seconds, then press 🔊 Hear it again.",
     "play-refused": "The sound is ready but your browser would not play it. Press 🔊 Hear it again.",
+    "voice-late": "DMbot hasn't finished listening. Press Use this to try again, or type it instead.",
+    "voice-too-soon": "That's a lot of recordings at once. Wait a minute, then press Use this again, or type it.",
     "still-waiting": "No sound yet. Wait a minute, then press 🔊 Hear it again.",
     busy: "Finish the other recording first.",
     "mic-refused": "DMbot can't use the microphone. Allow it in your browser, or type how to say it instead.",

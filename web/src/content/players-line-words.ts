@@ -25,3 +25,10 @@ export const playersLineWords = {
     server: "That didn't save. Try again. If it keeps failing, ask on the Help page.",
   } as Record<string, string>,
 } as const;
+
+/** The line on a name waiting to be checked (#3833): what the players are told, shown before the DM confirms it. */
+export const playersKnowWords = {
+  label: "Players know:",
+  change: "Change it",
+  changeFor: (name: string): string => `Change what players know about ${name}`,
+} as const;

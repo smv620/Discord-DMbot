@@ -1356,6 +1356,50 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**Which channel gets what (owner, 2026-11-09, #3874).** The **DM screen** is for the game while it is being played:
+anything that needs or asks for the DM's attention in the flow of play, such as conditions at the table, game-mechanics
+notices, rules alerts, answers to questions, the sidebar and the clock. The DM should only have to watch the DM screen
+during play. **Everything else goes to the DM Bot channel** (`dmb-dm-bot-<short name>`): campaign setup, pre-game items,
+post-game items, and anything that needs the DM's attention eventually but not now. That includes names, connections and
+claims to check, upload results, after-session reviews and notes, and recap readiness. Because the DM Bot channel is public
+(above), what DMbot posts there is **counts only** ("66 names to check: 30 NPCs, 24 places", "60 connections"), with no
+names, quotes or story words. Every button checks the presser is a DM of the campaign, and the cards that show the words open
+privately. Each upload or session gets **one live message** that DMbot edits as items are answered, ending as "✅ All
+answered" with its buttons removed, never a new message for each batch. **Private messages to the DM jump to the right
+message:** a question's "Open in Discord" and its review buttons open that live message in the DM Bot channel (or, for a
+live-play item, the DM screen). With no DM Bot channel, or no permission to post there, DMbot falls back to the private
+card as before.
+**Uploads and imports apply what DMbot is sure of (owner, 2026-11-09, #3878).** After about ten deploys of accepting every
+suggestion as it was, the owner's rule: when DMbot reads **background lore** or **imports earlier sessions**, it **adds what it
+found by itself** and only asks about what it is unsure of. "Sure" means what the **Add all** buttons would add today: new
+names, other names and spellings, and connections found in the text (family roles and feelings included), each through the
+store's own DM calls, so every rule is checked again (`devtools/accept_all` is the pattern). Still **asked**, never guessed:
+"Which one?", same-person questions, a name that needs to know who plays it, anything with no suggestion, and anything a rule
+refuses. What was added follows the usual rules: secret only when uploaded with spoilers, nothing revealed to players because
+it was added, and nothing anyone confirmed is overwritten. Afterwards the DM gets one notice, in the DM Bot channel (counts
+only) and privately: "Added 62 names and 48 connections from <label>", the few questions left with their buttons, a link to
+the website's **Names** page and one to the **Story Graph**, and **Undo this upload**. That undoes the whole batch, from the
+notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
+one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
+
+**Who can see a campaign's channels (owner, 2026-11-09, #3891).** A per-campaign setting in ⚙️ Settings, **"Who can see
+this campaign's channels"**: **Everyone in the server**, or **Only this campaign's people** (the default, for new and existing
+campaigns). It covers the campaign's DM Bot and transcript channels; the DM screen keeps its own visibility rules. The
+campaign's people are its DMs, the members who play its player characters, the members recorded at its sessions, and anyone a
+DM adds by hand. DMbot keeps the channels' member permissions in step, the way it already does for the DM screen. Someone who
+can't see a channel gets no unread marks or notifications from it. Transcripts on the website follow the same setting. This
+replaces "anyone in the Discord server" for transcripts (2026-10-05) and "everyone in the server can see" the DM Bot channel
+(2026-10-17) with the campaign's choice. Backups are unchanged: anyone in the server may still download a paid campaign's
+backup, so a campaign survives its DM.
+
+**A script for every session (owner, 2026-11-09, #3901).** With `DMBOT_THEATRE_ON` on and story memory in the plan, every
+session, live or imported, gets its script (the theatrical transcript, #3244) by itself. The after-session "make a script?"
+question goes away, and the DM sees one line, "📜 Script made", with a link to it. The recap waits for the script for at most
+10 minutes, then goes on without it and says so. The recap's "did we miss anything important" check and its fact check read the
+script as well as the beat sheet and the cleaned transcript, behind `DMBOT_RECAP_READS_SCRIPT`, scored before and after like
+any recap change. Same rules as the script today: consenting speakers only, what the party knows, DM-only, counted in the
+session's AI spend.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
@@ -4621,6 +4665,25 @@ marked).** A DM manages every campaign from the website as fully as from Discord
    then a written table of every Discord campaign action with its website status (the parity list,
    #2554), then each missing group in that order of use. A new Discord campaign action ships with its
    website way, or with a held line on the parity list saying when.
+**Search the website** (owner, 2026-11-08, #3855, #3856). A search bar in the site's header answers in two lines.
+Line 1 appears at once: the getdmbot.com page that best matches the query ("a summary of episodes" gives the recaps page).
+It comes from an index built with the site, with a hand-kept list of the words people use for each page; it runs in the
+browser, costs nothing and sends nothing. Line 2 shows "[... thinking ...]" while DMbot writes a short answer about DMbot or
+its website, from DMbot's public, user-facing words only (site pages, help, What's new, the user-facing parts of this plan;
+a fixed allow-list built in at deploy time, never internal files, issues or anyone's data). It never invents: what the
+words don't cover gets "I don't know" and a link. Anyone may ask. **Cost limits** (owner, 2026-11-08): 100 questions an
+hour and 200 a day per visitor, and 300 an hour for the whole site. Over a limit, line 2 says "Too many requests to process,
+try again in about an hour." (after the daily limit: "Too many requests to process, try again tomorrow."); line 1 still
+works. A visitor is a keyed hash of their address, its key changed daily, kept only as counts for 24 hours and never logged.
+Answers are cached for a day (a cached answer doesn't count against the site's limit), and logs hold counts only.
+**The answer engine is free** (owner, 2026-11-08: "a free tier api call"; Supervisor, #3856): Cloudflare Workers AI's free
+daily allowance (10,000 Neurons, reset 00:00 UTC), a small model (Llama 3.2 3B, about 6 Neurons a question), called from
+core's `/site/ask` with a Cloudflare API token kept on the server like the other keys. Cloudflare doesn't train on or keep
+what is asked. Google's free tier was ruled out because it trains on questions and people may read them. The free allowance
+is the real daily ceiling: core stops at 1,500 answers a day (headroom under the allowance), and then line 2 says the daily
+words above. It never moves to a paid service on its own; paying past the allowance (about $0.50 a day at 300 an hour) is the
+owner's call. Website-only on purpose (it searches the site).
+
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an

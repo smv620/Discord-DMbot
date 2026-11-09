@@ -53,6 +53,7 @@ What the graph should hold after the sample session is read: [the session transc
 | s031 | Belleros Stormgrace | knows | Okthandom Korran | by_rule | no | yes | 0 | player characters who play together know each other (#3036); the feeling words above are read from the lines |
 | s032 | Belleros Stormgrace | knows | Claude Ambere | by_rule | no | yes | 0 | player characters who play together know each other (#3036); the feeling words above are read from the lines |
 | s033 | Okthandom Korran | knows | Claude Ambere | by_rule | no | yes | 0 | player characters who play together know each other (#3036); the feeling words above are read from the lines |
+| s034 | Garret Velryn | associate | Dwarven Valley | stated | no | yes | 204 | the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b) |
 
 ## Events of this session
 

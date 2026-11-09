@@ -124,6 +124,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.consent import ConsentStore
     from dmbot.dm_screen.peek_notices import PeekNotices
     from dmbot.dm_screen.said_as_hears import HearStore
+    from dmbot.dm_screen.said_as_listens import ListenStore
     from dmbot.dm_screen.web_settings import SettingStore
     from dmbot.mail import Mailer
     from dmbot.memory.exposures import ExposureStore
@@ -267,6 +268,7 @@ class RecapFeatures:
         web_line_deletions: web_line_delete.WebLineDeletions | None
         speaker_removals: speaker_removal.SpeakerRemovals | None
         said_as_hears: HearStore | None
+        said_as_listens: ListenStore | None
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
@@ -296,6 +298,7 @@ class RecapFeatures:
 
         async def run_speaker_removals(self) -> None: ...
         async def run_said_as_hears(self) -> None: ...
+        async def run_said_as_listens(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -542,7 +545,7 @@ class RecapFeatures:
             session = await self.transcripts.session(gid, table.transcript_session_id)
             if session is None or session.lines == 0:
                 return
-            dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+            dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
             if dm <= 0:
                 return
             # A short session asks first (#2104): what the recap would read is not changed.
@@ -963,7 +966,7 @@ class RecapFeatures:
         except Exception:
             log.exception("Recap: couldn't count the questions for the email")
             return
-        for user_id in sorted(campaign.dm_user_ids):
+        for user_id in sorted(campaign.dm_accounts):
             try:
                 await remind_the_dm(
                     self.mailer,
@@ -1130,7 +1133,7 @@ class RecapFeatures:
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.recap_allowed(gid, cid, None):
             return "refused"
-        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
         if dm <= 0:
             return "refused"
         # Like any session, it waits for the DM's name answers first (#2174).
@@ -1596,7 +1599,7 @@ class RecapFeatures:
                 gid,
                 cid,
                 job,
-                campaign.dm_user_ids if campaign is not None else (),
+                campaign.dm_accounts if campaign is not None else (),
             )
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
@@ -1916,7 +1919,7 @@ class RecapFeatures:
                 raise PlanUnchecked  # not a no: try again, and don't count it
             log.info("Import: no recap written (not in the plan)")
             return "your plan doesn't include recaps"
-        dm = campaign.owner_user_id or min(campaign.dm_user_ids, default=0)
+        dm = campaign.owner_user_id or min(campaign.dm_accounts, default=0)
         if dm <= 0:
             log.warning("Import: no recap written (the campaign has no DM)")
             return "the campaign has no DM"
@@ -1989,6 +1992,10 @@ class RecapFeatures:
         take it over unchanged."""
         sweeps = 0
         while True:
+            try:
+                await self.run_said_as_listens()
+            except Exception as exc:
+                log.warning("The Say it clips failed: %s", type(exc).__name__)
             try:  # first: someone is waiting to hear a name, and a few seconds is the whole wait
                 await self.run_said_as_hears()
             except Exception as exc:
@@ -2102,6 +2109,8 @@ class RecapFeatures:
                             await self.speaker_removals.sweep(guild.id)
                         if self.said_as_hears is not None:
                             await self.said_as_hears.sweep(guild.id)
+                        if self.said_as_listens is not None:
+                            await self.said_as_listens.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.

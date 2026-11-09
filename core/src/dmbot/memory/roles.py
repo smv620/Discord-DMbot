@@ -38,7 +38,13 @@ class Role:
     @property
     def embed_text(self) -> str:
         """What is embedded: the description and its examples as one text, never `not_this`."""
-        return " ".join((self.description, *self.examples))
+        return embed_text(self.description, self.examples)
+
+
+def embed_text(description: str, examples: tuple[str, ...]) -> str:
+    """The one text a role is matched by (#3172): its description, then its examples. Never
+    `not_this`: its words would pull the role toward the very one it must be told apart from."""
+    return " ".join((description.strip(), *(e.strip() for e in examples)))
 
 
 COMMONER = "commoner"  # the default, never stored

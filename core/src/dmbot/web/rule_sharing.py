@@ -82,14 +82,16 @@ def shape(got: dict[str, Any], *, can_share: bool) -> dict[str, Any]:
     }
 
 
-async def _can_share(db: Database, owner: str | None, now: int, *, enforce_plans: bool) -> bool:
+async def _can_share(
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
+) -> bool:
     """Whether the campaign's plan lets it share house rules: the owner's plan, the check Discord
     makes (`plan_rules` "share"). A campaign with no owner has no plan."""
     if not enforce_plans:
         return True
     if owner is None or not owner.isdecimal():
         return False
-    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     return plan_rules.allowed(plan_rules.RULE_OF["share"], access)
 
 
@@ -109,7 +111,9 @@ async def read_sharing(
     got = found["r"] if found else None
     if got is None:
         raise RecapError("not_allowed")
-    can_share = await _can_share(db, got.get("owner"), now, enforce_plans=enforce_plans)
+    can_share = await _can_share(
+        db, got.get("owner"), now, enforce_plans=enforce_plans, guild_id=guild_id
+    )
     return shape(got, can_share=can_share)
 
 

@@ -33,7 +33,9 @@ def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
         ),
         campaigns=SimpleNamespace(
             get=AsyncMock(
-                return_value=SimpleNamespace(dm_user_ids=frozenset({DM}), dm_screen_channel_id=9)
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=9
+                )
             )
         ),
         plan_allows=AsyncMock(return_value=plan),

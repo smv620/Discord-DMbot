@@ -383,6 +383,7 @@ class AtTheTable(Clocks):
             campaign_id=self.a.id,
             listening=True,
             dm_user_ids=frozenset({DM, OTHER_DM}),
+            dm_accounts=frozenset({DM, OTHER_DM}),
             clock_said={},
             clock_suggested_at=None,
             clock_spoken_rest=None,

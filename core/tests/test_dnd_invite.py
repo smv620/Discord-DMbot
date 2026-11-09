@@ -208,7 +208,7 @@ class Card(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(id=2)
 
     def campaign(self, invite: str | None) -> Any:
-        return SimpleNamespace(name="Rime", dndbeyond_invite=invite)
+        return SimpleNamespace(name="Rime", dndbeyond_invite=invite, channels_visibility="everyone")
 
     async def test_a_new_card_has_the_button_only_with_a_link(self) -> None:
         for invite in (LINK, None):
@@ -255,7 +255,11 @@ def settings_interaction(user: int) -> Any:
     store = SimpleNamespace(
         get=AsyncMock(
             return_value=SimpleNamespace(
-                id=CAMPAIGN, guild_id=GUILD, dm_user_ids=frozenset({DM}), dndbeyond_invite=None
+                id=CAMPAIGN,
+                guild_id=GUILD,
+                dm_user_ids=frozenset({DM}),
+                dm_accounts=frozenset({DM}),
+                dndbeyond_invite=None,
             )
         ),
         set_dndbeyond_invite=AsyncMock(
@@ -279,7 +283,10 @@ class DmSide(unittest.IsolatedAsyncioTestCase):
         return Campaign(
             id=CAMPAIGN, guild_id=GUILD, name="Rime", created_at=1,
             last_played_at=None, target_ruleset="2024", fallback_ruleset="2014",
-            optional_rules_default=True, dm_user_ids=frozenset({DM}), dm_screen_channel_id=None,
+optional_rules_default=True,
+            dm_user_ids=frozenset({DM}),
+            dm_accounts=frozenset({DM}),
+            dm_screen_channel_id=None,
             last_voice_channel_id=None, dm_screen_visibility="peek", dndbeyond_invite=invite,
         )  # fmt: skip
 
@@ -409,6 +416,7 @@ def sheet_interaction(*, found: list[PlayerCharacter] | None = None) -> Any:
         name="Rime",
         dm_screen_channel_id=555,
         dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
     )
     bot = SimpleNamespace(
         sheets=store,

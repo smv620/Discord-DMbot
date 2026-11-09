@@ -159,7 +159,11 @@ async def settle_cap(
         keep = access.campaign_cap if access.works else plans.load().by_id["try-it"].campaigns
         if keep is None:  # no limit
             return None
-        cur = await conn.execute("SELECT * FROM dmbot_pause_over_cap(%s, %s)", (keep, live or []))
+        # Campaigns in a listed free server are neither counted nor paused (#3792).
+        cur = await conn.execute(
+            "SELECT * FROM dmbot_pause_over_cap(%s, %s, %s::bigint[])",
+            (keep, live or [], sorted(entitlements.free_guilds())),
+        )
         paused = [
             PausedCampaign(str(r["campaign_id"]), int(r["server_id"]), str(r["campaign_name"]))
             for r in await cur.fetchall()
@@ -202,6 +206,15 @@ async def add_minutes(
             " updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
         )
+        if owner_user_id not in entitlements.free_users() and await entitlements.on_free_guild(
+            conn
+        ):
+            # Free because of the server, not the person (#3792): the session's minutes are kept,
+            # but they are not this owner's plan hours, which a paid owner's other servers draw
+            # on. Nothing to limit, so no standing to report either.
+            return Standing(
+                s.access, s.month, used_before=0, used_after=0, buys_hours=False, renews=False
+            )
         # The row lock this upsert takes serialises two campaigns of one owner ticking at
         # once; the total it returns, not the earlier read, says where the hours stand now.
         cur = await conn.execute(

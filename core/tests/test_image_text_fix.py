@@ -90,7 +90,11 @@ def _bot(*, shown: str = LINE, dms: tuple[int, ...] = (DM,), yes: bool = True) -
             image_line=AsyncMock(return_value=(shown, shown)),
         ),
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(id="c" * 32, dm_user_ids=frozenset(dms)))
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    id="c" * 32, dm_user_ids=frozenset(dms), dm_accounts=frozenset(dms)
+                )
+            )
         ),
         consent=SimpleNamespace(has_image_consent=lambda g, u: yes),
         lookup=SimpleNamespace(get=AsyncMock(return_value=object())),

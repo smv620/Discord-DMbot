@@ -57,7 +57,7 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
     def table(self) -> Any:
         return SimpleNamespace(
             campaign_id="c", transcript_session_id="s", guild_id=1, dm_user_id=DM,
-            dm_user_ids=frozenset(),
+            dm_user_ids=frozenset(), dm_accounts=frozenset(),
         )  # fmt: skip
 
     async def test_off_means_off_nothing_is_read_or_asked(self) -> None:

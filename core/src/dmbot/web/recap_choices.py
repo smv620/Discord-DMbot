@@ -57,12 +57,12 @@ async def owner_access(
     owner = found.get("owner")
     if not isinstance(owner, str) or not owner.isascii() or not owner.isdecimal():
         return None
-    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     return access
 
 
 async def _audio_facts(
-    db: Database, owner: str | None, now: int, *, enforce_plans: bool
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
 ) -> dict[str, Any]:
     """Whether the narration switch is offered and may be turned on, and how the plan has it
     (`recap_panel.audio_how`'s two answers), from the campaign owner's plan. With
@@ -72,7 +72,7 @@ async def _audio_facts(
     if owner is None or not owner.isascii() or not owner.isdecimal():
         return {"canAudio": False, "audioHow": "", "limited": True}
     # The owner's plan, as the bot reads it (`recap_plan_facts`), not the signed-in person's.
-    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     if not (access.works and access.recap_audio):  # the bot's `can_recap_audio`
         return {"canAudio": False, "audioHow": "", "limited": True}
     # As the panel says it: "part of your plan" unless it is a paid plan outside Guild and Pro.
@@ -114,7 +114,9 @@ async def read_choices(
     found = row["found"] if row else None
     if found is None:
         raise RecapError("not_found")
-    facts = await _audio_facts(db, found.get("owner"), now, enforce_plans=enforce_plans)
+    facts = await _audio_facts(
+        db, found.get("owner"), now, enforce_plans=enforce_plans, guild_id=guild_id
+    )
     limited = bool(facts.pop("limited"))
     why = ""
     if not audio_on:

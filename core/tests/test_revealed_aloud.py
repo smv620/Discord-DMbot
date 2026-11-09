@@ -275,7 +275,12 @@ class AfterTheSession(WithTheStore):
 
 class TheButton(unittest.IsolatedAsyncioTestCase):
     def press(self, user: int, memory: Any) -> tuple[Any, Any]:
-        campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32, dm_user_ids=frozenset({DM_ID}))
+        campaign = SimpleNamespace(
+            guild_id=GUILD_A,
+            id="c" * 32,
+            dm_user_ids=frozenset({DM_ID}),
+            dm_accounts=frozenset({DM_ID}),
+        )
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             memory=memory,

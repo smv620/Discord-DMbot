@@ -161,7 +161,7 @@ class Presses(unittest.IsolatedAsyncioTestCase):
 
 
 def campaign32() -> Any:
-    return SimpleNamespace(guild_id=1, id="c" * 32, dm_user_ids=[7])
+    return SimpleNamespace(guild_id=1, id="c" * 32, dm_user_ids=[7], dm_accounts=[7])
 
 
 class SessionStart(unittest.IsolatedAsyncioTestCase):

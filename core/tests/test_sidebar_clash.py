@@ -216,11 +216,15 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
         from dmbot.bot import DMBot
 
         wins = SimpleNamespace(record=AsyncMock())
-        now = SimpleNamespace(dm_user_ids=frozenset({70}))  # DM (7) is no longer one
+        now = SimpleNamespace(
+            dm_user_ids=frozenset({70}), dm_accounts=frozenset({70})
+        )  # DM (7) is no longer one
         fake = SimpleNamespace(
             house_wins=wins, campaigns=SimpleNamespace(get=AsyncMock(return_value=now))
         )
-        stale = SimpleNamespace(guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}))
+        stale = SimpleNamespace(
+            guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+        )
         record = DMBot.sidebar_record_win.__get__(fake)
         self.assertFalse(await record(stale, RuleRef("", 1), RuleRef("", 2), DM))
         wins.record.assert_not_awaited()
@@ -240,7 +244,9 @@ class TheBotsViews(unittest.IsolatedAsyncioTestCase):
         assert sides is not None
         record_win = AsyncMock(return_value=True)
         fake = SimpleNamespace(sidebar_record_win=record_win)
-        mine = SimpleNamespace(guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}))
+        mine = SimpleNamespace(
+            guild_id=GUILD, id="c", dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+        )
         retry = AsyncMock()
         view = DMBot.sidebar_clash_view(cast(Any, fake), cast(Any, mine), sides, retry)
         self.assertIsInstance(view, ClashView)
@@ -331,7 +337,12 @@ class AtTheTable(unittest.IsolatedAsyncioTestCase):
         self.recorded: list[tuple[Any, Any]] = []
 
         async def campaign_of(guild_id: int, campaign_id: str) -> Any:
-            return SimpleNamespace(id=campaign_id, guild_id=guild_id, dm_user_ids=frozenset({DM}))
+            return SimpleNamespace(
+                id=campaign_id,
+                guild_id=guild_id,
+                dm_user_ids=frozenset({DM}),
+                dm_accounts=frozenset({DM}),
+            )
 
         async def record(_campaign: Any, winner: Any, loser: Any, by: int) -> bool:
             self.recorded.append((winner, loser))

@@ -127,7 +127,9 @@ class Live(unittest.IsolatedAsyncioTestCase):
     """`DMBot.ask_live` and the copies of a live question (#3210)."""
 
     def bot(self, reach: dict[int, bool]) -> Any:
-        campaign = SimpleNamespace(name="The *Table*", owner_user_id=8, dm_user_ids=set(reach))
+        campaign = SimpleNamespace(
+            name="The *Table*", owner_user_id=8, dm_user_ids=set(reach), dm_accounts=set(reach)
+        )
         order: list[int] = []
 
         async def dm_message(user_id: int, text: str, view: Any) -> Any:

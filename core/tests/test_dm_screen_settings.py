@@ -39,6 +39,7 @@ def campaign(level: str = "normal", name: str = "Frostmaiden", vis: str = "peek"
         fallback_ruleset="2014",
         optional_rules_default=True,
         dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
         dm_screen_channel_id=None,
         last_voice_channel_id=None,
         dm_screen_visibility=vis,
@@ -84,7 +85,7 @@ class SettingsCardTest(unittest.TestCase):
         items: list[Any] = list(view.children)
         self.assertEqual(
             [i.row for i in items],
-            [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3],
+            [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3],
         )  # rows 0 and 1: what needs Discord (Questions, levels, Who can see, Rules cards, Clock,
         # chat, Stop when quiet, What's switched on); rows 2 and up wait for the website (#2986)
         labels = [i.item.label for i in items]

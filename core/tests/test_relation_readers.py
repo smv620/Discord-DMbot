@@ -26,6 +26,8 @@ READERS = {
     + ": counts current, confirmed connections for a rank floor; never shown to a player",
     "memory/importance_step.py": CONFIRMED_ONLY
     + ": the connections the importance reading is shown, DM-only; never for a player",
+    "memory/reveal_proposals.py": CONFIRMED_ONLY
+    + ": who learned what is placed only on a confirmed connection, for the DM (#2996)",
     "memory/role_store.py": CONFIRMED_ONLY
     + ": the roles current, confirmed connections show, for the DM's why; never for a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
@@ -99,6 +101,8 @@ STORE = {
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
+    "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
+    "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
     "_recheck_companions": DM_ONLY
     + ": a merge or a change of kind refuses a companion link left invalid",
     "_let_go_of_anchored": DM_ONLY

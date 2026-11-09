@@ -20,7 +20,11 @@ TOKEN = "T" * 43
 
 def make(user: int = DM_ID, *, recent: Any = None, link: Any = (TOKEN, "")) -> Any:
     campaign = SimpleNamespace(
-        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), table_chat_id=CHAT
+        guild_id=GUILD,
+        id=CID,
+        dm_user_ids=frozenset({DM_ID}),
+        dm_accounts=frozenset({DM_ID}),
+        table_chat_id=CHAT,
     )
     channel = SimpleNamespace(send=AsyncMock(), guild=SimpleNamespace(id=GUILD))
     bot = SimpleNamespace(

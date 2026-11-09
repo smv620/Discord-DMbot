@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -21,6 +22,8 @@ from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
 from dmbot.memory import meaning, voyage
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
+from dmbot.site_ask import cloudflare, sources
+from dmbot.site_ask.service import SiteAsk
 from dmbot.web import feedback, move_sync, names_smart, sessions, strays, support
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
@@ -204,6 +207,23 @@ async def serve(settings: WebSettings) -> None:
             settings.voyage_embed_model,
             meaning.CallCounter(time.time).count,
         )
+    # The search bar's short answer (#3856): only with the switch on, both Cloudflare settings
+    # set and the public words found.
+    site_ask_http: cloudflare.HttpTransport | None = None
+    site_ask: SiteAsk | None = None
+    if settings.site_ask_on:
+        passages = sources.collect(Path(os.environ.get("DMBOT_DOCS_DIR") or "/app/knowledge"))
+        if passages:
+            site_ask_http = cloudflare.HttpTransport(settings.cloudflare_ai_token)
+            site_ask = SiteAsk(
+                cloudflare.Workers(site_ask_http, settings.cloudflare_account_id),
+                passages,
+                settings.link_token_secret or settings.secret_key,
+                daily_answers=settings.site_ask_daily,
+            )
+            log.info("Site answers are on, from %d passages", len(passages))
+        else:
+            log.warning("Site answers are on but none of DMbot's public words were found")
     app = create_app(
         settings,
         db,
@@ -216,6 +236,7 @@ async def serve(settings: WebSettings) -> None:
         move_codes=move_codes,
         helper=helper,
         smart_names=smart_names,
+        site_ask=site_ask,
         said_as_ai=ai_client.tier(AIModelTier.FAST, Feature.SAID_AS)
         if ai_client is not None
         else None,
@@ -256,6 +277,8 @@ async def serve(settings: WebSettings) -> None:
                 await stray_sweeper
         if voyage_http is not None:
             await voyage_http.close()
+        if site_ask_http is not None:
+            await site_ask_http.close()
         await discord.close()
         if discussions is not None:
             await discussions.close()

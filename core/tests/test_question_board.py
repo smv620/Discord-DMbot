@@ -105,7 +105,11 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import AsyncMock, MagicMock
 
         campaign = SimpleNamespace(
-            guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden", dm_user_ids=frozenset({7})
+            guild_id=GUILD,
+            id=CAMPAIGN,
+            name="Frostmaiden",
+            dm_user_ids=frozenset({7}),
+            dm_accounts=frozenset({7}),
         )
         bot = MagicMock()
         bot.question_round = round_
@@ -250,7 +254,11 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import AsyncMock, MagicMock
 
         campaign = SimpleNamespace(
-            guild_id=GUILD, id=CAMPAIGN, name="Frostmaiden", dm_user_ids=frozenset({7})
+            guild_id=GUILD,
+            id=CAMPAIGN,
+            name="Frostmaiden",
+            dm_user_ids=frozenset({7}),
+            dm_accounts=frozenset({7}),
         )
         bot = MagicMock()
         bot.question_round = round_

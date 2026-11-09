@@ -160,7 +160,7 @@ def free_guilds() -> frozenset[int]:
     return _free_guilds
 
 
-async def _on_free_guild(conn: Conn) -> bool:
+async def on_free_guild(conn: Conn) -> bool:
     """Is this transaction set to a listed server (`dmbot.guild_id`, as `Database.meter` and
     `guild` set it)? One small query, and none at all while the list is empty."""
     if not _free_guilds:
@@ -346,7 +346,7 @@ async def inputs(
 ) -> tuple[Entitlement | None, Grant | None, Access]:
     """`effective`, with the paid plan and grant it came from: the hours meter needs them
     to find the month the hours belong to (dmbot.hours.month_for)."""
-    if user_id in _free_users or await _on_free_guild(conn):  # (the server: #3788)
+    if user_id in _free_users or await on_free_guild(conn):  # (the server: #3788)
         return None, None, free_access(None, now)
     async with _as_person(conn, user_id):
         plan = await _read_plan(conn, user_id)
@@ -469,7 +469,10 @@ async def owned_campaigns(conn: Conn, user_id: int) -> int:
     `owner_campaigns`, through a function that returns only a count (dmbot_owned_campaigns,
     schema 0034), so the website's role can ask it too. Needs an open transaction."""
     async with _as_person(conn, user_id):
-        cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+        # Campaigns in a listed free server take no slot of the owner's cap (#3792).
+        cur = await conn.execute(
+            "SELECT dmbot_owned_campaigns_outside(%s::bigint[]) AS n", (sorted(free_guilds()),)
+        )
         row = await cur.fetchone()
     assert row is not None  # a function call always gives a row
     return int(row["n"])
