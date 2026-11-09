@@ -71,12 +71,10 @@ class ScriptMake(Script):
     ) -> None:
         # The story rule is its own door: patched to deny, the rest of the plan being allowed.
         real = script_make.plan_rules.allowed
-        deny_story = lambda rule, access: (
-            rule != script_make.plan_rules.RULE_OF["story"]
-            and real(  # noqa: E731
-                rule, access
-            )
-        )
+
+        def deny_story(rule: Any, access: Any) -> bool:
+            return bool(rule != script_make.plan_rules.RULE_OF["story"] and real(rule, access))
+
         entitlements.configure_free_users({ALICE.id})
         self.addCleanup(entitlements.configure_free_users, ())
         with patch.object(script_make.plan_rules, "allowed", deny_story):
