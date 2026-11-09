@@ -14,7 +14,6 @@ export const addAllWords = {
   nothingLeft: "Nothing left to add.",
   adding: "Adding names",
   undoing: "Taking the names back",
-  part: (done: number, total: number): string => `part ${done} of ${total}`,
   stalled: "Still working, but slower than usual.",
   failedNone: "Adding stopped. No names were added.",
   nothingAdded: "Nothing was added.",

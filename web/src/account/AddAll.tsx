@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { addAllWords as w, countsList, plainKindSingular, plainKindWord, sumCounts } from "../content/add-all-words";
 import { CONFIRM_KINDS_LIVE } from "../content/confirm-kinds-switch";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "./api";
+import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 1500;
@@ -47,6 +48,8 @@ export default function AddAll({
   const [result, setResult] = useState<Result | null>(null);
   const [problem, setProblem] = useState<Problem>("");
   const lastAt = useRef<number | null>(null);
+  // The page's own start of the wait, from the press: the bot has not answered yet at that point, so its own start is not there.
+  const wait = useObservedWait(busy !== null, String(progress?.at ?? ""));
 
   // Poll the bot's answer until it is done or failed; the wait panel shows each look.
   useEffect(() => {
@@ -171,17 +174,17 @@ export default function AddAll({
 
       {busy !== null && (
         <>
+          {/* The panel shows the parts as its own count and bar, and its stalled line; the page's stalled words are its "what to do". */}
           <WorkProgress
             stage={busy === "undo" ? w.undoing : w.adding}
-            done={null}
-            total={null}
-            startedAt={progress?.createdAt ?? null}
+            done={progress?.done ?? null}
+            total={progress && progress.total > 0 ? progress.total : null}
+            startedAt={progress?.createdAt ?? wait.startedAt}
             updatedAt={progress?.at ?? null}
             serverNow={progress?.now ?? null}
             state={stalled ? "stalled" : "running"}
+            whatToDo={w.stalled}
           />
-          {progress && progress.total > 0 && <p class="small">{w.part(progress.done, progress.total)}</p>}
-          {stalled && <p role="status">{w.stalled}</p>}
         </>
       )}
 
