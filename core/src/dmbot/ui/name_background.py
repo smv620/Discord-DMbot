@@ -796,6 +796,14 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
     )
+    # A character's first name the lore uses alone ("Claude" for Claude Ambere) becomes their
+    # short name by rule, whatever the AI listed (#3880). Never stops the read; counts only.
+    try:
+        short = await memory.add_short_names(guild, campaign.id, [upload.text])
+        if short.value:
+            log.info("Short names: %d added", len(short.value))
+    except Exception as exc:
+        log.warning("Short names: couldn't add them (%s)", type(exc).__name__)
     await save_place_spellings(
         memory,
         campaign,

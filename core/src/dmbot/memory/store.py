@@ -59,6 +59,7 @@ from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
+from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
@@ -140,6 +141,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     ROLES,
+    SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
     WHO_SOURCE,
@@ -3213,6 +3215,36 @@ class MemoryStore:
                 ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
             return Written(_alias(row), w.batch)
+
+    async def add_short_names(
+        self, guild_id: int, campaign_id: str, texts: Sequence[str]
+    ) -> Written[list[Alias]]:
+        """A person's first name as their short name, by rule (#3880, `short_names.py`): "Claude"
+        for Claude Ambere when the text uses "Claude" alone and nothing else in the campaign is
+        called that. Proposed other names, never a merge, all in one batch so one Undo takes them
+        back. Read inside the write, so two runs at once never add the same name twice. Nothing to
+        add writes nothing."""
+        async with self._write(guild_id, campaign_id, SHORT_NAME_SOURCE) as w:
+            entities = await w.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed', 'rejected')"
+            )
+            aliases = await w.select(ALIASES)
+            people = [
+                (str(e["id"]), str(e["name"]))
+                for e in entities
+                if e["type"] == "character" and e["status"] != REJECTED
+            ]
+            # Every name the campaign has, turned down ones too: a name the DM rejected for this
+            # entry is never added again, and a word another entry was ever called is never taken.
+            names = [(str(e["id"]), str(e["name"])) for e in entities]
+            names += [(str(a["entity_id"]), str(a["text"])) for a in aliases]
+            added = []
+            for entity_id, word in short_names_mod.short_names(people, names, texts):
+                row = await w.insert(
+                    ALIASES, _new_alias(w, entity_id, word, "short", PROPOSED, False, None)
+                )
+                added.append(_alias(row))
+            return Written(added, w.batch)
 
     async def update_alias(
         self,
