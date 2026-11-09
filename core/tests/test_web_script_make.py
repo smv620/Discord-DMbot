@@ -11,8 +11,9 @@ from typing import Any
 from dmbot import entitlements
 from dmbot.web import script_make
 from dmbot.web.recaps import RecapError
-from tests.test_web_api import ALICE
-from tests.test_web_theatre_script import BOB, NOW, THURSDAY, Script
+from tests.test_recap_web import BOB, NOW
+from tests.test_web_api import ALICE, THURSDAY
+from tests.test_web_theatre_script import Script
 
 
 class ScriptMake(Script):
