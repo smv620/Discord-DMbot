@@ -123,6 +123,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         recaps=SimpleNamespace(
             enqueue=AsyncMock(return_value=True),
             used_in_month=AsyncMock(return_value=SimpleNamespace(narrated=0, recaps=0)),
+            waiting_for_script=AsyncMock(return_value=False),
         ),
         transcripts=SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),

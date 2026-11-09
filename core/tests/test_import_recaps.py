@@ -144,7 +144,10 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         consent=SimpleNamespace(
             consenting=AsyncMock(return_value={MIRA}), agreed=AsyncMock(return_value={MIRA})
         ),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True),
+            waiting_for_script=AsyncMock(return_value=False),
+        ),
         plan_allows=AsyncMock(return_value=True),
         recap_holds=None,
         post=AsyncMock(return_value=True),
@@ -152,6 +155,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_speakers={},
         _import_entries={},
         _import_batches={},
+        _import_starts={},
         _import_reports={},
         _import_unhonoured={},
         _import_party={},

@@ -226,14 +226,21 @@ async def keep_all(
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     *,
     keep_flags: bool = True,
+    one_press: bool = False,
 ) -> KeptAll:
-    """Keep each of these ready connections. A refused one stays in the list. `progress(done,
-    total)` is told before the first and after each one (kept or refused: tried), for the
-    website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that already
-    exists never makes it secret, so a secret spelling in the text never hides what the players
-    were shown (#3025); False only when the DM pressed 🤫 Keep as secret, which is their own word.
+    """Keep each of these ready connections. A refused one stays in the list. A connection DMbot
+    inferred (#2959 item 5) is never kept by Keep all or the sure step: only by the DM's press on
+    that one (`one_press`), so it is left out and stays waiting (not counted as refused).
+    `progress(done, total)` is told before the first and after each one (kept or refused: tried),
+    for the website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that
+    already exists never makes it secret, so a secret spelling in the text never hides what the
+    players were shown (#3025); False only when the DM pressed 🤫 Keep as secret, their own word.
     """
     done = KeptAll()
+    if one_press and len(links) != 1:
+        raise ValueError("One press keeps one connection.")
+    if not one_press:
+        links = [c for c in links if not c.inferred]
     total = len(links)
     if progress is not None:
         await progress(0, total)
@@ -281,7 +288,9 @@ async def keep_all(
         # (an older twin's rows are not this upload's), and never a reason to lose the connection.
         if c.upload and made.created_at >= now:
             try:
-                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload, c.quote)
+                await memory.record_link_source(
+                    guild_id, campaign_id, made.id, c.upload, c.quote, inferred=c.inferred
+                )
             except Exception as exc:
                 log.warning(
                     "A kept connection's source could not be stored (%s)", type(exc).__name__
@@ -306,7 +315,7 @@ async def keep_all(
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
-        if c.truth:
+        if c.truth and not c.inferred:  # (DMbot's inference is never pinned as 100% truth)
             try:
                 await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
             except MemoryRuleError:  # kept all the same: pinning is one tap on its card

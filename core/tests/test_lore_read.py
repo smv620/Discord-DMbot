@@ -95,9 +95,10 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 7)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 5)
+        self.assertEqual(text.count("NAMES\n"), 8)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 6)
         self.assertEqual(text.count("UNNAMED\n"), 2)
+        self.assertEqual(text.count("TRAITS\n"), 1)  # (a lineage and a class, #2959 item 3)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -1289,7 +1290,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
         def waiting(detail: str) -> Any:
             return SimpleNamespace(
                 subject_id="s", predicate="kin_of", object_id="o", secret=False, detail=detail,
-                truth=False, decided="", known_by="", world=0, upload="",
+                truth=False, decided="", known_by="", world=0, upload="", inferred="",
             )  # fmt: skip
 
         await keep_all(memory, store, 1, "c", [waiting("parent"), waiting("")])  # type: ignore[arg-type]

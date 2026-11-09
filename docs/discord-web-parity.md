@@ -138,7 +138,7 @@ match. "In Discord" says where the DM finds it today.
 | Function | In Discord | Answer |
 |---|---|---|
 | Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
-| Uploads and imports add what DMbot is sure of; Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
+| Uploads and imports add what DMbot is sure of (an import also adds the connections the DM's own lines state); Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
 | Who can see the campaign's channels (the people, or everyone) and the list added by hand | ⚙️ Manage DMbot → Who can see the channels, 👥 Who can see | The same setting and list on the campaign page (WebDev, #3894) |
 | Who is this? (same as a known name) | name card, look-alikes | Who is this? (the clarify page, #3604) |
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
@@ -152,6 +152,8 @@ match. "In Discord" says where the DM finds it today.
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | Make these words a kind of connection | kind offer | #3577 |
+| A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
+| Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
 | What the characters learned (Keep / Not this) | reveal card | #3863 |

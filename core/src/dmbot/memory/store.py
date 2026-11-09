@@ -110,6 +110,7 @@ from dmbot.memory.models import (
     BACKGROUND_SOURCE,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
+    CLASS,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -170,6 +171,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    Trait,
     WaitingJoin,
     Written,
     check_status_change,
@@ -227,6 +229,35 @@ _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
 )
+
+
+def _trait_rows(w: Changes, entity_id: str, traits: Sequence[Trait]) -> list[dict[str, Any]]:
+    """The rules-link rows for a new character's lineage and classes (#2959 item 3), checked as
+    `set_rule_link` checks one: one lineage (the first), classes without repeats, a known link
+    only with its source. A trait that fails a check is left out; the name is kept."""
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for t in traits:
+        name = clean_text(t.name, LINK_NAME_MAX)
+        source = t.rules_source if t.known else ""
+        if (
+            t.kind not in (SPECIES, CLASS)
+            or not name
+            or (t.known and not 0 < len(source) <= LINK_SOURCE_MAX)
+            or (t.edition is not None and t.edition not in LINK_EDITIONS)
+        ):
+            continue
+        key = (t.kind, source, name_key(name))
+        if key in seen or (t.kind == SPECIES and any(k[0] == SPECIES for k in seen)):
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "id": new_id(), "entity_id": entity_id, "kind": t.kind, "rules_source": source,
+                "name": name, "edition": t.edition, "known": t.known, "created_at": w.now,
+            }
+        )  # fmt: skip
+    return rows
 
 
 async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[str]:
@@ -2236,10 +2267,12 @@ class MemoryStore:
                 folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
             entities: list[dict[str, Any]] = []
+            links: list[dict[str, Any]] = []
             for n in names:
                 check_named(n.type, n.name)
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
+                is_character = onto.is_a(kind, "character")  # (`kind` is reused for aliases below)
                 _check_role(onto, kind, role, None)
                 # A waiting suggestion may be read as a player character (#3553: the text says so);
                 # it is confirmed only once the DM says who plays it. Anything else needs a player.
@@ -2283,10 +2316,14 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(entity_id)
+                if n.traits and is_character:
+                    links.extend(_trait_rows(w, entity_id, n.traits))
             # Two statements however long the list (#253): the entries, then all their
             # names, so the campaign's write lock is held for a moment, not seconds.
             await w.insert_many(ENTITIES, entities)
             await w.insert_many(ALIASES, aliases)
+            if links:  # (a new character's lineage and classes, in the same change: #2959)
+                await w.insert_many(RULE_LINKS, links)
             return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
@@ -2302,7 +2339,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
-                " ('memory_entities', 'memory_aliases')) AS names_only, count(*) AS n"
+                " ('memory_entities', 'memory_aliases', 'memory_rule_links'))"
+                # (a name or another name must be in it: a batch of rules links alone is no list)
+                " AND bool_or(table_name IN ('memory_entities', 'memory_aliases')) AS names_only,"
+                " count(*) AS n"
                 " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
                 (*w.ids, batch),
             )
@@ -2796,13 +2836,20 @@ class MemoryStore:
             return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
-        self, guild_id: int, campaign_id: str, relation_id: str, label: str, quote: str = ""
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        label: str,
+        quote: str = "",
+        inferred: str = "",
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
         a connection that has one keeps the first. `quote`: the reader's own quote for the line
-        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
-        else about the upload is stored."""
+        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone.
+        `inferred`: why DMbot inferred it (#2959 item 5), "" for a stated one, so the "Why?" never
+        reads an inference as the DM's own text. Nothing else about the upload is stored."""
         label = clean_text(label)[:120]
         # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
         quote = " ".join(
@@ -2816,8 +2863,8 @@ class MemoryStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " quote, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_relations"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " quote, created_at, inferred_reason) SELECT %s, %s, id, %s, %s, %s, %s"
+                " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
@@ -2825,6 +2872,7 @@ class MemoryStore:
                     label,
                     quote,
                     int(time.time()),
+                    " ".join(inferred.split())[:80],
                     guild_id,
                     campaign_id,
                     relation_id,
@@ -2833,18 +2881,21 @@ class MemoryStore:
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
-    ) -> tuple[str, str] | None:
-        """(the upload's label, the reader's quote) a connection was kept from (#2946, #3606), or
-        None. A DM-only reader, as the website's link-sources door is: the quote is the DM's own
-        text. Read by Discord's connection page for its "Why?"."""
+    ) -> tuple[str, str, str] | None:
+        """(the upload's label, the reader's quote, why DMbot inferred it or "") a connection was
+        kept from (#2946, #3606, #2959 item 5), or None. A DM-only reader, as the website's
+        link-sources door is: the quote is the DM's own text. Read by Discord's connection page
+        for its "Why?"."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
-                "SELECT label, quote FROM memory_link_sources"
+                "SELECT label, quote, inferred_reason FROM memory_link_sources"
                 " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s",
                 (*scope.ids, relation_id),
             )
             row = await cur.fetchone()
-        return None if row is None else (str(row["label"]), str(row["quote"] or ""))
+        if row is None:
+            return None
+        return str(row["label"]), str(row["quote"] or ""), str(row["inferred_reason"] or "")
 
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
