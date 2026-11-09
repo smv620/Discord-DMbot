@@ -133,6 +133,10 @@ class FormsOfAddress(unittest.TestCase):
         got = th.check_brackets("Friend [Tavin], wait", {name_key("Tavin")}, [])
         self.assertEqual(got, ("Friend [Tavin], wait", 0))
 
+    def test_a_title_from_the_shared_list_is_an_everyday_word_too(self) -> None:
+        got = th.check_brackets("Major [Tavin], wait", {name_key("Tavin")}, [])
+        self.assertEqual(got, ("Major [Tavin], wait", 0))
+
     def test_a_real_name_from_an_address_phrase_is_still_rewritten_outside_a_bracket(self) -> None:
         # "Grace" is a name even though "Your Grace" is a form of address
         got = th.check_brackets("Grace nods", {name_key("Tavin")}, [])

@@ -40,7 +40,9 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | "Players know:" on a suggested name before the DM confirms it (the line a shared lore upload filled in), with a way to change it | recap page, names to check | built, switched off | `PLAYERS_LINE_LIVE` (#3833; Discord's card is #3838) |
 | Search the website: the best-matching page at once (a search of the site itself, so website-only on purpose; Discord already answers questions about DMbot through table questions) | site header | built, switched off | `SEARCH_LIVE` (#3855) |
 | Ask the website a question: a short answer under the search box, written from the site's own public words (website-only on purpose, as the search) | site header | built, switched off | `SEARCH_ASK_LIVE` (#3855; core #3856) |
-| After-session report, session notes, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `SESSION_NOTES_LIVE`, `PRESENT_PER_SCENE_LIVE` |
+| After-session report, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `PRESENT_PER_SCENE_LIVE` |
+| Session notes and the script, read on a session's Transcripts page (Script and Session notes tabs, game masters only) and saved | `/account/transcripts` | live (#3898) | `SESSION_NOTES_LIVE`, `THEATRE_DOWNLOAD_LIVE` |
+| Make a session's script from the website (Discord offers it after a live session; imported sessions get the offer too, CloudDev's half of #3899) | `/account/transcripts` Script tab | page built, switched off; the door is next | `SCRIPT_MAKE_LIVE` (#3899) |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
@@ -136,7 +138,7 @@ match. "In Discord" says where the DM finds it today.
 | Function | In Discord | Answer |
 |---|---|---|
 | Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
-| Uploads add what DMbot is sure of; Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel, ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
+| Uploads and imports add what DMbot is sure of; Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
 | Who is this? (same as a known name) | name card, look-alikes | Who is this? (the clarify page, #3604) |
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
@@ -144,6 +146,7 @@ match. "In Discord" says where the DM finds it today.
 | Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645) |
 | Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
 | Change a connection; its feeling | connection edit | Story Graph: change a connection; feeling picker (#3607) |
+| Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |

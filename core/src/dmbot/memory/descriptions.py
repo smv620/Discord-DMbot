@@ -10,7 +10,7 @@ choice, not a guess."""
 from __future__ import annotations
 
 from dmbot.memory.scan import GAME_TERMS
-from dmbot.memory.short_names import CREATURE_KINDS
+from dmbot.names.not_names import CREATURE_KINDS
 
 _LEADING = frozenset({"the", "a", "an", "my", "our", "his", "her", "their", "your", "this", "that"})
 
