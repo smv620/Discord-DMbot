@@ -129,6 +129,21 @@ class TheDepths(DatabaseTest):
         )
         self.assertEqual(await audio_oldest(), 900)  # the last write
 
+    async def test_an_audio_row_with_no_known_time_counts_but_sets_no_oldest(self) -> None:
+        await self.recap(300)
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET state = 'ready', audio = 'queued', audio_asked_at = 0,"
+            " approved_at = 0, updated_at = 0 WHERE session_at = 300",
+        )
+        audio = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["audio"]
+        self.assertEqual((audio.waiting, audio.oldest_s), (1, 0))
+
+    async def test_an_import_with_no_imported_at_counts_but_sets_no_oldest(self) -> None:
+        await self.import_row(SID1, "waiting", 0)
+        imports = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["imports"]
+        self.assertEqual((imports.waiting, imports.oldest_s), (1, 0))
+
     async def test_a_zero_time_counts_but_never_sets_the_oldest(self) -> None:
         await self.recap(0)  # created_at 0: unknown, so it counts but sets no age
         recaps = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["recaps"]
