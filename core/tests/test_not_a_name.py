@@ -20,7 +20,7 @@ class Shapes(unittest.TestCase):
 
     def test_a_title_alone_from_the_shared_list_is_an_address(self) -> None:
         # (the same list the short-name rule reads, `TITLE_WORDS`, so the two never disagree)
-        for text in ("Major", "Doctor", "Mayor", "Duke", "Sergeant", "Reverend", "Mistress"):
+        for text in ("Major", "Doctor", "Mayor", "Sergeant", "Reverend", "Mistress", "King"):
             self.assertEqual(why_not(text), "address", text)
 
     def test_a_describing_word_alone_is_left_to_the_other_checks(self) -> None:
@@ -28,6 +28,17 @@ class Shapes(unittest.TestCase):
             self.assertIsNone(why_not(text, text=text), text)
         for text in ("Major Ursa", "Doctor Hale", "Duke Tran"):
             self.assertIsNone(why_not(text, text=text), text)
+
+    def test_a_lone_title_the_text_names_someone_by_is_kept(self) -> None:
+        self.assertIsNone(why_not("Major", cued=frozenset({"major"})))
+        self.assertEqual(why_not("Friend", cued=frozenset({"friend"})), "address")  # (never)
+
+    def test_titles_that_are_also_first_names_are_still_asked(self) -> None:
+        for text in ("Sage", "Earl", "Bishop", "Prince"):
+            self.assertIsNone(why_not(text, text=text), text)
+
+    def test_a_lone_title_in_lower_case_is_an_address(self) -> None:
+        self.assertEqual(why_not("king", text="the king said", offered=2), "address")
 
     def test_real_names_are_kept(self) -> None:
         for text in ["Captain Vel", "Speaker Masthew", "Sister Nora", "Third Tower",

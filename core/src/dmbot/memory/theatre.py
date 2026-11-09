@@ -66,8 +66,9 @@ _EVERYDAY = frozenset(
 _EVERYDAY = frozenset(
     (
         *_EVERYDAY,
-        *(w for w in not_names.ADDRESS_ALONE if " " not in w and "'" not in w),
-        *not_names.TITLES_ALONE,  # (the same list the name questions use, #3385)
+        # (the same list the name questions use, #3385; it holds ADDRESS_ALONE's single words. A
+        # capitalised "Major" outside a bracket is never taken for a made-up name by this)
+        *(w for w in not_names.TITLES_ALONE if "'" not in w),
     )
 )  # (single words only: "good", "young" or "grace" from a phrase would hide a real name)
 

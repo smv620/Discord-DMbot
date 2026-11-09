@@ -158,7 +158,8 @@ and its only job is to warn the DM privately when play drifts from what the DM i
   they share a name.
 - **A name is a name; a title or a role word is not.** A form of address, a title said alone or a
   role word ("Friend", "Major", "the innkeeper") is never asked about as a name and never becomes one
-  (#3385); the script names who it meant, line by line. A person's first name said alone in the story
+  (#3385), unless the text plainly gives it as someone's name ("her name is Major"); the script names
+  who it meant, line by line. A person's first name said alone in the story
   ("Tran" for Tran Vosk) becomes their short name by rule, never a merge, when nothing else in the
   campaign is called that (#3880). Both read one title list (`not_names.TITLE_WORDS`), so they never
   disagree.
