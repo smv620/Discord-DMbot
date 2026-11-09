@@ -27,42 +27,99 @@ log = logging.getLogger(__name__)
 
 HEADING = "🧬 **Lineage and class**"
 LABEL = "🧬 Lineage and class"
-WHY = "DMbot never changes a character you have without asking you."
-KEEP, NOT_THIS, UNDO = "✅ Keep it", "❌ Not this", "↩️ Undo"
-HELP = f"_{KEEP}: DMbot adds it to the name card. {NOT_THIS}: DMbot won't ask about it again._"
-KEPT = "Kept. ↩️ Undo takes it back."
-NOT_KEPT = "OK. DMbot won't ask about that again."
-UNDONE = "Taken back. The question is gone; the lore will ask again next time it's uploaded."
+WHY = "DMbot never changes a character without asking you."
+# (not "Keep it": on DMbot's other cards that is the answer that changes nothing; ux-critic)
+YES, NO, UNDO = "✅ Yes, change it", "❌ No, leave it", "↩️ Undo"
 GONE_NOW = "Already answered. Showing what is left."
-COULD_NOT = "DMbot couldn't add that one (the character may have changed). Showing what is left."
-NOTHING_LEFT = "✅ Nothing left to answer. If a lore upload finds more, it will ask here."
+NOTHING_LEFT = (
+    "✅ Nothing left to answer. If a lore upload finds more, it shows in ❓ Questions for you."
+)
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
 QUOTE_SHOWN = 200  # Discord: the quote stays well inside one message
 
 
+def _a(word: str) -> str:
+    return ("an " if word[:1].lower() in "aeiou" else "a ") + word
+
+
+def _shown(offer: Offer) -> tuple[str, str, str]:
+    """The character, the trait and what DMbot has now, safe for Discord."""
+    who, what = _md(offer.entity_name), _md(offer.trait.name.lower())
+    if offer.trait.kind == SPECIES:
+        now = _md(offer.current.lower())
+    else:
+        now = ", ".join(_md(c.lower()) for c in offer.classes)
+    return who, what, now
+
+
 def card_text(offer: Offer, waiting: int) -> str:
-    """The question in plain words: what the lore says, where it said it, and what DMbot has now.
-    Never posted in a shared channel."""
+    """The question first, in one plain line, then where the lore said it, why DMbot asks and
+    what each button does. Never posted in a shared channel."""
     count = f" ({waiting} waiting)" if waiting > 1 else ""
-    who, what = _md(offer.entity_name), _md(offer.trait.name)
-    source = f'Your lore "{_md(offer.upload)}"' if offer.upload else "Your lore"
-    lines = [f"{HEADING}{count}", f"{source} says **{who}** is a **{what}**."]
+    who, what, now = _shown(offer)
+    if offer.trait.kind == SPECIES:
+        has = (
+            f"DMbot has {who} as **{_a(now)}**." if now else f"DMbot has no lineage for {who} yet."
+        )
+        lines = [f"{HEADING}{count}", f"Make **{who}** {_a(f'**{what}**')}? {has}"]
+        if now:
+            yes = f"{who} becomes {_a(what)} instead of {_a(now)}."
+            no = f"{who} stays {now}"
+        else:
+            yes, no = f"{who} becomes {_a(what)}.", "nothing changes"
+    else:
+        has = f"DMbot has {who} as **{now}**." if now else f"DMbot has no class for {who} yet."
+        lines = [f"{HEADING}{count}", f"Add **{what}** to **{who}**'s classes? {has}"]
+        yes = f"{what} is added to {who}'s classes" + ("; the ones they have stay." if now else ".")
+        no = "nothing changes"
+    source = f'Your lore "{_md(offer.upload)}" says so' if offer.upload else "Your lore says so"
     if offer.quote:
         quote = " ".join(offer.quote.split())
         if len(quote) > QUOTE_SHOWN:
             quote = quote[: QUOTE_SHOWN - 1].rstrip() + "…"
-        lines.append(f'> "{_md(quote)}"')
-    if offer.trait.kind == SPECIES:
-        lines.append(
-            f"DMbot has {who} as **{_md(offer.current)}**." if offer.current
-            else f"DMbot has no lineage for {who} yet."
-        )  # fmt: skip
+        lines += [f"{source}:", f'> "{_md(quote)}"']
     else:
-        lines.append(f"DMbot doesn't have that class for {who} yet.")
-    lines += [f"_{WHY}_", "", HELP]
+        lines.append(f"{source}.")
+    lines += [
+        f"_{WHY}_",
+        "",
+        f"_{YES}: {yes} {NO}: {no}, and DMbot won't ask this again._",
+    ]
     return "\n".join(lines)
+
+
+def kept_text(offer: Offer) -> str:
+    who, what, _now = _shown(offer)
+    if offer.trait.kind == SPECIES:
+        return f"Done: **{who}** is now {_a(f'**{what}**')}. ↩️ Undo takes it back."
+    return f"Done: **{what}** added to **{who}**. ↩️ Undo takes it back."
+
+
+def left_text(offer: Offer) -> str:
+    who, what, _now = _shown(offer)
+    return (
+        f"Left as it was. DMbot won't ask about **{who}** and **{what}** again. "
+        f"To change it later, open {who}'s name card."
+    )
+
+
+def undone_text(offer: Offer) -> str:
+    who, _what, now = _shown(offer)
+    back = (
+        f"**{who}** is {_a(f'**{now}**')} again." if offer.trait.kind == SPECIES and now
+        else "it is taken back."
+    )  # fmt: skip
+    return f"Undone: {back} The question is back, so you can answer it again."
+
+
+def could_not_text(offer: Offer) -> str:
+    who, _what, _now = _shown(offer)
+    return (
+        f"DMbot couldn't change **{who}**: they may have been joined with another name or "
+        "removed. DMbot won't ask this one again. Showing what is left."
+    )
 
 
 class TraitQuestions(_Menu):
@@ -73,7 +130,8 @@ class TraitQuestions(_Menu):
         self.campaign_id = campaign_id
         self.guild_id = guild_id  # from the campaign: a DM's private chat has no server (#3210)
         self.current: Offer | None = None
-        self.undo_batch: int | None = None  # the last Keep's change, while Undo is offered
+        self.undo_batch: int | None = None  # the last Yes's change, while Undo is offered
+        self.kept: Offer | None = None  # the question that Yes answered, to bring back on Undo
 
     async def _load(self, interaction: discord.Interaction) -> str | None:
         """The next question's words (its buttons drawn), or None when none is left."""
@@ -89,8 +147,8 @@ class TraitQuestions(_Menu):
             return None
         self.current = waiting[0]
         self.clear_items()
-        self.add_item(_Button(self._keep, label=KEEP, style=discord.ButtonStyle.success))
-        self.add_item(_Button(self._not_this, label=NOT_THIS, style=discord.ButtonStyle.danger))
+        self.add_item(_Button(self._keep, label=YES, style=discord.ButtonStyle.success))
+        self.add_item(_Button(self._not_this, label=NO, style=discord.ButtonStyle.danger))
         if self.undo_batch is not None:
             self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
         return card_text(waiting[0], len(waiting))
@@ -115,23 +173,27 @@ class TraitQuestions(_Menu):
         said = GONE_NOW
         offer = self.current
         try:
-            if what == "undo" and self.undo_batch is not None:
+            if what == "undo" and self.undo_batch is not None and self.kept is not None:
                 await memory.undo(self.guild_id, self.campaign_id, self.undo_batch)
-                self.undo_batch, said = None, UNDONE
+                said = undone_text(self.kept)
+                # the question comes back, so a Yes pressed by mistake can still be a No
+                await store.offer(self.guild_id, self.campaign_id, [self.kept])
+                self.undo_batch = self.kept = None
             elif what == "keep" and offer is not None:
-                batch = await store.keep(memory, self.guild_id, self.campaign_id, offer)
-                self.undo_batch, said = batch, KEPT
+                self.undo_batch = await store.keep(memory, self.guild_id, self.campaign_id, offer)
+                self.kept, said = offer, kept_text(offer)
             elif what == "never" and offer is not None:
+                self.undo_batch = self.kept = None
                 if await store.never(self.guild_id, self.campaign_id, offer):
-                    self.undo_batch, said = None, NOT_KEPT
+                    said = left_text(offer)
         except TooLateToUndo:
-            self.undo_batch, said = None, GONE_NOW
+            self.undo_batch = self.kept = None
         except MemoryRuleError:
-            self.undo_batch = None
-            said = COULD_NOT if what == "keep" else GONE_NOW
-        if what == "keep" and said == COULD_NOT and offer is not None:
-            # (refused for good, the character is no longer one: not asked again)
-            await store.never(self.guild_id, self.campaign_id, offer)
+            self.undo_batch = self.kept = None
+            if what == "keep" and offer is not None:
+                # refused for good (the character is no longer one): not asked again
+                await store.never(self.guild_id, self.campaign_id, offer)
+                said = could_not_text(offer)
         shown = await self._load(interaction)
         if shown is None:
             if self.undo_batch is None:

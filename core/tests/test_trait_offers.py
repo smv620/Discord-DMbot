@@ -55,20 +55,34 @@ class TheReaderOffers(unittest.TestCase):
 
 
 class TheCard(unittest.TestCase):
-    def test_the_question_says_what_the_lore_says_and_what_dmbot_has(self) -> None:
+    def test_the_question_comes_first_then_where_the_lore_said_it(self) -> None:
         offer = to.Offer("e1", DWARF, "Torvin Ashgrove is a dwarf", "Notes, 9 Nov", "Torvin",
                          "Human")  # fmt: skip
-        text = tq.card_text(offer, 2)
-        self.assertIn("(2 waiting)", text)
-        self.assertIn('Your lore "Notes, 9 Nov" says **Torvin** is a **Dwarf**.', text)
-        self.assertIn('> "Torvin Ashgrove is a dwarf"', text)
-        self.assertIn("DMbot has Torvin as **Human**.", text)
+        lines = tq.card_text(offer, 2).splitlines()
+        self.assertIn("(2 waiting)", lines[0])
+        self.assertEqual(lines[1], "Make **Torvin** a **dwarf**? DMbot has Torvin as **a human**.")
+        self.assertEqual(lines[2:4], ['Your lore "Notes, 9 Nov" says so:',
+                                      '> "Torvin Ashgrove is a dwarf"'])  # fmt: skip
+        self.assertIn("Torvin becomes a dwarf instead of a human.", lines[-1])
+        self.assertIn("Torvin stays human", lines[-1])
 
-    def test_a_class_and_a_first_lineage_are_worded_for_what_is_missing(self) -> None:
-        cls = tq.card_text(to.Offer("e1", CLERIC, entity_name="Torvin"), 1)
-        self.assertIn("DMbot doesn't have that class for Torvin yet.", cls)
+    def test_a_class_says_what_they_have_and_that_it_adds(self) -> None:
+        offer = to.Offer("e1", CLERIC, entity_name="Torvin", classes=("Fighter",))
+        text = tq.card_text(offer, 1)
+        self.assertIn("Add **cleric** to **Torvin**'s classes? DMbot has Torvin as **fighter**.",
+                      text)  # fmt: skip
+        self.assertIn("the ones they have stay", text)
         first = tq.card_text(to.Offer("e1", DWARF, entity_name="Torvin"), 1)
         self.assertIn("DMbot has no lineage for Torvin yet.", first)
+
+    def test_the_buttons_are_a_yes_and_a_no(self) -> None:
+        self.assertEqual((tq.YES, tq.NO), ("✅ Yes, change it", "❌ No, leave it"))
+
+    def test_each_answer_says_what_happened(self) -> None:
+        offer = to.Offer("e1", DWARF, entity_name="Torvin", current="Human")
+        self.assertIn("**Torvin** is now a **dwarf**", tq.kept_text(offer))
+        self.assertIn("**Torvin** is a **human** again", tq.undone_text(offer))
+        self.assertIn("won't ask about **Torvin** and **dwarf** again", tq.left_text(offer))
 
 
 class TheStore(NamesTest):
@@ -97,8 +111,15 @@ class TheStore(NamesTest):
             GUILD, self.campaign.id, [self.offer(), self.offer(who=self.wren)], NOTICE
         )
         self.assertEqual(n, 1)  # Wren is only proposed
+        await self.memory.set_rule_link(
+            GUILD, self.campaign.id, self.torvin, CLASS, "Fighter", source="dm",
+            rules_source="SRD 5.2.1", edition="2024", known=True,
+        )  # fmt: skip
         (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
-        self.assertEqual((waiting.entity_name, waiting.current), ("Torvin Ashgrove", "Human"))
+        self.assertEqual(
+            (waiting.entity_name, waiting.current, waiting.classes),
+            ("Torvin Ashgrove", "Human", ("Fighter",)),
+        )
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 1)
 
     async def test_keep_replaces_the_lineage_as_one_undoable_change(self) -> None:

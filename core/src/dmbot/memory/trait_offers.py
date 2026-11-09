@@ -40,7 +40,7 @@ WAITING, NEVER = "waiting", "never"
 @dataclass(frozen=True, slots=True)
 class Offer:
     """One trait the lore gives an existing character. `current`: the lineage DMbot has for them
-    now ("" for none or a class), for the question's words."""
+    now ("" for none), and `classes` their classes, for the question's words."""
 
     entity_id: str
     trait: Trait
@@ -48,6 +48,7 @@ class Offer:
     upload: str = ""
     entity_name: str = ""
     current: str = ""
+    classes: tuple[str, ...] = ()  # the classes DMbot has for them now, for a class question
 
     @property
     def key(self) -> str:
@@ -114,7 +115,10 @@ class TraitOfferStore:
                 " o.upload, e.name AS entity_name,"
                 " (SELECT l.name FROM memory_rule_links l WHERE l.guild_id = o.guild_id"
                 "   AND l.campaign_id = o.campaign_id AND l.entity_id = o.entity_id"
-                "   AND l.kind = 'species' LIMIT 1) AS current"
+                "   AND l.kind = 'species' LIMIT 1) AS current,"
+                " ARRAY(SELECT l.name FROM memory_rule_links l WHERE l.guild_id = o.guild_id"
+                "   AND l.campaign_id = o.campaign_id AND l.entity_id = o.entity_id"
+                "   AND l.kind = 'class' ORDER BY l.created_at, l.name) AS classes"
                 " FROM memory_trait_offers o JOIN memory_entities e ON e.guild_id = o.guild_id"
                 " AND e.campaign_id = o.campaign_id AND e.id = o.entity_id"
                 " WHERE o.guild_id = %s AND o.campaign_id = %s AND o.state = 'waiting'"
@@ -137,6 +141,7 @@ class TraitOfferStore:
                 str(r["upload"]),
                 str(r["entity_name"]),
                 str(r["current"] or ""),
+                tuple(str(c) for c in r["classes"] or ()),
             )
             for r in rows
         ]
