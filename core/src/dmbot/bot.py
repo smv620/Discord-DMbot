@@ -1073,7 +1073,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.recap_musts = recap_musts  # the list every recap is written to (#3328)
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
-        self.importance = ImportanceCache(memory) if memory is not None else None
+        # With DMBOT_RECAP_BY_RANK it also keeps each name's importance rank (#3172 slice 4).
+        self.importance = (
+            ImportanceCache(memory, ranks_on=settings.recap_by_rank_on)
+            if memory is not None
+            else None
+        )
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources: SourceStore | None = (

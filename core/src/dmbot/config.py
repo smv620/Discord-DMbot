@@ -121,6 +121,10 @@ class Settings:
     story_who_apply_on: bool = False  # DMbot joins a name itself when sure (#3602, slice 4)
     # DMbot guesses which NPCs and groups know each lore statement (#2959 item 3 of 10-29)
     story_npc_guess_on: bool = False
+    # A recap picks its beats by how much their names matter to the story (#3172 slice 4): the
+    # importance rank sorts first and the connection score breaks ties. Off until dev1's
+    # before-and-after `recap_run --score` table and the owner's go.
+    recap_by_rank_on: bool = False
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -436,6 +440,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_NPC_GUESS must be 1 (on) or 0 (off), got "' + npc_guess_raw + '".'
         )
+    by_rank_raw = (get("DMBOT_RECAP_BY_RANK") or "0").lower()
+    if by_rank_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_RECAP_BY_RANK must be 1 (on) or 0 (off), got "' + by_rank_raw + '".'
+        )
     precheck_raw = (get("DMBOT_STORY_REVEALS_PRECHECK") or "0").lower()
     if precheck_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -645,6 +654,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
         story_npc_guess_on=npc_guess_raw in ("1", "true", "on"),
+        recap_by_rank_on=by_rank_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
