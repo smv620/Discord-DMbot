@@ -15,7 +15,7 @@ import io
 import math
 import os
 import time
-from collections.abc import Awaitable, Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -452,6 +452,20 @@ async def backup(
     return path
 
 
+def master_key() -> dict[str, object]:
+    """The master answer key (lore and session), as `graph_key_check` reads it by default: what
+    the AI's decisions are scored against (#3900)."""
+    import json
+
+    from dmbot.devtools import graph_key_check
+
+    with graph_key_check.DEFAULT_KEY.open(encoding="utf-8") as f:
+        key = json.load(f)
+    if not isinstance(key, dict):
+        raise SampleError("the answer key is not readable")
+    return key
+
+
 def score(path: Path, docs: str) -> list[str]:
     """`graph_key_check --docs DOCS --counts-only` on a backup, as the command does, and its
     counts-only lines back."""
@@ -511,12 +525,14 @@ async def run_steps(
     actions: Mapping[str, Callable[[], Awaitable[Mapping[str, int | str]]]],
     done: list[Step],
     say: Say,
+    order: Sequence[str] = STEPS,
 ) -> None:
-    """Run the actions in `plan.STEPS` order, timing each and adding it to `done` as it finishes
-    (so a stop part way still reports what was done). The actions must be exactly the steps."""
-    if set(actions) != set(STEPS):
+    """Run the actions in `order` (`plan.STEPS`, or `plan.STEPS_DECIDE` since #3900), timing each
+    and adding it to `done` as it finishes (so a stop part way still reports what was done). The
+    actions must be exactly the steps."""
+    if set(actions) != set(order) or len(order) != len(set(order)):
         raise SampleError("the run's actions are not the run's steps")
-    for name in STEPS:
+    for name in order:
         began = time.monotonic()
         counts = await actions[name]()
         done.append(Step(name, time.monotonic() - began, counts))

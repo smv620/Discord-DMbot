@@ -86,6 +86,24 @@ STEPS: tuple[str, ...] = (
     "backup and score (both)",
     "recap (no audio)",
 )
+# The same run since #3900, when it adds what DMbot is sure of and then asks the careful model about
+# the rest, scoring the graph after each: the three columns (sure, AI-decided, left) never mix.
+STEPS_DECIDE: tuple[str, ...] = (
+    "lore read",
+    "player characters found by the read",
+    "sure (lore)",
+    "backup and score (lore, sure)",
+    "AI decides (lore)",
+    "backup and score (lore, sure + AI)",
+    "players not on Discord",
+    "player characters corrected",
+    "session import",
+    "sure (session)",
+    "backup and score (both, sure)",
+    "AI decides (session)",
+    "backup and score (both, sure + AI)",
+    "recap (no audio)",
+)
 
 
 def off_discord_roles(
