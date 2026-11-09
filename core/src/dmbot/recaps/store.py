@@ -395,7 +395,13 @@ class RecapStore:
                     Jsonb(beats), now, now, now,
                 ),
             )  # fmt: skip
-            return bool(cur.rowcount)
+            if not cur.rowcount:
+                return False
+            # The beat sheet is this session's notes, as for a recap the pipeline wrote (#3026).
+            # This row skips the pipeline, so without this the Session notes tab stayed empty
+            # for a finished recap kept by `recap_run --keep` or the sample run (#3959).
+            await notes.keep_from_job(conn, guild_id, campaign_id, session_at)
+            return True
 
     async def due(self, guild_id: int, *, limit: int = 20) -> list[tuple[str, int]]:
         """(campaign, session) of the unfinished jobs in a server that may run now: not leased,

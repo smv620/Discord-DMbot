@@ -120,6 +120,7 @@ class Found:
 
     name: str
     trait: Trait
+    quote: str = ""  # the reader's quote, kept for a question about an existing character (#3926)
 
 
 def _plain(words: str) -> list[str]:
@@ -156,15 +157,18 @@ def read_traits(
     resolve: Resolve,
     dropped: Counter[str] | None = None,
     existing: Collection[str] = (),
+    offers: list[Found] | None = None,
 ) -> list[Found]:
     """The traits the text really states, for the caller to store with each new character. `names`:
     the read's own names and the campaign's (as written; matched by key). A line is dropped, and
     counted under its reason, when it can't be read (`trait_unreadable`), is no lineage or class
     (`trait_kind`, `trait_not_a_class`), is about no name of the read (`trait_no_name`), or its
     quote is not in the text or doesn't hold the name and the words (`trait_not_in_text`).
-    `existing`: the keys of names the campaign already has. Their traits are counted
-    (`trait_existing_name`) and left alone, never changed silently. Supervisor's ruling asks the DM
-    about them; that question is a follow-up (#3926), so until it ships they are only counted."""
+    `existing`: the keys of names the campaign already has. Their traits are never changed
+    silently: one that passes the same checks goes into `offers` (Supervisor's ruling on #3926:
+    the caller asks the DM about it, counted `trait_existing_checked`); without `offers` it is only
+    counted
+    (`trait_existing_name`)."""
     counts = dropped if dropped is not None else Counter()
     haystack = bg._squash(text)
     keys = {name_key(n) for n in names}
@@ -180,10 +184,11 @@ def read_traits(
         if kind is None:
             counts["trait_kind"] += 1
             continue
-        if name_key(name) in existing:
+        is_existing = name_key(name) in existing
+        if is_existing and offers is None:
             counts["trait_existing_name"] += 1
             continue
-        if name_key(name) not in keys:
+        if not is_existing and name_key(name) not in keys:
             counts["trait_no_name"] += 1
             continue
         said = bg._squash(quote)  # (squashed as the text is)
@@ -204,6 +209,12 @@ def read_traits(
         if key in seen:
             continue
         seen.add(key)
+        if is_existing and offers is not None:
+            # (checked, not yet asked: the caller leaves out what changes nothing or is unsure)
+            if len(offers) < MAX_TRAITS:  # (its own cap: never eats the new names' traits)
+                counts["trait_existing_checked"] += 1
+                offers.append(Found(name, trait, quote))
+            continue
         found.append(Found(name, trait))
         if len(found) >= MAX_TRAITS:
             break

@@ -19,6 +19,8 @@ import discord
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 LABEL = "Check the connections"
 EMOJI = "📜"
+ALL_ANSWERED = "✅ All answered."
+NONE_READY = "📜 None are ready to check right now."
 MAX_PARTS = 2  # uploads named in one notice; the rest are counted together
 NAME_SHOWN = 30  # an upload's name is cut to this many characters
 

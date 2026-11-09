@@ -175,6 +175,16 @@ async def _rules(src: Sources, g: int, c: str) -> Counted:
     return Counted(n)
 
 
+async def _traits(src: Sources, g: int, c: str) -> Counted:
+    """A lineage or class the lore gives a character the campaign has (#3926): the rows the
+    🧬 card shows (`TraitOfferStore.waiting`)."""
+    from dmbot.memory.trait_offers import TraitOfferStore
+
+    if src.memory is None:
+        return Counted(0)
+    return Counted(await TraitOfferStore(src.db).count(g, c))
+
+
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
     kinds.HEARD: _heard,
@@ -182,6 +192,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.CONNECTIONS: _connections,
     kinds.WHICH: _which,
     kinds.FAMILY: _family,
+    kinds.TRAITS: _traits,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
     kinds.PLOT: _plot,

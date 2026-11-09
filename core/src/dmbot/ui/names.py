@@ -2291,7 +2291,7 @@ class ReviewButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:names:review:(?P<campaign>[0-9a-f]{32})",
 ):
-    """On the DM screen after a session: opens the check privately for whoever runs the
+    """In the DM Bot channel after a session: opens the check privately for a DM of the
     campaign. Works after a restart (the campaign is in the button's ID)."""
 
     def __init__(self, campaign_id: str) -> None:
@@ -2311,6 +2311,18 @@ class ReviewButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Only a DM of the campaign, on every press: this button now sits in the DM Bot channel,
+        # which the campaign's people can read, and a server manager who is not a DM must not be
+        # able to open the names to check (#3874).
+        guild = interaction.guild
+        campaign = (
+            await _bot(interaction).campaigns.get(guild.id, self.campaign_id)
+            if guild is not None
+            else None
+        )
+        if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
+            await _tell(interaction, "Only the DM can answer this.")
+            return
         await start_review(interaction, self.campaign_id)
 
 
@@ -2377,7 +2389,7 @@ def held_back_text(names: list[str]) -> str:
 
 
 def recap_names_text(count: int) -> str:
-    """For the DM screen when a recap used names DMbot didn't know yet (#2027): the names are
+    """For the DM Bot channel when a recap used names DMbot didn't know yet (#2027): the names are
     listed on the DM's recap page, not here, so nothing is spoiled for players who peek."""
     return (
         f"📝 **{_plural(count, 'new name')} in the recap.** Said at your table, and DMbot "
