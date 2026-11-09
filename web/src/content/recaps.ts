@@ -67,6 +67,17 @@ export const text = {
     "We can't find that recap. Open it again from your email, or pick it from your list.",
   onlyYou: "Only you can see this until you post it.",
   working: "DMbot is still writing this recap. Check back in a few minutes.",
+  // What DMbot is thinking about at each step of writing a recap (owner request, 2026-11-09): one fixed line for each step the
+  // API names (core `recaps/progress.py`), never made up as it goes. The first three are the owner's words.
+  scribe: {
+    recap_names: "Looking… which names came up?",
+    recap_reading: "Thinking… who was important in the scene?",
+    recap_beats: "Contemplating… what events were noteworthy?",
+    recap_writing: "Writing… turning those events into the story.",
+    recap_checking: "Considering… did I cover all the significant details?",
+    recap_final_read: "Reading it over… does it flow?",
+    recap_finishing: "Tidying up… a title and a few notes.",
+  } as Record<string, string>,
   // The big mark over a draft DMbot is still checking (#3861): the owner's exact word.
   draftMark: "DRAFT",
   // What a screen reader is told instead of the mark: that the words are a draft still being checked.
