@@ -112,12 +112,15 @@ def asks_for(
     *,
     where: str = "your upload",
     summary_url: str = "",
+    summary_names: int = 0,
 ) -> list[Ask]:
     """One `Ask` for each kind with something waiting (`buttons`: the kind's button maker; a kind
     without one is left out). `where` says what the count is from, in the line for several.
     `summary_url`: the upload's summary message in the DM-screen channel, which holds the Add all
     buttons; the names and connections buttons then open it (a link button, the same label), and
-    every other kind keeps its own. The DM screen's fallback keeps today's buttons."""
+    every other kind keeps its own. The DM screen's fallback keeps today's buttons.
+    `summary_names` is how many names that summary counts: names waiting beyond them (from an
+    earlier session) get a second, ordinary names question, so none is left without a button."""
     out: list[Ask] = []
     for kind in KINDS:
         n = getattr(waiting, "connections" if kind == CONNECTIONS else kind)
@@ -125,10 +128,18 @@ def asks_for(
             continue
         screen = _alone(kind, n)  # (the DM screen's words, and today's button, are unchanged)
         text, button = screen, buttons[kind]
+        extra = 0
         if summary_url and kind in LINKED_BUTTONS:
+            if kind == NAMES and 0 < summary_names < n:
+                extra, n = n - summary_names, summary_names
             text = _alone_linked(kind, n)
             button = partial(_link_button, LINKED_BUTTONS[kind], summary_url)
+            screen = _alone(kind, n + extra)
         out.append(Ask(kind, text, f"{_line(kind, n)} from {where}", button, buttons[kind], screen))
+        if extra:
+            more = _plural(extra, "more name to check", "more names to check")
+            own = f"📝 **{more}**.\n" + _alone(kind, extra).split("\n", 1)[1]
+            out.append(Ask(kind, own, f"{more} (from earlier)", buttons[kind], buttons[kind], own))
     return out
 
 

@@ -1577,10 +1577,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             on_link_change=self._on_ears_link_change,
         )
         self._background: list[asyncio.Task[None]] = []
-        # The newest lore upload's summary message in a campaign's DM-screen channel, by (server,
-        # campaign): (channel id, message id, names it counts). Ids and a count, never words. Kept
-        # in memory: after a restart the private questions fall back to their own buttons (#3873).
-        self._upload_summaries: dict[tuple[int, str], tuple[int, int, int]] = {}
+        # A lore upload's summary message in the campaign's DM-screen channel, by (server, campaign,
+        # the upload's key): (channel id, message id, names it counts). Ids and a count, never
+        # words. Used once, by that upload's private question, and kept only in memory (#3873).
+        self._upload_summaries: dict[tuple[int, str, str], tuple[int, int, int]] = {}
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
@@ -11198,20 +11198,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             connections += await safe(what, count)
         return WaitingChecks(names=names, people=people, claims=claims, connections=connections)
 
-    def note_upload_summary(self, gid: int, cid: str, message: discord.Message, names: int) -> None:
-        """A lore upload just posted its summary (the one with the Add all buttons): remember where
-        it is, so the private questions about that upload's names and connections can open it
-        (#3873). The newest upload of a campaign wins. Ids and a count only."""
-        if len(self._upload_summaries) >= 200:  # a bound, not a rule: the oldest goes
-            self._upload_summaries.pop(next(iter(self._upload_summaries)))
-        self._upload_summaries.pop((gid, cid), None)
-        self._upload_summaries[(gid, cid)] = (message.channel.id, message.id, names)
+    def note_upload_summary(
+        self, gid: int, cid: str, key: str, message: discord.Message, names: int
+    ) -> None:
+        """A lore upload just posted its summary in the DM-screen channel (the one with the Add all
+        buttons): remember where it is for the private message about that same upload (`key`), so
+        its names and connections buttons can open it (#3873). Ids and a count only."""
+        summaries = self._upload_summaries
+        summaries.pop((gid, cid, key), None)
+        while len(summaries) >= 50:  # a bound, not a rule: the oldest goes
+            summaries.pop(next(iter(summaries)))
+        summaries[(gid, cid, key)] = (message.channel.id, message.id, names)
 
-    async def _upload_summary_for(self, gid: int, cid: str) -> tuple[str, int]:
-        """The address of the campaign's newest upload summary and the names it counts, or
-        ("", 0) when none is known or it can't be fetched now (deleted, the channel gone): the
-        caller then keeps today's buttons, so nothing is a dead end. Never raises."""
-        known = getattr(self, "_upload_summaries", {}).get((gid, cid))
+    async def _upload_summary_for(self, gid: int, cid: str, key: str) -> tuple[str, int]:
+        """The address of this upload's summary message and the names it counts, once, or
+        ("", 0) when none is known or it can't be opened now (deleted, the channel gone, no
+        permission): the caller then keeps today's buttons, so nothing is a dead end. Never
+        raises."""
+        known = self._upload_summaries.pop((gid, cid, key), None)
         if known is None:
             return "", 0
         channel_id, message_id, names = known
@@ -11220,12 +11224,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             fetch = getattr(channel, "fetch_message", None)
             message = await fetch(message_id) if fetch is not None else None
             url = dm_links.jump_link(message)
-        except Exception:
+        except discord.HTTPException:  # (NotFound, Forbidden, a failed request: no link this time)
             url = ""
-        if not url:
-            self._upload_summaries.pop((gid, cid), None)  # (gone: don't try it again)
-            return "", 0
-        return url, names
+        return (url, names) if url else ("", 0)
 
     async def tell_dm_waiting(
         self,
@@ -11256,11 +11257,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return False
             waiting = await self.count_waiting(gid, cid)
             shown = waiting.minus(already) if already is not None else waiting
-            summary_url, summary_names = await self._upload_summary_for(gid, cid)
-            if summary_url and shown.names > summary_names:
-                # The question counts the names the linked summary counts (its Add all covers this
-                # reading's names), not every name waiting from earlier sessions too (#3873).
-                shown = replace(shown, names=summary_names)
+            summary_url, summary_names = await self._upload_summary_for(gid, cid, key)
             asks = asks_for(
                 shown,
                 {
@@ -11271,6 +11268,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 },
                 where=where,
                 summary_url=summary_url,
+                summary_names=summary_names,
             )
             if not await sent.claim(gid, cid, key, f"{waiting.offered()} {note}".strip()):
                 return False  # (another round took it between the look and now)

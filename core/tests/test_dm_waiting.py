@@ -6,12 +6,15 @@ from __future__ import annotations
 import time
 from functools import partial
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
+
+import discord
 
 from dmbot.bot import DMBot
 from dmbot.dm_screen import links_ready
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
+from dmbot.ui.names import RecapNamesButton
 from tests.test_import_recaps import GUILD, WithImports
 
 BOT: Any = DMBot  # (its methods are called on a stand-in)
@@ -160,12 +163,19 @@ def with_channel(me: Any, found: Any) -> None:
 class TheSummaryLink(WithImports):
     """After a lore upload the names and connections buttons open the upload's summary (#3873)."""
 
+    async def told(self, me: Any, key: str = "lore:1") -> None:
+        await me.tell_dm_waiting(GUILD, self.campaign.id, key, where="x")
+
+    def known(self, me: Any, names: int, key: str = "lore:1", **where: int) -> Any:
+        summary = summary_message(**where)
+        me.note_upload_summary(GUILD, self.campaign.id, key, summary, names)
+        with_channel(me, summary)
+        return summary
+
     async def test_with_a_known_summary_the_two_buttons_are_link_buttons_to_it(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
-        summary = summary_message()
-        me.note_upload_summary(GUILD, self.campaign.id, summary, 3)
-        with_channel(me, summary)
-        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        summary = self.known(me, 3)
+        await self.told(me)
         _guild, _cid, _text, view, links = me.ask_privately.await_args.args
         self.assertEqual(
             [c.label for c in view.children], ["📝 Check new names", "📜 Check the connections"]
@@ -176,56 +186,71 @@ class TheSummaryLink(WithImports):
 
     async def test_without_a_summary_the_buttons_are_todays(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
-        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        await self.told(me)
         _guild, _cid, _text, view, links = me.ask_privately.await_args.args
         self.assertIsNone(links)
         self.assertFalse(any(getattr(c, "url", None) for c in view.children))
 
-    async def test_a_summary_that_cannot_be_fetched_falls_back_and_is_forgotten(self) -> None:
-        me = fake_bot(self, [WaitingChecks(names=3), WaitingChecks(names=3)])
-        me.note_upload_summary(GUILD, self.campaign.id, summary_message(), 3)
-        with_channel(me, None)  # deleted, or the channel is gone
-        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
-        _guild, _cid, _text, view, links = me.ask_privately.await_args.args
-        self.assertIsNone(links)
-        self.assertFalse(any(getattr(c, "url", None) for c in view.children))
-        self.assertEqual(me._upload_summaries, {})
+    async def test_a_summary_that_cannot_be_opened_falls_back(self) -> None:
+        for n, broken in enumerate(
+            (
+                discord.NotFound(
+                    cast(Any, SimpleNamespace(status=404, reason="gone")), "gone"
+                ),  # deleted
+                discord.Forbidden(
+                    cast(Any, SimpleNamespace(status=403, reason="no")), "no"
+                ),  # no permission
+            )
+        ):
+            me = fake_bot(self, [WaitingChecks(names=3)])
+            key = f"lore:{n}"
+            me.note_upload_summary(GUILD, self.campaign.id, key, summary_message(), 3)
+            fetch = AsyncMock(side_effect=broken)
+            me.get_channel = MagicMock(return_value=SimpleNamespace(fetch_message=fetch))
+            await self.told(me, key)
+            _guild, _cid, _text, view, links = me.ask_privately.await_args.args
+            self.assertIsNone(links)
+            self.assertFalse(any(getattr(c, "url", None) for c in view.children))
 
-    async def test_two_uploads_waiting_link_to_the_newest(self) -> None:
+    async def test_another_uploads_summary_is_never_linked(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3)])
-        older, newer = summary_message(5, 6), summary_message(5, 9)
-        me.note_upload_summary(GUILD, self.campaign.id, older, 3)
-        me.note_upload_summary(GUILD, self.campaign.id, newer, 3)
-        with_channel(me, newer)
-        await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:2", where="x")
-        links = me.ask_privately.await_args.args[4]
-        self.assertEqual(links.discord_url, newer.jump_url)
+        self.known(me, 3, key="lore:1")
+        await self.told(me, "lore:2")  # a different upload (or a session) asks
+        self.assertIsNone(me.ask_privately.await_args.args[4])
 
-    async def test_the_question_counts_the_names_the_summary_counts(self) -> None:
-        # 68 names wait in all, the upload's summary counts its own 66.
+    async def test_the_summary_is_used_once(self) -> None:
+        me = fake_bot(self, [WaitingChecks(names=3)])
+        self.known(me, 3)
+        self.assertNotEqual(
+            await me._upload_summary_for(GUILD, self.campaign.id, "lore:1"), ("", 0)
+        )
+        self.assertEqual(await me._upload_summary_for(GUILD, self.campaign.id, "lore:1"), ("", 0))
+
+    async def test_names_beyond_the_summary_keep_an_ordinary_button(self) -> None:
+        # 68 names wait in all; the upload's summary counts its own 66.
         me = fake_bot(self, [WaitingChecks(names=68)])
-        summary = summary_message()
-        me.note_upload_summary(GUILD, self.campaign.id, summary, 66)
-        with_channel(me, summary)
-        await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:3", where="x")
-        text = me.ask_privately.await_args.args[2]
+        summary = self.known(me, 66)
+        await self.told(me)
+        _guild, _cid, text, view, _links = me.ask_privately.await_args.args
         self.assertIn("66 names to check", text)
-        self.assertNotIn("68", text)
+        self.assertIn("2 more names to check", text)
+        self.assertEqual(len(view.children), 2)
+        self.assertEqual(view.children[0].url, summary.jump_url)  # the upload's 66
+        self.assertIsNone(getattr(view.children[1], "url", None))  # the other 2: today's button
+        self.assertIsInstance(view.children[1], RecapNamesButton)
 
-    async def test_names_answered_since_are_not_counted_again(self) -> None:
+    async def test_names_answered_since_are_counted_as_they_wait(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=40)])  # 26 of the upload's 66 were answered
-        summary = summary_message()
-        me.note_upload_summary(GUILD, self.campaign.id, summary, 66)
-        with_channel(me, summary)
-        await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:4", where="x")
-        self.assertIn("40 names to check", me.ask_privately.await_args.args[2])
+        self.known(me, 66)
+        await self.told(me)
+        text = me.ask_privately.await_args.args[2]
+        self.assertIn("40 names to check", text)
+        self.assertNotIn("more name", text)
 
     async def test_the_dm_screen_fallback_keeps_todays_button_and_words(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3)], private=False)
-        summary = summary_message()
-        me.note_upload_summary(GUILD, self.campaign.id, summary, 3)
-        with_channel(me, summary)
-        await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:5", where="x")
+        self.known(me, 3)
+        await self.told(me)
         view = me.post.await_args.kwargs["view"]
         self.assertFalse(any(getattr(c, "url", None) for c in view.children))
 
