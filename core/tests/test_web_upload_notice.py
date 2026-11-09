@@ -62,7 +62,11 @@ class UploadNoticeRead(Script):
 
     async def test_another_upload_or_kind_is_not_this_notice(self) -> None:
         await self.add("up1", "lore")
-        self.assertEqual((await self.read("lore", "up2"))["state"], "none")
+        none = await self.read("lore", "up2")
+        self.assertEqual(none["state"], "none")
+        self.assertEqual(none["counts"], {"names": 0, "byKind": {}, "connections": 0})
+        self.assertIsNone(none["undone"])
+        self.assertIsNone(none["undoUntil"])
         self.assertEqual((await self.read("import", "up1"))["state"], "none")
 
     async def test_a_notice_without_a_source_is_never_guessed_at(self) -> None:
@@ -74,7 +78,7 @@ class UploadNoticeRead(Script):
         assert await self.notices.claim_undo(THURSDAY.id, made.id) is not None
         got = await self.read()
         self.assertEqual(got["state"], "done")
-        self.assertEqual(got["undone"], {"took": 0, "of": 0})
+        self.assertIsNone(got["undone"])  # (how many it took back is not kept)
         self.assertIsNone(got["undoUntil"])
 
     async def test_an_upload_that_changed_nothing_offers_no_undo(self) -> None:
@@ -99,3 +103,18 @@ class UploadNoticeRead(Script):
         self.assertEqual(await self.refused(kind="other"), "not_found")
         self.assertEqual(await self.refused(source_id="x y"), "not_found")
         self.assertEqual(await self.refused(source_id=""), "not_found")
+
+    async def test_the_window_closes_after_seven_days(self) -> None:
+        made = await self.add()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE upload_notices SET created_at = %s WHERE id = %s",
+                (made.created_at - UNDO_SECONDS - 5, made.id),
+            )
+        self.assertIsNone((await self.read())["undoUntil"])
+
+    async def test_the_same_source_id_in_another_campaign_is_not_found(self) -> None:
+        await self.notices.add(
+            THURSDAY.id, self.two.id, "Other", COUNTS, [1], source_kind="lore", source_id="up1"
+        )
+        self.assertEqual((await self.read())["state"], "none")

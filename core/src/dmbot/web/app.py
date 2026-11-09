@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
@@ -3439,11 +3439,13 @@ def create_app(
 
     # What one upload or import added, for the Lore and Import pages' notice (#3879). DMs only.
     @app.get("/me/campaigns/{ref}/upload-notice")
-    async def me_upload_notice(ref: str, kind: str, id: str, signed: Signed) -> dict[str, Any]:
+    async def me_upload_notice(
+        ref: str, kind: str, signed: Signed, source: str = Query(alias="id")
+    ) -> dict[str, Any]:
         """The notice for one upload (`kind` lore or import, and its `id`): counts and times."""
         session, _token = signed
         try:
-            return await upload_notice.read(db, session, ref, kind, id)
+            return await upload_notice.read(db, session, ref, kind, source)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

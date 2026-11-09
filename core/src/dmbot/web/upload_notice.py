@@ -61,6 +61,24 @@ async def read(
             "connections": stored.get("connections", 0),
         },
         "undoUntil": got.get("undoUntil"),
+        # A past Undo says nothing here: how many it took back is not kept, and "took back 0 of 0"
+        # would be wrong. The page shows its own answer for a press it made, and the Undo button is
+        # gone because `undoUntil` is empty.
+        "undone": None,
+        "questionsLeft": 0,
+        "serverNow": now,
+    }
+    stored = {str(k): int(v) for k, v in (got.get("counts") or {}).items() if isinstance(v, int)}
+    by_kind = {k: v for k, v in stored.items() if k not in _NOT_KINDS and v > 0}
+    return {
+        "state": "done",
+        "label": str(got.get("label") or ""),
+        "counts": {
+            "names": sum(by_kind.values()),
+            "byKind": by_kind,
+            "connections": stored.get("connections", 0),
+        },
+        "undoUntil": got.get("undoUntil"),
         # An Undo already done: how many it took back is not kept, so no numbers (`took` 0 of 0 is
         # the page's "taken back" without a count).
         "undone": {"took": 0, "of": 0} if got.get("undone") else None,
