@@ -1810,6 +1810,36 @@
    "must_find": false,
    "line": 30,
    "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
+  },
+  {
+   "id": "l124",
+   "a": "Belleros Stormgrace",
+   "relation": "leads",
+   "b": "Aurora's Wind",
+   "tier": "stated",
+   "must_find": false,
+   "line": 93,
+   "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)"
+  },
+  {
+   "id": "l125",
+   "a": "Okthandom Korran",
+   "relation": "enemy_of",
+   "b": "Fizzlebomb",
+   "tier": "stated",
+   "must_find": false,
+   "line": 93,
+   "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)"
+  },
+  {
+   "id": "l126",
+   "a": "Cerric Vanya'elen",
+   "relation": "enemy_of",
+   "b": "Fizzlebomb",
+   "tier": "stated",
+   "must_find": false,
+   "line": 93,
+   "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)"
   }
  ],
  "events": [
