@@ -176,6 +176,15 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_THEATRE_ON must be 1"):
             load_settings({**BASE, "DMBOT_THEATRE_ON": "maybe"})
 
+    def test_the_recap_reads_the_script_only_with_the_script_switch(self) -> None:
+        self.assertFalse(load_settings(BASE).recap_reads_script)
+        both = {**BASE, "DMBOT_THEATRE_ON": "1", "DMBOT_RECAP_READS_SCRIPT": "on"}
+        self.assertTrue(load_settings(both).recap_reads_script)
+        alone = {**BASE, "DMBOT_RECAP_READS_SCRIPT": "1"}  # (needs the theatre switch)
+        self.assertFalse(load_settings(alone).recap_reads_script)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_READS_SCRIPT must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_READS_SCRIPT": "maybe"})
+
     def test_relationship_reader_switch_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).rel_read_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_REL_READ_ON": "1"}).rel_read_on)

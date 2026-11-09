@@ -151,6 +151,7 @@ class Inputs:
 # purpose: names and rare words take more tokens than plain English, so it errs towards "too long".
 CHARS_PER_TOKEN = 3
 SCRIPT_CHECK_CHARS = 40_000  # of the script the checks read, at most (#3901)
+SCRIPT_CUT_LINE = "\n[The script goes on; the rest is not shown.]"
 TRANSCRIPT_SHARE = 0.5  # of the smaller input room, for the transcript and the guide
 TRANSCRIPT_TOKENS_MAX = 60_000  # and never more than this, whatever the window (cost per retry)
 STORY_CHARS_MAX = (
@@ -449,8 +450,17 @@ class RecapWorker:
                 "Recap: the script could not be read for the checks (%s)", type(exc).__name__
             )
             return ""
-        kept = [text for users, text in lines if set(users) <= agreed]
-        return "\n".join(kept)[:SCRIPT_CHECK_CHARS]
+        # (a line that draws on no one is never sent: there is nobody whose consent it rests on)
+        kept = [text for users, text in lines if users and set(users) <= agreed]
+        joined = "\n".join(kept)
+        if len(joined) <= SCRIPT_CHECK_CHARS:
+            return joined
+        # Cut at a line, and say so, so a checker does not take the missing end for "not said".
+        cut = joined[:SCRIPT_CHECK_CHARS].rsplit("\n", 1)[0]
+        log.info(
+            "Recap: the script was cut to %d of %d characters for the checks", len(cut), len(joined)
+        )
+        return cut + SCRIPT_CUT_LINE
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
         """Work one job until it is ready, has failed, or must wait. None if another worker
@@ -1746,7 +1756,7 @@ class RecapWorker:
                 given = self._given.get((gid, cid, job.session_at), rd.Given())
                 script = await self._script_text(gid, cid, job, consenting) if consenting else ""
                 reply = await self._careful.complete(
-                    rd.FACTS_SYSTEM + (rd.FACTS_SCRIPT_NOTE if script else ""),
+                    rd.facts_system(script),
                     rd.facts_message(
                         shown,
                         prose.summary,
@@ -2110,7 +2120,7 @@ class RecapWorker:
             script = await self._script_text(gid, cid, job, consenting)
             cover_message = covg.message(inputs.musts, sheet, sentences, script)
             raw = await self._call(
-                gid, cid, job, self._careful, covg.SYSTEM + (covg.SCRIPT_NOTE if script else ""),
+                gid, cid, job, self._careful, covg.system(script),
                 cover_message,
                 covg.room(len(inputs.musts)), schema=covg.SCHEMA, stage="musts", soft=True,
                 free=waiting,

@@ -591,6 +591,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "'before' of a writer change, written by a build with no --score (#3328)",
     )  # fmt: skip
     parser.add_argument(
+        "--script", metavar="FILE",
+        help="with --score-recap: the session's script as plain text, given to the coverage "
+        "check as DMBOT_RECAP_READS_SCRIPT does (#3901), to score with and without it",
+    )  # fmt: skip
+    parser.add_argument(
         "--beats", metavar="FILE",
         help="with --score-recap: the beats.json an --out run of the SAME session saved, so the "
         "before and the after are held to the same facts",
@@ -887,7 +892,12 @@ async def _score_recap(args: argparse.Namespace) -> int:
     _, careful, _ = got
     try:
         recap_text, beats_text = await asyncio.to_thread(sc.read_texts, recap, beats)
-        lines = await sc.score_recap_file(recap_text, beats_text, [], careful)
+        script_text = (
+            await asyncio.to_thread(Path(args.script).read_text, encoding="utf-8-sig")
+            if args.script
+            else ""
+        )
+        lines = await sc.score_recap_file(recap_text, beats_text, [], careful, script_text)
     except OSError as exc:  # the kind only: never the path's contents
         print(f"recap_run: could not read a file ({type(exc).__name__})", file=sys.stderr)
         return 2

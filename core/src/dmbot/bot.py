@@ -407,6 +407,7 @@ from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.session_split import SessionSplitter, release_recap_lines
+from dmbot.recaps.store import Job as RecapJob
 from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
@@ -13791,7 +13792,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
 
-    async def recap_script(self, gid: int, cid: str, job: Any) -> list[tuple[Sequence[int], str]]:
+    async def recap_script(
+        self, gid: int, cid: str, job: RecapJob
+    ) -> list[tuple[Sequence[int], str]]:
         """The session's script for the recap's two checks (#3901, part 2): (who each line draws
         on, the line). Only the campaign's own session; the pipeline keeps the lines everyone in
         them still agrees to."""
