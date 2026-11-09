@@ -1,4 +1,4 @@
-"""0406_script_make_heartbeat
+"""0407_script_make_heartbeat
 
 "Make the script" judges a running press by the bot's heartbeat, and shows a script that DMbot is
 making by itself as running (#3899, follow-ups from the bot half's review).
