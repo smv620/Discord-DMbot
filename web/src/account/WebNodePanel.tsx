@@ -2,30 +2,40 @@
 // The name editor in the Story Graph's list (change the spelling or the kind of a name), and, for a DM, "Tavin now knows the
 // guard is Ken" (#3542). A separate file, fetched only when a DM opens a name to change it, so the Story Graph page stays
 // light (page weight, #1947).
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 
 import { NAME_LIMIT } from "../content/names-words";
 import { TOLD_LIVE } from "../content/told-switch";
 import { kindWords, webPage as words } from "../content/web-words";
 import type { AccountApi, NameChange, WebNode } from "./api";
 import LazyPanel from "./LazyPanel";
+import SavingWait from "./SavingWait";
 
 export default function WebNodePanel({ node, act, api, refId }: { node: WebNode; act: (id: string, change: NameChange, ok: string) => Promise<string | null>; api: AccountApi; refId: string }) {
   const [spelling, setSpelling] = useState(node.name);
   const [kind, setKind] = useState(node.kind);
   const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false); // a save is with the bot: no second press until it is answered
+  const busyRef = useRef(false); // (a ref as well, so a quick second press before the redraw does nothing)
   const kinds = Object.keys(words.kinds).includes(node.kind) ? Object.keys(words.kinds) : [node.kind, ...Object.keys(words.kinds)];
+  async function save(change: NameChange): Promise<void> {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      setProblem(await act(node.id, change, words.saved));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
   return (
     <div class="stack" role="group" aria-label={words.nodePanel(node.name)}>
       <label class="field">
         {words.spellLabel}
         <input type="text" value={spelling} maxLength={NAME_LIMIT} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
       </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "spell", name: spelling }, words.saved))}
-      >
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void save({ action: "spell", name: spelling })}>
         {words.saveSpelling}
       </button>
       <label class="field">
@@ -38,13 +48,10 @@ export default function WebNodePanel({ node, act, api, refId }: { node: WebNode;
           ))}
         </select>
       </label>
-      <button
-        type="button"
-        class="button secondary"
-        onClick={async () => setProblem(await act(node.id, { action: "kind", kind }, words.saved))}
-      >
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void save({ action: "kind", kind })}>
         {words.saveKind}
       </button>
+      <SavingWait active={busy} />
       {problem && (
         <p class="warn" role="alert">
           {problem}

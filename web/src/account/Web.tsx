@@ -965,6 +965,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                     {canEdit && editing === n.id && !n.unnamed && <LazyPanel key={n.id} load={() => import("./WebNodePanel")} what="the name editor" props={{ node: n, act: actName, api, refId: ref }} />}
                   </div>
                 )}
+                {/* A reveal can take up to a minute: the wait sits below this name's row, never inside the flex row (#3803).
+                    It is fetched only while a reveal is out, so the page's first download stays within its budget. */}
+                {canEdit && api.webReveal && revealing.has(`name:${n.id}`) && (
+                  <LazyPanel key={`wait-${n.id}`} load={() => import("./SavingWait")} what="DMbot's progress" props={{ active: true }} />
+                )}
               </li>
             );
           })}

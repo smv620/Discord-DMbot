@@ -340,6 +340,8 @@ function LinkRow({
           )}
         </div>
       )}
+      {/* The reveal of a connection can take up to a minute: the wait goes below its row (#3803). */}
+      {canEdit && link.revealed === false && <SavingWait active={revealing.has(`link:${link.id}`)} />}
       {canEdit && (
         <div class="stack">
           {feeling !== null ? (
