@@ -621,6 +621,7 @@ from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
+from dmbot.ui.trait_questions import TraitQuestionsButton
 from dmbot.ui.transcripts import (
     DownloadButton,
     download_view,
@@ -1830,7 +1831,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(recap_lines_ui.RecapLinesUndoButton)  # last time's recap (#3298)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
-            questions_board.LookAlikesButton, questions_board.QuestionsButton, FamilyTiesButton
+            questions_board.LookAlikesButton,
+            questions_board.QuestionsButton,
+            FamilyTiesButton,
+            TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
