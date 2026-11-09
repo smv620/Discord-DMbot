@@ -360,7 +360,7 @@ from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.scenes_backup import ScenesSection
-from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
+from dmbot.memory.secret_aloud import said_lines, secret_names
 from dmbot.memory.secret_reveal import revealed_in
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
@@ -610,9 +610,6 @@ from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
-    more_text,
-    question_text,
-    secret_aloud_view,
 )
 from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
@@ -10126,68 +10123,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "Secrets said at the table: %d told, %d shown, %d not", len(listed), shown, failed
             )
 
-    async def ask_about_secrets(self, table: Table) -> None:
-        """After a session: a name the DM keeps secret was said by a player, so it is now in the
-        transcript everyone may read (#1407). The DM screen asks, privately, once for each such
-        name (at most five, most said first), with two buttons. Only players who are recorded
-        now count: not the DM, not DMbot, not someone who stopped. No AI call. The log gets a
-        count, never a name."""
-        if (
-            self.memory is None
-            or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
-        ):
-            return
-        gid, cid = table.guild_id, table.campaign_id
-        with log_context(guild_id=gid, campaign_id=cid):
-            campaign = await self.campaigns.get(gid, cid)
-            if campaign is None:
-                return
-            secrets = await secret_names(self.memory, gid, cid)
-            if not secrets:
-                return
-            lines = await self.transcripts.lines(gid, table.transcript_session_id)
-            agreed = await self.consent.consenting(gid)  # asked after the lines were read
-            players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            every = spoken(secrets, said_lines(lines, people=players))
-            found = every[:MAX_ASKED]
-            alone = campaign.dm_screen_visibility != "private"
-            reached = 0  # DMs who got the question privately
-            closed_dms = 0  # DMs whose private messages are closed
-            for said in found:
-                if alone:  # players may look at the screen: the name goes to the DMs only
-                    for dm_id in sorted(campaign.dm_accounts):
-                        sent = await self.sidebar_send_dm(
-                            dm_id,
-                            question_text(
-                                said.text,
-                                said.entries,
-                                private=True,
-                                campaign_name=campaign.name,
-                            ),
-                            secret_aloud_view(cid, said.alias_id, gid),
-                        )
-                        reached += sent == "sent"
-                        closed_dms += sent == "forbidden"
-                    continue
-                await self.post(
-                    table.screen_channel_id,
-                    question_text(said.text, said.entries),
-                    view=secret_aloud_view(cid, said.alias_id, gid),
-                    secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
-                )
-            if alone and found:
-                log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
-                if not reached and closed_dms:
-                    # Nobody could be asked because their private messages are closed (a send that
-                    # merely failed is not that): say so, with no name.
-                    await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
-            if len(every) > len(found):  # the DM should know the rest exist
-                await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
-            if found:
-                log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
-
     async def note_claims(self, table: Table) -> None:
         """After a session (#1297): count the proposals the story extractor left waiting. With the
         extractor off (the default) nothing is ever waiting; this step makes no AI call. The
@@ -10222,11 +10157,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     claims_waiting_text(waiting),
                 ),
             )
-
-    async def ask_about_claims(self, table: Table) -> None:
-        """Count and tell in one go: the two steps above, for a caller that wants both."""
-        await self.note_claims(table)
-        await self.post_claims(table)
 
     async def warn_about_family(self, table: Table) -> None:
         """After a session (#3066): if family links worked out from the DM's own (#2960) wait for a

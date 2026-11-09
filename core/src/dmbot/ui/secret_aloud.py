@@ -67,11 +67,6 @@ def question_text(
     )
 
 
-def more_text(count: int) -> str:
-    what = "name was" if count == 1 else "names were"
-    return f"🤫 {count} more secret {what} said. DMbot will ask about them next session."
-
-
 def kept_text() -> str:
     """The answer, without the name: an answered question can stay on a screen players may look
     at (#2097)."""
