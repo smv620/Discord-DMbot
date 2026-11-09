@@ -1063,12 +1063,13 @@ class RecapFeatures:
         """A recap that DMbot could not finish checking for three days (#2255): said once on the
         DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
         campaign = await self.campaigns.get(gid, cid)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+        if channel is None:
             return
         link = page_link(self.settings.site_url, gid, cid, job.session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
         await self.post(
-            campaign.dm_screen_channel_id,
+            channel,
             f"{critics.UNCHECKED_TOLD}{where}",
             view=again_view(cid, job.session_at, keep=job.keeps_previous),
         )
@@ -1564,6 +1565,14 @@ class RecapFeatures:
             ],
         )
 
+    def _upkeep_channel(self, campaign: Campaign) -> tuple[int | None, bool]:
+        """Where a post-game notice goes (#3874): the DM Bot channel, else the DM screen as before.
+        The flag says it is the DM Bot channel, which the campaign's people can read, so the
+        words there are counts only: no recap title, no names."""
+        if getattr(campaign, "dm_bot_channel_id", None):
+            return campaign.dm_bot_channel_id, True
+        return campaign.dm_screen_channel_id, False
+
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
         """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
         the DM screen with buttons (read it, post it, skip it, tell DMbot what you thought; #1455),
@@ -1575,7 +1584,10 @@ class RecapFeatures:
             if self.settings.site_url
             else ""
         )
-        if campaign is not None and campaign.dm_screen_channel_id is not None:
+        channel, counts_only = (
+            self._upkeep_channel(campaign) if campaign is not None else (None, False)
+        )
+        if campaign is not None and channel is not None:
             if job.state == "ready":
                 try:
                     why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
@@ -1583,8 +1595,10 @@ class RecapFeatures:
                     log.exception("Recap: couldn't tell why audio is off")
                     why = "unavailable"
                 await self.post(
-                    campaign.dm_screen_channel_id,
-                    ready_text(job.title, link, AUDIO_WHY[why] if why else ""),
+                    channel,
+                    ready_text(
+                        "" if counts_only else job.title, link, AUDIO_WHY[why] if why else ""
+                    ),
                     view=ready_view(
                         cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)
                     ),
@@ -1593,7 +1607,7 @@ class RecapFeatures:
             elif not campaign.recaps_email:
                 where = f": {link}" if link else " on the website"
                 await self.post(
-                    campaign.dm_screen_channel_id,
+                    channel,
                     "📜 I couldn't write this session's recap. "
                     f"Try again from your recap page{where}"
                     + (
@@ -1652,10 +1666,9 @@ class RecapFeatures:
                     continue
                 added += 1
             await self._link_recap_names(gid, cid, job)
-            if added and campaign.dm_screen_channel_id is not None:
-                await self.post(
-                    campaign.dm_screen_channel_id, recap_names_text(added), view=review_view(cid)
-                )
+            names_channel, _ = self._upkeep_channel(campaign)
+            if added and names_channel is not None:
+                await self.post(names_channel, recap_names_text(added), view=review_view(cid))
             if added:
                 await self._private_names_note(gid, cid, job.dm_user_id, added)
             if self.lookup is not None and not any(
@@ -1859,9 +1872,10 @@ class RecapFeatures:
             log.warning("Recap: the send failed")
             return await back(recap_progress.POST_NOTES["send_failed"])
         await self.recaps.posted(gid, cid, at, url=link)
-        if campaign.dm_screen_channel_id:
+        posted_to = self._upkeep_channel(campaign)[0]
+        if posted_to:
             await self.post(
-                campaign.dm_screen_channel_id,
+                posted_to,
                 "📜 Recap posted to the table." + (f"\n{audio_note}" if audio_note else ""),
             )
         changed = job.summary != job.original

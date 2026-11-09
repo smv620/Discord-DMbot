@@ -244,6 +244,7 @@ def bot_with(**kw: Any) -> Any:
         **kw,
     )
     bot._private_names_note = DMBot._private_names_note.__get__(bot)
+    bot._upkeep_channel = DMBot._upkeep_channel.__get__(bot)
     bot._link_recap_names = AsyncMock()  # the website's check list has its own tests
     return bot
 

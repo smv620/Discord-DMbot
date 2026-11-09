@@ -143,6 +143,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
         "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
         "recap_plan_facts", "recap_audio_why", "_recap_allowance", "_recap_refusal",
+        "_upkeep_channel",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -235,6 +236,28 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(children[3].url.startswith("https://site.example.com/"))
             self.assertEqual(children[4].item.custom_id, f"dmbot:recapshare:{'c' * 32}")
             self.assertFalse(children[1].item.disabled)  # audio is in this campaign's plan
+
+    async def test_a_ready_recap_goes_to_the_dm_bot_channel_with_no_title(self) -> None:
+        # (#3874) post-game notices leave the DM screen; the DM Bot channel is read by the
+        # campaign's people, so a draft recap's title (it can give the story away) stays out
+        bot = fake_bot(campaign(dm_bot_channel_id=77))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
+        self.assertEqual(channel, 77)
+        self.assertIn("Recap ready", line)
+        self.assertNotIn("Silver Lock", line)
+        self.assertIn("view", kwargs)
+
+    async def test_a_failed_recap_also_goes_to_the_dm_bot_channel(self) -> None:
+        bot = fake_bot(campaign(dm_bot_channel_id=77, recaps_email=False))
+        failed = SimpleNamespace(state="failed", session_at=100, title="", keeps_previous=False)
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, failed)
+        self.assertEqual(bot.post.await_args.args[0], 77)
 
     async def test_the_audio_button_is_greyed_with_its_reason_for_each_reason(self) -> None:
         # (#2420) not set up here, the DM's switch off, the plan, and the month's allowance used up
