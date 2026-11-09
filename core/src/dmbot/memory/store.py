@@ -2831,6 +2831,21 @@ class MemoryStore:
                 ),
             )
 
+    async def link_source(
+        self, guild_id: int, campaign_id: str, relation_id: str
+    ) -> tuple[str, str] | None:
+        """(the upload's label, the reader's quote) a connection was kept from (#2946, #3606), or
+        None. A DM-only reader, as the website's link-sources door is: the quote is the DM's own
+        text. Read by Discord's connection page for its "Why?"."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT label, quote FROM memory_link_sources"
+                " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s",
+                (*scope.ids, relation_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["label"]), str(row["quote"] or ""))
+
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
         (#3383, part 2): a `member_of` the DM proposed for it while it waited becomes a fact."""
