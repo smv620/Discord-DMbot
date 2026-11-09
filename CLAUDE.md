@@ -291,11 +291,16 @@ dev1 as a note on the issue.
   table. A later deploy waits until the earlier one has been checked.
   **The sample run is part of every deploy's tests** (owner, 2026-11-06): once a deploy is checked,
   dev1 makes a fresh "test of the frostmaiden (sample)" campaign. Into it dev1 uploads the small
-  sample lore, accepts every DMbot suggestion without the DM pressing anything in Discord
-  (`devtools/accept_all`, #3544), and scores it against the lore key. Then dev1 imports the sample
-  session, accepts every suggestion again, scores it against the master key (lore key + session key),
-  and builds the recap with no audio. The counts go on #3545 for GraphEngineer, with a line in
-  `docs/testing-history.log`. The steps are in `core/tests/fixtures/story_graph/README.md`.
+  sample lore and lets DMbot decide without the DM pressing anything in Discord (`devtools/sample_run`;
+  owner, 2026-11-09, #3900): first what DMbot is sure of is added, as an upload adds it, and scored
+  against the lore key (`lore-sure`). Then the careful AI decides each item still waiting, at most 60 a
+  run, with its cost shown before `--yes`. Each yes or no goes through the DM's own store calls, is
+  checked against the key, and is scored again (`lore`). Then dev1 imports the sample session, does the
+  same against the master key (lore key + session key) (`both-sure`, then `both`), and builds the recap
+  with no audio. The counts go on #3545 for GraphEngineer, with the AI's agreement with the key per kind,
+  and a line in `docs/testing-history.log`. The decision record stays on the server, never on GitHub.
+  `--accept-all` (#3544, accept every suggestion) remains for comparison; scores from before #3900 are a
+  different series. The steps are in `core/tests/fixtures/story_graph/README.md`.
   **dev1's checks gate the next deploy; the owner's checks can wait** (owner, 2026-11-06, to clear
   the deploy backlog). Supervisor marks each deploy-handover check as **dev1** (logs, counts, the
   sample run) or **owner** (looked at in Discord or on the site, or at the table). The next deploy
