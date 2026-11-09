@@ -252,13 +252,21 @@ ADDRESS_ALONE = frozenset(
     }
 )
 # Titles and forms of address said before a name ("Lord Neverember", "Major Ursa", "Old Mother
-# Ashe"): a word that is never the name itself. The short-name rule (#3880) reads it; #3385 (never
-# ask about a title) is to read it too, in its own change, so the two never disagree. Single words,
+# Ashe"): a word that is never the name itself. The short-name rule (#3880) and the never-ask-about-
+# a-title rule (#3385, through TITLES_ALONE) both read it, so the two never disagree. Single words,
 # lower case; the one-word forms of ADDRESS_ALONE are all in it.
+# Words that describe a person before a name ("Old Mother Ashe", "Little John"): part of the title
+# list, never a title said alone ("Old" alone can be a nickname).
+DESCRIBING_TITLE_WORDS = frozenset(
+    {"the", "old", "young", "high", "grand", "great", "little", "big", "good", "saint", "st"}
+)
+# Titles that are also common first names (Sage, Earl, Bishop, Prince): a person may really be
+# called this, so said alone it is still asked about (only a title before a name is never theirs).
+NAME_LIKE_TITLES = frozenset({"sage", "earl", "bishop", "prince", "duke", "cardinal", "count"})
 TITLE_WORDS = frozenset(
     {
         *(w for w in ADDRESS_ALONE if " " not in w),
-        *("the", "old", "young", "high", "grand", "great", "little", "big", "good", "saint", "st"),
+        *DESCRIBING_TITLE_WORDS,
         *("king", "queen", "prince", "princess", "emperor", "empress", "regent", "chancellor"),
         *("duke", "duchess", "baron", "baroness", "count", "countess", "earl", "marquis", "jarl"),
         *("dame", "knight", "squire", "mistress", "lord", "lady", "sir", "madam", "mister", "miss"),
@@ -270,6 +278,12 @@ TITLE_WORDS = frozenset(
         *("granny", "grandma", "grandpa", "grandmother", "grandfather", "captain", "master"),
     }
 )
+
+
+# The ones that are a title or a form of address said ALONE ("Hello, Friend", "Yes, Major", "Thank
+# you, Doctor"): never asked about as a name (#3385). Describing words are left out: "Old", "Little"
+# or "Grand" alone can be a nickname, and before a name they only describe it.
+TITLES_ALONE = TITLE_WORDS - DESCRIBING_TITLE_WORDS - NAME_LIKE_TITLES
 
 
 _CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d+\s*(?:am|pm|o'?clock)\b", re.IGNORECASE)
@@ -306,7 +320,7 @@ def shape_of(candidate: str) -> str | None:
     words = _words_of(candidate)
     if not words:
         return None
-    if " ".join(words) in ADDRESS_ALONE:
+    if " ".join(words) in ADDRESS_ALONE or (len(words) == 1 and words[0] in TITLES_ALONE):
         return "address"
     if _clause(candidate):
         return "clause"
@@ -360,17 +374,126 @@ def why_not(
     cued: frozenset[str] = frozenset(),
 ) -> str | None:
     """Why this candidate must not be asked about as a name, as a reason key for the log, or None.
-    Shapes (number, measure, time, a lone form of address or title) decide by themselves. A
+    Shapes (number, measure, time, a lone form of address or title) decide by themselves, except a
+    lone title from TITLES_ALONE that a naming cue in the text gives as a name. A
     common noun ("the dogs", "snow", "the lady") is dropped only when it is lower case in every
     cited line, the DM did not cue it as a name, fewer than two lines offer it, and the caller
     knows no entry by it (the caller passes only unknown names). Capitals are one sign, not the
     test: "Boy" capitalised, or "boy" offered by two lines, is kept."""
     shape = shape_of(candidate)
+    words = _words_of(candidate)
+    if (
+        shape == "address"
+        and len(words) == 1
+        and words[0] in cued
+        and " ".join(words) not in ADDRESS_ALONE
+    ):
+        return None  # "her name is Major": the text names her so (a lone title, never "Friend")
     if shape is not None:
         return shape
-    words = _words_of(candidate)
     if not words or _first(candidate) in cued or any(w in cued for w in words):
         return None
     if offered < 2 and candidate == candidate.lower() and _lower_everywhere(candidate, text):
         return "common_noun"
     return None
+
+
+# A kind of creature is not a name ("Goblin", "Owlbear"): said alone or before a name
+# ("Goblin Grik") it is the kind, never the person's own name. One list for the short-name reader
+# and for the upload auto-add (#3878, #3885); GraphEngineer owns what the readers mark.
+CREATURE_KINDS = frozenset(
+    [
+        "aberration",
+        "aboleth",
+        "banshee",
+        "basilisk",
+        "bat",
+        "bear",
+        "beast",
+        "beholder",
+        "boar",
+        "bugbear",
+        "celestial",
+        "centaur",
+        "chimera",
+        "cockatrice",
+        "construct",
+        "cultist",
+        "demon",
+        "devil",
+        "dire",
+        "dragon",
+        "drake",
+        "drow",
+        "dryad",
+        "duergar",
+        "dwarf",
+        "elemental",
+        "elf",
+        "ettin",
+        "fey",
+        "fiend",
+        "ghast",
+        "ghost",
+        "ghoul",
+        "giant",
+        "gnoll",
+        "gnome",
+        "goblin",
+        "golem",
+        "gorgon",
+        "griffon",
+        "hag",
+        "harpy",
+        "hellhound",
+        "hobgoblin",
+        "humanoid",
+        "hydra",
+        "imp",
+        "kenku",
+        "kobold",
+        "kraken",
+        "kuo-toa",
+        "lich",
+        "lizardfolk",
+        "manticore",
+        "medusa",
+        "merfolk",
+        "mimic",
+        "minotaur",
+        "monstrosity",
+        "mummy",
+        "naga",
+        "ogre",
+        "ogrillon",
+        "ooze",
+        "orc",
+        "otyugh",
+        "owlbear",
+        "pegasus",
+        "phoenix",
+        "pixie",
+        "plant",
+        "rat",
+        "roc",
+        "sahuagin",
+        "satyr",
+        "shadow",
+        "skeleton",
+        "sprite",
+        "stirge",
+        "troll",
+        "undead",
+        "unicorn",
+        "vampire",
+        "werewolf",
+        "wight",
+        "wolf",
+        "worg",
+        "wraith",
+        "wyvern",
+        "xorn",
+        "yeti",
+        "zombie",
+    ]
+)

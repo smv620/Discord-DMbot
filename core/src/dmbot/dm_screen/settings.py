@@ -40,6 +40,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
 from dmbot.dm_screen import (
+    channel_sync_ui,
     handover,
     messages,
     quiet_stop,
@@ -269,10 +270,14 @@ def settings_view(
         view.add_item(_row(story_mode.StoryButton(campaign.id), 2))  # Shared story (#1692)
         view.add_item(_row(HouseFileButton(campaign.id), 2))  # the house-rules file (#969)
         view.add_item(_row(InviteButton(campaign.id), 2))  # the D&D Beyond invite (#1119)
+        # (#3878) whether a lore upload asks first or adds what DMbot is sure of
+        view.add_item(_row(AskBeforeAddingButton(campaign.id, campaign.ask_before_adding), 2))
         view.add_item(_row(RecapStyleButton(campaign.id), 3))  # (the rest of Recaps: website)
         view.add_item(_row(SharedRulesButton(campaign.id), 3))  # shared house rules (#1190)
         view.add_item(_row(HomebrewButton(campaign.id), 3))  # the campaign's own homebrew (#1520)
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
+        # who sees the DM Bot and transcript channels (#3891)
+        view.add_item(_row(channel_sync_ui.ChannelsMenuButton(campaign.id), 3))
     return view
 
 
@@ -353,6 +358,8 @@ def _drawn(
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
         return visibility_text(campaign), visibility_view(campaign)
+    if card == "channels":
+        return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
     return settings_text(campaign, offer, viewer), settings_view(
@@ -836,6 +843,64 @@ class RulesCardsButton(
             saved: Campaign = await save(campaign.guild_id, campaign.id, self.turn_on)
         except Exception:
             log.exception("Couldn't change rules cards")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
+class AskBeforeAddingButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:askfirst:{_ID}:(?P<to>on|off)",
+):
+    """⚙️ Ask me before adding: On or Off, one tap changes it (#3878). Off (the default), a lore
+    upload adds what DMbot is sure of by itself and says how many; on, it offers its names for a
+    yes with Add all, as it always did. Only the campaign's DMs have it."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Ask me before adding: {'on' if on else 'off'}",
+                emoji="🙋",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=2,
+                custom_id=f"dmbot:askfirst:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> AskBeforeAddingButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the ask-first choice")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # checked on every press
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await interaction.response.defer()
+        assert store is not None  # (a campaign was loaded from it)
+        try:
+            saved: Campaign = await store.set_ask_before_adding(
+                campaign.guild_id, campaign.id, self.turn_on
+            )
+        except Exception:
+            log.exception("Couldn't change the ask-first choice")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
         await _redraw(interaction, saved)

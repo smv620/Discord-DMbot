@@ -97,6 +97,7 @@ _WAIT = "a wait or a pointer, kept out by its schema comment"
 _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 _QUEUE = "a request still waiting for an answer: a restored campaign starts with none"
+_MEMBER_IDS = "Discord ids of this server's members: not in a file anyone in the server may get"
 _KEY = "a key to a publisher's set, which must not travel in a file anyone in the server may get"
 _VOICE_CO = (
     "an object on the voice company's one shared account, not in our data: a file could point a "
@@ -144,6 +145,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
     "hear_use": _RUNTIME,
+    "campaign_channel_people": _MEMBER_IDS,  # members a DM let see the channels by hand (#3891)
+    "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
@@ -253,4 +256,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
     "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
+    "upload_notices.channel_id": "left: the notice stays in the old server; its buttons name the "
+    "old server, so they find nothing after a move",
+    "upload_notices.message_id": "left: as its channel",
 }

@@ -60,6 +60,7 @@ from dmbot.memory.models import (
     FIX,
     HOWS,
     KEEP,
+    KNOWS_HOWS,
     LIE_STATUSES,
     LINE_REF_MAX,
     LINK_EDITIONS,
@@ -160,6 +161,7 @@ _CHOICES: dict[str, Sequence[str]] = {
         *BELIEF_STATUSES,
     ),
     "how": HOWS,
+    "knows_how": KNOWS_HOWS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -415,6 +417,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raise CampaignError(DAMAGED)
         if table is RELATIONS and raw["mention_ids"]:
             raise CampaignError(DAMAGED)
+        # whether two people met is a `knows` thing only (#3881): the database refuses it elsewhere,
+        # so a hand-edited file says "damaged" here instead of failing mid-restore
+        if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
@@ -624,6 +630,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "directional": False,
                 "decided": None,
                 "via_alias_id": None,  # from before #3037: no connection came through a name
+                "knows_how": "",  # from before #3881: the story's word on how was not kept
                 **raw,
                 "definition_version": version,
             }

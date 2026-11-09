@@ -22,6 +22,7 @@ import type {
   NameRow,
   NamesPage,
   NameSource,
+  ScriptOffer,
   MatchRow,
   NamesQuery,
   SmartNamesAnswer,
@@ -1215,6 +1216,8 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
   sharingState.set(ref, now);
   return note;
 }
+// Scripts made from the pretend website (#3899), by campaign and session.
+const madeScripts = new Set<string>();
 const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
@@ -3168,12 +3171,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The pretend script of a session (#3244): session 1 has one, the rest have none; a ref ending `.player`
     // is a player's, who may not save it.
+    // Making a script from the website (#3899). A campaign ending `.script-plan` is on a plan without scripts, `.script-off` has
+    // them switched off, `.script-fail` fails the job; session 1 already has its script, and a made one is kept for the session.
+    async scriptOffer(campaignRef, number): Promise<ScriptOffer> {
+      calls.push(`scriptOffer:${campaignRef}:${number}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) return { state: "exists", cost: null, allowed: true, why: null };
+      if (/\.script-plan$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "plan" };
+      if (/\.script-off$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "off" };
+      return { state: "none", cost: "It uses about 6 cents of your AI allowance.", allowed: true, why: null };
+    },
+    async makeScript(campaignRef, number, onLook): Promise<void> {
+      calls.push(`makeScript:${campaignRef}:${number}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      if (/\.script-plan$/.test(campaignRef)) throw new ApiError("plan-needed");
+      if (/\.script-off$/.test(campaignRef)) throw new ApiError("script-off");
+      if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) throw new ApiError("script-already");
+      for (let i = 1; i <= 2; i++) {
+        onLook?.({ stage: "script_writing", done: i, total: 3, unit: "parts", startedAt: 100, updatedAt: 100 + i, serverNow: 102, state: "running" });
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      if (/\.script-fail$/.test(campaignRef)) throw new ApiError("server");
+      madeScripts.add(`${campaignRef}:${number}`);
+    },
     async transcriptScript(campaignRef, number) {
       calls.push(`transcriptScript:${campaignRef}:${number}`);
       await reachable();
       signedIn();
       if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
-      if (number !== 1) throw new ApiError("no-script");
+      if (number !== 1 && !madeScripts.has(`${campaignRef}:${number}`)) throw new ApiError("no-script");
       return new Blob(
         ["The Silver Lock, session 1: the script\n\nMira [Belleros's character] draws her sword.\n"],
         { type: "text/plain" },

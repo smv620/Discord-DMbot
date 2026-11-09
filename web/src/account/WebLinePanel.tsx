@@ -13,6 +13,7 @@ import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import { webPage as words } from "../content/web-words";
 import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget } from "./api";
 import LazyPanel from "./LazyPanel";
+import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
 
 /** All the connections between two names, and (for a DM) the controls to change them. */
@@ -230,6 +231,7 @@ function WhoKnows({
           {words.whoEveryone}
         </button>
       </div>
+      <SavingWait active={busy} />
       {already && <p role="status">{already}</p>}
       {problem && <p role="status">{problem}</p>}
       {picking && (
@@ -337,6 +339,8 @@ function LinkRow({
           )}
         </div>
       )}
+      {/* The reveal of a connection can take up to a minute: the wait goes below its row (#3803). */}
+      {canEdit && link.revealed === false && <SavingWait active={revealing.has(`link:${link.id}`)} />}
       {canEdit && (
         <div class="stack">
           {feeling !== null ? (

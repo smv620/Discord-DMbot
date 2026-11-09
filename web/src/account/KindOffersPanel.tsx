@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOffersWords as w } from "../content/kind-offers-words";
 import { ApiError, type AccountApi, type KindOffer } from "./api";
+import SavingWait from "./SavingWait";
 
 export default function KindOffersPanel({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
   const [offers, setOffers] = useState<KindOffer[] | null>(null);
@@ -78,7 +79,8 @@ export default function KindOffersPanel({ api, campaignRef }: { api: AccountApi;
         </ul>
       )}
       {/* Always there, so a screen reader hears what is put in it. */}
-      <p class="small" role="status" tabIndex={-1} ref={status}>{busy ? w.working : said}</p>
+      <SavingWait active={busy} />
+      <p class="small" role="status" tabIndex={-1} ref={status}>{said}</p>
       {problem && <p class="warn small" role="alert">{problem}</p>}
     </section>
   );
