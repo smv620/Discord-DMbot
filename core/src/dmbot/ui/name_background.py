@@ -800,7 +800,11 @@ async def read_background(
             replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
         ]
     # A new character's lineage and classes the text states (#2959 item 3), stored with its name.
-    traits = _traits_of(read.trait_lines, upload.text, found, known, campaign, read.stats.dropped)
+    # The campaign's homebrew lineages come before the rules (#3926): one read, only with traits.
+    homebrew = await _homebrew_lineages(bot, campaign) if read.trait_lines else {}
+    traits = _traits_of(
+        read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew
+    )
     stored = await store(
         memory,
         campaign,
@@ -1259,13 +1263,17 @@ def _traits_of(
     known: Collection[str],
     campaign: Campaign,
     dropped: Counter[str],
+    homebrew: Mapping[str, str] | None = None,
 ) -> dict[str, list[Trait]]:
     """The checked traits of this read's new names, by name key (`traits_read`). A lineage is found
-    in the rules newest first, in the campaign's target then fallback ruleset; a 2014-only entry
-    keeps its edition, so it shows `[Legacy 2014]`. Counts only, in the read's dropped counts."""
+    in the campaign's homebrew first (`homebrew`, #3926), then in the rules newest first, in the
+    campaign's target then fallback ruleset; a 2014-only entry keeps its edition, so it shows
+    `[Legacy 2014]`. Counts only, in the read's dropped counts."""
     if not lines:
         return {}
-    resolve = traits_read.rules_resolver(campaign.target_ruleset, campaign.fallback_ruleset)
+    resolve = traits_read.rules_resolver(
+        campaign.target_ruleset, campaign.fallback_ruleset, homebrew
+    )
     names = [n for f in found for n in (f.name, *f.also)]
     out: dict[str, list[Trait]] = {}
     for got in traits_read.read_traits(lines, text, names, resolve, dropped, existing=known):
@@ -1276,6 +1284,20 @@ def _traits_of(
             if name_key(other) in out and name_key(other) != name_key(f.name):
                 out.setdefault(name_key(f.name), []).extend(out.pop(name_key(other)))
     return out
+
+
+async def _homebrew_lineages(bot: Any, campaign: Campaign) -> dict[str, str]:
+    """The lineages this campaign's homebrew names (#3926), for the trait lookup: its own usable
+    entries, then the packs and shared sets it follows (`HomebrewReader`, one read per upload).
+    Never another campaign's. A failed read gives none, so the rules are looked in as before."""
+    reader = getattr(bot, "homebrew_reader", None)
+    if reader is None:
+        return {}
+    try:
+        return traits_read.homebrew_lineages(await reader.list(campaign.guild_id, campaign.id))
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Homebrew lineages couldn't be read (%s)", type(exc).__name__)
+        return {}
 
 
 async def _secret_names_known_by(
