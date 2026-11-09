@@ -40,6 +40,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
 from dmbot.dm_screen import (
+    channel_sync_ui,
     handover,
     messages,
     quiet_stop,
@@ -275,6 +276,8 @@ def settings_view(
         view.add_item(_row(SharedRulesButton(campaign.id), 3))  # shared house rules (#1190)
         view.add_item(_row(HomebrewButton(campaign.id), 3))  # the campaign's own homebrew (#1520)
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
+        # who sees the DM Bot and transcript channels (#3891)
+        view.add_item(_row(channel_sync_ui.ChannelsMenuButton(campaign.id), 3))
     return view
 
 
@@ -355,6 +358,8 @@ def _drawn(
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
         return visibility_text(campaign), visibility_view(campaign)
+    if card == "channels":
+        return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
     return settings_text(campaign, offer, viewer), settings_view(

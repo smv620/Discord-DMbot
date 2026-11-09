@@ -1036,6 +1036,18 @@ class MemoryStore:
 
     # ---- story threads the DM keeps (#1662) ----
 
+    async def players_of(self, guild_id: int, campaign_id: str) -> set[int]:
+        """The members who play a confirmed character in this campaign (#3891: they may see its
+        channels). Ids only; a speaker without Discord has a negative number and is left out."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT DISTINCT played_by FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND played_by > 0 AND type = 'character'"
+                " AND status = 'confirmed'",
+                scope.ids,
+            )
+            return {int(r["played_by"]) for r in await cur.fetchall()}
+
     async def is_player_here(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
         """Whether this person is tied to this campaign (#1666): the player of a confirmed
         character in it, or heard saying a known name in one of its sessions. A merged or
