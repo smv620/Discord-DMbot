@@ -54,6 +54,14 @@ describe("a yes says whether the bot showed it or kept it hidden", () => {
     expect(screen.getByText(saidLine(b.heldMany(1)))).toBeTruthy();
   }, 15000);
 
+  it("All true says the kept-hidden plural when several were held", async () => {
+    const api = mockApi("table");
+    api.answerWaiting = async () => ({ held: 1 });
+    await open("", api);
+    fireEvent.click(screen.getByRole("button", { name: /All true/ }));
+    expect(await screen.findByText(saidLine(b.heldMany(2)), {}, { timeout: 8000 })).toBeTruthy();
+  }, 15000);
+
   it("All true says the plural when several were shown", async () => {
     const api = mockApi("table");
     api.answerWaiting = async () => ({ shown: 1 });

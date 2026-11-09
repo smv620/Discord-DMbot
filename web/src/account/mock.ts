@@ -716,8 +716,8 @@ function pretendReadings(): Reading[] {
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
-/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
-/** Two claims for a campaign ref ending `.shown-held`: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
+/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. A campaign ref ending
+ * `.shown-held` also has two claims: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
 function pretendWaiting(ref = ""): Waiting {
   const shownHeld: WaitingClaim[] = ref.endsWith(".shown-held")
     ? [
@@ -2239,9 +2239,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
       if (answer.kind === "claim" && answer.action === "confirm") {
         // A yes the bot showed to the players, or kept hidden beside another hidden connection (#3974, #3986).
-        if (answer.id.endsWith("-shown")) return { shown: 1 };
-        if (answer.id.endsWith("-held")) return { held: 1 };
-        return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
+        // (each also gives a batch, so Undo takes it back, as for an ordinary yes)
+        const batch = 100 + Number(answer.id.replace(/\D/g, ""));
+        if (answer.id.endsWith("-shown")) return { shown: 1, batch };
+        if (answer.id.endsWith("-held")) return { held: 1, batch };
+        return { batch };
       }
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },

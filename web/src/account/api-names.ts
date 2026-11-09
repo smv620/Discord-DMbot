@@ -42,7 +42,7 @@ import type { AccountApi, ApiHelpers, NodeSummary, UploadNotice } from "./api";
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
   if (typeof counts !== "string") return undefined;
-  for (const [, name, digits] of counts.matchAll(/([a-z_]+):(\d+)/g)) {
+  for (const [, name, digits] of counts.matchAll(/(?<![a-z_])([a-z_]+):(\d+)/g)) {
     if (name === key) {
       const n = Number(digits);
       return n > 0 ? n : undefined;
