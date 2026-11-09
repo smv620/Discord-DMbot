@@ -25,20 +25,20 @@ class Labels(unittest.TestCase):
 class Notice(unittest.TestCase):
     def test_one_upload_names_it_and_the_next_step(self) -> None:
         self.assertEqual(
-            links_ready.notice({"Tavin's backstory, 24 Oct": 3}),
+            links_ready.notice({"Tavin's backstory, 24 Oct": 3}, named=True),
             "📜 Tavin's backstory, 24 Oct: 3 connections are ready to check.\n"
             "Press the button to keep or skip each one. Nothing goes to players.",
         )
 
     def test_one_connection_is_singular(self) -> None:
         self.assertTrue(
-            links_ready.notice({"Lore, 1 Jan": 1}).startswith(
+            links_ready.notice({"Lore, 1 Jan": 1}, named=True).startswith(
                 "📜 Lore, 1 Jan: 1 connection is ready to check."
             )
         )
 
     def test_the_total_comes_first_and_only_two_uploads_are_named(self) -> None:
-        text = links_ready.notice({"A, 1 Jan": 2, "B, 2 Jan": 1, "C, 3 Jan": 1, "": 4})
+        text = links_ready.notice({"A, 1 Jan": 2, "B, 2 Jan": 1, "C, 3 Jan": 1, "": 4}, named=True)
         self.assertTrue(
             text.startswith(
                 "📜 8 connections are ready to check (2 from A, 1 Jan, 1 from B, 2 Jan, 5 more)."
@@ -47,11 +47,16 @@ class Notice(unittest.TestCase):
         )
 
     def test_a_long_upload_name_is_cut(self) -> None:
-        text = links_ready.notice({"x" * 200 + ", 1 Jan": 1})
+        text = links_ready.notice({"x" * 200 + ", 1 Jan": 1}, named=True)
         self.assertLess(len(text.split("\n")[0]), 80)
 
     def test_nothing_ready_says_nothing(self) -> None:
         self.assertEqual(links_ready.notice({}), "")
+
+    def test_by_default_it_is_a_count_and_never_an_upload_name(self) -> None:
+        text = links_ready.notice({"Tavin's backstory, 24 Oct": 3, "": 1})
+        self.assertIn("4 connections are ready to check", text)
+        self.assertNotIn("Tavin", text)
 
     def test_an_upload_name_cannot_ping_or_format(self) -> None:
         text = links_ready.notice({"@everyone **x**, 1 Jan": 1})

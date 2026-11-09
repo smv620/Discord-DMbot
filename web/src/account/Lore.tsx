@@ -4,6 +4,7 @@
 // shown back; the page keeps nothing of them. Only a campaign's DM gets a page; the door says so too.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
@@ -220,6 +221,13 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
               </>
             )}
           </div>
+        )}
+        {AUTO_ADD_LIVE && done && api.uploadNotice && (
+          <LazyPanel
+            load={() => import("./UploadNotice")}
+            what="what DMbot added"
+            props={{ api, campaignRef: ref, source: { kind: "lore" as const, id: upload.id }, onChanged: () => void api.loreRead?.(ref, upload.id).then((got) => got && setUpload(got)).catch(() => undefined) }}
+          />
         )}
         {done && (
           <AddAll

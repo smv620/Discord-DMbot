@@ -65,6 +65,7 @@ class TheKinds(unittest.TestCase):
                 "Connections waiting",
                 "Which one?",
                 "Family ties",
+                "Lineage and class",
                 "Facts to check",
                 "What people believe",
                 "Plot check",

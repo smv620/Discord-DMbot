@@ -56,6 +56,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
+| DMbot adds what it is sure of after a lore upload or an import: the counts notice, Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
 | How two people know each other on a `knows` connection: "has met", "has heard of", or plain "knows", and the DM's change (#3882; Discord's card and edit menu are #3889) | `/account/web` | page built, switched off; the website's door is next | `KNOWS_HOW_LIVE` |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
 | Node summary on the graph | `/account/web` | built, switched off | `NODE_SUMMARY_LIVE` |
@@ -154,6 +155,7 @@ match. "In Discord" says where the DM finds it today.
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
+| A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | #3946 |
 | Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |

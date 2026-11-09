@@ -259,7 +259,7 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_notice_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
         bot = bot_with()
-        camp = SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=88)
+        camp: Any = SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=88)
         await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), camp)
         args = bot.post.await_args.args
         self.assertEqual(args[0], 88)
