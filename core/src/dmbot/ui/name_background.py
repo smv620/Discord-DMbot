@@ -627,7 +627,14 @@ class BackgroundOffer(_Menu):
                 knowledge_note=done.knowledge_note,
             )
             # The card above is the DM's own, and goes when they close it: what waits for them
-            # also comes once to their private chat, like a live session's (#3314).
+            # also comes once to their private chat, like a live session's (#3314). Its names and
+            # connections buttons open the summary above (#3873), which holds the Add all buttons.
+            with contextlib.suppress(Exception):  # (without it the private buttons are today's)
+                summary_message = await interaction.original_response()
+                if stored and summary_message is not None:
+                    bot.note_upload_summary(
+                        guild, campaign.id, summary_message, sum(map(len, stored.values()))
+                    )
             await bot.tell_dm_waiting(
                 guild, campaign.id, f"lore:{time.time_ns()}", where="your upload"
             )

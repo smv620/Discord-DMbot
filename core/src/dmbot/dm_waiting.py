@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import discord
@@ -92,24 +93,47 @@ def _alone(kind: str, n: int) -> str:
     )
 
 
+# The two kinds an upload's summary message can answer, with the button each one has elsewhere.
+LINKED_BUTTONS = {NAMES: "📝 Check new names", CONNECTIONS: "📜 Check the connections"}
+
+
+def _alone_linked(kind: str, n: int) -> str:
+    """The words when this is the only kind waiting and its button opens the upload's summary."""
+    head = _alone(kind, n).split("\n", 1)[0]
+    return (
+        f"{head}\nPress the button to open the list in the DM screen: add them all there, or look "
+        "at them one by one. Nothing is added until you say yes."
+    )
+
+
 def asks_for(
     waiting: WaitingChecks,
     buttons: dict[str, Callable[[], discord.ui.Item[Any]]],
     *,
     where: str = "your upload",
+    summary_url: str = "",
 ) -> list[Ask]:
     """One `Ask` for each kind with something waiting (`buttons`: the kind's button maker; a kind
-    without one is left out). `where` says what the count is from, in the line for several."""
+    without one is left out). `where` says what the count is from, in the line for several.
+    `summary_url`: the upload's summary message in the DM-screen channel, which holds the Add all
+    buttons; the names and connections buttons then open it (a link button, the same label), and
+    every other kind keeps its own. The DM screen's fallback keeps today's buttons."""
     out: list[Ask] = []
     for kind in KINDS:
         n = getattr(waiting, "connections" if kind == CONNECTIONS else kind)
         if n <= 0 or kind not in buttons:
             continue
-        text = _alone(kind, n)
-        out.append(
-            Ask(kind, text, f"{_line(kind, n)} from {where}", buttons[kind], buttons[kind], text)
-        )
+        screen = _alone(kind, n)  # (the DM screen's words, and today's button, are unchanged)
+        text, button = screen, buttons[kind]
+        if summary_url and kind in LINKED_BUTTONS:
+            text = _alone_linked(kind, n)
+            button = partial(_link_button, LINKED_BUTTONS[kind], summary_url)
+        out.append(Ask(kind, text, f"{_line(kind, n)} from {where}", button, buttons[kind], screen))
     return out
+
+
+def _link_button(label: str, url: str) -> discord.ui.Item[Any]:
+    return discord.ui.Button(label=label, url=url)
 
 
 class WaitingSent:
