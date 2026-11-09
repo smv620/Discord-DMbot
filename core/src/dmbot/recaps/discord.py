@@ -1079,9 +1079,19 @@ class RecapFeatures:
             else "Find it on your recap page when it's ready."
         )
         lead = f"{note} " if note else ""
+        # The recap waits for its session's script, at most ten minutes (#3901): say so, so the
+        # wait is never silent. Counts and fixed words only.
+        held = self.recaps is not None and await self.recaps.waiting_for_script(
+            campaign.guild_id, campaign.id, session_at
+        )
+        first = (
+            " It starts once the session's script is made (at most 10 minutes), or without it."
+            if held
+            else ""
+        )
         await self.post(
             channel_id,
-            f"📜 {lead}Writing a recap of this session. {ready} "
+            f"📜 {lead}Writing a recap of this session.{first} {ready} "
             f"Nothing goes to the table until you say so.{where}",
         )
 
