@@ -570,6 +570,8 @@ class Buttons(base.UsageTest):
         from dmbot.memory import lore_read
         from dmbot.ui import name_background
 
+        # These check the plan gate on the "Ask me before adding" path, which shows the summary.
+        await self.campaigns.set_ask_before_adding(base.GUILD_A, self.a.id, True)
         it = self.it(bot)
         with (
             patch.object(
