@@ -71,7 +71,8 @@ SPLIT_DEPTH = 3  # a slice whose answer is cut off is halved this many times
 
 NAMES, RELATIONSHIPS, NOT_INCLUDED = "NAMES", "RELATIONSHIPS", "NOT INCLUDED"
 UNNAMED = "UNNAMED"  # people the text describes but never names (#2959)
-SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED)
+TRAITS = "TRAITS"  # a character's lineage and class, as the text states them (#2959 item 3)
+SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED, TRAITS)
 
 # Whether this read asks for each name's `about:` line (#2967 slice a): only when the DM said the
 # players know all of the upload, the one case the line is stored (Supervisor's ruling on #3832),
@@ -198,6 +199,22 @@ NAMES
 UNNAMED
 - Tavin | knows (neutral) | barmaid with red hair | quote: "a barmaid with red hair warned Tavin about the smugglers"
 - Three Flags Sailing | works in | barmaid with red hair | quote: "At the Three Flags Sailing, a barmaid with red hair warned Tavin"
+
+Example 9. Input (a character's lineage and class; a god they serve is a relationship, not a class):
+<document>
+Mira Vell is a half-elf paladin who serves Torm.
+</document>
+Output:
+NAMES
+- Mira Vell | person | quote: "Mira Vell is a half-elf paladin"
+- Torm | god | quote: "who serves Torm"
+
+RELATIONSHIPS
+- Mira Vell — serves — Torm | quote: "Mira Vell is a half-elf paladin who serves Torm"
+
+TRAITS
+- Mira Vell | lineage | half-elf | quote: "Mira Vell is a half-elf paladin"
+- Mira Vell | class | paladin | quote: "Mira Vell is a half-elf paladin"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -305,6 +322,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
+        "- A relationship the text plainly implies but never says outright (two people named as "
+        "the same captain's crew know each other) may be listed too, with ' | inferred: <why, "
+        "from the text, a few words>' after its quote. Only a "
+        "relationship of the kinds below, never an event, a motive or a plan, and never family "
+        "(DMbot works family out itself). When in doubt, leave it out.\n"
         "- UNNAMED PEOPLE: a person the text describes but never names anywhere, who has to do "
         "with a NAMED person, group or place (family, work, a meeting, a deal, anything the text "
         "says they did together), goes under a fourth heading, UNNAMED, one line each, once for "
@@ -326,8 +348,14 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "and RELATIONSHIPS instead and not here. Never a crowd, 'the party', a kind of creature "
         "in general or anyone already listed. Leave the heading out when there is no such "
         "person.\n"
-        "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
-        + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
+        "- TRAITS: a character's lineage (dwarf, elf, half-elf, human, tiefling…) or class "
+        "(cleric, paladin, wizard…) that the text states outright goes under a fifth heading, "
+        "TRAITS, one line each: the character's full name as listed under NAMES | lineage or "
+        "class | the text's own word or words for it | quote. 'A half-elf paladin' is two lines. "
+        "A god they serve is not a class (that is a relationship). Never a guess from a name, a "
+        "look or a homeland. Leave the heading out when the text states none.\n"
+        "- Keep the headings (UNNAMED and TRAITS only when they have lines), and write nothing "
+        "else.\n\n" + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
     )
 
 
@@ -389,7 +417,8 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         + "). Leave out 'said:'. An "
         "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
-        f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
+        "'quote:'), inferred (its 'inferred:', else empty) and how, which reads 'a <how> b': "
+        f"exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
         'a character, creature or group it is tied to the place b: put in "words" '
@@ -437,7 +466,7 @@ def shape_request(names: list[str], links: list[str]) -> str:
 
 
 _HEADING = re.compile(
-    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?)[*:\s]*$", re.I
+    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?|TRAITS)[*:\s]*$", re.I
 )
 
 
@@ -449,6 +478,7 @@ class PlainList:
     links: list[str] = field(default_factory=list)
     left_out: list[str] = field(default_factory=list)
     unnamed: list[str] = field(default_factory=list)  # people described but never named (#2959)
+    traits: list[str] = field(default_factory=list)  # lineage and class lines (#2959 item 3)
     last: str | None = None  # the section the last line went into (a continuation starts there)
 
     def add(self, section: str, line: str) -> None:
@@ -457,6 +487,7 @@ class PlainList:
             RELATIONSHIPS: self.links,
             NOT_INCLUDED: self.left_out,
             UNNAMED: self.unnamed,
+            TRAITS: self.traits,
         }[section].append(line)
 
 
@@ -506,14 +537,34 @@ def dedupe_unnamed(items: list[str]) -> list[str]:
     return out
 
 
-def dedupe(items: list[str]) -> list[str]:
+def dedupe_traits(items: list[str]) -> list[str]:
+    """One line for each (name, kind, words): a continuation that repeats a line adds nothing."""
     seen: set[str] = set()
     out: list[str] = []
     for line in items:
-        key = _entry_key(line)
-        if key and key not in seen:
+        key = "|".join(name_key(part) for part in line.lstrip("- ").split("|")[:3])
+        if key not in seen:
             seen.add(key)
             out.append(line)
+    return out
+
+
+_INFERRED_MARK = re.compile(r"\|\s*inferred:", re.I)
+
+
+def dedupe(items: list[str]) -> list[str]:
+    """One line for each entry, the first said; a stated line beats an inferred twin (#2959)."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for line in items:
+        key = _entry_key(line)
+        if not key:
+            continue
+        if key not in seen:
+            seen[key] = len(out)
+            out.append(line)
+        elif _INFERRED_MARK.search(out[seen[key]]) and not _INFERRED_MARK.search(line):
+            out[seen[key]] = line
     return out
 
 
@@ -524,6 +575,7 @@ def plain_text(found: PlainList) -> str:
         + f"\n\n{RELATIONSHIPS}\n"
         + "\n".join(found.links)
         + (f"\n\n{UNNAMED}\n" + "\n".join(found.unnamed) if found.unnamed else "")
+        + (f"\n\n{TRAITS}\n" + "\n".join(found.traits) if found.traits else "")
     ).strip()
 
 
@@ -579,6 +631,9 @@ class LoreRead:
     secret_spellings: frozenset[str] = frozenset()
     # People the text describes but never names (#2959), checked and ready for the store.
     unnamed: list[UnnamedLink] = field(default_factory=list)
+    # The TRAITS lines as pass 1 gave them (#2959 item 3): checked by `traits_read` with the
+    # campaign's rules, which this pure reader does not hold.
+    trait_lines: list[str] = field(default_factory=list)
 
 
 async def _call(
@@ -1259,4 +1314,4 @@ async def _read_lore(
     )  # fmt: skip
     # "the Ash Wolves, Tavin and Mira": a list a group of this read leads is its members (#3383)
     links = [*links, *bg.group_connections([names], known_keys)]
-    return LoreRead(names, links, cut, stats, known, secrets, unnamed)
+    return LoreRead(names, links, cut, stats, known, secrets, unnamed, dedupe_traits(listed.traits))

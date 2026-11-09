@@ -75,8 +75,9 @@ SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND = (
     "species", "creature_type", "stat_block", "class", "background",
 )  # fmt: skip
 LINK_KINDS = (SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND)
+# "Lineage" is the word users see (owner, #2959 item 3); the rules data and the code keep "species".
 LINK_LABELS = {
-    SPECIES: "species",
+    SPECIES: "lineage",
     CREATURE_TYPE: "type",
     STAT_BLOCK: "stat block",
     CLASS: "class",
@@ -246,6 +247,22 @@ class NewName:
     # The players' line (#2967 slice a): only from an upload the DM said the players know all of;
     # "" for none. A line longer than `PLAYERS_TEXT_MAX` is not stored (the DM writes one).
     players_text: str = ""
+    # A character's lineage and classes the text states (#2959 item 3): written as its rules links
+    # in the same change, so the one Undo takes them back with the name. Ignored for anything else.
+    traits: tuple[Trait, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Trait:
+    """A lineage or a class a lore read found for a new character (#2959 item 3), as a rules link
+    to write: `kind` is `SPECIES` (shown as "lineage") or `CLASS`; `known` with its `rules_source`
+    and `edition` when the rules data has it, else the text's own words."""
+
+    kind: str
+    name: str
+    rules_source: str = ""
+    edition: str | None = None
+    known: bool = False
 
 
 @dataclass(frozen=True, slots=True)
