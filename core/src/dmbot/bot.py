@@ -13799,12 +13799,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Every few seconds: answer the website's "Make the script" presses (#3899;
         `script_make`). A server's trouble never stops the others."""
         await asyncio.sleep(SCRIPT_MAKE_FIRST_S)
+        running: dict[int, asyncio.Task[int]] = {}
         while True:
             for guild in list(self.guilds):
-                try:
-                    await script_make.run_round(self, guild.id)
-                except Exception:
-                    log.exception("Script presses: a server's round failed")
+                # One script at a time for a server, but a long one never holds up another
+                # server's presses (a run takes minutes), so each runs as its own task.
+                task = running.get(guild.id)
+                if task is not None and not task.done():
+                    continue
+                running[guild.id] = asyncio.create_task(
+                    script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
+                )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
 
     async def _auto_script_loop(self) -> None:

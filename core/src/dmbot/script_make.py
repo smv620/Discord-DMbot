@@ -12,7 +12,6 @@ short word (at most 40 characters) the page turns into plain words. Counts only 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -31,14 +30,18 @@ RETAKE_AFTER_S = 10 * 60  # a claim that stopped moving this long ago (the bot r
 WATCH_EVERY_S = 3.0  # how often the row follows the job's progress
 
 # The words a failed press ends with (the page turns them into plain words).
+# ("failed" is the general one; it is not "no-script", which the Transcripts page already uses for
+# something else.) The door also writes "lost" itself.
 NOT_ALLOWED, OFF, PLAN, GONE, BUSY, NO_SCRIPT = (
     "not-allowed",
     "off",
     "plan",
     "gone",
     "busy",
-    "no-script",
+    "failed",
 )
+WORDS = (NOT_ALLOWED, OFF, PLAN, GONE, BUSY, NO_SCRIPT)
+MAX_TRIES = 3  # a press that keeps stopping the bot is failed, not retaken for ever
 
 
 @dataclass(slots=True)
@@ -48,6 +51,7 @@ class Press:
     session_id: str
     user_id: int
     claimed_at: int  # milliseconds: the token that lets only this worker write
+    tries: int = 1
 
 
 class ScriptMakes:
@@ -65,7 +69,7 @@ class ScriptMakes:
                 " WHERE guild_id = %s AND created_at >= %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, session_id, user_id",
+                " RETURNING id, campaign_id, session_id, user_id, tries",
                 (now_ms, guild_id, now_ms // 1000 - GIVE_UP_S, now_ms - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
@@ -73,7 +77,7 @@ class ScriptMakes:
             return None
         return Press(
             str(row["id"]), str(row["campaign_id"]), str(row["session_id"]),
-            int(row["user_id"]), now_ms,
+            int(row["user_id"]), now_ms, int(row["tries"]),
         )  # fmt: skip
 
     async def moved(self, guild_id: int, press: Press, part: int, of_parts: int) -> bool:
@@ -113,12 +117,18 @@ async def run_round(bot: Any, guild_id: int) -> int:
         return 0
     with log_context(guild_id=guild_id, campaign_id=press.campaign_id):
         try:
-            word = await _answer(bot, makes, guild_id, press)
+            word = (
+                NO_SCRIPT if press.tries > MAX_TRIES else await _answer(bot, makes, guild_id, press)
+            )
         except Exception as exc:
             log.warning("A website script press failed (%s)", type(exc).__name__)
             word = NO_SCRIPT
-        await makes.end(guild_id, press, ok=not word, error=word)
-        log.info("A website script press ended: %s", word or "done")
+        try:
+            held = await makes.end(guild_id, press, ok=not word, error=word)
+        except Exception as exc:  # the row stays working and is retaken, then failed at MAX_TRIES
+            log.warning("A website script press could not be closed (%s)", type(exc).__name__)
+            return 1
+        log.info("A website script press ended: %s%s", word or "done", "" if held else " (lost)")
     return 1
 
 
@@ -129,7 +139,7 @@ async def _answer(bot: Any, makes: ScriptMakes, guild_id: int, press: Press) -> 
     session = await bot.transcripts.session(guild_id, press.session_id)
     if campaign is None or session is None or session.campaign_id != press.campaign_id:
         return GONE
-    if press.user_id not in campaign.dm_user_ids:  # still a DM of this campaign
+    if not campaign.is_dm(press.user_id):  # still a DM of this campaign
         return NOT_ALLOWED
     if not bot.settings.theatre_on:
         return OFF
@@ -140,6 +150,8 @@ async def _answer(bot: Any, makes: ScriptMakes, guild_id: int, press: Press) -> 
         """The page shows the row's counts; no private card is kept."""
 
     runs = TheatreRuns(bot.campaigns.db)
+    if await runs.state(guild_id, press.session_id) == "done":
+        return ""  # a script was made meanwhile (the automatic round, the button, a retaken press)
     watcher = asyncio.create_task(_follow(makes, runs, guild_id, press))
     try:
         outcome = await theatre_button.make_for(
@@ -147,8 +159,7 @@ async def _answer(bot: Any, makes: ScriptMakes, guild_id: int, press: Press) -> 
         )
     finally:
         watcher.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await watcher
+        await asyncio.gather(watcher, return_exceptions=True)
     if not outcome.started:
         return BUSY  # another run has the session: the page asks again, nothing is paid twice
     return "" if outcome.ok else NO_SCRIPT
@@ -157,11 +168,11 @@ async def _answer(bot: Any, makes: ScriptMakes, guild_id: int, press: Press) -> 
 async def _follow(makes: ScriptMakes, runs: TheatreRuns, guild_id: int, press: Press) -> None:
     """Copy the job's part and count to the press while it runs. Its own failures end it quietly:
     the job must never stop for the page."""
-    try:
-        while True:
-            await asyncio.sleep(WATCH_EVERY_S)
+    while True:
+        await asyncio.sleep(WATCH_EVERY_S)
+        try:
             found = await runs.progress(guild_id, press.session_id)
             if found is not None and not await makes.moved(guild_id, press, *found):
                 return  # (the press is not ours any more)
-    except Exception as exc:
-        log.warning("Following a script press stopped (%s)", type(exc).__name__)
+        except Exception as exc:  # one failed look must not stop the heartbeat
+            log.warning("Following a script press missed a look (%s)", type(exc).__name__)

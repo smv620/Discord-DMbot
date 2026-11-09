@@ -4,6 +4,7 @@ when it stops. Invented ids."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,7 @@ from dmbot import script_make
 from dmbot.script_make import ScriptMakes
 from dmbot.transcript import theatre_job as job
 from dmbot.transcript.store import TranscriptStore
+from dmbot.transcript.theatre_runs import TheatreRuns
 from dmbot.ui import theatre_button
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
 
@@ -153,3 +155,63 @@ class Press(NamesTest):
     async def test_no_press_waiting_takes_nothing(self) -> None:
         took, make = await self.round(self.fake_bot())
         self.assertEqual((took, make.await_count), (0, 0))
+
+    async def test_a_session_that_already_has_its_script_runs_no_second_job(self) -> None:
+        rid = await self.queue()
+        row = (await self.rows())[0]
+        runs = TheatreRuns(self.db)
+        token = await runs.begin(GUILD, row["session_id"])
+        assert token is not None
+        await runs.finish(GUILD, row["session_id"], token, ok=True)
+        _, make = await self.round(self.fake_bot())
+        make.assert_not_awaited()
+        done = next(r for r in await self.rows() if r["id"] == rid)
+        self.assertEqual((done["state"], done["error"]), ("done", ""))
+
+    async def test_a_job_that_raises_ends_with_the_failed_word_and_the_watcher_stops(self) -> None:
+        await self.queue()
+        me = self.fake_bot()
+        with patch.object(theatre_button, "make_for", AsyncMock(side_effect=RuntimeError("x"))):
+            await script_make.run_round(me, GUILD)
+        self.assertEqual((await self.rows())[0]["error"], script_make.NO_SCRIPT)
+        leftovers = [t for t in asyncio.all_tasks() if "_follow" in repr(t.get_coro())]
+        self.assertEqual(leftovers, [])
+
+    async def test_a_press_that_keeps_stopping_the_bot_is_failed_after_a_few_tries(self) -> None:
+        await self.queue()
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE script_makes SET tries = %s", (script_make.MAX_TRIES,))
+        _, make = await self.round(self.fake_bot())  # (this claim is try MAX_TRIES + 1)
+        make.assert_not_awaited()
+        self.assertEqual((await self.rows())[0]["error"], script_make.NO_SCRIPT)
+
+    async def test_a_press_the_door_failed_meanwhile_is_not_rewritten(self) -> None:
+        await self.queue()
+        got = await self.makes.claim_next(GUILD)
+        assert got is not None
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE script_makes SET state = 'failed', error = 'lost'")
+        self.assertFalse(await self.makes.end(GUILD, got, ok=True))
+        self.assertEqual((await self.rows())[0]["error"], "lost")
+
+    async def test_the_job_progress_reaches_the_press_while_it_runs(self) -> None:
+        await self.queue()
+        row = (await self.rows())[0]
+        runs = TheatreRuns(self.db)
+        token = await runs.begin(GUILD, row["session_id"])
+        assert token is not None
+        await runs.moved(GUILD, row["session_id"], token, 2, 6)
+        got = await self.makes.claim_next(GUILD)
+        assert got is not None
+        with patch.object(script_make, "WATCH_EVERY_S", 0.01):
+            task = asyncio.create_task(script_make._follow(self.makes, runs, GUILD, got))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        found = (await self.rows())[0]
+        self.assertEqual((found["part"], found["of_parts"]), (2, 6))
+
+    def test_every_word_a_press_can_end_with_fits_the_column(self) -> None:
+        for word in script_make.WORDS:
+            self.assertLessEqual(len(word), 40)
+        self.assertNotIn("no-script", script_make.WORDS)  # (the Transcripts page's own word)
