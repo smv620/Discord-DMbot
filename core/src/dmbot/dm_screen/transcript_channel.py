@@ -1,10 +1,10 @@
 """Create a campaign's live transcript channel and keep it view-only (#124).
 
-`#dmb-transcript-<short name>` (docs/PLAN.md, "Channel structure"): unrestricted, so
-anyone in the server can read it, and only DMbot posts (no threads or reactions
-either). Slash commands work there (#188): their replies are private, the pinned card
-tells players to type `/consent revoke`, and a DM's first try is often `/dmbot` in the
-channel they're looking at.
+`#dmb-transcript-<short name>` (docs/PLAN.md, "Channel structure"): the campaign's own people read
+it, or the whole server when the DM chose that (#3891, `channel_people.py`), and only DMbot posts
+(no threads or reactions either). Slash commands work there (#188): their replies are private,
+the pinned card tells players to type `/consent revoke`, and a DM's first try is often `/dmbot`
+in the channel they're looking at.
 
 It sits next to the DM screen, in the same category, with a topic and a pinned "what's
 this channel?" card. DMbot only ever changes a channel it named like a
@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Iterable
 
 import discord
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns.models import CHANNELS_EVERYONE
 from dmbot.consent_dm import JOIN_LABEL, invite_button
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import (
@@ -37,13 +39,11 @@ from dmbot.dm_screen.channel import (
     current_overwrites,
     held_permissions,
 )
+from dmbot.dm_screen.channel_people import channel_plan
 from dmbot.dm_screen.names import PREFIX, sub_channel_name
 from dmbot.dm_screen.rules import (
-    FULL,
-    READ_ONLY,
     Perms,
     Target,
-    everyone,
     merge_overwrites,
     restrict,
 )
@@ -66,12 +66,6 @@ def transcript_channel_name(campaign: Campaign) -> str:
 
 def is_transcript_name(name: str) -> bool:
     return name.startswith(NAME_PREFIX)
-
-
-def transcript_plan(*, guild_id: int, bot_id: int) -> dict[Target, Perms]:
-    """Everyone reads and can use slash commands, nobody posts; DMbot posts. DMs read
-    like everyone else."""
-    return {everyone(guild_id): READ_ONLY, Target("member", bot_id): FULL}
 
 
 async def _fresh(guild: discord.Guild, campaign: Campaign) -> discord.TextChannel | None:
@@ -105,7 +99,9 @@ async def _ensure_card(
     """One current, pinned card. Looked for among the pins (a transcript channel soon has
     thousands of messages) and the last few messages. Best effort: the channel works
     without it."""
-    text = messages.transcript_card(campaign.name)
+    text = messages.transcript_card(
+        campaign.name, everyone=campaign.channels_visibility == CHANNELS_EVERYONE
+    )
     invite = campaign.dndbeyond_invite  # the Join on D&D Beyond button, if the DM set a link
     try:
         found: dict[int, discord.Message] = {}
@@ -194,6 +190,7 @@ async def setup_transcript_channel(
     store: CampaignStore,
     *,
     category: discord.CategoryChannel | None = None,
+    people: Iterable[int] = (),
 ) -> discord.TextChannel:
     """Create the campaign's transcript channel, or make an existing one view-only again.
 
@@ -210,8 +207,17 @@ async def setup_transcript_channel(
             if campaign is None:
                 raise TranscriptChannelError(messages.CAMPAIGN_GONE)
             held = held_permissions(me)
-            plan = transcript_plan(guild_id=guild.id, bot_id=me.id)
-            topic = messages.transcript_topic(campaign.name)
+            # Who may see it is the campaign's choice (#3891). The DMs are always among the
+            # people, whatever the caller knew, so a channel is never hidden from its own DM.
+            plan = channel_plan(
+                campaign.channels_visibility,
+                guild_id=guild.id,
+                bot_id=me.id,
+                people={*people, *campaign.dm_user_ids},
+            )
+            topic = messages.transcript_topic(
+                campaign.name, everyone=campaign.channels_visibility == CHANNELS_EVERYONE
+            )
             reason = f"DMbot: live transcript for {campaign.name}"
             channel = await _fresh(guild, campaign)
             if channel is None:

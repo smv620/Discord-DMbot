@@ -1,113 +1,117 @@
+"""Keeping a campaign's two channels in step with who may see them (#3891): the people from the
+stores, the sweep healing a missing overwrite, leaving a right channel alone, and the plain message
+when DMbot lacks a permission. Invented ids."""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
 import discord
 
-from dmbot.channel_access import (
-    PostProblem,
-    join_blocked_message,
-    missing_post_permissions,
-    notice_failed_message,
-    post_problems,
-)
+from dmbot.campaigns import CampaignStore
+from dmbot.dm_screen import channel_access
+from dmbot.memory.backup import MemorySection
+from dmbot.memory.store import MemoryStore
+from tests.pg import DatabaseTest
+from tests.test_dm_screen_setup import BOT, BOT_PERMS, DM, GUILD, text_channel
 
-CAN_POST = discord.Permissions(view_channel=True, send_messages=True)
-
-
-def perms(**flags: bool) -> discord.Permissions:
-    return discord.Permissions(**flags)
+TRANSCRIPT, DMBOT_CHANNEL = 60, 61
+EVE, MIRA = 91, 92
 
 
-def test_nothing_missing_when_bot_can_view_and_send() -> None:
-    assert missing_post_permissions(perms(view_channel=True, send_messages=True)) == []
+class Access(DatabaseTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = CampaignStore(self.db)
+        self.store.register_section(MemorySection())
+        self.memory = MemoryStore(self.db)
+        made = await self.store.create(GUILD, "Frostmaiden", DM)
+        self.me = MagicMock(spec=discord.Member)
+        self.me.id = BOT
+        self.me.guild_permissions = BOT_PERMS
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = GUILD
+        guild.me = self.me
+        guild.get_role = lambda _id: None
+        guild.get_member = lambda _id: None
+        self.transcript = text_channel(TRANSCRIPT, "dmb-transcript-frstmdn", guild)
+        self.dm_bot = text_channel(DMBOT_CHANNEL, "dmb-dm-bot-frstmdn", guild)
+        for channel in (self.transcript, self.dm_bot):
+            channel.pins = AsyncMock(return_value=[])
+        guild.get_channel = lambda cid: {
+            TRANSCRIPT: self.transcript,
+            DMBOT_CHANNEL: self.dm_bot,
+        }.get(cid)
+        guild.fetch_channel = AsyncMock(side_effect=lambda cid: guild.get_channel(cid))
+        self.guild = guild
+        await self.store.set_transcript_channel(GUILD, made.id, TRANSCRIPT)
+        await self.store.set_dm_bot_channel(GUILD, made.id, DMBOT_CHANNEL)
+        self.campaign = await self.store.get(GUILD, made.id)
+        assert self.campaign is not None
 
+    def edited(self, channel: Any) -> dict[Any, discord.PermissionOverwrite] | None:
+        calls = channel.edit.await_args_list
+        return calls[-1].kwargs.get("overwrites") if calls else None
 
-def test_reports_both_when_channel_is_hidden() -> None:
-    assert missing_post_permissions(perms()) == ["View Channel", "Send Messages"]
+    async def test_the_people_are_the_dms_players_speakers_and_the_by_hand_list(self) -> None:
+        await self.store.add_channel_person(GUILD, self.campaign.id, EVE, DM, 1)
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name="Mira", role="player_character",
+            played_by=MIRA, status="confirmed", source="dm",
+        )  # fmt: skip
+        people = await channel_access.campaign_people(self.store, self.memory, self.campaign, BOT)
+        self.assertEqual(people, {DM, EVE, MIRA})
 
+    async def test_a_channel_that_everyone_can_see_is_hidden_from_non_members(self) -> None:
+        await self.store.add_channel_person(GUILD, self.campaign.id, EVE, DM, 1)
+        problem = await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        self.assertIsNone(problem)
+        for channel in (self.transcript, self.dm_bot):
+            sent = self.edited(channel)
+            assert sent is not None
+            by_id = {key.id: ow for key, ow in sent.items()}
+            self.assertIs(by_id[GUILD].view_channel, False)
+            self.assertTrue(by_id[EVE].view_channel)
+            self.assertTrue(by_id[DM].view_channel)
 
-def test_reports_send_only_when_bot_can_view() -> None:
-    assert missing_post_permissions(perms(view_channel=True)) == ["Send Messages"]
+    async def test_a_channel_already_right_is_left_alone(self) -> None:
+        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        for channel in (self.transcript, self.dm_bot):
+            sent = self.edited(channel)
+            assert sent is not None
+            channel.overwrites = sent  # (Discord now has what was sent)
+            channel.edit.reset_mock()
+        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        self.transcript.edit.assert_not_awaited()
+        self.dm_bot.edit.assert_not_awaited()
 
+    async def test_choosing_everyone_puts_the_channels_back(self) -> None:
+        await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        for channel in (self.transcript, self.dm_bot):
+            channel.overwrites = self.edited(channel)
+            channel.edit.reset_mock()
+        opened = await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")
+        await channel_access.reconcile(self.guild, opened, self.store, self.memory)
+        sent = self.edited(self.transcript)
+        assert sent is not None
+        by_id = {key.id: ow for key, ow in sent.items()}
+        self.assertTrue(by_id[GUILD].view_channel)
+        self.assertNotIn(DM, by_id)
 
-def test_threads_need_send_messages_in_threads() -> None:
-    p = perms(view_channel=True, send_messages=True)
-    assert missing_post_permissions(p, in_thread=True) == ["Send Messages in Threads"]
-    p = perms(view_channel=True, send_messages_in_threads=True)
-    assert missing_post_permissions(p, in_thread=True) == []
+    async def test_a_missing_permission_is_said_in_plain_words_and_nothing_is_changed(self) -> None:
+        self.me.guild_permissions = discord.Permissions(
+            view_channel=True, send_messages=True, read_message_history=True, manage_channels=True
+        )
+        problem = await channel_access.reconcile(self.guild, self.campaign, self.store, self.memory)
+        assert problem is not None
+        self.assertIn("Manage Roles", problem)
+        self.transcript.edit.assert_not_awaited()
+        self.dm_bot.edit.assert_not_awaited()
 
-
-def check(
-    screen: discord.Permissions | None = CAN_POST,
-    voice: discord.Permissions = CAN_POST,
-    *,
-    in_thread: bool = False,
-) -> list[PostProblem]:
-    return post_problems(
-        screen_id=1,
-        screen_perms=screen,
-        screen_in_thread=in_thread,
-        voice_id=2,
-        voice_perms=voice,
-    )
-
-
-def test_no_problems_when_both_channels_are_postable() -> None:
-    assert check() == []
-
-
-def test_reports_both_channels_together() -> None:
-    problems = check(screen=perms(), voice=perms(view_channel=True))
-    assert [(p.channel_id, p.missing) for p in problems] == [
-        (1, ("View Channel", "Send Messages")),
-        (2, ("Send Messages",)),
-    ]
-
-
-def test_screen_thread_is_checked_as_a_thread() -> None:
-    (problem,) = check(screen=CAN_POST, in_thread=True)
-    assert problem.missing == ("Send Messages in Threads",)
-    assert problem.in_thread
-
-
-def test_unseen_screen_channel_is_its_own_problem() -> None:
-    (problem,) = check(screen=None)
-    assert problem.unseen
-    assert problem.missing == ()
-
-
-def test_blocked_message_names_each_channel_and_permission() -> None:
-    text = join_blocked_message(
-        [
-            PostProblem(1, ("View Channel", "Send Messages"), "updates go here"),
-            PostProblem(2, ("Send Messages",), "notice goes here"),
-        ]
-    )
-    assert text.startswith("⚠️ Not joining")
-    assert "<#1> needs **View Channel** and **Send Messages** (updates go here)" in text
-    assert "<#2> needs **Send Messages** (notice goes here)" in text
-    assert "Add them via Edit Channel → Permissions" in text
-    assert "run `/dmbot start` again" in text
-
-
-def test_blocked_message_says_it_for_a_single_permission() -> None:
-    text = join_blocked_message([PostProblem(2, ("Send Messages",), "notice goes here")])
-    assert "Add it via Edit Channel → Permissions" in text
-
-
-def test_thread_problem_points_to_the_parent_channel() -> None:
-    text = join_blocked_message(
-        [PostProblem(3, ("Send Messages in Threads",), "updates go here", in_thread=True)]
-    )
-    assert "set on its parent channel" in text
-
-
-def test_unseen_channel_suggests_view_or_another_channel() -> None:
-    text = join_blocked_message([PostProblem(4, (), "", unseen=True)])
-    assert "I can't see <#4>" in text
-    assert "another private channel" in text
-    assert "Edit Channel" not in text  # nothing listed to add
-
-
-def test_notice_failed_message_says_tell_the_table_first() -> None:
-    text = notice_failed_message(42)
-    assert "<#42>" in text
-    assert text.index("Tell the table now") < text.index("Send Messages")
-    assert "retry on the next `/dmbot start`" in text
+    async def test_a_server_role_that_can_see_a_channel_is_reported_not_changed(self) -> None:
+        role = MagicMock(spec=discord.Role)
+        role.id = 777
+        self.transcript.overwrites = {role: discord.PermissionOverwrite(view_channel=True)}
+        found = channel_access.exposure(self.transcript, self.campaign, BOT, [DM])
+        self.assertEqual(found.roles, (777,))

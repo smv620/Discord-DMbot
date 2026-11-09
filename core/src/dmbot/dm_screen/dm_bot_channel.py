@@ -1,6 +1,7 @@
 """The DM Bot channel (#1666; docs/PLAN.md, "The DM Bot channel").
 
-`#dmb-dm-bot-<short name>`: everyone in the server can read it, and only DMbot posts, as with
+`#dmb-dm-bot-<short name>`: the campaign's own people can read it (the whole server when the DM
+chose that, #3891), and only DMbot posts, as with
 the game-time channel (it reuses the transcript module's permissions, repair and per-campaign
 lock). It holds one panel message of buttons by role (`dm_screen/dm_bot_panel.py`); every
 answer to a press is private, and nothing from the DM screen is ever posted here.
@@ -15,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Iterable
 
 import discord
 
@@ -29,8 +31,9 @@ from dmbot.dm_screen.channel import (
     campaign_lock,
     held_permissions,
 )
+from dmbot.dm_screen.channel_people import channel_plan
 from dmbot.dm_screen.names import PREFIX, sub_channel_name
-from dmbot.dm_screen.transcript_channel import _repair, transcript_plan
+from dmbot.dm_screen.transcript_channel import _repair
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +73,7 @@ async def setup_dm_bot_channel(
     store: CampaignStore,
     *,
     category: discord.CategoryChannel | None = None,
+    people: Iterable[int] = (),
 ) -> discord.TextChannel:
     """Create the campaign's DM Bot channel, or make an existing one view-only again.
 
@@ -86,7 +90,14 @@ async def setup_dm_bot_channel(
             if campaign is None:
                 raise DmBotChannelError(messages.CAMPAIGN_GONE)
             held = held_permissions(me)
-            plan = transcript_plan(guild_id=guild.id, bot_id=me.id)
+            # Who may see it is the campaign's choice (#3891). The DMs are always among the
+            # people, whatever the caller knew, so a channel is never hidden from its own DM.
+            plan = channel_plan(
+                campaign.channels_visibility,
+                guild_id=guild.id,
+                bot_id=me.id,
+                people={*people, *campaign.dm_user_ids},
+            )
             topic = messages.dm_bot_topic(campaign.name)
             reason = f"DMbot: settings for {campaign.name}"
             channel = await _fresh(guild, campaign)

@@ -235,18 +235,21 @@ def transcript_discord_error(detail: str) -> str:
     return f"Discord said: {detail}. A category can hold only 50 channels, so check it isn't full."
 
 
-def transcript_topic(campaign_name: str) -> str:
+def transcript_topic(campaign_name: str, *, everyone: bool = True) -> str:
+    """The channel's topic. `everyone`: whether the whole server may read it (#3891)."""
+    who = "Anyone in this server" if everyone else "The people in this campaign"
     return (
-        f"Live transcript for {campaign_name}. Anyone in this server can read it; only "
+        f"Live transcript for {campaign_name}. {who} can read it; only "
         "DMbot posts here. Only people who said yes to recording are recorded."
     )
 
 
-def transcript_card(campaign_name: str) -> str:
+def transcript_card(campaign_name: str, *, everyone: bool = True) -> str:
+    who = "Anyone in this server" if everyone else "The people in this campaign"
     return "\n".join(
         [
             f"{TRANSCRIPT_CARD_TITLE}{campaign_name}**",
-            "Anyone in this server can read this. Only DMbot posts here, not even the DM.",
+            f"{who} can read this. Only DMbot posts here, not even the DM.",
             "While DMbot is listening, what people say shows up here a few seconds later. "
             "Chat that's clearly not about the game may be shortened to a note like \"[8s of "
             'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
