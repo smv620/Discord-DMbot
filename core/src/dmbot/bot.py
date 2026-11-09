@@ -720,6 +720,9 @@ IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this ma
 # words (web/src/content/import-words.ts, `stage.finding_names` and `story.reading_connections`).
 IMPORT_NAMES = "Looking for names"
 IMPORT_READING = "Reading connections"
+# The two steps after the read, in the same feed (#3602's ruling, #3596): the words show as written.
+IMPORT_SCENES = "Writing what happened around each name"
+IMPORT_WHO = "Working out who each name is"
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -8966,21 +8969,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
     async def write_scenes(self, table: Table) -> None:
-        """After a live session (#3596), only with DMBOT_STORY_SCENES and the extractor on: write
-        the scene of each waiting question that has none (see `memory.scene_step`). Inside the
-        extractor's session and daily call limits, only lines of people who agree, counts only in
-        the log."""
+        """After a live session (#3596): see `_write_scenes`. The people who may be read are those
+        who agree now (`ConsentStore.consenting`)."""
+        if (
+            not self.settings.story_scenes_on  # (off means off: not even the table is read)
+            or not self.settings.story_extractor_on
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid = table.guild_id
+        await DMBot._write_scenes(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _write_scenes(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
+        """Only with DMBOT_STORY_SCENES and the extractor on: write the scene of each waiting
+        question that has none (see `memory.scene_step`), after a live session or an imported one
+        (#3602's ruling). Inside the extractor's session and daily call limits, only lines of
+        people `consenting` returns (asked again after the call: a live session's agreed people,
+        an import's `recorded_in`), counts only in the log. `renew`, after each counted call."""
         if (
             not self.settings.story_scenes_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or asked)
-        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
@@ -9008,17 +9033,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = [e for e in open_names if e.id in missing][:SCENES_PER_SESSION]
             if not waiting:
                 return
-            agreed = await self.consent.consenting(gid)
-            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            agreed = await consenting()
             items, empty = await scene_step.items_for(
-                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, dm_ids, agreed
-            )
+                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, set(dm_ids),
+                agreed,
+            )  # fmt: skip
             report = scene_step.Report(no_lines=empty)
 
             async def count_call() -> None:
                 await transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 )
+                if renew is not None:  # (an import keeps its claim through a long step)
+                    await renew()
 
             await scene_step.run(
                 ai,
@@ -9026,7 +9053,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 items,
                 guild_id=gid,
                 campaign_id=cid,
-                consenting=lambda: self.consent.consenting(gid),
+                consenting=consenting,
                 model=lambda: ai.model,
                 session_started_at=session.started_at if session else None,
                 max_calls=allowed,
@@ -9131,24 +9158,46 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.warning("Importance: the reading failed (%s)", type(exc).__name__)
 
     async def write_who(self, table: Table) -> None:
-        """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
-        each waiting name could be (see `memory.who_step`). It only ranks, unless
-        DMBOT_STORY_WHO_APPLY is also on: then a "sure" answer naming an existing entry is joined
-        by `join_by_ai`.
-        Inside the extractor's session and daily call limits, only lines of people who agree, the
-        DM's own ranking (hidden entries may be a choice; the answers are DM-only), counts only in
-        the log."""
+        """After a live session (#3602): see `_write_who`. The people who may be read are those
+        who agree now (`ConsentStore.consenting`)."""
+        if (
+            not self.settings.story_who_on  # (off means off: not even the table is read)
+            or not self.settings.story_extractor_on
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid = table.guild_id
+        await DMBot._write_who(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _write_who(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
+        """Only with DMBOT_STORY_WHO and the extractor on, after a live session or an imported one
+        (#3602's ruling): rank who each waiting name could be (see `memory.who_step`). It only
+        ranks, unless DMBOT_STORY_WHO_APPLY is also on: then a "sure" answer naming an existing
+        entry is joined by `join_by_ai`.
+        Inside the extractor's session and daily call limits, only lines of people `consenting`
+        returns (asked again after the call: a live session's agreed people, an import's
+        `recorded_in`), `renew` after each counted call, the DM's own ranking (hidden entries may
+        be a choice; the answers are DM-only), counts only in the log."""
         if (
             not self.settings.story_who_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or asked)
-        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
@@ -9176,8 +9225,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = [e for e in open_names if e.id in missing]
             if not waiting or allowed <= 0:
                 return  # (nothing to ask, or no call left: no lookup or transcript is read)
-            agreed = await self.consent.consenting(gid)
-            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            agreed = await consenting()
             lookup = CampaignLookup.build(await memory.lookup_data(gid, cid))
             # (every open name is left out, not only the ones asked this time: a name that waits is
             # never offered as another's choice, even if it is confirmed between the two reads)
@@ -9202,7 +9250,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return found
 
                 lines, speakers = await who_step.lines_for(
-                    entity.id, held, transcripts, gid, dm_ids, agreed
+                    entity.id, held, transcripts, gid, set(dm_ids), agreed
                 )
                 if pointers and not lines:
                     report.no_lines += 1  # (it was said, but no line of a recorded person is left)
@@ -9228,6 +9276,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 )
+                if renew is not None:  # (an import keeps its claim through a long step)
+                    await renew()
 
             await who_step.run(
                 ai,
@@ -9235,7 +9285,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 pending,
                 guild_id=gid,
                 campaign_id=cid,
-                consenting=lambda: self.consent.consenting(gid),
+                consenting=consenting,
                 model=lambda: ai.model,
                 session_started_at=session.started_at if session else None,
                 max_calls=allowed,
@@ -11794,6 +11844,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ready.session_id,
                     renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
                 )
+                await self._import_scenes_and_who(gid, ready, campaign)
             elif outcome == "limit":
                 await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome
@@ -11805,6 +11856,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception as again:
                     log.warning("Import: couldn't note the wait (%s)", type(again).__name__)
             return "skipped"
+
+    async def _import_scenes_and_who(self, gid: int, ready: Ready, campaign: Campaign) -> None:
+        """An imported session's scenes, then who each waiting name could be (#3602's ruling, and
+        #3596): the same steps, switches, call limits and Undo as after a live session, in the
+        same order, before the import's sure step (`_add_sure_import`) runs at its end. The people
+        who may be read are those the import recorded (`ConsentStore.recorded_in`), asked again
+        after each call. Each is its own named stage in the import page's live feed; neither stops
+        the import (each logs the type only). A session a call limit split across rounds is
+        finished by `_extract_imports_left`, after the import's sure step: its scenes and who
+        step run then, on what the sure step left waiting."""
+        assert self.import_job is not None
+        store = self.import_job.store
+        cid, sid = ready.campaign_id, ready.session_id
+        dm_ids = set(campaign.dm_user_ids)
+
+        def recorded() -> Awaitable[Collection[int]]:
+            return self.consent.recorded_in(gid, cid)
+
+        def renew() -> Awaitable[bool]:  # (no other round retakes the import while it runs)
+            return store.renew_scan(gid, sid, int(time.time()))
+
+        for word, step in (
+            (IMPORT_SCENES, self._write_scenes),
+            (IMPORT_WHO, self._write_who),
+        ):
+            try:
+                ai_feed.step(word)
+                await step(gid, cid, sid, dm_ids, recorded, renew)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Import: %s stopped (%s)", word.lower(), type(exc).__name__)
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:
         """Imported sessions the story extractor did not finish (a call limit stopped it, or a
