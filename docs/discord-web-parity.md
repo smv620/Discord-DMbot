@@ -54,6 +54,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
+| How two people know each other on a `knows` connection: "has met", "has heard of", or plain "knows", and the DM's change (#3882; Discord's card and edit menu are #3889) | `/account/web` | page built, switched off; the website's door is next | `KNOWS_HOW_LIVE` |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
 | Node summary on the graph | `/account/web` | built, switched off | `NODE_SUMMARY_LIVE` |
 | Transcripts: read, download (text, theatre), put back or leave out a stretch | `/account/transcripts` | live | `THEATRE_DOWNLOAD_LIVE` |

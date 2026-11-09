@@ -72,6 +72,7 @@ import type { CleanupView, ImportClock, NameAnswerResult, NameGroupHint } from "
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
+import { knowsHowOf, withKnowsHow } from "../content/knows-how-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -913,6 +914,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (/\.unnamed$/.test(ref)) {
         found.nodes.push({ id: "u1", name: "unnamed - Ken's sister", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
         found.links.push({ id: "lu1", a: found.nodes[0]!.id, b: "u1", words: "sister of", secret: false, direction: "a-b" });
+      }
+      // `.knowshow`: three `knows` connections, one for each way the story can say (#3882).
+      if (/\.knowshow$/.test(ref)) {
+        found.links.push({ id: "kh1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "has met (wary)", secret: false, direction: "a-b" });
+        found.links.push({ id: "kh2", a: found.nodes[0]!.id, b: found.nodes[4]!.id, words: "has heard of", secret: false, direction: "a-b" });
+        found.links.push({ id: "kh3", a: found.nodes[1]!.id, b: found.nodes[5]!.id, words: "knows", secret: false, direction: "a-b" });
       }
       if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
     }
@@ -2314,6 +2321,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
         if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
         link.words = `knows (${change.feeling})`;
+      } else if (change.action === "knows-how") {
+        // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
+        if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
+        link.words = withKnowsHow(link.words, change.how);
       } else if (change.action === "who") {
         // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
         const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
