@@ -75,7 +75,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--max-decisions",
         type=int,
-        default=60,
+        default=decide_mod.DEFAULT_MAX_DECISIONS,
         help="the most careful-model decisions in the whole run (#3900); past it, items wait",
     )
     parser.add_argument(
@@ -165,7 +165,11 @@ async def run(
     )
     say(plan.Cost(lore, windows, story, recap).line())
     if not args.accept_all:
-        say(f"decisions: at most {max(args.max_decisions, 0)} careful-model calls (#3900)")
+        calls = max(args.max_decisions, 0)
+        say(
+            f"decisions: at most {calls} careful-model calls (#3900),"
+            f" about ${decide_mod.estimate(calls):.2f}"
+        )
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
@@ -198,6 +202,9 @@ async def run(
     )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
+    decider: list[
+        Any
+    ] = []  # (the decisions' client is made at their first stage, closed at the end)
     try:
         campaigns, memory = steps.campaign_store(db), MemoryStore(db)
         today = dt.date.today().isoformat()
@@ -231,8 +238,10 @@ async def run(
         async def accept_step() -> Mapping[str, int | str]:
             return await accept(db, gid, cid)
 
-        budget = decide_mod.Budget(max(args.max_decisions, 0))
         docs = (lore_text, session_text)
+        # One asker for the whole run (#3900): the cap, the counts and the cost add up across the
+        # lore and session stages, and the record is this run's own file (stamped, owner-only).
+        record = folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}.jsonl"
 
         async def sure_step() -> Mapping[str, int | str]:
             return await sure(db, gid, cid)
@@ -241,31 +250,33 @@ async def run(
             """The careful model's answers for what is still waiting (#3900), then the connections
             those answers made ready, kept as the sure step keeps them."""
             from dmbot.consent import ConsentStore as Consents
+            from dmbot.devtools import accept_all
             from dmbot.devtools.sample_run import judge
             from dmbot.memory.backstory_links import BackstoryLinks
             from dmbot.memory.claims import ClaimStore
 
-            ai, close = decide_client(os.environ)
-            try:
+            if not decider:
+                ai, close = decide_client(os.environ)
                 asker = decide_mod.Asker(
-                    ai, getattr(ai, "model", ""), budget, decide_mod.Run(),
-                    folder / f"decisions-{label}.jsonl",
+                    ai, str(getattr(ai, "model", "")),
+                    decide_mod.Budget(max(args.max_decisions, 0)), decide_mod.Run(), record,
                 )  # fmt: skip
-                links = BackstoryLinks(db)
-                got = await decide_mod.run(
-                    db, memory, links, ClaimStore(memory), asker, judge.Key(steps.master_key()),
-                    gid, cid, docs=docs, opted_in=await Consents(db).recorded_in(gid, cid), dm=dm,
+                decider.extend([asker, close])
+            asker = decider[0]
+            asker.stage = label
+            calls, cost = asker.run.calls, asker.run.cost
+            try:
+                await decide_mod.run(
+                    db, memory, BackstoryLinks(db), ClaimStore(memory), asker,
+                    judge.Key(steps.master_key()), gid, cid, docs=docs,
+                    opted_in=await Consents(db).recorded_in(gid, cid), dm=dm,
                 )  # fmt: skip
-            finally:
-                await close()
-            for line in got.lines():
-                say(line)
+            except accept_all.WrongCampaign as exc:
+                raise SampleError(str(exc)) from exc
             after = await sure(db, gid, cid, connections_only=True)
             return {
-                "decided": sum(sum(c.values()) for c in got.decided.values()),
-                "over the cap": sum(got.over_cap.values()),
-                "calls": got.calls,
-                "cost": f"${got.cost:.2f}",
+                "calls": asker.run.calls - calls,
+                "cost": f"${asker.run.cost - cost:.2f}",
                 "connections kept after": after.get("accepted", 0),
             }
 
@@ -367,9 +378,14 @@ async def run(
             },
             done,
             say,
+            plan.STEPS if args.accept_all else plan.STEPS_DECIDE,
         )
     finally:
         await db.close()
+        if decider:  # the run's decisions, all stages together: counts and agreement only
+            await decider[1]()
+            for line in decider[0].run.lines():
+                say(line)
         for line in plan.report(
             done, commit=commit, switches=switches(os.environ), today=dt.date.today().isoformat()
         ):
@@ -451,7 +467,8 @@ def _careful_client(environ: Mapping[str, str]) -> tuple[Any, Callable[[], Await
         models, _ = parse_ai_models(lambda name: environ.get(name, ""))
     except ConfigError as exc:
         raise SampleError(str(exc)) from exc
-    client = AnthropicClient(environ.get("ANTHROPIC_API_KEY", ""), models)
+    # never a quiet fall back to a smaller model: the record says "careful" (#3900)
+    client = AnthropicClient(environ.get("ANTHROPIC_API_KEY", ""), models, fallback=False)
     tier = client.tier(AIModelTier.CAREFUL, Feature.NAMES)
     return tier, client.close
 
