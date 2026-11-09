@@ -468,7 +468,8 @@ describe("generated content belongs to the campaign (#1388)", () => {
   it("says on both pages that what DMbot makes belongs to the campaign, and the campaign to its game master", () => {
     for (const page of [privacy(), terms()]) {
       expect(page).toContain("What DMbot makes from a session belongs to the campaign");
-      expect(page).toContain("a recap, story facts, notes for the game master, and anything else DMbot writes from what was said");
+      // (the privacy page also names session notes while SESSION_NOTES_LIVE is on, #3027: only the shared ending is pinned)
+      expect(page).toContain("story facts, notes for the game master, and anything else DMbot writes from what was said");
       expect(page).toMatch(/deleted only with the campaign/);
     }
   });

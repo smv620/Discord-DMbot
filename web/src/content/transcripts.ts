@@ -91,6 +91,16 @@ export const text = {
   scriptFailed: "Couldn't save it. Try again in a minute.",
   scriptAboutLabel: "What is the script?",
   scriptNone: "No script has been made for this session yet.",
+  // The Script and Session notes views beside Cleaned and As heard (#3898, owner request 2026-11-09): game masters only.
+  tabs: { script: "Script", notes: "Session notes" },
+  scriptTabNote: "Script: a copy of the session where who and what is meant is written in brackets. Only game masters see it.",
+  notesTabNote: "Session notes: a numbered list of what happened in this game. Only game masters see it, and it stays when the transcript is deleted.",
+  notesNone: "No session notes yet. DMbot writes them when it makes the recap.",
+  notesFailed: "Couldn't open the session notes.",
+  scriptReadFailed: "Couldn't open the script.",
+  tryAgain: "Try again",
+  saveNotes: "Save the notes",
+  savingNotes: "Saving…",
   scriptTooBig: "This script is too big to save in one file.",
   scriptAbout:
     "The script is a copy of this session's transcript where each he, she or it is replaced by who or what is meant, in [brackets], like: He [Bram] drew his sword [Bram's sword]. Only game masters can save it.",
