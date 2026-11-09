@@ -116,7 +116,7 @@ def asks_for(
 ) -> list[Ask]:
     """One `Ask` for each kind with something waiting (`buttons`: the kind's button maker; a kind
     without one is left out). `where` says what the count is from, in the line for several.
-    `summary_url`: the upload's summary message in the DM-screen channel, which holds the Add all
+    `summary_url`: the upload's summary message in the DM Bot channel, which holds the Add all
     buttons; the names and connections buttons then open it (a link button, the same label), and
     every other kind keeps its own. The DM screen's fallback keeps today's buttons.
     `summary_names` is how many names that summary counts: names waiting beyond them (from an

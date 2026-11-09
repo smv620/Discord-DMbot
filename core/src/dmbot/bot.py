@@ -1577,7 +1577,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             on_link_change=self._on_ears_link_change,
         )
         self._background: list[asyncio.Task[None]] = []
-        # A lore upload's summary message in the campaign's DM-screen channel, by (server, campaign,
+        # A lore upload's summary message in the campaign's DM Bot channel, by (server, campaign,
         # the upload's key): (channel id, message id, names it counts). Ids and a count, never
         # words. Used once, by that upload's private question, and kept only in memory (#3873).
         self._upload_summaries: dict[tuple[int, str, str], tuple[int, int, int]] = {}
@@ -11090,7 +11090,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if combined is None:
             return False
         text, view = combined
-        if await self.ask_privately(guild_id, campaign_id, text, view, links):
+        # (`links` only when the upload's summary is to be opened, so every other caller and
+        # stand-in of `ask_privately` sees the call it always saw)
+        private = (
+            await self.ask_privately(guild_id, campaign_id, text, view, links)
+            if links is not None
+            else await self.ask_privately(guild_id, campaign_id, text, view)
+        )
+        if private:
             return True
         posted = False
         for ask in ordered(asks):
@@ -11201,7 +11208,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     def note_upload_summary(
         self, gid: int, cid: str, key: str, message: discord.Message, names: int
     ) -> None:
-        """A lore upload just posted its summary in the DM-screen channel (the one with the Add all
+        """A lore upload just posted its summary in the DM Bot channel (the one with the Add all
         buttons): remember where it is for the private message about that same upload (`key`), so
         its names and connections buttons can open it (#3873). Ids and a count only."""
         summaries = self._upload_summaries

@@ -176,7 +176,8 @@ class TheSummaryLink(WithImports):
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
         summary = self.known(me, 3)
         await self.told(me)
-        _guild, _cid, _text, view, links = me.ask_privately.await_args.args
+        _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
+        links = rest[0] if rest else None
         self.assertEqual(
             [c.label for c in view.children], ["📝 Check new names", "📜 Check the connections"]
         )
@@ -187,7 +188,8 @@ class TheSummaryLink(WithImports):
     async def test_without_a_summary_the_buttons_are_todays(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
         await self.told(me)
-        _guild, _cid, _text, view, links = me.ask_privately.await_args.args
+        _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
+        links = rest[0] if rest else None
         self.assertIsNone(links)
         self.assertFalse(any(getattr(c, "url", None) for c in view.children))
 
@@ -208,7 +210,8 @@ class TheSummaryLink(WithImports):
             fetch = AsyncMock(side_effect=broken)
             me.get_channel = MagicMock(return_value=SimpleNamespace(fetch_message=fetch))
             await self.told(me, key)
-            _guild, _cid, _text, view, links = me.ask_privately.await_args.args
+            _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
+            links = rest[0] if rest else None
             self.assertIsNone(links)
             self.assertFalse(any(getattr(c, "url", None) for c in view.children))
 
@@ -216,7 +219,7 @@ class TheSummaryLink(WithImports):
         me = fake_bot(self, [WaitingChecks(names=3)])
         self.known(me, 3, key="lore:1")
         await self.told(me, "lore:2")  # a different upload (or a session) asks
-        self.assertIsNone(me.ask_privately.await_args.args[4])
+        self.assertEqual(len(me.ask_privately.await_args.args), 4)  # (no links passed)
 
     async def test_the_summary_is_used_once(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3)])
@@ -231,7 +234,7 @@ class TheSummaryLink(WithImports):
         me = fake_bot(self, [WaitingChecks(names=68)])
         summary = self.known(me, 66)
         await self.told(me)
-        _guild, _cid, text, view, _links = me.ask_privately.await_args.args
+        _guild, _cid, text, view, *_rest = me.ask_privately.await_args.args
         self.assertIn("66 names to check", text)
         self.assertIn("2 more names to check", text)
         self.assertEqual(len(view.children), 2)
