@@ -1,12 +1,12 @@
 // The words of "Make the script" on a session's Script tab (#3899). Plain words. The cost line is the one Discord's question
-// gives, sent by the API as it is; a script is only ever made when the game master presses the button (it uses the AI allowance).
+// gives, sent by the API as it is. Since #3901 a new session gets its script automatically; this button is for the sessions
+// that have none (made before then, or while scripts were off), and it uses the AI allowance, so it is the game master's press.
 export const makeScriptWords = {
-  lead: "DMbot has not made a script of this session. It only does when you ask, because it uses your AI allowance.",
+  lead: "This session has no script yet. Making one uses some of your AI allowance.",
   button: "Make the script",
   making: "Making the script…",
   stage: "Making the script",
   quiet: "Still working. You can leave this page: the script will be here when it is done.",
-  done: "The script is ready.",
   already: "A script was already made for this session.",
   plan: "Your plan doesn't include scripts.",
   off: "Scripts are switched off right now.",

@@ -1,8 +1,9 @@
 /** @jsxImportSource preact */
 // "Make the script" on a session's Script tab (#3899, owner request 2026-11-09): a game master presses once, with the cost shown
 // first (the line Discord's question gives); the bot makes it with the same job as Discord's button, and the page shows the
-// shared wait panel (stage, count, how long, last moved) until it is done, then tells the tab to read the script. A script is
-// never made by itself, because it uses the AI allowance. Game masters only (the tab is theirs; the door refuses anyone else).
+// shared wait panel (stage, count, how long, last moved) until it is done, then tells the tab to read the script. New sessions
+// get their script by themselves (#3901); this is for the sessions that have none, by hand, because it uses the AI allowance.
+// Game masters only (the tab is theirs; the door refuses anyone else).
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { makeScriptWords as w } from "../content/make-script-words";
