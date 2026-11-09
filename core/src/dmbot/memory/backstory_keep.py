@@ -16,10 +16,11 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import kin, lore_knowledge
+from dmbot.memory import kin, knows_how, lore_knowledge
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     CONFIRMED,
@@ -251,6 +252,8 @@ async def keep_all(
                 ),
                 from_session_at=start if old else None,  # (starts as the old one ends)
                 keep_flags=keep_flags,
+                # whether they've met, from the quote's own words (#3881)
+                knows_how=knows_how.how_from(c.quote) if c.predicate == KNOWS_PREDICATE else "",
             )  # fmt: skip
         except Exception as exc:
             # the change is whole or not at all, whatever went wrong

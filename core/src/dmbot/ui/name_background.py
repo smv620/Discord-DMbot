@@ -29,6 +29,7 @@ from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
     descriptions,
     kin,
+    knows_how,
     lore_context,
     lore_knowledge,
     lore_pc_names,
@@ -49,6 +50,7 @@ from dmbot.memory.backstory_links import (
     Waiting,
     WhichWaiting,
 )
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.end_match import bare, usable_alias
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
@@ -2187,7 +2189,7 @@ class ConnectionOffer(_Menu):
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
         if r.predicate != "knows":
             return plain
-        return link_words(r.predicate, r.detail, r.directional, feeling=True)
+        return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
@@ -2323,6 +2325,8 @@ class ConnectionOffer(_Menu):
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret,
+                    # whether they've met, from the quote's own words (#3881)
+                    knows_how=knows_how.how_from(c.quote) if c.predicate == KNOWS_PREDICATE else "",
                 )  # fmt: skip
             except Exception as exc:
                 # a change is whole or not at all, whatever went wrong

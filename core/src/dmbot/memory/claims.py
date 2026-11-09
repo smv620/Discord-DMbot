@@ -27,6 +27,7 @@ from dmbot.memory import (
     forget_readings,
     graph_review,
     kin,
+    knows_how,
     link,
     one_off,
     place_words,
@@ -37,6 +38,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -2140,6 +2142,10 @@ class ClaimStore:
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    # whether they've met, from the reader's own words for it (#3881)
+                    knows_how=knows_how.how_from(claim.relationship, claim.details)
+                    if term.key == KNOWS_PREDICATE
+                    else "",
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(

@@ -1565,13 +1565,13 @@ class NameCards(NamesTest):
         it = self.it()
         await name_card.show_card(it, self.campaign.id, self.bell.id)
         for k in range(5):  # one line each, all on the card: nothing is cut, so no Show all
-            self.assertIn(f"• knows **Friend {k}**", it.response.sent[0][0])
+            self.assertIn(f"• knows of **Friend {k}**", it.response.sent[0][0])
         self.assertIsNone(self.select(it.response.sent[0][1]))
         it = self.it()
         await name_card.show_section(it, self.campaign.id, self.bell.id, "links")
         text = it.response.sent[0][0]
         for k in range(5):
-            self.assertIn(f"knows **Friend {k}**", text)
+            self.assertIn(f"knows of **Friend {k}**", text)
         after = await self.memory.aliases(GUILD, self.campaign.id, include_secret=True)
         self.assertEqual(len(before), len(after))
 
