@@ -203,6 +203,7 @@ class TheImportRead(WithImports):
             transcripts=self.transcripts,
             _extract_session=AsyncMock(return_value=outcome),
             _read_importance=AsyncMock(),  # (the importance reading after a finished read, #3172)
+            consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({5, -3}))),
         )
         me._mark_import_read = partial(BOT._mark_import_read, me)
         me._import_scenes_and_who = AsyncMock()  # (then its scenes and who step, #3602)
@@ -224,6 +225,16 @@ class TheImportRead(WithImports):
         self.assertEqual(through, START * 1000 + DAY * 1000)  # marked read to its last line
         me._read_importance.assert_awaited_once()  # (then its importance, on the same claim)
         self.assertTrue(await me._read_importance.await_args.kwargs["renew"]())
+
+    async def test_the_read_and_its_importance_use_who_the_import_recorded(self) -> None:
+        # (Supervisor on #3918: the uploader's confirmed speakers in, anyone with a "no" out)
+        sid = await self.imported(1)
+        ready: Any = SimpleNamespace(campaign_id=self.campaign.id, session_id=sid)
+        me = self.fake("done")
+        await BOT._extract_import(me, GUILD, ready)
+        for step in (me._extract_session, me._read_importance):
+            self.assertEqual(await step.await_args.kwargs["consenting"](), frozenset({5, -3}))
+        me.consent.recorded_in.assert_awaited_with(GUILD, self.campaign.id)
 
     async def test_the_import_card_is_told_each_batch_then_read_or_waiting(self) -> None:
         for outcome, final in (("done", "read"), ("limit", "waiting")):
