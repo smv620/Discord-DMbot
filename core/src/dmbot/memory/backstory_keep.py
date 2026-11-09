@@ -217,6 +217,22 @@ async def undo_batches(
             log.info("A write of a change could not be taken back")
 
 
+async def keep_guesses(
+    memory: MemoryStore, guild_id: int, campaign_id: str, c: Waiting, made: Relation, now: int
+) -> None:
+    """DMbot's guesses of which NPCs and groups know a connection the DM just kept (#2959 slice 3),
+    written as knowers below 1.0. Only for a connection made just now (an older twin's knowers are
+    the DM's), and never a reason to lose the connection: a failure is logged by its type."""
+    if not c.npc_guesses or made.created_at < now:
+        return
+    try:
+        await memory.add_guessed_knowers(
+            guild_id, campaign_id, "connection", made.id, c.npc_guesses, source=DM
+        )
+    except Exception as exc:
+        log.warning("DMbot's guesses for a kept connection were not kept (%s)", type(exc).__name__)
+
+
 async def keep_all(
     memory: MemoryStore,
     store: BackstoryLinks,
@@ -295,6 +311,7 @@ async def keep_all(
                 log.warning(
                     "A kept connection's source could not be stored (%s)", type(exc).__name__
                 )
+        await keep_guesses(memory, guild_id, campaign_id, c, made, now)
         # A feeling kept with a "knows" (#3175) is how the first name feels about the second: the
         # DM's press stores it as a reputation from the story (a standing the DM set still wins).
         # Its batch joins the ones Undo takes back, so one press and one Undo cover both.

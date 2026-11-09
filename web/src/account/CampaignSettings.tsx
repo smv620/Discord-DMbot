@@ -11,6 +11,7 @@ import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
 import { stageWords } from "../content/work-progress";
+import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { SHARE_STORY_LIVE } from "../content/share-story-switch";
 import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
@@ -297,6 +298,9 @@ export default function CampaignSettings({
       )}
       {SHARE_STORY_LIVE && s && s.shareImprove !== undefined && api.setCampaignSetting && (
         <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareImprove }} />
+      )}
+      {AUTO_ADD_LIVE && s && s.askBeforeAdding !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./AskBeforeAddingPanel")} what="Ask me before adding" props={{ api, campaignRef, on: s.askBeforeAdding }} />
       )}
       {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
