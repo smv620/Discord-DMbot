@@ -166,7 +166,8 @@ def read_traits(
     quote is not in the text or doesn't hold the name and the words (`trait_not_in_text`).
     `existing`: the keys of names the campaign already has. Their traits are never changed
     silently: one that passes the same checks goes into `offers` (Supervisor's ruling on #3926:
-    the caller asks the DM about it, counted `trait_offered`); without `offers` it is only counted
+    the caller asks the DM about it, counted `trait_existing_checked`); without `offers` it is only
+    counted
     (`trait_existing_name`)."""
     counts = dropped if dropped is not None else Counter()
     haystack = bg._squash(text)
@@ -209,10 +210,12 @@ def read_traits(
             continue
         seen.add(key)
         if is_existing and offers is not None:
-            counts["trait_offered"] += 1
-            offers.append(Found(name, trait, quote))
-        else:
-            found.append(Found(name, trait))
-        if len(found) + len(offers or ()) >= MAX_TRAITS:
+            # (checked, not yet asked: the caller leaves out what changes nothing or is unsure)
+            if len(offers) < MAX_TRAITS:  # (its own cap: never eats the new names' traits)
+                counts["trait_existing_checked"] += 1
+                offers.append(Found(name, trait, quote))
+            continue
+        found.append(Found(name, trait))
+        if len(found) >= MAX_TRAITS:
             break
     return found

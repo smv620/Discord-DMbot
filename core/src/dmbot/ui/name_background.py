@@ -633,7 +633,9 @@ class BackgroundOffer(_Menu):
                     questions=done.questions,
                     changes=done.changes,
                     suggested=done.suggested,
-                    knowledge_note=done.knowledge_note,
+                    # (the lineage questions' count rides on the note: count only, as the
+                    # question itself opens privately from ❓ Questions for you, #3926)
+                    knowledge_note=done.knowledge_note + trait_questions_line(done.trait_questions),
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
             # (#3314). When the summary above was posted in the DM Bot channel, its names and
@@ -939,6 +941,16 @@ async def read_background(
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
     return done
+
+
+def trait_questions_line(n: int) -> str:
+    """The count line for an upload whose lineage questions wait (#3926); "" for none."""
+    if not n:
+        return ""
+    return (
+        f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
+        " in ❓ Questions for you."
+    )
 
 
 async def ask_traits(

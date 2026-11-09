@@ -35,6 +35,17 @@ if TYPE_CHECKING:
 QUOTE_MAX = 240  # the reader's quote of the DM's own text, as `memory_link_sources.quote`
 UPLOAD_MAX = 200  # the upload's label, as `upload_notices.label`
 WAITING, NEVER = "waiting", "never"
+# A question whose answer is already true (the DM set that lineage or class since) is not shown or
+# counted: the same rows `waiting` and `count` read.
+_STILL_OPEN = (
+    " AND NOT EXISTS (SELECT 1 FROM memory_rule_links l WHERE l.guild_id = o.guild_id"
+    " AND l.campaign_id = o.campaign_id AND l.entity_id = o.entity_id AND l.kind = o.kind"
+    " AND lower(l.name) = lower(o.name))"
+)
+
+
+class NotWaiting(MemoryRuleError):
+    """The question was answered already (another press, or another DM)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +134,8 @@ class TraitOfferStore:
                 " AND e.campaign_id = o.campaign_id AND e.id = o.entity_id"
                 " WHERE o.guild_id = %s AND o.campaign_id = %s AND o.state = 'waiting'"
                 " AND e.status = 'confirmed'"
-                " ORDER BY o.created_at, o.entity_id, o.kind, o.name_key",
+                + _STILL_OPEN
+                + " ORDER BY o.created_at, o.entity_id, o.kind, o.name_key",
                 (guild_id, campaign_id),
             )
             rows = await cur.fetchall()
@@ -153,7 +165,7 @@ class TraitOfferStore:
                 "SELECT count(*) AS n FROM memory_trait_offers o JOIN memory_entities e"
                 " ON e.guild_id = o.guild_id AND e.campaign_id = o.campaign_id"
                 " AND e.id = o.entity_id WHERE o.guild_id = %s AND o.campaign_id = %s"
-                " AND o.state = 'waiting' AND e.status = 'confirmed'",
+                " AND o.state = 'waiting' AND e.status = 'confirmed'" + _STILL_OPEN,
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
@@ -162,18 +174,34 @@ class TraitOfferStore:
     async def keep(
         self, memory: MemoryStore, guild_id: int, campaign_id: str, offer: Offer
     ) -> int | None:
-        """✅ Keep it: the rules link, as the DM's own change, then the question goes (only after
-        the link is written, so a refused one is still asked). Returns the change's batch, for
-        Undo. Raises MemoryRuleError when the question is not waiting any more or the link is
-        refused (the character is no longer one)."""
-        if not await self._waits(guild_id, campaign_id, offer):
-            raise MemoryRuleError("That question was already answered.")
+        """✅ Yes, change it: the rules link, as the DM's own change. The question is claimed first
+        in one statement, so two presses (or two DMs) write it once. Returns the change's batch,
+        for Undo. Raises `NotWaiting` when it was answered already, and MemoryRuleError when the
+        link is refused (the character is no longer one): that question is then remembered as
+        "never". Any other failure puts the question back."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM memory_trait_offers WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND kind = %s AND name_key = %s AND state = 'waiting'"
+                " RETURNING notice_id",
+                (guild_id, campaign_id, offer.entity_id, offer.trait.kind, offer.key),
+            )
+            claimed = await cur.fetchone()
+        if claimed is None:
+            raise NotWaiting("That question was already answered.")
         t = offer.trait
-        written = await memory.set_rule_link(
-            guild_id, campaign_id, offer.entity_id, t.kind, t.name, source=DM,
-            rules_source=t.rules_source, edition=t.edition, known=t.known,
-        )  # fmt: skip
-        await self._take(guild_id, campaign_id, offer)
+        try:
+            written = await memory.set_rule_link(
+                guild_id, campaign_id, offer.entity_id, t.kind, t.name, source=DM,
+                rules_source=t.rules_source, edition=t.edition, known=t.known,
+            )  # fmt: skip
+        except MemoryRuleError:
+            await self.offer(guild_id, campaign_id, [offer], claimed["notice_id"])
+            await self.never(guild_id, campaign_id, offer)
+            raise
+        except BaseException:
+            await self.offer(guild_id, campaign_id, [offer], claimed["notice_id"])
+            raise
         return written.batch
 
     async def never(self, guild_id: int, campaign_id: str, offer: Offer) -> bool:
@@ -186,23 +214,6 @@ class TraitOfferStore:
                 (guild_id, campaign_id, offer.entity_id, offer.trait.kind, offer.key),
             )
             return bool(cur.rowcount)
-
-    async def _waits(self, guild_id: int, campaign_id: str, offer: Offer) -> bool:
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT 1 FROM memory_trait_offers WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND kind = %s AND name_key = %s AND state = 'waiting'",
-                (guild_id, campaign_id, offer.entity_id, offer.trait.kind, offer.key),
-            )
-            return await cur.fetchone() is not None
-
-    async def _take(self, guild_id: int, campaign_id: str, offer: Offer) -> None:
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "DELETE FROM memory_trait_offers WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND kind = %s AND name_key = %s AND state = 'waiting'",
-                (guild_id, campaign_id, offer.entity_id, offer.trait.kind, offer.key),
-            )
 
     async def drop_for_notice(self, guild_id: int, campaign_id: str, notice_id: str) -> int:
         """ "Undo this upload": the questions it left waiting go (an answered "Not this" stays)."""

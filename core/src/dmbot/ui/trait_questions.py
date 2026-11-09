@@ -18,7 +18,7 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import SPECIES, MemoryRuleError, TooLateToUndo
-from dmbot.memory.trait_offers import Offer, TraitOfferStore
+from dmbot.memory.trait_offers import NotWaiting, Offer, TraitOfferStore
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.family_ties import _dm_campaign
 from dmbot.ui.names import _md, _memory
@@ -186,20 +186,21 @@ class TraitQuestions(_Menu):
                 self.undo_batch = self.kept = None
                 if await store.never(self.guild_id, self.campaign_id, offer):
                     said = left_text(offer)
-        except TooLateToUndo:
-            self.undo_batch = self.kept = None
+        except (TooLateToUndo, NotWaiting):
+            self.undo_batch = self.kept = None  # (said stays GONE_NOW)
         except MemoryRuleError:
             self.undo_batch = self.kept = None
             if what == "keep" and offer is not None:
-                # refused for good (the character is no longer one): not asked again
-                await store.never(self.guild_id, self.campaign_id, offer)
+                # refused for good (the character is no longer one): the store remembers it
                 said = could_not_text(offer)
         shown = await self._load(interaction)
         if shown is None:
             if self.undo_batch is None:
                 self.stop()
             await _replace(
-                interaction, f"{said}\n\n{NOTHING_LEFT}", self if self.undo_batch else None
+                interaction,
+                f"{said}\n\n{NOTHING_LEFT}",
+                self if self.undo_batch is not None else None,
             )
             return
         await _replace(interaction, f"{said}\n\n{shown}", self)

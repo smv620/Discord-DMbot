@@ -4,6 +4,7 @@ upload clears what it left, and only a confirmed character is asked about. Inven
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 from collections import Counter
 
@@ -47,7 +48,7 @@ class TheReaderOffers(unittest.TestCase):
         self.assertEqual(got, [])  # never stored with the name
         (offer,) = offers  # the elf line is not in the text: dropped, not offered
         self.assertEqual((offer.trait, offer.quote), (DWARF, "Torvin Ashgrove is a dwarf"))
-        self.assertEqual((dropped["trait_offered"], dropped["trait_not_in_text"]), (1, 1))
+        self.assertEqual((dropped["trait_existing_checked"], dropped["trait_not_in_text"]), (1, 1))
 
     def test_without_offers_it_is_only_counted(self) -> None:
         got, dropped = self.read(None)
@@ -165,3 +166,45 @@ class TheStore(NamesTest):
         self.assertEqual(n, 1)
         (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertEqual((waiting.trait.name, waiting.upload), ("Dwarf", "Notes"))
+
+    async def test_two_presses_at_once_write_it_once_and_undo_gives_back_the_old(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer()])
+        got = await asyncio.gather(
+            self.store.keep(self.memory, GUILD, self.campaign.id, self.offer()),
+            self.store.keep(self.memory, GUILD, self.campaign.id, self.offer()),
+            return_exceptions=True,
+        )
+        won = [g for g in got if not isinstance(g, BaseException)]
+        lost = [g for g in got if isinstance(g, to.NotWaiting)]
+        self.assertEqual((len(won), len(lost)), (1, 1))
+        assert isinstance(won[0], int)
+        await self.memory.undo(GUILD, self.campaign.id, won[0])
+        links = await self.memory.rule_links(GUILD, self.campaign.id, {self.torvin})
+        self.assertEqual([lk.name for lk in links if lk.kind == SPECIES], ["Human"])
+
+    async def test_a_question_already_true_is_not_shown_or_counted(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer()])
+        await self.memory.set_rule_link(
+            GUILD, self.campaign.id, self.torvin, SPECIES, "Dwarf", source="dm",
+            rules_source="SRD 5.2.1", edition="2024", known=True,
+        )  # fmt: skip
+        self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+
+    async def test_a_class_they_have_and_a_shared_name_are_not_asked(self) -> None:
+        await self.memory.set_rule_link(
+            GUILD, self.campaign.id, self.torvin, CLASS, "Cleric", source="dm",
+            rules_source="SRD 5.2.1", edition="2024", known=True,
+        )  # fmt: skip
+        await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Mira", "npc", CONFIRMED)], source="dm"
+        )
+        await self.memory.add_alias(  # Torvin is called Mira too: two confirmed Miras
+            GUILD, self.campaign.id, self.torvin, "Mira", kind="nickname", source="dm",
+            status=CONFIRMED,
+        )  # fmt: skip
+        found = [
+            traits_read.Found("Torvin Ashgrove", CLERIC),  # he has it
+            traits_read.Found("Mira", DWARF),  # two confirmed Miras: whose?
+        ]
+        self.assertEqual(await nb.ask_traits(self.memory, self.campaign, found, "Notes", None), 0)
