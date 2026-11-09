@@ -122,6 +122,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_npc_guesses": "DMbot's guesses of which NPCs and groups know a lore name, waiting for "
+    "the DM to confirm it (#2959): entry ids and a certainty, never words; made again by the next "
+    "read, and the ones already confirmed are knowers, which a backup carries",
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",
@@ -179,6 +182,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
+    "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,

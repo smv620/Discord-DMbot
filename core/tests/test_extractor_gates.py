@@ -218,7 +218,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             _recap_lines=AsyncMock(return_value=frozenset()),  # (no split yet: every line is play)
             add_short_names=AsyncMock(),  # (#3880: tested in test_short_names)
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7}))),
-            name_of=lambda gid, uid: f"<@{uid}>",
+            name_of=unittest.mock.Mock(side_effect=lambda gid, uid: f"<@{uid}>"),
             post=AsyncMock(),
         )  # fmt: skip
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
@@ -307,6 +307,30 @@ dm_user_ids=frozenset(),
         with patch.object(extractor, "run", AsyncMock()) as run:
             await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
+
+    async def test_an_import_reads_who_it_recorded_and_never_a_no(self) -> None:
+        """An import passes its own list (`ConsentStore.recorded_in`, Supervisor on #3918): a
+        speaker the uploader confirmed (no Discord, a negative number) is read, someone with a
+        "no" on record (left out of that list) is not, and the server's list isn't asked."""
+        from tests.test_extractor import line
+
+        confirmed, said_no = -3, 9
+        me = self.fake()
+        me.transcripts.lines = AsyncMock(
+            return_value=[line(1, confirmed, "Vale opens the gate."), line(2, said_no, "No.")]
+        )
+        recorded = AsyncMock(return_value=frozenset({DM, confirmed}))
+        with patch.object(extractor, "run", AsyncMock(return_value=extractor.Report())) as run:
+            await BOT._extract_session(
+                me, 1, "c", "s", dm_ids={DM}, tally=None, notice_channel=None,
+                consenting=recorded,
+            )  # fmt: skip
+        self.assertEqual(me.add_short_names.await_args.args[2], ["Vale opens the gate."])
+        call = run.await_args
+        assert call is not None
+        self.assertIs(call.kwargs["consenting"], recorded)  # (asked again per batch)
+        me.consent.consenting.assert_not_awaited()
+        self.assertNotIn(-3, [c.args[1] for c in me.name_of.call_args_list])  # (no placeholder)
 
 
 class Contradictions(unittest.IsolatedAsyncioTestCase):

@@ -2,7 +2,7 @@
 
 A campaign has a list of short lines naming what a recap must capture for someone who missed the
 session (where it began and ended, travel, each combat, loot, twists, clues, the characters). With
-none of its own, a campaign gets the 13 defaults shipped in `must_have_defaults/defaults.txt`, one
+none of its own, a campaign gets the 15 defaults shipped in `must_have_defaults/defaults.txt`, one
 `group: line` each, so the wording can change without a migration and a campaign that never edits
 always has the current defaults. The DM's list replaces them, and saving an empty list, or one that
 is word for word the defaults, brings the defaults back.
@@ -143,8 +143,12 @@ This campaign has a list of must-haves: things a recap must capture so that some
 the session can follow. Include each one WHEN THE SESSION GAVE IT, in the beats, the transcript \
 or the confirmed story, and put it where it happened in the story. If the session did not give \
 it, leave it out: never invent a direction, how long a journey took, how a character felt, a name \
-or a detail to fill a line. The must-haves decide what goes in, not how long the recap is. They \
-change none of the numbered rules above; those, and the facts of the beat sheet, always win."""
+or a detail to fill a line. A must-have about what a mention needs (such as how an encounter \
+ended, or why a name is there) applies to whatever the recap itself mentions: give what the \
+session gave, or say plainly \
+that the session did not say, or leave that mention out. The must-haves decide what goes in, not \
+how long the recap is. They change none of the numbered rules above; those, and the facts of the \
+beat sheet, always win."""
 
 
 class MustSection:
