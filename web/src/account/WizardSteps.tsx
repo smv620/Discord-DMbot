@@ -20,7 +20,7 @@ export interface StepProps {
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
-/** Step 1: where the campaign is, and the D&D Beyond invite and public sheet links. */
+/** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
 export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
   const a = draft.answers;
   const [invite, setInvite] = useState(a.invite);
