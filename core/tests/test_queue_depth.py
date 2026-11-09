@@ -46,19 +46,20 @@ class TheDepths(DatabaseTest):
         self.clock.now = at
         await self.store.enqueue(guild, campaign or self.one, at, dm_user_id=fx.DM)
 
-    async def import_row(self, sid: str, state: str, updated: int) -> None:
+    async def import_row(self, sid: str, state: str, imported: int) -> None:
         await self.sql(
             GUILD,
             "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
             " VALUES (%s, %s, %s, %s)",
-            sid, GUILD, self.one, updated,
+            sid, GUILD, self.one, imported,
         )  # fmt: skip
+        # updated_at is left at its default (0), as the production insert leaves it
         await self.sql(
             GUILD,
             "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
-            " file_name, imported_by, imported_at, state, updated_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            GUILD, self.one, sid, IMPORT, "first.txt", fx.DM, updated, state, updated,
+            " file_name, imported_by, imported_at, state)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            GUILD, self.one, sid, IMPORT, "first.txt", fx.DM, imported, state,
         )  # fmt: skip
 
     async def test_nothing_waiting_gives_zeros(self) -> None:
@@ -98,6 +99,43 @@ class TheDepths(DatabaseTest):
         theirs = {d.kind: d.waiting for d in await queue_depths(self.db, OTHER_GUILD, now=1000)}
         self.assertEqual(ours["recaps"], 0)
         self.assertEqual(theirs["recaps"], 1)
+
+    async def test_an_import_ages_from_imported_at(self) -> None:
+        await self.import_row(SID1, "waiting", 100)
+        imports = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["imports"]
+        self.assertEqual((imports.waiting, imports.oldest_s), (1, 900))
+
+    async def test_audio_falls_back_to_approved_at_then_updated_at(self) -> None:
+        await self.recap(300)
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET state = 'ready', audio = 'queued', audio_asked_at = 300,"
+            " approved_at = 0, updated_at = 0 WHERE session_at = 300",
+        )
+
+        async def audio_oldest() -> int:
+            return {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}[
+                "audio"
+            ].oldest_s
+
+        self.assertEqual(await audio_oldest(), 700)  # the asked-again time
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET audio_asked_at = 0, approved_at = 200 WHERE session_at = 300",
+        )
+        self.assertEqual(await audio_oldest(), 800)  # the approval time
+        await self.sql(
+            GUILD, "UPDATE recap_jobs SET approved_at = 0, updated_at = 100 WHERE session_at = 300"
+        )
+        self.assertEqual(await audio_oldest(), 900)  # the last write
+
+    async def test_a_zero_time_counts_but_never_sets_the_oldest(self) -> None:
+        await self.recap(0)  # created_at 0: unknown, so it counts but sets no age
+        recaps = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["recaps"]
+        self.assertEqual((recaps.waiting, recaps.oldest_s), (1, 0))
+        await self.recap(100)
+        recaps = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["recaps"]
+        self.assertEqual((recaps.waiting, recaps.oldest_s), (2, 900))
 
     async def test_a_clock_behind_never_gives_a_negative_age(self) -> None:
         await self.recap(2000)
