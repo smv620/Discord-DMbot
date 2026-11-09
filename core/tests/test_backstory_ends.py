@@ -573,7 +573,7 @@ class WhenKept(NamesTest):
         await self.read()
         await self.confirm_all()
         await self.look_with(self.campaign)
-        self.bot.post_message.assert_not_awaited()
+        self.bot.post_message.assert_not_awaited()  # type: ignore[attr-defined]
         self.assertTrue(all(not w.told for w in await self.waiting()))
 
     async def test_a_deleted_message_is_replaced_but_a_passing_error_is_not(self) -> None:
