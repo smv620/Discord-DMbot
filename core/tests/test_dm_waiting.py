@@ -183,6 +183,7 @@ class TheSummaryLink(WithImports):
         )
         self.assertTrue(all(c.url == summary.jump_url for c in view.children))
         # ...and "Open in Discord" points at the summary too, not at the question itself
+        assert links is not None
         self.assertEqual(links.discord_url, summary.jump_url)
 
     async def test_without_a_summary_the_buttons_are_todays(self) -> None:
