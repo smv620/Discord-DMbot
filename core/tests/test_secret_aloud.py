@@ -330,12 +330,6 @@ class InAPrivateMessage(unittest.IsolatedAsyncioTestCase):
         await button.callback(interaction)  # interaction.guild is GUILD_A
         bot.campaigns.get.assert_not_awaited()
 
-    def test_the_private_question_names_the_campaign_and_says_it_was_sent_alone(self) -> None:
-        text = question_text("Auril", private=True, campaign_name="Frostmaiden")
-        self.assertIn("(campaign Frostmaiden)", text)
-        self.assertIn("Sent to you alone", text)
-        self.assertNotIn("Sent to you alone", question_text("Auril"))
-
     def test_an_answered_keep_message_does_not_repeat_the_name(self) -> None:
         self.assertNotIn("Auril", kept_text())
 

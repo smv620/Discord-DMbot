@@ -45,25 +45,14 @@ def names_note(entries: int) -> tuple[str, str]:
     )
 
 
-PRIVATE_NOTE = "\n(Sent to you alone, because your players can look at your DM screen.)"
-
-
-def question_text(
-    name: str, entries: int = 1, *, private: bool = False, campaign_name: str = ""
-) -> str:
+def question_text(name: str, entries: int = 1) -> str:
     shown = discord.utils.escape_markdown(name)
     after_name, covers = names_note(entries)
-    where = (
-        f" (campaign {discord.utils.escape_markdown(campaign_name)})"
-        if private and campaign_name
-        else ""
-    )
     return (
-        f"🤫 A player said **{shown}**{after_name} at the table{where}. You'd marked it secret, "
+        f"🤫 A player said **{shown}**{after_name} at the table. You'd marked it secret, "
         f"and the transcript (which anyone in this server can read) now has it.{covers}\n"
         "**Keep it secret:** DMbot still won't use it when it answers players.\n"
         "**Not secret any more:** DMbot may use it in answers to players."
-        + (PRIVATE_NOTE if private else "")
     )
 
 
