@@ -12,6 +12,7 @@ from dmbot import auto_script
 from dmbot.transcript import theatre_job as job
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.theatre_runs import TheatreRuns
+from dmbot.ui import theatre_button
 from tests.test_memory_names import GUILD, NamesTest
 
 NOW = 1_700_100_000
@@ -119,10 +120,8 @@ class Round(NamesTest):
         make = AsyncMock(return_value=me.outcome)
         me.campaigns.db = self.db
         with (
-            patch.object(
-                auto_script.TheatreRuns, "sessions_without_script", AsyncMock(return_value=due)
-            ),
-            patch.object(auto_script.theatre_button, "make_for", make),
+            patch.object(TheatreRuns, "sessions_without_script", AsyncMock(return_value=due)),
+            patch.object(theatre_button, "make_for", make),
         ):
             tried = await auto_script.run_round(me, GUILD, NOW)
         return tried, make
