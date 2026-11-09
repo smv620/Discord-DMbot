@@ -9,6 +9,8 @@ from __future__ import annotations
 
 # A migration that changes rows opens row-level security for itself (CLAUDE.md, #704): both tables
 # are touched below, so each has a `migrate_backfill` policy for the length of the file.
+# Only `ready` is filled: the one path that skipped the notes (`add_finished`) always writes a
+# ready job, and the pipeline's unfinished jobs keep theirs as they go.
 # Only a ready recap with a beat sheet and no notes yet gains a row; a session that has notes is
 # left as it is (ON CONFLICT DO NOTHING), and the beats are copied as they are, never rewritten.
 SQL = """

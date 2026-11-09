@@ -90,21 +90,23 @@ class Writing(NotesTest):
         found = await self.kept()
         self.assertEqual([b["what"] for b in found.beats], [b["what"] for b in FIRST])
 
-    async def test_a_kept_recap_with_no_beats_leaves_no_notes_and_a_second_keeps_the_first(
-        self,
-    ) -> None:
+    async def test_a_kept_recap_with_no_beats_leaves_no_notes(self) -> None:
         none = await self.recaps.add_finished(
             GUILD, self.camp.id, 1000, dm_user_id=DM, title="T", summary="s", original="s",
             housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=None,
         )  # fmt: skip
         self.assertTrue(none)
         self.assertIsNone(await self.kept())
-        again = await self.recaps.add_finished(
-            GUILD, self.camp.id, 1000, dm_user_id=DM, title="U", summary="s", original="s",
-            housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=SECOND,
-        )  # fmt: skip
-        self.assertFalse(again)  # the session already has a recap: left as it is
-        self.assertIsNone(await self.kept())
+
+    async def test_a_second_keep_for_the_same_session_leaves_the_first_ones_notes(self) -> None:
+        for title, sheet, expect in (("T", FIRST, True), ("U", SECOND, False)):
+            made = await self.recaps.add_finished(
+                GUILD, self.camp.id, 1000, dm_user_id=DM, title=title, summary="s", original="s",
+                housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=sheet,
+            )  # fmt: skip
+            self.assertEqual(made, expect)  # the session already has a recap: left as it is
+        found = await self.kept()
+        self.assertEqual([b["what"] for b in found.beats], [b["what"] for b in FIRST])
 
     async def test_a_redone_recap_replaces_the_notes(self) -> None:
         await self.beats_step(self.camp, 1000, FIRST)
@@ -410,7 +412,10 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
             max_size=2,
             # (a later migration that adds a column to session_notes needs the table: left out too)
             migrations=tuple(
-                m for m in MIGRATIONS if m[0] not in (self.name, "0381_made_by_commit_transcripts")
+                m
+                for m in MIGRATIONS
+                if m[0]
+                not in (self.name, "0381_made_by_commit_transcripts", "0408_session_notes_fill")
             ),
         )
 
@@ -499,5 +504,14 @@ class TheFillMigration(unittest.IsolatedAsyncioTestCase):
         notes = SessionNotesStore(self.db)
         got = {n.session_at: n for n in await notes.all(GUILD, camp.id)}
         self.assertEqual(sorted(got), [1000, 2000])
-        self.assertEqual(len(got[1000].beats), len(FIRST))
+        self.assertEqual([b["what"] for b in got[1000].beats], [b["what"] for b in FIRST])
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT updated_at, created_at FROM recap_jobs WHERE session_at = 1000"
+            )
+            job = await cur.fetchone()
+        assert job is not None
+        self.assertEqual(
+            (got[1000].written_at, got[1000].job_created_at), (job["updated_at"], job["created_at"])
+        )
         self.assertEqual(len(got[2000].beats), len(FIRST))  # not replaced by the job's own sheet
