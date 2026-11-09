@@ -2862,8 +2862,9 @@ class MemoryStore:
         own name for the upload (it can name a private backstory), cut to the column's limit, and
         is only ever given to the DM. Ids, the label and a time only. An entry that is gone by now
         is left out quietly. Returns how many rows are new."""
-        label = clean_text(label)[:120]
-        upload_key = clean_text(upload_key)[:120] or label
+        # (`clean_text` refuses an empty text: no label records nothing, and no key is the label)
+        label = clean_text(label)[:120] if label.strip() else ""
+        upload_key = clean_text(upload_key)[:120] if upload_key.strip() else label
         ids = sorted(set(entity_ids))
         if not label or not ids:
             return 0

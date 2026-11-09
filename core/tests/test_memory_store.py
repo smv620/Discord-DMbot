@@ -271,6 +271,8 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and which upload a name was read from (#3675): an id and a label only
+        await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
