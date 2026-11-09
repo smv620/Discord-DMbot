@@ -145,7 +145,10 @@ class TheDepths(DatabaseTest):
         self.assertEqual((imports.waiting, imports.oldest_s), (1, 0))
 
     async def test_a_zero_time_counts_but_never_sets_the_oldest(self) -> None:
-        await self.recap(0)  # created_at 0: unknown, so it counts but sets no age
+        # session_at must be above 0 (a database check), so the row is queued at 200 and its
+        # created_at is then set to 0: unknown, so it counts but sets no age
+        await self.recap(200)
+        await self.sql(GUILD, "UPDATE recap_jobs SET created_at = 0 WHERE session_at = 200")
         recaps = {d.kind: d for d in await queue_depths(self.db, GUILD, now=1000)}["recaps"]
         self.assertEqual((recaps.waiting, recaps.oldest_s), (1, 0))
         await self.recap(100)
