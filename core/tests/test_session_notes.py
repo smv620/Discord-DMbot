@@ -9,11 +9,13 @@ import unittest
 import uuid
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from dmbot.accounts import delete_person
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.db import Database, drop_schema
 from dmbot.recaps.inputs import story_so_far
-from dmbot.recaps.notes import SessionNotesSection, SessionNotesStore, numbered
+from dmbot.recaps.notes import SessionNotesSection, SessionNotesStore, keep_from_job, numbered
 from dmbot.recaps.store import RecapStore
 from dmbot.schema import MIGRATIONS
 from dmbot.transcript.models import Line
@@ -76,6 +78,33 @@ class Writing(NotesTest):
         self.assertEqual([b["what"] for b in found.beats], [b["what"] for b in FIRST])
         self.assertGreater(found.written_at, 0)
         self.assertGreater(found.job_created_at, 0)
+
+    async def test_a_finished_recap_kept_by_the_test_run_keeps_its_notes_too(self) -> None:
+        # (#3959) `recap_run --keep` and the sample run write the job in one statement, with
+        # its beats, and never pass through the beats step
+        made = await self.recaps.add_finished(
+            GUILD, self.camp.id, 1000, dm_user_id=DM, title="T", summary="s", original="s",
+            housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=FIRST,
+        )  # fmt: skip
+        self.assertTrue(made)
+        found = await self.kept()
+        self.assertEqual([b["what"] for b in found.beats], [b["what"] for b in FIRST])
+
+    async def test_a_kept_recap_with_no_beats_leaves_no_notes_and_a_second_keeps_the_first(
+        self,
+    ) -> None:
+        none = await self.recaps.add_finished(
+            GUILD, self.camp.id, 1000, dm_user_id=DM, title="T", summary="s", original="s",
+            housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=None,
+        )  # fmt: skip
+        self.assertTrue(none)
+        self.assertIsNone(await self.kept())
+        again = await self.recaps.add_finished(
+            GUILD, self.camp.id, 1000, dm_user_id=DM, title="U", summary="s", original="s",
+            housekeeping=[], music=[], game_day=None, speakers=[], grade={}, beats=SECOND,
+        )  # fmt: skip
+        self.assertFalse(again)  # the session already has a recap: left as it is
+        self.assertIsNone(await self.kept())
 
     async def test_a_redone_recap_replaces_the_notes(self) -> None:
         await self.beats_step(self.camp, 1000, FIRST)
@@ -418,3 +447,57 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mine[0].beats, FIRST)
         theirs = await notes.all(GUILD, other.id)
         self.assertEqual(theirs[0].beats, SECOND)
+
+
+class TheFillMigration(unittest.IsolatedAsyncioTestCase):
+    """0408 (#3959): a ready recap kept without its notes gets them from the beats its job holds."""
+
+    async def asyncSetUp(self) -> None:
+        if not TEST_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_DATABASE_URL is needed")
+            self.skipTest("set DMBOT_TEST_DATABASE_URL to test the migration")
+        self.schema = f"t_{uuid.uuid4().hex[:16]}"
+        self.fill = "0408_session_notes_fill"
+        self.db = await Database.open(
+            TEST_URL,
+            schema=self.schema,
+            max_size=2,
+            migrations=tuple(m for m in MIGRATIONS if m[0] != self.fill),
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.db.close()
+        await drop_schema(TEST_URL, self.schema)
+
+    async def test_ready_recaps_without_notes_gain_them_and_nothing_else_changes(self) -> None:
+        camp = await CampaignStore(self.db).create(GUILD, "Frostmaiden", DM)
+        recaps = RecapStore(self.db)
+        # (session, beats, the job's state, whether it already has notes)
+        jobs: tuple[tuple[int, list[Any], str, bool], ...] = (
+            (1000, FIRST, "ready", False),  # kept by the test run: gains notes
+            (2000, SECOND, "ready", True),  # already has notes: left as they are
+            (3000, [], "ready", False),  # no beats
+            (4000, SECOND, "failed", False),  # a recap that failed
+        )
+        for at, sheet, state, has_notes in jobs:
+            await recaps.enqueue(GUILD, camp.id, at, dm_user_id=DM)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "UPDATE recap_jobs SET state = %s, beats = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND session_at = %s",
+                    (state, Jsonb(sheet), GUILD, camp.id, at),
+                )
+                if has_notes:
+                    await keep_from_job(conn, GUILD, camp.id, at)
+                    await conn.execute(
+                        "UPDATE session_notes SET beats = %s WHERE session_at = %s",
+                        (Jsonb(FIRST), at),
+                    )
+        await self.db.close()
+        self.db = await Database.open(TEST_URL, schema=self.schema, max_size=2)
+        notes = SessionNotesStore(self.db)
+        got = {n.session_at: n for n in await notes.all(GUILD, camp.id)}
+        self.assertEqual(sorted(got), [1000, 2000])
+        self.assertEqual(len(got[1000].beats), len(FIRST))
+        self.assertEqual(len(got[2000].beats), len(FIRST))  # not replaced by the job's own sheet
