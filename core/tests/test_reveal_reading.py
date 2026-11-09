@@ -201,5 +201,43 @@ class TheAnswer(unittest.TestCase):
         self.assertIn('{"reveals": []}', rr.REVEAL_SYSTEM)
 
 
+class ThePreCheck(unittest.TestCase):
+    def test_each_word_family_on_a_dm_line_asks_and_says_which(self) -> None:
+        families = {
+            rr.CHECK_WORD: ("Roll Insight for me.", "Make a Perception check.",
+                            "Give me an Arcana check.", "You are rolling Survival."),
+            rr.DISCOVERY_WORD: ("You notice a hidden door.", "You realize he lied.",
+                                "You realise he lied.", "You recognise her.", "You learnt it.",
+                                "You learn the truth.", "You discovered a door.",
+                                "It is a discovery.", "You find out the truth.",
+                                "You found it out.", "She found out."),
+            rr.TELLING_WORD: ("She whispers a name.", "He explains the plan.",
+                              "She warned them.", "He admits it.", "She mentioned it."),
+        }  # fmt: skip
+        for family, said in families.items():
+            for words in said:
+                with self.subTest(words):
+                    self.assertEqual(rr.reveal_reason([(words, True)]), family)
+
+    def test_check_and_discovery_words_count_on_the_dm_s_lines_only(self) -> None:
+        self.assertFalse(rr.could_hold_reveal([("I rolled a 19 on Insight!", False)]))
+        self.assertFalse(rr.could_hold_reveal([("I notice nothing.", False)]))
+        mixed = [("I roll Perception!", False), ("The wind howls.", True)]
+        self.assertFalse(rr.could_hold_reveal(mixed))  # (the player's line alone never asks)
+
+    def test_a_telling_word_on_anyone_s_line_asks(self) -> None:
+        self.assertEqual(rr.reveal_reason([("Bruno told me about Shela.", False)]), "telling")
+
+    def test_see_and_plain_talk_do_not_ask(self) -> None:
+        self.assertFalse(rr.could_hold_reveal([("You see a long road ahead.", True)]))
+        self.assertFalse(rr.could_hold_reveal([("We walk on.", False), ("Snow falls.", True)]))
+        self.assertEqual(rr.reveal_reason([]), "")
+
+    def test_every_listed_check_counts(self) -> None:
+        for check in rr.CHECKS:
+            with self.subTest(check):
+                self.assertTrue(rr.could_hold_reveal([(f"Roll {check}.", True)]))
+
+
 if __name__ == "__main__":
     unittest.main()

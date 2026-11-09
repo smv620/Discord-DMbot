@@ -111,6 +111,9 @@ class Settings:
     # A fourth question (#2996, part 2 slice 1): who learned what, proposed for the DM to keep.
     # Off until dev1's sample run; only runs when the extractor does, inside the same call limits.
     story_reveals_on: bool = False
+    # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
+    # shows the kept reveals don't drop with it on.
+    story_reveals_precheck: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -426,6 +429,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_WHO_APPLY must be 1 (on) or 0 (off), got "' + who_apply_raw + '".'
         )
+    precheck_raw = (get("DMBOT_STORY_REVEALS_PRECHECK") or "0").lower()
+    if precheck_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
+        )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -625,6 +633,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_deeds_on=deeds_raw in ("1", "true", "on"),
         story_reveals_on=reveals_raw in ("1", "true", "on"),
+        story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
