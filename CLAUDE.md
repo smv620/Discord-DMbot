@@ -516,10 +516,12 @@ terminal output or Discord screenshots copied to it.
   (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
   the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
   that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
-- **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
-  Discord server may view and download a campaign's session transcripts (decided
-  2026-10-05). Only people who agreed are ever recorded, and the consent request tells
-  them the whole server can read the transcript. DM-screen content (rules alerts,
+- **Transcripts are shared; the DM screen is not pushed to players.** A campaign's people
+  (its DMs, its players and those recorded at its table) may view and download its session
+  transcripts, or everyone in the Discord server when the campaign's "Who can see this
+  campaign's channels" setting says so (owner, 2026-11-09, #3891; it was everyone in the
+  server from 2026-10-05). Only people who agreed are ever recorded, and the consent request
+  tells them who can read the transcript. DM-screen content (rules alerts,
   house-rule prompts, NPC and plot notes) never goes into transcripts, and the bot never
   sends it to players. Players see the DM screen only if the campaign's DM-screen
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
