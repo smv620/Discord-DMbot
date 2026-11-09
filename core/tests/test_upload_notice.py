@@ -336,4 +336,4 @@ class ImportAdds(NamesTest):
         self.assertTrue(done)
         notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
         self.assertEqual(notice.counts.get("connections"), 1)
-        self.assertTrue(notice.changes)  # (names and the connection: one Undo)
+        self.assertGreaterEqual(len(notice.changes), 2)  # (the names and the connection: one Undo)

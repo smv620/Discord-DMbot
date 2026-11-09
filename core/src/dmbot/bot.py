@@ -12061,7 +12061,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if campaign is None or campaign.dm_screen_channel_id is None:
                 continue
             if (
-                names
+                (names or starts)
                 and not campaign.ask_before_adding
                 and await self._add_sure_import(campaign, speakers, entries, batches, starts)
             ):
@@ -12131,7 +12131,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         notice went out (the old post is then not needed), False when nothing was added. Never
         raises; counts only in the log."""
         from dmbot.ui.names import RecapNamesButton
-        from dmbot.ui.upload_notice import add_sure
+        from dmbot.ui.upload_notice import DmClaims, add_sure
 
         try:
             agreed = await self.consent.consenting(campaign.guild_id)
@@ -12141,7 +12141,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             done = await add_sure(
                 self, campaign, {"names": sorted(entries)}, "your imported sessions",
                 connections=False,
-                dm_claims=(campaign.dm_user_ids, agreed, starts),
+                dm_claims=DmClaims(campaign.dm_user_ids, starts),
                 # (the website finds the notice by its import; with several batches in one report
                 # there is no single one to name, so none is: it shows no notice, never a wrong one)
                 source=("import", next(iter(batches))) if len(batches) == 1 else None,

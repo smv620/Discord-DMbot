@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 import discord
 
@@ -197,6 +197,14 @@ async def undo_upload(
     return NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
 
 
+class DmClaims(NamedTuple):
+    """Which connections an import may keep as sure (#3897): stated in the lines of these DMs, in
+    the sessions that start at these times."""
+
+    dm_ids: Collection[int]
+    sessions: Collection[int]
+
+
 async def add_sure(
     bot: Any,
     campaign: Any,
@@ -205,16 +213,16 @@ async def add_sure(
     *,
     connections: bool = True,
     source: tuple[str, str] | None = None,
-    dm_claims: tuple[Collection[int], Collection[int], Collection[int]] | None = None,
+    dm_claims: DmClaims | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
     None when nothing could be kept (no store). `connections=False`: names only (an import's).
     `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
-    by it (#3879). `dm_claims`: (the DMs' ids, who may be recorded now, the starts of this import's
-    sessions) to also keep the connections the DM's own lines state, once their names are in
-    (#3897; an import's). Never raises."""
+    by it (#3879). `dm_claims`: the DMs and this import's sessions, to also keep the connections the
+    DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
+    again just before. Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -230,10 +238,11 @@ async def add_sure(
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
         if dm_claims is not None:  # (after the names, so the claims about them are ready)
-            dms, opted_in, starts = dm_claims
+            opted_in = await bot.consent.consenting(guild)  # (read again after the names)
             await auto.accept_dm_claims(
-                memory, guild, cid, tally, dm_ids=dms, opted_in=opted_in, sessions=starts
-            )
+                memory, guild, cid, tally,
+                dm_ids=dm_claims.dm_ids, opted_in=opted_in, sessions=dm_claims.sessions,
+            )  # fmt: skip
         if (
             links is not None and connections
         ):  # (a bot without the connections store adds the names only)

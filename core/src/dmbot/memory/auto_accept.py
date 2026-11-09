@@ -197,7 +197,9 @@ async def accept_dm_claims(
     it is `dm_said`; every cited line was spoken by one of the campaign's DMs (checked here, never
     trusting the AI's label); it is still waiting with both its names answered (what `waiting`
     returns); and it came from `sessions`, the starts of this import's sessions. Players' claims,
-    plans, readings and secrets stay questions (`secret=False`: nothing is hidden by this)."""
+    plans, readings and lore's worked-out ties stay questions. Secrecy is decided as a plain ✅
+    in the review decides it (`secret=False`, with the store's own rules for names the DM hid);
+    this adds no "secret" choice, which only the DM makes."""
     dms = set(dm_ids)
     starts = set(sessions)
     claims = ClaimStore(memory)
