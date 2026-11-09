@@ -202,6 +202,17 @@ class TheParty(NamesTest):
         steps = await fill_parties(Broken(), make)  # type: ignore[arg-type]
         self.assertEqual(steps["failed"], 2)
 
+    async def test_a_campaign_with_both_parties_is_counted_and_the_flagged_one_wins(self) -> None:
+        flagged = (await self.memory.ensure_party(GUILD, self.campaign.id, source="dm")).id
+        linked = await self.group("The Old Party")
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET source = 'party' WHERE guild_id = %s AND id = %s",
+                (GUILD, linked),
+            )
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        self.assertEqual((filled.step, filled.party_id, filled.both), ("had", flagged, True))
+
     def test_the_names_the_fill_knows(self) -> None:
         self.assertIn("the adventurers", party_mod.PARTY_NAMES)
         self.assertNotIn("the heroes", party_mod.PARTY_NAMES)

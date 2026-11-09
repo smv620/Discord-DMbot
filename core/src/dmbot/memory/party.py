@@ -119,6 +119,9 @@ class Filled:
     step: str
     party_id: str | None
     knower_rows: int = 0
+    # A live #3036 party besides the flagged one (two "party" entries, from before #3954): the
+    # flagged one wins for every reader; counted for Supervisor, never merged by DMbot.
+    both: bool = False
 
 
 async def flagged(w: Changes) -> dict[str, Any] | None:
@@ -149,7 +152,13 @@ async def fill(w: Changes) -> Filled:
     row = await flagged(w)
     if row is not None:
         if row["status"] == CONFIRMED and row["merged_into"] is None:
-            return Filled("had", str(row["id"]))
+            other = await w.select(
+                ENTITIES,
+                " AND source = %s AND type = 'faction' AND status = %s AND merged_into IS NULL"
+                " AND id <> %s",
+                [PARTY_SOURCE, CONFIRMED, row["id"]],
+            )
+            return Filled("had", str(row["id"]), both=bool(other))
         return Filled("rejected", None)  # (rejected, or put aside: the DM's to bring back)
     if any(r["status"] == REJECTED for r in await w.select(
         ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE]

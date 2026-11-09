@@ -1417,7 +1417,7 @@ class MemoryStore:
                 )
                 row = await cur.fetchone()
                 held = int(row["n"]) if row else 0
-            return party_mod.Filled(filled.step, filled.party_id, held)
+            return party_mod.Filled(filled.step, filled.party_id, held, filled.both)
 
     async def add_deed(
         self,
