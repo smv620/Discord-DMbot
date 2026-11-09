@@ -6,6 +6,7 @@ names."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -81,6 +82,68 @@ class ScriptMake(Script):
             got = await self.offer(enforce_plans=True)
             self.assertEqual((got["allowed"], got["why"]), (False, "plan"))
             self.assertEqual(await self.refused(self.press, enforce_plans=True), "script_plan")
+        self.assertEqual((await self.offer())["state"], "none")
+
+    async def _set_press(self, press: str, **cols: int | str) -> None:
+        sets = ", ".join(f"{k} = %s" for k in cols)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                f"UPDATE script_makes SET {sets} WHERE id = %s",
+                (*cols.values(), press),
+            )
+
+    async def test_a_working_press_that_is_still_moving_is_not_lost(self) -> None:
+        first = await self.press()
+        old = int(time.time()) - 3600  # created an hour ago, but the bot moved a minute ago
+        await self._set_press(
+            first, state="working", created_at=old, claimed_at=(int(time.time()) - 60) * 1000
+        )
+        self.assertEqual((await self.offer())["state"], "running")
+        self.assertEqual(await self.press(), first)  # (the same job, never a second one)
+
+    async def test_a_working_press_that_stopped_moving_is_lost(self) -> None:
+        first = await self.press()
+        old = int(time.time()) - 3600
+        await self._set_press(first, state="working", created_at=old, claimed_at=old * 1000)
+        self.assertEqual((await self.offer())["state"], "none")
+        self.assertNotEqual(await self.press(), first)
+
+    async def _auto_run(self, moved_ago: int) -> None:
+        now = int(time.time())
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO theatre_runs (guild_id, session_id, token, state, started_at,"
+                " moved_at) VALUES (%s, %s, 'tok', 'running', %s, %s)",
+                (THURSDAY.id, self.sid, now - moved_ago - 5, now - moved_ago),
+            )
+
+    async def test_a_script_dmbot_is_making_by_itself_shows_as_running(self) -> None:
+        await self._auto_run(moved_ago=30)
+        got = await self.offer()
+        self.assertEqual(got["state"], "running")
+        self.assertIsNone(got["running"])  # (no press of the website's is going)
+        self.assertIsNone(got["cost"])
+
+    async def test_a_press_while_dmbot_makes_it_by_itself_is_refused_and_queues_nothing(
+        self,
+    ) -> None:
+        await self._auto_run(moved_ago=30)
+        self.assertEqual(await self.refused(self.press), "busy")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM script_makes")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_a_finished_automatic_run_does_not_show_as_running(self) -> None:
+        await self._auto_run(moved_ago=30)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE theatre_runs SET state = 'done'")
+        self.assertEqual((await self.offer())["state"], "none")
+        self.assertTrue(await self.press())
+
+    async def test_an_automatic_run_that_stopped_moving_is_not_shown_as_running(self) -> None:
+        await self._auto_run(moved_ago=3600)
         self.assertEqual((await self.offer())["state"], "none")
 
     async def test_a_run_lost_for_half_an_hour_lets_the_session_be_pressed_again(self) -> None:
