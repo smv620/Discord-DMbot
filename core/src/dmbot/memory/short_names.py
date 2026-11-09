@@ -37,6 +37,8 @@ CREATURE_KINDS = frozenset(
         *("giant", "humanoid", "monstrosity", "ooze", "plant", "undead", "goblin", "hobgoblin"),
         *("bugbear", "kobold", "ogre", "troll", "yeti", "wolf", "bear", "duergar", "drow", "lich"),
         *("vampire", "zombie", "skeleton", "ghost", "ghoul", "demon", "devil", "golem", "hag"),
+        *("minotaur", "owlbear", "orc", "gnoll", "ogrillon", "harpy", "griffon", "wyvern", "naga"),
+        *("lizardfolk", "kenku", "kuo-toa", "sahuagin", "merfolk", "werewolf", "wight", "wraith"),
     }
 )
 # Words an epithet starts with ("Red Ilsa", "Black Grim", "Mad Tom"): said alone they name a colour

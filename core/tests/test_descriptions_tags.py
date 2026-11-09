@@ -48,6 +48,22 @@ class TheDescriptionRule(unittest.TestCase):
         self.assertTrue(descriptions.matches_alone("Mira", "full", "background"))
 
 
+class ACapitalisedKindIsNoName(unittest.TestCase):
+    """#3431, from the 11b sample run: "the Minotaur captain of the first ship" was kept as a name,
+    because the capital on a kind of creature read as a proper name."""
+
+    def test_a_kind_with_a_capital_still_makes_a_description(self) -> None:
+        for text in ("the Minotaur captain of the first ship", "the Dwarf smith",
+                     "an Orc raider with a scar"):  # fmt: skip
+            with self.subTest(text):
+                self.assertTrue(descriptions.is_described(text))
+
+    def test_a_real_name_stays_a_name(self) -> None:
+        for text in ("Minotaur Bob", "the Dwarven Valley", "Mira's sister Ren", "Captain Vel"):
+            with self.subTest(text):
+                self.assertFalse(descriptions.is_described(text))
+
+
 class TheMergedDescriptionNeverPlacesALine(unittest.TestCase):
     def test_the_woman_merged_into_beggar_woman_places_nothing(self) -> None:
         entities = [{"id": "a" * 32, "name": "Mira Vane", "type": "character"}]

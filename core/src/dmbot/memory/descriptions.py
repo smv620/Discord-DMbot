@@ -9,6 +9,8 @@ choice, not a guess."""
 
 from __future__ import annotations
 
+import functools
+
 _LEADING = frozenset({"the", "a", "an", "my", "our", "his", "her", "their", "your", "this", "that"})
 
 
@@ -123,12 +125,30 @@ def _split(text: str) -> tuple[list[str], list[str]]:
     return (words, []) if tail is None else (words[:tail], words[tail:])
 
 
+@functools.cache
+def _kinds() -> frozenset[str]:
+    """Kinds of creature and people, lower case (read once; imported late, as the readers import
+    this module)."""
+    from dmbot.memory.scan import GAME_TERMS
+    from dmbot.memory.short_names import CREATURE_KINDS
+
+    return frozenset(GAME_TERMS | CREATURE_KINDS)
+
+
+def _kind_words_lowered(head: list[str]) -> list[str]:
+    """A capitalised kind of creature or people is no proper name ("the Minotaur captain", "the
+    Dwarf smith", #3431): it is read in lower case, so the description is still found."""
+    return [w.casefold() if w.casefold() in _kinds() else w for w in head]
+
+
 def _head(head: list[str], tail: list[str], *, group: bool = False) -> tuple[str, bool] | None:
     """The head word ("barmaid" in "the barmaid with red hair") and whether something says which
     one: a word before it that is not an article, owner or a word of how many ("red-haired
     barmaid"), or a tail ("with red hair"; for a group, never "of": "the women of the town" is a
     crowd). None when the head phrase is no description: a capital in it ("Mira's sister Ren"), or
     an article in its middle ("bram the guard": a name and a job, never a description)."""
+    if head:
+        head = _kind_words_lowered(head)
     if not head or not is_description(" ".join(head)):
         return None
     if any(w.casefold() in ("the", "a", "an") for w in head[1:]):
