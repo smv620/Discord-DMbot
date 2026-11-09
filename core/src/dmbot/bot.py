@@ -597,6 +597,7 @@ from dmbot.ui.names import (
     RecapNamesButton,
     ReviewButton,
     after_session_text,
+    counts_after_session_text,
     held_back_text,
     private_after_session_text,
     review_view,
@@ -11114,7 +11115,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"{len(names)} new {'name' if len(names) == 1 else 'names'} to check",
                     partial(RecapNamesButton, table.guild_id, table.campaign_id),
                     partial(ReviewButton, table.campaign_id),
-                    after_session_text(names),
+                    counts_after_session_text(len(names)),  # (a count: others may read it)
                 ),
             )
 
@@ -11159,18 +11160,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         if private:
             return True
+        # These are upkeep, not live play, so with no way to reach a DM privately they wait in the
+        # DM Bot channel (the owner's "which channel gets what", #3874); the DM screen only for a
+        # campaign that has none. Each line is counts only (`Ask.screen`, pinned by a test over
+        # every builder), because the campaign's people read that channel.
+        target = screen_channel_id
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is not None and campaign.dm_bot_channel_id:
+                target = campaign.dm_bot_channel_id
+        except Exception:
+            log.exception("Couldn't look up where to leave the questions for the DM")
         posted = False
         for ask in ordered(asks):
-            if screen_channel_id is None:
-                break  # (no DM screen to fall back on)
+            if target is None:
+                break  # (nowhere to fall back on)
             # Each in its own try: one failed post must not skip the questions after it.
             try:
-                await self.post(
-                    screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
-                )
+                await self.post(target, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask))
                 posted = True
             except Exception:
-                log.exception("Couldn't post a question for the DM on the DM screen")
+                log.exception("Couldn't post a question for the DM")
         return posted
 
     async def _recap_lines(self, gid: int, sid: str) -> frozenset[int]:
