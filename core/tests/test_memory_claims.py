@@ -759,6 +759,69 @@ class Stored(ConfirmedMemoryTest):
         (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
                   if r.id != rel]  # fmt: skip
         self.assertEqual((new.unrevealed, done.shown), (True, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def confirm_blood_bound(self) -> Any:
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        return await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+
+    async def relation(self, relation_id: str) -> Any:
+        (rel,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id == relation_id]  # fmt: skip
+        return rel
+
+    async def test_a_twin_the_dm_turned_down_comes_back_held_back_beside_a_held_row(self) -> None:
+        """#3975, the reviewer's case: the reader said it in an earlier session and the DM said
+        no; brought back now, it was shown then and must be held back now."""
+        rel = await self.held_back()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "associated_with", self.town, source="dm",
+            status="confirmed", confidence=1.0, detail="is blood-bound to",
+        )  # fmt: skip
+        twin = made.value[0].id
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+                (GUILD_A, twin),
+            )
+        done = await self.confirm_blood_bound()
+        back = await self.relation(done.claim.fact_id)
+        self.assertEqual((back.id, back.status), (twin, "confirmed"))
+        self.assertEqual((back.unrevealed, done.shown), (True, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_catch_all_said_in_the_same_words_is_shown_as_said(self) -> None:
+        """#3963 (c) still holds when the held-back row is the claim's exact twin."""
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "associated_with", self.town, source="dm",
+            status="confirmed", confidence=1.0, unrevealed=True, detail="is blood-bound to",
+        )  # fmt: skip
+        rel = made.value[0].id
+        done = await self.confirm_blood_bound()
+        self.assertEqual((done.claim.fact_id, done.shown), (rel, True))
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_an_ended_held_back_row_holds_nothing_back(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET to_session_at = 1 WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
+        done = await self.confirm_blood_bound()
+        self.assertFalse((await self.relation(done.claim.fact_id)).unrevealed)
+
+    async def test_a_claim_of_its_own_kind_beside_a_held_row_is_written_as_before(self) -> None:
+        """Only the catch-all is held back: a claim the reader named a kind for is its own
+        connection, and the existing rules decide it."""
+        rel = await self.held_back()
+        await self.propose(said("Bram", "leads", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.predicate, new.unrevealed), ("leads", False))
+        self.assertTrue(await self.unrevealed(rel))
 
     async def test_a_catch_all_claim_with_nothing_held_back_is_shown_as_before(self) -> None:
         await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))

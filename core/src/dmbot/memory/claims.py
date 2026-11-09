@@ -83,7 +83,7 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
-    held_back_between,
+    live_between,
     reveal_stated_in,
 )
 from dmbot.memory.voice import (
@@ -2144,9 +2144,8 @@ class ClaimStore:
                 # story already holds a connection back for, may be that connection in other
                 # words: it is written held back too, never shown beside it (#3975). The DM
                 # decides with 👁️ Reveal; DMbot never guesses which one it means.
-                hold = term.key == FALLBACK_PREDICATE and await held_back_between(
-                    w, subject_id, object_id
-                )
+                live = await live_between(w, subject_id, object_id)
+                hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
@@ -2164,8 +2163,13 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
-                # (the table said it: a connection the story held back is the party's now)
-                shown = not secret and not hold and await reveal_stated_in(w, relation.id)
+                if relation.id in live:
+                    # (the table said a connection the story already has: held back, it is the
+                    # party's now, #3963 c; one already shown stays as it is)
+                    shown = not secret and await reveal_stated_in(w, relation.id)
+                elif hold and not relation.unrevealed:
+                    # a twin the DM once turned down comes back as it was, shown: held back here
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
             row = await w.update(
                 CLAIMS,
                 claim_id,
