@@ -2835,13 +2835,20 @@ class MemoryStore:
             return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
-        self, guild_id: int, campaign_id: str, relation_id: str, label: str, quote: str = ""
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        label: str,
+        quote: str = "",
+        inferred: str = "",
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
         a connection that has one keeps the first. `quote`: the reader's own quote for the line
-        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
-        else about the upload is stored."""
+        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone.
+        `inferred`: why DMbot inferred it (#2959 item 5), "" for a stated one, so the "Why?" never
+        reads an inference as the DM's own text. Nothing else about the upload is stored."""
         label = clean_text(label)[:120]
         # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
         quote = " ".join(
@@ -2855,8 +2862,8 @@ class MemoryStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " quote, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_relations"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " quote, created_at, inferred_reason) SELECT %s, %s, id, %s, %s, %s, %s"
+                " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
@@ -2864,6 +2871,7 @@ class MemoryStore:
                     label,
                     quote,
                     int(time.time()),
+                    " ".join(inferred.split())[:80],
                     guild_id,
                     campaign_id,
                     relation_id,
@@ -2872,18 +2880,21 @@ class MemoryStore:
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
-    ) -> tuple[str, str] | None:
-        """(the upload's label, the reader's quote) a connection was kept from (#2946, #3606), or
-        None. A DM-only reader, as the website's link-sources door is: the quote is the DM's own
-        text. Read by Discord's connection page for its "Why?"."""
+    ) -> tuple[str, str, str] | None:
+        """(the upload's label, the reader's quote, why DMbot inferred it or "") a connection was
+        kept from (#2946, #3606, #2959 item 5), or None. A DM-only reader, as the website's
+        link-sources door is: the quote is the DM's own text. Read by Discord's connection page
+        for its "Why?"."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
-                "SELECT label, quote FROM memory_link_sources"
+                "SELECT label, quote, inferred_reason FROM memory_link_sources"
                 " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s",
                 (*scope.ids, relation_id),
             )
             row = await cur.fetchone()
-        return None if row is None else (str(row["label"]), str(row["quote"] or ""))
+        if row is None:
+            return None
+        return str(row["label"]), str(row["quote"] or ""), str(row["inferred_reason"] or "")
 
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it

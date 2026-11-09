@@ -1179,6 +1179,14 @@ async def store(
     return stored
 
 
+def inferred_line(reason: str) -> str:
+    """The card's line for a connection DMbot inferred (#2959 item 5), or "": the text implies it
+    but doesn't say it, so it is DMbot's suggestion, never the DM's own words."""
+    if not reason:
+        return ""
+    return f"🤔 **Inferred by DMbot:** {_md(reason)} (your text doesn't say it outright)\n"
+
+
 def _traits_of(
     lines: Sequence[str],
     text: str,
@@ -1765,6 +1773,7 @@ async def queue_links(
                 c.decided,
                 known_by,
                 world,
+                inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
@@ -2325,6 +2334,7 @@ class ConnectionOffer(_Menu):
                 + self._change_line(c, how)
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
+                + inferred_line(c.inferred)
                 + f"{note}"
                 + self._scope(c)
             )
@@ -2333,6 +2343,7 @@ class ConnectionOffer(_Menu):
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
+            + inferred_line(c.inferred)
             + f"{note}"
             + self._scope(c)
         )
@@ -2436,6 +2447,18 @@ class ConnectionOffer(_Menu):
                 )
                 return
             made = kept.value[0]
+            # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred
+            # this"): only a connection made just now, and never a reason to lose it.
+            if c.upload and made.created_at >= now:
+                try:
+                    await memory.record_link_source(
+                        campaign.guild_id, campaign.id, made.id, c.upload, c.quote,
+                        inferred=c.inferred,
+                    )  # fmt: skip
+                except Exception as exc:
+                    log.warning(
+                        "A kept connection's source could not be stored (%s)", type(exc).__name__
+                    )
             # (only a connection made just now: an older twin's rows are the DM's, not a guess's)
             if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
                 await keep.mark_guess(

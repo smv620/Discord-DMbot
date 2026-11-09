@@ -135,6 +135,17 @@ OTHER = "other"
 WORDS_CHARS = 40
 
 
+INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short reason
+
+
+def inferred_reason(raw: object) -> str:
+    """The reason a shaped line says DMbot inferred it, or "" (a stated one, or nothing readable):
+    one line, at most `INFERRED_CHARS`, cut at a word."""
+    if not isinstance(raw, str):
+        return ""
+    return at_word_end(" ".join(raw.split()), INFERRED_CHARS)
+
+
 def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
     """The answer's shape; the campaign's own relationships are allowed kinds too."""
     return {
@@ -171,8 +182,9 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "words": {"type": "string"},
                         "b": {"type": "string"},
                         "quote": {"type": "string"},
+                        "inferred": {"type": "string"},
                     },
-                    "required": ["a", "how", "words", "b", "quote"],
+                    "required": ["a", "how", "words", "b", "quote", "inferred"],
                     "additionalProperties": False,
                 },
             },
@@ -213,6 +225,9 @@ class Connection:
     variant_a: str = ""
     variant_b: str = ""
     decided: str = ""  # how a pronoun was settled (#2790), kept with the waiting connection
+    # Why DMbot inferred it (#2959 item 5): the text implies it without saying it. "" for a stated
+    # connection. Never kept without the DM's own press on it.
+    inferred: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -998,6 +1013,11 @@ def read_connections(
         if not all(isinstance(x, str) for x in (a, b, quote)):
             lost["unreadable"] += 1
             continue
+        inferred = inferred_reason(item.get("inferred"))
+        if inferred and how == "kin_of":
+            # (family is never an inference: DMbot works it out from confirmed links, #2959 item 2)
+            lost["inferred_family"] += 1
+            continue
         # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
         if reverse:  # "a is an apprentice of b" is kept as "b mentors a"
@@ -1039,6 +1059,7 @@ def read_connections(
             words=label,
             variant_a=seen[0] if seen[0] != a else "",
             variant_b=seen[1] if seen[1] != b else "",
+            inferred=inferred,
         )
         if not (
             _in_text(haystack, seen[0], piece)
@@ -1057,6 +1078,13 @@ def read_connections(
             lost["quote_widened"] += 1
             joined = replace(made, quote=" ".join(wide))
             out.append(_via(joined, _squash(" ".join(wide)), seen, forms))
+        elif (
+            made.inferred
+            and unsettled is not None
+            and _unsettled(piece, words, said_squashed, made, seen, holds) is not None
+        ):
+            # (an inference about a pronoun is two guesses in one: never offered, #2959 item 5)
+            lost["inferred_pronoun"] += 1
         elif unsettled is not None and (
             open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
@@ -1238,6 +1266,9 @@ def keep_connections(
                     }
                     & hidden
                 )
+                if c.inferred:  # (an inference with an end that fits two names: two guesses)
+                    lost["inferred_which"] += 1
+                    continue
                 word = c.b if second.ambiguous else c.a
                 again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
                 if again in seen_picks:
@@ -1311,6 +1342,7 @@ def keep_connections(
                 ),
                 c.words,
                 decided=c.decided,
+                inferred=c.inferred,
             )
             role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
             # A shared role (sibling, spouse, cousin) has no order to contradict, but it still
