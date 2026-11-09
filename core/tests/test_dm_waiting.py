@@ -92,6 +92,27 @@ class TheMessage(WithImports):
         self.assertEqual(me.post.await_args.args[0], 77)
         self.assertIn("allow messages", me.post.await_args.args[1].lower())
 
+    async def test_a_dm_without_a_private_chat_gets_it_in_the_dm_bot_channel_not_the_screen(
+        self,
+    ) -> None:
+        me = fake_bot(self, [WaitingChecks(names=3)], private=False)
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=88)
+        )
+        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        me.post.assert_awaited_once()
+        self.assertEqual(me.post.await_args.args[0], 88)  # (upkeep: not the DM screen, 77)
+        self.assertIn("allow messages", me.post.await_args.args[1].lower())
+
+    async def test_a_failed_campaign_lookup_still_falls_back_to_the_screen(self) -> None:
+        me = fake_bot(self, [WaitingChecks(names=3)], private=False)
+        looked = AsyncMock(
+            side_effect=[SimpleNamespace(dm_screen_channel_id=77), RuntimeError("down")]
+        )
+        me.campaigns.get = looked
+        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        self.assertEqual(me.post.await_args.args[0], 77)
+
     async def test_when_it_cannot_be_sent_anywhere_the_key_is_given_back_for_the_next_round(
         self,
     ) -> None:
