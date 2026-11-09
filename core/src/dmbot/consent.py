@@ -234,7 +234,13 @@ class ConsentStore:
         yes again, so any one on record is a current one; and a confirmation restored from a
         backup made in another server never outweighs it.) It is for readers of a campaign's
         stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
-        never lets a voice be recorded, and never counts in another campaign or server."""
+        never lets a voice be recorded, and never counts in another campaign or server.
+        A stop whose revoke has not been saved yet (`_held_back`) is subtracted from the
+        confirmed people too, so a failed revoke never leaves them readable. An off-the-record
+        pause (`consenting`) does not apply to the confirmed people: it is about the live table,
+        and an imported session was recorded elsewhere, not now (so a paused person who is also
+        confirmed is in the result, though `consenting` leaves them out)."""
+        stops_before = {u: n for (g, u), n in self._stops.items() if g == guild_id}
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
@@ -244,7 +250,15 @@ class ConsentStore:
                 (guild_id, campaign_id),
             )
             confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())
-        return await self.consenting(guild_id) | confirmed
+        everyone = (await self.consenting(guild_id) | confirmed) - self._held_back.get(
+            guild_id, set()
+        )
+        # A stop that came, and was saved, while the read above ran is in neither the held-back
+        # list nor that read: the count of stops tells.
+        stopped = {
+            u for (g, u), n in self._stops.items() if g == guild_id and n != stops_before.get(u, 0)
+        }
+        return everyone - stopped
 
     async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:

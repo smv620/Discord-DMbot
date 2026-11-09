@@ -40,6 +40,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import spellings as place_spellings_mod
+from dmbot.memory import trait_offers as trait_offers_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
@@ -56,12 +57,14 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
+    CLASS,
     CONFIRMED,
     DESCRIPTION_MAX,
     DM,
     NEEDS_A_LOOK,
     PLAYER_CHARACTER,
     PROPOSED,
+    SPECIES,
     MemoryRuleError,
     MoreNames,
     NewName,
@@ -631,7 +634,9 @@ class BackgroundOffer(_Menu):
                     questions=done.questions,
                     changes=done.changes,
                     suggested=done.suggested,
-                    knowledge_note=done.knowledge_note,
+                    # (the lineage questions' count rides on the note: count only, as the
+                    # question itself opens privately from ❓ Questions for you, #3926)
+                    knowledge_note=done.knowledge_note + trait_questions_line(done.trait_questions),
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
             # (#3314). When the summary above was posted in the DM Bot channel, its names and
@@ -684,6 +689,9 @@ class BackgroundRead:
     # kept; the DM then has today's Add all summary.
     notice: Any = None
     questions_left: int = 0
+    # A lineage or class the lore gives a character the campaign has already (#3926): how many new
+    # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
+    trait_questions: int = 0
 
 
 async def read_background(
@@ -808,9 +816,11 @@ async def read_background(
     # A new character's lineage and classes the text states (#2959 item 3), stored with its name.
     # The campaign's homebrew lineages come before the rules (#3926): one read, only with traits.
     homebrew = await _homebrew_lineages(bot, campaign) if read.trait_lines else {}
+    trait_offers: list[traits_read.Found] = []  # (for names the campaign has: questions, #3926)
     traits = _traits_of(
-        read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew
-    )
+        read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
+        offers=trait_offers,
+    )  # fmt: skip
     # A player character's backstory written into campaign lore is known to that character
     # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
     # guess only (see `_backstory_owners`).
@@ -941,6 +951,10 @@ async def read_background(
         )
         if added is not None:
             done.notice, done.questions_left = added
+    if trait_offers:
+        notice_id = done.notice.id if done.notice is not None else None
+        done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
+        done.questions_left += done.trait_questions
     return done
 
 
@@ -1022,6 +1036,62 @@ async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
         return set()
+
+
+def trait_questions_line(n: int) -> str:
+    """The count line for an upload whose lineage questions wait (#3926); "" for none."""
+    if not n:
+        return ""
+    return (
+        f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
+        " in ❓ Questions for you."
+    )
+
+
+async def ask_traits(
+    memory: MemoryStore,
+    campaign: Campaign,
+    offers: Sequence[traits_read.Found],
+    upload: str,
+    notice_id: str | None,
+) -> int:
+    """The lineages and classes the lore gives characters the campaign has already (#3926,
+    Supervisor's ruling): one that would change something (another lineage, or their first; a class
+    they don't have) waits as a question for the DM, never written silently. Only a confirmed
+    character is asked about, and a name two entries share is not (DMbot can't tell whose). Returns
+    how many new questions wait. Never raises: the read is done; the log gets the error type."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        whose: dict[str, set[str]] = {}
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if who is not None and who.status == CONFIRMED and who.role is not None:
+                whose.setdefault(name_key(entry.text), set()).add(who.id)
+        ids = {o.name: next(iter(whose[name_key(o.name)])) for o in offers
+               if len(whose.get(name_key(o.name), ())) == 1}  # fmt: skip
+        if not ids:
+            return 0
+        links = await memory.rule_links(campaign.guild_id, campaign.id, set(ids.values()))
+        lineage = {link.entity_id: link.name for link in links if link.kind == SPECIES}
+        classes: dict[str, list[str]] = {}
+        for link in links:
+            if link.kind == CLASS:
+                classes.setdefault(link.entity_id, []).append(link.name)
+        wanted = [
+            trait_offers_mod.Offer(ids[o.name], o.trait, o.quote, upload)
+            for o in offers
+            if o.name in ids
+            and trait_offers_mod.changes_something(
+                o.trait, lineage.get(ids[o.name]), classes.get(ids[o.name], ())
+            )
+        ]
+        if not wanted:
+            return 0
+        store = trait_offers_mod.TraitOfferStore(memory._db)
+        return await store.offer(campaign.guild_id, campaign.id, wanted, notice_id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Lineage questions couldn't be kept (%s)", type(exc).__name__)
+        return 0
 
 
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:
@@ -1382,11 +1452,14 @@ def _traits_of(
     campaign: Campaign,
     dropped: Counter[str],
     homebrew: Mapping[str, str] | None = None,
+    *,
+    offers: list[traits_read.Found] | None = None,
 ) -> dict[str, list[Trait]]:
     """The checked traits of this read's new names, by name key (`traits_read`). A lineage is found
     in the campaign's homebrew first (`homebrew`, #3926), then in the rules newest first, in the
     campaign's target then fallback ruleset; a 2014-only entry keeps its edition, so it shows
-    `[Legacy 2014]`. Counts only, in the read's dropped counts."""
+    `[Legacy 2014]`. A trait for a name the campaign has already goes into `offers` (#3926), to
+    be asked about. Counts only, in the read's dropped counts."""
     if not lines:
         return {}
     resolve = traits_read.rules_resolver(
@@ -1394,7 +1467,9 @@ def _traits_of(
     )
     names = [n for f in found for n in (f.name, *f.also)]
     out: dict[str, list[Trait]] = {}
-    for got in traits_read.read_traits(lines, text, names, resolve, dropped, existing=known):
+    for got in traits_read.read_traits(
+        lines, text, names, resolve, dropped, existing=known, offers=offers
+    ):
         out.setdefault(name_key(got.name), []).append(got.trait)
     # (a trait given under another name of the same entry belongs to that entry's main name)
     for f in found:
@@ -1657,6 +1732,10 @@ async def announce(
             from dmbot.dm_screen import links_ready  # (it imports this module's neighbours)
 
             asks.append(partial(links_ready.ReadyButton, campaign.id))
+    if done.trait_questions:  # (the question itself opens privately, for a DM: #3926)
+        from dmbot.ui.trait_questions import TraitQuestionsButton
+
+        asks.append(partial(TraitQuestionsButton, campaign.id))
     posted: discord.Message | None = await bot.post_upload_notice(
         campaign, notice, done.questions_left, asks
     )
