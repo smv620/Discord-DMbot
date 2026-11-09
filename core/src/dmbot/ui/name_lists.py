@@ -561,6 +561,7 @@ class Upload:
     text: str
     label: str  # "report.pdf", "your list", "the linked page or file"
     document: bool = False  # not meant as a names list: straight to the AI
+    source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)

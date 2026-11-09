@@ -32,6 +32,8 @@ class Notice:
     channel_id: int | None = None
     message_id: int | None = None
     undone_at: int | None = None
+    source_kind: str | None = None  # "lore" or "import": which kind of upload made it (#3879)
+    source_id: str | None = None  # that upload's or import's id, as the website reads it
 
     def can_undo(self, now: int) -> bool:
         """Undo is offered for 7 days, once, and only if the upload changed something."""
@@ -52,13 +54,17 @@ class UploadNotices:
         label: str,
         counts: dict[str, int],
         changes: list[int],
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> Notice:
         notice_id = secrets.token_hex(16)
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO upload_notices (guild_id, campaign_id, id, label, created_at,"
-                " counts, changes) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)",
+                " counts, changes, source_kind, source_id)"
+                " VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)",
                 (
                     guild_id,
                     campaign_id,
@@ -67,6 +73,8 @@ class UploadNotices:
                     now,
                     json.dumps(counts),
                     changes,
+                    source_kind if source_id else None,
+                    source_id or None,
                 ),
             )
             # (the old ones go with the next new one: counts and ids, small and few)
@@ -76,7 +84,15 @@ class UploadNotices:
                 (guild_id, campaign_id, now - (UNDO_DAYS + KEEP_DAYS) * 86400),
             )
         return Notice(
-            guild_id, campaign_id, notice_id, label[:LABEL_MAX], now, dict(counts), tuple(changes)
+            guild_id,
+            campaign_id,
+            notice_id,
+            label[:LABEL_MAX],
+            now,
+            dict(counts),
+            tuple(changes),
+            source_kind=source_kind if source_id else None,
+            source_id=source_id or None,
         )
 
     async def attach(self, guild_id: int, notice_id: str, channel_id: int, message_id: int) -> None:
@@ -133,4 +149,6 @@ def _notice(row: dict[str, object]) -> Notice:
         channel_id=None if row["channel_id"] is None else int(str(row["channel_id"])),
         message_id=None if row["message_id"] is None else int(str(row["message_id"])),
         undone_at=None if row["undone_at"] is None else int(str(row["undone_at"])),
+        source_kind=None if row.get("source_kind") is None else str(row["source_kind"]),
+        source_id=None if row.get("source_id") is None else str(row["source_id"]),
     )

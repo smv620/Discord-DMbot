@@ -204,12 +204,14 @@ async def add_sure(
     label: str,
     *,
     connections: bool = True,
+    source: tuple[str, str] | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
     None when nothing could be kept (no store). `connections=False`: names only (an import's).
-    Never raises."""
+    `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
+    by it (#3879). Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -243,7 +245,15 @@ async def add_sure(
             + (await links.count_which(guild, cid) if links is not None else 0)
             + len(await memory.same_person_offers(guild, cid))
         )
-        notice = await notices.add(guild, cid, label, counts, tally.batches)
+        notice = await notices.add(
+            guild,
+            cid,
+            label,
+            counts,
+            tally.batches,
+            source_kind=source[0] if source else None,
+            source_id=source[1] if source else None,
+        )
         return notice, questions
     except Exception:
         log.exception("Couldn't add what an upload was sure of")
