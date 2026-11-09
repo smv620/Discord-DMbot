@@ -569,7 +569,7 @@ class Base(DatabaseTest):
         self.allowed = True
 
     def worker(
-        self, *, provider: bool = True, cap: int = 15000, model: str = "eleven_multilingual_v2"
+        self, *, provider: bool = True, cap: int = 20000, model: str = "eleven_multilingual_v2"
     ) -> AudioWorker:
         eleven = ElevenLabs(self.fake, voice_id="v", speech_model=model) if provider else None
 

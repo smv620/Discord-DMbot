@@ -57,7 +57,16 @@ const pictureErrorKinds: Record<string, ApiErrorKind> = {
 const scriptErrorKinds: Record<string, ApiErrorKind> = { ...errorKinds, no_script: "no-script" };
 
 /** The make-script action's own refusals (#3899): the plan gate, scripts off, and one already made. */
-const makeScriptErrorKinds: Record<string, ApiErrorKind> = { ...errorKinds, plan: "plan-needed", off: "script-off", already: "script-already" };
+// `busy`: another run (the automatic script) already has the session, so the press is not a failure: the script is on its way (#3933).
+// `not-allowed`: the bot's word for a press by someone who is no longer a game master.
+const makeScriptErrorKinds: Record<string, ApiErrorKind> = {
+  ...errorKinds,
+  plan: "plan-needed",
+  off: "script-off",
+  already: "script-already",
+  busy: "still-waiting",
+  "not-allowed": "not-allowed",
+};
 
 /** The route's own action names; the page's names for the same things are mapped here only (#3275). */
 const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
