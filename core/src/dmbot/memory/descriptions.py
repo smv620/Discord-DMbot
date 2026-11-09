@@ -9,6 +9,9 @@ choice, not a guess."""
 
 from __future__ import annotations
 
+from dmbot.memory.scan import GAME_TERMS
+from dmbot.names.not_names import CREATURE_KINDS
+
 _LEADING = frozenset({"the", "a", "an", "my", "our", "his", "her", "their", "your", "this", "that"})
 
 
@@ -123,12 +126,27 @@ def _split(text: str) -> tuple[list[str], list[str]]:
     return (words, []) if tail is None else (words[:tail], words[tail:])
 
 
+# Kinds of creature and people, lower case (the species and classes the table says, and kinds of
+# creature): a capital on one BEFORE the head word is no proper name (#3431).
+_KINDS = frozenset(GAME_TERMS | CREATURE_KINDS)
+
+
+def _kind_words_lowered(head: list[str]) -> list[str]:
+    """A capitalised kind of creature or people before the head word is no proper name ("the
+    Minotaur captain", "the Dwarf smith", #3431): it is read in lower case, so the description is
+    still found. The head word itself keeps its capital: "the Hag" or "the Bard of Waterdeep" is
+    how someone is known, a title, and stays a name for the DM. Only the described-person and group
+    checks read this; `is_description` (another name matching alone) still goes by capitals."""
+    return [w.casefold() if w.casefold() in _KINDS else w for w in head[:-1]] + head[-1:]
+
+
 def _head(head: list[str], tail: list[str], *, group: bool = False) -> tuple[str, bool] | None:
     """The head word ("barmaid" in "the barmaid with red hair") and whether something says which
     one: a word before it that is not an article, owner or a word of how many ("red-haired
     barmaid"), or a tail ("with red hair"; for a group, never "of": "the women of the town" is a
     crowd). None when the head phrase is no description: a capital in it ("Mira's sister Ren"), or
     an article in its middle ("bram the guard": a name and a job, never a description)."""
+    head = _kind_words_lowered(head)
     if not head or not is_description(" ".join(head)):
         return None
     if any(w.casefold() in ("the", "a", "an") for w in head[1:]):
