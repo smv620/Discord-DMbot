@@ -52,13 +52,19 @@ def ask_for(guild_id: int, campaign_id: str, offer: kind_offers.Offer) -> Ask:
     """The question for the DM's private message after a session."""
     text = question(offer)
     line = f"the words “{offer.words}” can be a kind of connection"
+    # Where the campaign's people may read it (the DM Bot channel, when no DM can be reached
+    # privately): no words from the table, only that there is something to look at.
+    public = (
+        "🔗 A phrase the table keeps saying could become a kind of connection. "
+        "Press the button to look at it."
+    )
     return Ask(
         KINDS,
         text,
         line,
         lambda: OpenButton(guild_id, campaign_id),
         lambda: OpenButton(guild_id, campaign_id),
-        text,
+        public,
     )
 
 
