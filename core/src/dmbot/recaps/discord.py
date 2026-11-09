@@ -1060,8 +1060,9 @@ class RecapFeatures:
         return True
 
     async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
-        """A recap that DMbot could not finish checking for three days (#2255): said once on the
-        DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
+        """A recap that DMbot could not finish checking for three days (#2255): said once in
+        the DM Bot channel, with the link to the recap page. Nothing goes to the table. Fixed
+        words only."""
         campaign = await self.campaigns.get(gid, cid)
         channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
         if channel is None:
@@ -1569,15 +1570,15 @@ class RecapFeatures:
         """Where a post-game notice goes (#3874): the DM Bot channel, else the DM screen as before.
         The flag says it is the DM Bot channel, which the campaign's people can read, so the
         words there are counts only: no recap title, no names."""
-        if getattr(campaign, "dm_bot_channel_id", None):
+        if campaign.dm_bot_channel_id:
             return campaign.dm_bot_channel_id, True
         return campaign.dm_screen_channel_id, False
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
-        """Tell the DM that their recap is ready, or could not be written. A ready recap goes on
-        the DM screen with buttons (read it, post it, skip it, tell DMbot what you thought; #1455),
-        and is emailed unless the DM chose not to be (#1421). A failed one is emailed, or said on
-        the DM screen."""
+        """Tell the DM that their recap is ready, or could not be written. A ready recap goes in
+        the DM Bot channel (the DM screen if there is none) with buttons (read it, post it, skip
+        it, tell DMbot what you thought; #1455), and is emailed unless the DM chose not to be
+        (#1421). A failed one is emailed, or said in that channel."""
         campaign = await self.campaigns.get(gid, cid)
         link = (
             page_link(self.settings.site_url, gid, cid, job.session_at)
@@ -1634,10 +1635,10 @@ class RecapFeatures:
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
         """Names the recap kept that DMbot didn't know (#2027) go into the after-session name
-        check as suggestions, and the DM screen says so at once, with the check's button. They are
-        only proposed: nothing is written to story memory until the DM says yes. The names
-        themselves stay on the DM's recap page, so nothing reaches players who peek. Once only
-        (`names_state`); a failure costs the notice, never the recap."""
+        check as suggestions, and the DM Bot channel says so at once, with the check's
+        button. They are only proposed: nothing is written to story memory until the DM says
+        yes. The names themselves stay on the DM's recap page, so nothing reaches players who
+        peek. Once only (`names_state`); a failure costs the notice, never the recap."""
         if self.memory is None or self.recaps is None:
             return
         try:

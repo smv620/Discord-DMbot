@@ -83,7 +83,7 @@ def campaign(**kw: Any) -> Any:
     base = {
         "id": "c" * 32, "guild_id": GUILD, "name": "Frozen Wastes", "dm_user_ids": frozenset({DM}),
         "owner_user_id": DM, "recaps_text": True, "recaps_audio": True, "recaps_email": True,
-        "dm_screen_channel_id": 66, "ask_before_adding": False,
+        "dm_screen_channel_id": 66, "dm_bot_channel_id": None, "ask_before_adding": False,
     }  # fmt: skip
     data = {**base, **kw}
     data.setdefault("dm_accounts", data["dm_user_ids"])
@@ -251,6 +251,16 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Recap ready", line)
         self.assertNotIn("Silver Lock", line)
         self.assertIn("view", kwargs)
+
+    async def test_with_no_dm_bot_channel_the_dm_screen_keeps_the_notice_and_title(self) -> None:
+        bot = fake_bot(campaign(dm_bot_channel_id=None))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        self.assertEqual(bot.post.await_args.args[0], 66)
+        self.assertIn("Silver Lock", bot.post.await_args.args[1])
 
     async def test_a_failed_recap_also_goes_to_the_dm_bot_channel(self) -> None:
         bot = fake_bot(campaign(dm_bot_channel_id=77, recaps_email=False))

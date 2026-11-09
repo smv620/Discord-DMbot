@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.campaigns.store import CampaignStore
@@ -250,12 +250,45 @@ def bot_with(**kw: Any) -> Any:
 
 
 class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
-    CAMPAIGN: Any = SimpleNamespace(dm_screen_channel_id=77)
+    CAMPAIGN: Any = SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=None)
 
     def job(self) -> Any:
         return SimpleNamespace(
             session_at=100, dm_user_id=DM_ID, to_confirm=("Mira", "Zarathon Keep", "Yrsa")
         )
+
+    async def test_the_notice_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
+        bot = bot_with()
+        camp = SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=88)
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), camp)
+        args = bot.post.await_args.args
+        self.assertEqual(args[0], 88)
+        self.assertNotIn("Zarathon", args[1])  # counts only
+
+    async def test_only_a_dm_can_open_the_check_from_the_notice(self) -> None:
+        from dmbot.ui import names as names_ui
+
+        camp = SimpleNamespace(
+            id=CID,
+            dm_user_ids=frozenset({DM_ID}),
+            owner_user_id=DM_ID,
+            dm_accounts=frozenset({DM_ID}),
+        )
+        bot = SimpleNamespace(campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)))
+        told = AsyncMock()
+        button = names_ui.ReviewButton(CID)
+        for user_id, opens in ((DM_ID + 1, False), (DM_ID, True)):
+            interaction = SimpleNamespace(
+                guild=SimpleNamespace(id=GUILD), user=SimpleNamespace(id=user_id), client=bot
+            )
+            with (
+                patch.object(names_ui, "_bot", return_value=bot),
+                patch.object(names_ui, "_tell", told),
+                patch.object(names_ui, "start_review", AsyncMock()) as started,
+            ):
+                await button.callback(cast(Any, interaction))
+            self.assertEqual(started.await_count, 1 if opens else 0)
+        told.assert_awaited_once_with(ANY, "Only the DM can answer this.")
 
     async def test_new_names_are_proposed_and_the_dm_screen_is_told_once(self) -> None:
         bot = bot_with()
