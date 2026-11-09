@@ -542,8 +542,10 @@ class Names:
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
     # Each character's (role, its player) by entry id, for who speaks for it (#2562)
     roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
-    # Each entry's source by id: only the party entry is told apart by it (#3176)
+    # Each entry's source by id (#3176)
     sources: Mapping[str, str] = field(default_factory=dict)
+    # The party entry's id: the `party` flag is the one marker (#3954), for the companion check
+    parties: frozenset[str] = frozenset()
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -588,7 +590,8 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         if str(e["type"]) == "character"
     }
     sources = {str(e["id"]): str(e.get("source") or "") for e in entities}
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources)
+    parties = frozenset(str(e["id"]) for e in entities if e.get("party"))
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources, parties)
 
 
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
@@ -723,6 +726,7 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
                 "type": second[1],
                 "role": names.roles.get(second[0], (None, None))[0],
                 "source": names.sources.get(second[0], ""),
+                "party": second[0] in names.parties,
             },
             EXTRACTOR,
         )
