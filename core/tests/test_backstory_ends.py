@@ -14,7 +14,7 @@ import unittest
 from collections import Counter
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import discord
 
@@ -475,7 +475,7 @@ class WhenKept(NamesTest):
         await self.confirm_all()
         campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
         self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
-        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.bot.post_message = AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
         guilds = PropertyMock(return_value=[SimpleNamespace(id=GUILD)])
         with (
             patch.object(DMBot, "guilds", guilds),
@@ -483,24 +483,75 @@ class WhenKept(NamesTest):
         ):
             await self.bot._links_ready_look(self.campaign.id)
             await self.bot._links_ready_look(self.campaign.id)
-        self.bot.post.assert_awaited_once()
-        call = self.bot.post.await_args
+        self.bot.post_message.assert_awaited_once()
+        call = self.bot.post_message.await_args
         assert call is not None
         channel, text, view = call.args
         self.assertEqual(channel, 555)
         self.assertIn("2 connections are ready to check", text)
         self.assertEqual(view.children[0].item.label, links_ready.LABEL)
 
-    async def test_nothing_waiting_posts_nothing(self) -> None:
-        campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
+    async def test_the_notice_goes_to_the_dm_bot_channel_not_the_dm_screen(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(
+            self.campaign, dm_screen_channel_id=555, dm_bot_channel_id=777
+        )
         self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
-        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.bot.post_message = AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
         with (
             patch.object(DMBot, "guilds", PropertyMock(return_value=[SimpleNamespace(id=GUILD)])),
             patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
         ):
             await self.bot._links_ready_look(self.campaign.id)
-        self.bot.post.assert_not_awaited()
+        self.assertEqual(self.bot.post_message.await_args.args[0], 777)  # type: ignore[union-attr]
+
+    async def test_more_ready_later_edits_the_one_message_and_never_posts_another(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+        self.bot.post_message = AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
+        edit = AsyncMock()
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.get_partial_message.return_value = SimpleNamespace(edit=edit)
+        with (
+            patch.object(DMBot, "guilds", PropertyMock(return_value=[SimpleNamespace(id=GUILD)])),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+            patch.object(DMBot, "get_channel", return_value=channel),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)  # the first post
+            await self.memory.add_names(
+                GUILD,
+                self.campaign.id,
+                [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+                source="dm",
+            )
+            ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+            await self.store.add(
+                GUILD,
+                self.campaign.id,
+                [
+                    NewLink(
+                        ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other, 2 Jan"
+                    )
+                ],
+            )
+            await self.bot._links_ready_look(self.campaign.id)  # one more became ready
+        self.bot.post_message.assert_awaited_once()
+        edit.assert_awaited_once()
+        self.assertIn("3 connections are ready to check", edit.await_args.kwargs["content"])
+
+    async def test_nothing_waiting_posts_nothing(self) -> None:
+        campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
+        self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+        self.bot.post_message = AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
+        with (
+            patch.object(DMBot, "guilds", PropertyMock(return_value=[SimpleNamespace(id=GUILD)])),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)
+        self.bot.post_message.assert_not_awaited()
 
     async def test_keep_all_keeps_only_the_upload_on_screen(self) -> None:
         await self.read()
@@ -550,12 +601,12 @@ class WhenKept(NamesTest):
             self.assertTrue(all(not w.told for w in await self.waiting()))
             campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
             self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
-            self.bot.post = AsyncMock(return_value=False)  # type: ignore[method-assign]
+            self.bot.post_message = AsyncMock(return_value=None)  # type: ignore[method-assign]
             await self.bot._links_ready_look(self.campaign.id)
             self.assertTrue(all(not w.told for w in await self.waiting()))  # (said next time)
-            self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+            self.bot.post_message = AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
             await self.bot._links_ready_look(self.campaign.id)
-        self.bot.post.assert_awaited_once()
+        self.bot.post_message.assert_awaited_once()
         self.assertTrue(all(w.told for w in await self.waiting()))
 
     async def test_keep_all_never_mixes_an_old_connection_with_a_labelled_one(self) -> None:

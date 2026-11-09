@@ -498,6 +498,18 @@ class BackstoryLinks:
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
         return Taken(counts, ids)
 
+    async def ready_counts(
+        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+    ) -> dict[str, int]:
+        """How many connections are ready to check now, for each upload ("" for an old one), told
+        or not: the live message in the DM Bot channel shows the whole count (#3874). Read-only;
+        counts only."""
+        counts: dict[str, int] = {}
+        for link in await self.waiting(guild_id, campaign_id, symmetric=symmetric):
+            if link.ready:
+                counts[link.upload] = counts.get(link.upload, 0) + 1
+        return counts
+
     async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
         """These connections were just announced some other way (an upload's own summary)."""
         if not ids:
