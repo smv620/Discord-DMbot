@@ -621,6 +621,51 @@ class WhenKept(NamesTest):
         self.assertIsNone(edit.await_args.kwargs["view"])  # (no button left)
         self.assertNotIn(self.campaign.id, self.bot._links_ready_msgs)  # (the next one is new)
 
+    async def on_screen(self, campaign: Any) -> None:
+        """Put the live message on screen (posted once, remembered)."""
+        await self.look_with(campaign)
+        self.assertIn(self.campaign.id, self.bot._links_ready_msgs)
+
+    def channel_with(self, edit: AsyncMock) -> Any:
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.get_partial_message.return_value = SimpleNamespace(edit=edit)
+        return channel
+
+    async def test_an_unchanged_message_is_not_edited_again(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        await self.on_screen(campaign)
+        channel = self.channel_with(AsyncMock())
+        await self.look_with(campaign, channel=channel)  # nothing new, same words
+        channel.get_partial_message.assert_not_called()
+
+    async def test_connections_left_but_none_ready_never_say_all_answered(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        await self.on_screen(campaign)
+        edit = AsyncMock()
+        with patch.object(type(self.store), "ready_counts", AsyncMock(return_value={})):
+            await self.look_with(campaign, channel=self.channel_with(edit))
+        assert edit.await_args is not None
+        self.assertEqual(edit.await_args.kwargs["content"], links_ready.NONE_READY)
+        self.assertIsNone(edit.await_args.kwargs["view"])
+
+    async def test_ending_keeps_the_message_on_a_passing_error_and_drops_it_when_gone(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        await self.on_screen(campaign)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM backstory_links")
+        blip = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=503, reason="x"), "b"))
+        await self.look_with(campaign, channel=self.channel_with(blip))
+        self.assertIn(self.campaign.id, self.bot._links_ready_msgs)  # (a later look tries again)
+        gone = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404, reason="x"), "g"))
+        await self.look_with(campaign, channel=self.channel_with(gone))
+        self.assertNotIn(self.campaign.id, self.bot._links_ready_msgs)
+
     async def test_with_no_message_on_screen_nothing_is_edited_when_none_wait(self) -> None:
         campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
         channel = MagicMock(spec=discord.TextChannel)
