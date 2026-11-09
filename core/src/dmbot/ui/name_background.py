@@ -627,7 +627,7 @@ class BackgroundOffer(_Menu):
                 knowledge_note=done.knowledge_note,
             )
             # What waits for the DM also comes once to their private chat, like a live session's
-            # (#3314). When the summary above was posted in the DM-screen channel, its names and
+            # (#3314). When the summary above was posted in the DM Bot channel, its names and
             # connections buttons open it (#3873).
             key = f"lore:{time.time_ns()}"
             if posted is not None and stored:
@@ -1286,7 +1286,7 @@ async def summary(
     knowledge_note: str = "",
 ) -> discord.Message | None:
     """Say what the reading found. The summary with the Add all buttons is a real message in the
-    campaign's DM-screen channel when it can be posted there (#3873): the private questions after
+    campaign's DM Bot channel when it can be posted there (#3873): the private questions after
     an upload open it, and it is edited as the names are answered. The DM's own card then only
     points to it. Without a channel, or without permission, it stays on the DM's own card as it
     always was. Returns the posted message, or None."""
@@ -1377,18 +1377,18 @@ async def _deliver(
     content: str,
     view: BulkConfirm | None,
 ) -> discord.Message | None:
-    """Show a names summary. With buttons and a DM-screen channel it is posted there as a real
-    message, so the private questions can open it (#3873); the DM's own card then points to it.
+    """Show a names summary. With buttons and a DM Bot channel (the campaign's `dmb-dm-bot-…`
+    channel, where upkeep belongs, not the DM screen, which is for live play) it is posted there as
+    a real message, so the private questions can open it (#3873); the DM's own card then points to
+    it.
     Counts only in either place. When the channel is unknown, gone, or DMbot may not post there, it
     stays on the DM's own card, as before. Returns the posted message, or None."""
     posted: discord.Message | None = None
-    if view is not None and campaign.dm_screen_channel_id:
+    if view is not None and campaign.dm_bot_channel_id:
         view.shared = True
         view.timeout = SHARED_TIMEOUT_S
         with contextlib.suppress(Exception):  # (never fatal: the card below is the fallback)
-            posted = await _bot(interaction).post_message(
-                campaign.dm_screen_channel_id, content, view
-            )
+            posted = await _bot(interaction).post_message(campaign.dm_bot_channel_id, content, view)
     if posted is not None and view is not None:
         view.message = posted
         view.words = content
@@ -2459,7 +2459,7 @@ class BulkConfirm(_Menu):
         self.campaign_id = campaign_id
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
-        # A summary posted in the DM-screen channel is everyone's to see and only the game masters'
+        # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
         # to use (#3873): `shared` makes every press check that, and keeps one DM's "one by one"
         # from taking the buttons off for the rest. `message` is that message, to edit at the end.
         self.shared = False

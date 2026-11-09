@@ -692,7 +692,7 @@ class ThePath(NamesTest):
     async def read_with_channel(self, channel_id: int | None, *, post: Any = "ok") -> Any:
         """The reading, with the campaign's DM-screen channel set (or not) and the bot's post
         stood in. `post`: a message to hand back, "ok" for a fake one, or None for a failure."""
-        await self.campaigns.set_dm_screen(GUILD, self.campaign.id, channel_id)
+        await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
         sent = SimpleNamespace(
             id=9,
             channel=SimpleNamespace(id=channel_id),
