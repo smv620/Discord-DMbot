@@ -51,6 +51,13 @@ Removing every line brings the defaults back, the same way the style examples wo
 8. **Close calls:** any moment a player character came close to death or was in great danger.
 9. **Loot and treasure:** every major treasure, magic item or other prize gained or lost. A large
    hoard is summed up in one short line.
+14. **Every encounter ends:** any encounter the recap mentions (a fight, ambush, threat spotted,
+    creature or stranger met) says how it ended, even a trivial one: fought off, fled, avoided,
+    talked down, or came to nothing. If the session stopped first, the recap says so, and that is
+    the cliffhanger (3). (Owner, 2026-11-06, #3632. It is number 14 because it was added last; it
+    sits with the action lines. Worded to fit the 300-letter line limit.) It works with "never
+    invented": if the session did not say how an encounter ended, the recap leaves the encounter
+    out or says plainly that the session did not say. It never guesses "they drove them off".
 
 ### 🧠 Plot and mystery
 10. **The element of surprise:** unexpected twists, betrayals and shocking dice rolls are always
@@ -63,6 +70,20 @@ Removing every line brings the defaults back, the same way the style examples wo
     flaws shown, new skills learned, and shifts in ideals, bonds or motivations.
 13. **Characters the party meets (NPCs):** include the ones who matter to the story and leave out
     the ones who only pass by.
+15. **Every name earns its place:** anyone the recap names gets a nod to why they matter in this
+    scene: what they did, or how they tie in. A name that played no part in the session's events is
+    left out, not dropped in as a label. If one is used, it is tied to the moment ("Cerric loosed
+    magic upon their foes; Syllar Sparkwalker taught him well."). Nothing is invented to give a
+    name a reason: if nothing in the session or the players' view supports one, the name goes.
+    (Owner, 2026-11-06, #3664. It is number 15 because it was added last, after 14.)
+
+## Secret connections in a recap (owner, 2026-11-06, #3664; changes #2591)
+
+A pair of characters with a connection the DM keeps secret may appear in the same scene. The recap
+may give a **cryptic nod** ("a familiar look passed between them") but never states the connection
+and never explains how they know each other; the DM reads the script before the table does. A
+**secret name** never appears at all: the name checks, near-secret spelling refusals and retries are
+unchanged.
 
 ## Must-haves and recap examples (owner, 2026-11-03)
 

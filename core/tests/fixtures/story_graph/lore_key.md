@@ -164,6 +164,9 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l121 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | 18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (l011 says works_for) |
 | l122 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | 67 | the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner) |
 | l123 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | 30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
+| l124 | Belleros Stormgrace | leads | Aurora's Wind | stated | no | yes | 93 | 'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b) |
+| l125 | Okthandom Korran | enemy_of | Fizzlebomb | stated | no | yes | 93 | pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b) |
+| l126 | Cerric Vanya'elen | enemy_of | Fizzlebomb | stated | no | yes | 93 | 'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b) |
 
 ## Events
 

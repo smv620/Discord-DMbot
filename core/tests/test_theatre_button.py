@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import re
 import unittest
-from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
-from dmbot.dm_questions import SCRIPT
 from dmbot.transcript import theatre_job as job
 from dmbot.ui import theatre_button as tb
 
@@ -41,7 +39,6 @@ def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
         plan_allows=AsyncMock(return_value=plan),
         ask_dm=AsyncMock(),
     )
-    me.offer_script = partial(BOT.offer_script, me)
     return me
 
 
@@ -68,35 +65,7 @@ def pressed(me: Any, user: int) -> Any:
     )
 
 
-class TheOffer(unittest.IsolatedAsyncioTestCase):
-    async def test_it_is_offered_with_the_switch_and_the_plan(self) -> None:
-        me = bot()
-        await me.offer_script(table())
-        me.ask_dm.assert_awaited_once()
-        ask = me.ask_dm.await_args.args[1]
-        self.assertEqual(ask.kind, SCRIPT)
-        self.assertIsInstance(ask.button(), tb.ScriptButton)
-        # the cost and who can read it are in the question, so the button is the one "yes"
-        self.assertIn(job.estimate_line(300), ask.alone)
-        self.assertIn(job.PRIVATE_NOTE, ask.alone)
-        self.assertIn("Nothing is used until you press the button.", ask.alone)
-
-    async def test_it_is_hidden_when_the_switch_is_off(self) -> None:
-        me = bot(on=False)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-
-    async def test_it_is_hidden_when_the_plan_does_not_allow_it_or_cannot_be_checked(self) -> None:
-        me = bot(plan=False)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-        self.assertEqual(me.plan_allows.await_args.kwargs, {"fail_open": False})
-
-    async def test_a_session_with_no_lines_gets_no_offer(self) -> None:
-        me = bot(lines=0)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-
+class TheButton(unittest.IsolatedAsyncioTestCase):
     def test_the_button_knows_its_server_and_session_after_a_restart(self) -> None:
         button = tb.ScriptButton(GUILD, SESSION)
         custom_id = button.item.custom_id

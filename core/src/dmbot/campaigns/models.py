@@ -193,6 +193,12 @@ class Campaign:
     recaps_text: bool = True
     recaps_audio: bool = True
     recaps_email: bool = True
+    # "Ask me before adding" (#3878): a lore upload offers its names for a yes instead of adding
+    # what DMbot is sure of by itself. Off by default.
+    ask_before_adding: bool = False
+    # Who sees the DM Bot and transcript channels: "people" (the campaign's own) or "everyone"
+    # (#3891; dm_screen/channel_people.py).
+    channels_visibility: str = "people"
     # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
     story_mode: str = DEFAULT_STORY_MODE
     # The initiative style the DM last set, kept for the next session (#1784): see fight_style.
@@ -284,6 +290,19 @@ def check_rulesets(target: str, fallback: str) -> None:
         raise CampaignError(
             "'If missing' can't be the same rules as 'Main rules'. Pick the other one, or skip it."
         )
+
+
+# Who sees a campaign's DM Bot and transcript channels (#3891); the plans are in
+# dm_screen/channel_people.py.
+CHANNELS_EVERYONE = "everyone"
+CHANNELS_PEOPLE = "people"
+CHANNELS_CHOICES = (CHANNELS_EVERYONE, CHANNELS_PEOPLE)
+DEFAULT_CHANNELS = CHANNELS_PEOPLE  # new campaigns, and existing ones at the deploy
+
+
+def clean_channels(value: object) -> str:
+    """A stored channels choice, or the default for anything else."""
+    return value if isinstance(value, str) and value in CHANNELS_CHOICES else DEFAULT_CHANNELS
 
 
 def check_dm_screen_visibility(value: str) -> None:

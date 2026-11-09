@@ -34,6 +34,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    KNOWS_HOW_BACK,
     OLD_FEELINGS,
     back_after,
     back_words,
@@ -173,8 +174,13 @@ def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) ->
         # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
         return f"“{_md(r.detail)}”"
     return link_words(
-        r.predicate, r.detail, r.directional, subject_kind, feeling=feeling
-    )  # (family reads with its role: "is the niece of")
+        r.predicate,
+        r.detail,
+        r.directional,
+        subject_kind,
+        feeling=feeling,
+        knows_how=r.knows_how if r.predicate == "knows" else None,
+    )  # (family reads with its role: "is the niece of"; a knows says whether they met, #3881)
 
 
 def _guard(lookup: CampaignLookup) -> NameGuard:
@@ -310,7 +316,8 @@ def _rows(
                         or "is connected to"
                     )
                     if r.predicate in ("kin_of", "located_in")
-                    else CARD_BACK.get(r.predicate)
+                    else (KNOWS_HOW_BACK.get(r.knows_how) if r.predicate == "knows" else None)
+                    or CARD_BACK.get(r.predicate)  # (whether they met reads back too, #3881)
                     or campaign_back(r.predicate)
                     or "is connected to"
                 )

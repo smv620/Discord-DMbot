@@ -34,7 +34,9 @@ from dmbot.campaigns import offer_notify
 from dmbot.campaigns.backup_names import build_commit
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import (
+    CHANNELS_CHOICES,
     CONFIRMATION_PURPOSES,
+    DEFAULT_CHANNELS,
     DEFAULT_DM_SCREEN_LEVEL,
     DEFAULT_DM_SCREEN_VISIBILITY,
     DEFAULT_FALLBACK,
@@ -57,6 +59,7 @@ from dmbot.campaigns.models import (
     check_dm_screen_level,
     check_dm_screen_visibility,
     check_rulesets,
+    clean_channels,
     clean_name,
     fingerprint,
     name_key,
@@ -341,6 +344,8 @@ _SETTABLE = frozenset(
         "recaps_text",
         "recaps_audio",
         "recaps_email",
+        "ask_before_adding",
+        "channels_visibility",
     }
 )
 RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
@@ -962,6 +967,56 @@ class CampaignStore:
         """Whether rules cards show on the DM screen when a spell or creature is named
         (#931). Who may change it is checked by the caller (the campaign's DMs)."""
         return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
+
+    async def set_ask_before_adding(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Ask me before adding" (#3878): on, a lore upload offers its names for the DM's yes
+        (Add all) as it always did; off (the default), what DMbot is sure of is added by itself.
+        Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "ask_before_adding", bool(on))
+
+    async def set_channels_visibility(
+        self, guild_id: int, campaign_id: str, choice: str
+    ) -> Campaign:
+        """Who can see the DM Bot and transcript channels (#3891): "people" or "everyone". Who may
+        change it is checked by the caller (the campaign's DMs); applying it to the channels is
+        `dm_screen.channel_sync.reconcile`'s job."""
+        if choice not in CHANNELS_CHOICES:
+            raise CampaignError("Please pick who can see the channels from the list.")
+        return await self._set(guild_id, campaign_id, "channels_visibility", choice)
+
+    async def channel_people_by_hand(self, guild_id: int, campaign_id: str) -> list[int]:
+        """The members a DM added by hand to those who may see the campaign's channels."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM campaign_channel_people"
+                " WHERE guild_id = %s AND campaign_id = %s ORDER BY added_at, user_id",
+                (guild_id, campaign_id),
+            )
+            return [int(r["user_id"]) for r in await cur.fetchall()]
+
+    async def add_channel_person(
+        self, guild_id: int, campaign_id: str, user_id: int, added_by: int, now: int
+    ) -> bool:
+        """Let one more member see the campaign's channels. False when already on the list."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO campaign_channel_people"
+                " (guild_id, campaign_id, user_id, added_by, added_at)"
+                " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, user_id, added_by, now),
+            )
+            return cur.rowcount > 0
+
+    async def remove_channel_person(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
+        """Take a hand-added member off the list. Only the list is changed: someone who is on
+        the campaign's people another way (a DM, a player, a recorded speaker) still sees it."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM campaign_channel_people"
+                " WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+                (guild_id, campaign_id, user_id),
+            )
+            return cur.rowcount > 0
 
     async def set_paused(
         self, guild_id: int, campaign_id: str, user_id: int, paused: bool, now: int
@@ -1684,6 +1739,8 @@ class CampaignStore:
                 "recaps_text": campaign.recaps_text,
                 "recaps_audio": campaign.recaps_audio,
                 "recaps_email": campaign.recaps_email,
+                "ask_before_adding": campaign.ask_before_adding,
+                "channels_visibility": campaign.channels_visibility,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
                 "table_chat": campaign.table_chat,
@@ -1896,6 +1953,16 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
+            # Who sees the channels (#3891); the by-hand list is not in a backup.
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = %s WHERE guild_id = %s AND id = %s",
+                (info["channels_visibility"], guild_id, campaign_id),
+            )
+            # The "Ask me before adding" choice (#3878); a backup from before it says nothing: off.
+            await conn.execute(
+                "UPDATE campaigns SET ask_before_adding = %s WHERE guild_id = %s AND id = %s",
+                (info["ask_before_adding"], guild_id, campaign_id),
+            )
             # A restore keeps the stamp each row was made with, NULL included, and never stamps a
             # row with the build that loaded it (#3739, `dmbot.lineage`).
             await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
@@ -2248,6 +2315,8 @@ def _to_campaign(row: dict[str, Any], roster: _Roster) -> Campaign:
         recaps_text=bool(row.get("recaps_text", True)),  # older schemas (tests) have none
         recaps_audio=bool(row.get("recaps_audio", True)),
         recaps_email=bool(row.get("recaps_email", True)),
+        channels_visibility=clean_channels(row.get("channels_visibility")),
+        ask_before_adding=bool(row.get("ask_before_adding", False)),  # (older schemas: off)
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -2502,6 +2571,16 @@ def _validate_backup(
     if not isinstance(table_chat, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the channel setting existed get the default: the campaign's own people.
+    channels_visibility = campaign.get("channels_visibility", DEFAULT_CHANNELS)
+    if channels_visibility not in CHANNELS_CHOICES:
+        raise CampaignError(DAMAGED)
+
+    # Backups made before the upload notices existed have "Ask me before adding" off.
+    ask_before_adding = campaign.get("ask_before_adding", False)
+    if not isinstance(ask_before_adding, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
     if invite is not None:
@@ -2538,5 +2617,7 @@ def _validate_backup(
         **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
+        "ask_before_adding": ask_before_adding,
+        "channels_visibility": channels_visibility,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

@@ -6,6 +6,7 @@ from __future__ import annotations
 import dataclasses
 import re
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import discord
 
@@ -215,6 +216,52 @@ class Cards(base.NamesTest):
 
     def labels(self, page: Any) -> list[str]:
         return [getattr(c, "label", "") for c in page.children]
+
+    async def why(self, quote: str = "a heated debate about mithril") -> str:
+        await self.know("Kesh")
+        (rel,) = await self.relations()
+        await self.memory.record_link_source(GUILD, self.campaign.id, rel.id, "Notes, 9 Nov", quote)
+        return str(rel.id)
+
+    async def test_the_dm_sees_where_a_kept_lore_connection_came_from_and_nobody_else(self) -> None:
+        # (#3606: the DM's "Why?", as the website's line panel shows it)
+        rel = await self.why()
+        dm = self.it(DM)
+        await connection_edit.show_one(dm, self.campaign.id, self.bell.id, rel)
+        said = 'Why: your lore "Notes, 9 Nov" says \u201ca heated debate about mithril\u201d'
+        self.assertIn(said, dm.response.edited[0][0])
+        for who in (PLAYER, MANAGER):
+            it = self.it(who)
+            await connection_edit.show_one(it, self.campaign.id, self.bell.id, rel)
+            shown = " ".join(str(t) for t, _v in it.response.edited) + " ".join(
+                str(t) for t, _k in it.response.sent
+            )
+            self.assertNotIn("heated debate", shown)
+            self.assertNotIn("your lore", shown)
+
+    async def test_no_quote_says_so_and_marks_are_escaped(self) -> None:
+        rel = await self.why(quote="")
+        found = await connection_edit._find(self.it(), self.campaign.id, self.bell.id, rel)
+        assert found is not None
+        none = 'Read from your lore "Notes, 9 Nov". DMbot didn\'t keep the words.\n'
+        self.assertEqual(await connection_edit.why_line(found), none)
+        await self.memory.record_link_source(GUILD, self.campaign.id, rel, "x", "*bold*")
+        self.assertNotIn("*bold*", await connection_edit.why_line(found))  # (the first one stays)
+
+    async def test_nothing_recorded_or_a_failed_read_says_nothing(self) -> None:
+        await self.know("Kesh")
+        (rel,) = await self.relations()
+        found = await connection_edit._find(self.it(), self.campaign.id, self.bell.id, rel.id)
+        assert found is not None
+        self.assertEqual(await connection_edit.why_line(found), "")
+        with patch.object(found.memory, "link_source", AsyncMock(side_effect=RuntimeError("x"))):
+            self.assertEqual(await connection_edit.why_line(found), "")
+
+    async def test_marks_in_the_quote_are_escaped(self) -> None:
+        rel = await self.why(quote="*a* _b_")
+        found = await connection_edit._find(self.it(), self.campaign.id, self.bell.id, rel)
+        assert found is not None
+        self.assertIn("\\*a\\* \\_b\\_", await connection_edit.why_line(found))
 
     async def test_change_the_words_keeps_who_sees_it_and_says_what_it_reads_now(self) -> None:
         await self.know("Kesh", secret=True)

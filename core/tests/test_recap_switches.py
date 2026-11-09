@@ -83,7 +83,7 @@ def campaign(**kw: Any) -> Any:
     base = {
         "id": "c" * 32, "guild_id": GUILD, "name": "Frozen Wastes", "dm_user_ids": frozenset({DM}),
         "owner_user_id": DM, "recaps_text": True, "recaps_audio": True, "recaps_email": True,
-        "dm_screen_channel_id": 66,
+        "dm_screen_channel_id": 66, "ask_before_adding": False,
     }  # fmt: skip
     data = {**base, **kw}
     data.setdefault("dm_accounts", data["dm_user_ids"])
@@ -123,6 +123,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         recaps=SimpleNamespace(
             enqueue=AsyncMock(return_value=True),
             used_in_month=AsyncMock(return_value=SimpleNamespace(narrated=0, recaps=0)),
+            waiting_for_script=AsyncMock(return_value=False),
         ),
         transcripts=SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
