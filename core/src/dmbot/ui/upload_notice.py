@@ -194,6 +194,14 @@ async def undo_upload(
             log.warning("Undoing an upload stopped (%s)", type(exc).__name__)
             broke = True
             break
+    try:  # the lineage questions the upload left waiting go too (#3926); never stops the undo
+        from dmbot.memory.trait_offers import TraitOfferStore
+
+        await TraitOfferStore(bot.memory._db).drop_for_notice(
+            campaign.guild_id, campaign.id, notice_id
+        )
+    except Exception as exc:
+        log.warning("Undoing an upload's lineage questions failed (%s)", type(exc).__name__)
     if bot.lookup is not None:
         bot.lookup.drop([campaign.id])
     total = len(claimed.changes)

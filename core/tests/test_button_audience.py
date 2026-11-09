@@ -218,6 +218,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.transcript_keep.TranscriptsButton",
             "ui.claims_review.ClaimsReviewButton",
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
+            "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
             "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
             "questions.board.QuestionsButton",  # checks `dm_user_ids` before sending the list
             "ui.continuity.ContinuityButton",
