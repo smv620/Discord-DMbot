@@ -180,6 +180,7 @@ export default function AddAll({
             stage={busy === "undo" ? w.undoing : w.adding}
             done={progress?.done ?? null}
             total={progress && progress.total > 0 ? progress.total : null}
+            unit="parts"
             startedAt={progress?.createdAt ?? wait.startedAt}
             updatedAt={progress?.at ?? null}
             serverNow={progress?.now ?? null}

@@ -14,7 +14,7 @@ export const addAllWords = {
   nothingLeft: "Nothing left to add.",
   adding: "Adding names",
   undoing: "Taking the names back",
-  stalled: "Still working, but slower than usual.",
+  stalled: "You can leave this page. The names will be on the Names page when it's done.",
   failedNone: "Adding stopped. No names were added.",
   nothingAdded: "Nothing was added.",
   lostTouch: "Lost touch with DMbot. The names may still be added. Check the Names page to see what was added.",

@@ -116,7 +116,7 @@ describe("the press and its wait", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText(w.adding)).toBeTruthy();
-    expect(await screen.findByText("1 of 2")).toBeTruthy();
+    expect(await screen.findByText("1 of 2 parts")).toBeTruthy();
     expect((container.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -178,8 +178,8 @@ describe("the press and its wait", () => {
     const counted: ConfirmAnswer = { state: "working", stage: "adding", progress: { done: 2, total: 5, at: 10, createdAt: 1, now: 10 } };
     const { container } = render(<AddAll api={apiWith([counted], { confirmAnswer: async () => counted })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
-    expect(await screen.findByText("2 of 5")).toBeTruthy();
-    expect(screen.getAllByText("2 of 5")).toHaveLength(1);
+    expect(await screen.findByText("2 of 5 parts")).toBeTruthy();
+    expect(screen.getAllByText("2 of 5 parts")).toHaveLength(1);
     expect(container.querySelector("progress")?.getAttribute("max")).toBe("5");
   });
 
