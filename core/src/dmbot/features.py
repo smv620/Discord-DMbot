@@ -254,6 +254,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the calibration run on #2790
     ),
     Feature(
+        "npc guesses",
+        "Which NPCs and groups know what your lore says",
+        "",
+        lambda s: s.story_npc_guess_on,
+        ("story_npc_guess_on",),
+        for_dms=False,  # not live yet: on only after the smart-guess measure (#2959)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",

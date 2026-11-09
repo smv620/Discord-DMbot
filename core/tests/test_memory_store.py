@@ -271,6 +271,8 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only
+        await self.memory.add_npc_guesses(GUILD_A, self.c, [(a, b, 0.6)])
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
