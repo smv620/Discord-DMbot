@@ -27,7 +27,7 @@ export const wizardWords = {
   expired: "Your unfinished setup was kept for 7 days and has been removed. You can start again.",
   noRoom: "Your plan has no room for another campaign. Change your plan or remove a campaign, then come back.",
   tooFast: "Too many tries at once. Wait a moment, then try again.",
-  notAllowed: "You can't set up a campaign in this server. Ask someone who runs the server to do it.",
+  notAllowed: "You and DMbot both need to be in this server. Open this page again from ＋ New campaign in Discord, or sign out and back in if you joined the server recently.",
   saved: "Saved. You can leave and come back: your answers are kept for 7 days.",
   saving: "Saving…",
   step: (n: number, of: number): string => `Step ${n} of ${of}`,
@@ -196,7 +196,7 @@ export const wizardWords = {
     // The finish run's failure words (docs/WIZARD_DESIGN.md, 4.4).
     errors: {
       plan: "Your plan has no room for another campaign.",
-      "not-allowed": "You can't set up a campaign in this server. Ask someone who runs the server to do it.",
+      "not-allowed": "You and DMbot both need to be in this server. Open this page again from ＋ New campaign in Discord, or sign out and back in if you joined the server recently.",
       gone: "The setup was thrown away before it finished. Start again.",
       "no-key": "Your campaign is ready. DMbot can't read the lore until you add an AI key in Settings. Nothing is lost.",
       failed: "Something went wrong. Nothing you entered is lost. Try again in a minute.",
