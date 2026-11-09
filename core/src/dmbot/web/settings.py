@@ -132,6 +132,9 @@ class WebSettings:
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
+    # The same DMBOT_THEATRE_ON as the bot's: off, the website's "Make the script" offers nothing
+    # and queues nothing (#3899), as Discord's button does.
+    theatre_on: bool = False
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
@@ -518,6 +521,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         cloudflare_ai_token=get("CLOUDFLARE_AI_TOKEN"),
         site_ask_daily=_site_ask_daily(get("DMBOT_SITE_ASK_DAILY")),
         enforce_plans=enforce_raw in ("1", "true", "on"),
+        theatre_on=(get("DMBOT_THEATRE_ON") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         discord_client_id=get("DISCORD_CLIENT_ID"),

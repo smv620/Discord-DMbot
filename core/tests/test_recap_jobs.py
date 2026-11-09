@@ -1287,7 +1287,12 @@ class Working(WorkerHarness):
         job = await self.store.get(1, self.one.id, 100)
         assert job is not None
         sheet = [rd.Beat(1, "x", (), (1,), "event")]  # type: ignore[attr-defined]
-        result = await self.worker._facts(1, self.one.id, job, sheet, rd.Prose("A b.", ()))
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="", day=4
+        )
+        result = await self.worker._facts(
+            1, self.one.id, job, sheet, rd.Prose("A b.", ()), inputs=inputs
+        )
         self.assertEqual(result, (None, False))
         self.assertEqual(self.worker._careful.fact_sent, [])  # type: ignore[attr-defined]
 

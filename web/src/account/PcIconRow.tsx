@@ -7,6 +7,7 @@ import { useRef, useState } from "preact/hooks";
 
 import { pcIconWords as w } from "../content/pc-icon-words";
 import type { IconChoice, WebNode } from "./api";
+import SavingWait from "./SavingWait";
 
 export default function PcIconRow({
   node,
@@ -79,8 +80,9 @@ export default function PcIconRow({
         )}
       </div>
       {choice !== "default" && <p class="small muted">{w.removeHint}</p>}
+      <SavingWait active={busy} />
       <p class="small" role="status" tabIndex={-1} ref={statusBox}>
-        {busy ? w.working : said}
+        {said}
       </p>
       {problem && (
         <p class="warn small" role="alert">

@@ -246,6 +246,21 @@ async def run(
         async def sure_step() -> Mapping[str, int | str]:
             return await sure(db, gid, cid)
 
+        async def session_sure_step() -> Mapping[str, int | str]:
+            """DMbot's own matches from the import's who step (#3602), read before anything else
+            decides them, then what DMbot is sure of, as for the lore."""
+            from dmbot.devtools import accept_all
+            from dmbot.devtools.sample_run import judge
+
+            try:
+                line = await decide_mod.own_matches(
+                    db, memory, judge.Key(steps.master_key()), gid, cid
+                )
+            except accept_all.WrongCampaign as exc:
+                raise SampleError(str(exc)) from exc
+            say(line)
+            return await sure(db, gid, cid)
+
         async def decide_step(label: str) -> Mapping[str, int | str]:
             """The careful model's answers for what is still waiting (#3900), then the connections
             those answers made ready, kept as the sure step keeps them."""
@@ -360,7 +375,7 @@ async def run(
                 "backup and score (lore, sure + AI)": lambda: score_step("lore", "lore"),
             }
             both_accept = {
-                "sure (session)": sure_step,
+                "sure (session)": session_sure_step,
                 "backup and score (both, sure)": lambda: score_step("both-sure", "both"),
                 "AI decides (session)": lambda: decide_step("session"),
                 "backup and score (both, sure + AI)": lambda: score_step("both", "both"),

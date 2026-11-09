@@ -270,7 +270,10 @@ def fake_bot(
             deferred_names=AsyncMock(return_value=set()),  # no "Later" answers
         ),
         heard_questions=SimpleNamespace(count_for_session=AsyncMock(return_value=did_they_mean)),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True),
+            waiting_for_script=AsyncMock(return_value=False),
+        ),
         recap_worker=object(),
         import_job=None,
         recap_holds=store if holds == "default" else holds,
@@ -723,6 +726,15 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         await bot._say_writing(campaign(), 66, AT)
         await bot._say_writing(campaign(), 66, AT + 5)
         self.assertEqual(bot.post.await_count, 2)  # no debounce: each is told, with its own page
+
+    async def test_a_recap_waiting_for_its_script_says_so(self) -> None:
+        bot = fake_bot()
+        await bot._say_writing(campaign(), 66, AT)
+        self.assertNotIn("script", bot.post.await_args.args[1])
+        bot.recaps.waiting_for_script = AsyncMock(return_value=True)
+        await bot._say_writing(campaign(), 66, AT)
+        said = bot.post.await_args.args[1]
+        self.assertIn("waits for its script (up to 10 minutes), then gets written", said)
 
     async def test_a_group_never_takes_in_another_campaigns_hold(self) -> None:
         mine = self.group(100, 2)
