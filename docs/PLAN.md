@@ -386,6 +386,43 @@ commands are only visible to the person who used them.
 - **New campaign:** asks for the name, the **target ruleset**, and the **fallback ruleset**
   (defaults: 2024 rules, then 2014 legacy), and which **optional rules** to include
   (default: included where they don't conflict with the target ruleset).
+- **The campaign start-up wizard (owner, 2026-11-09).** An optional step-by-step wizard sets up a new
+  campaign; **[Skip]** on every step goes straight to typing the campaign's name, takes the defaults, and
+  says so: "DMbot will use the defaults. You can upload your lore and story later from DMbot's menus."
+  It lives on the **website** (uploads, many choices and a back button need a page), and Discord's
+  **＋ New campaign** offers it first ("Set up step by step on the website") beside the short Discord
+  form, which stays. The steps:
+  1. **Where the campaign is:** a D&D Beyond campaign link, a file upload, or a Google Drive file or
+     folder (Google's own file picker, `drive.file`). **D&D Beyond limit:** a campaign's page, its
+     characters and notes are behind the DM's own sign-in (checked 2026-11-09: the join link sends
+     anyone else to "Sign In"), and DMbot never holds a D&D Beyond password or cookie, so DMbot keeps
+     the link as the campaign's **Join on D&D Beyond** invite (#1119) and asks for what it can read:
+     each player character's **public sheet link** (read as today, #1119 part A) and, optionally, the
+     campaign page's text pasted in. Reading the campaign itself waits for the browser extension in
+     the DM's own session (part C).
+  2. **Confirm** the campaign's name and the player characters found (full name, the party's name).
+  3. **Who plays each character** (optional): a character with no player yet is still a player
+     character, its player "pending", answered later from Questions for you or the Names page.
+  4. **Lore everyone knows** (the campaign's backdrop) and 5. **secrets** not yet revealed: uploads or
+     links, **checked only** (it can be opened and read as text, with a count of pages and words), not
+     read for names yet.
+  6. **Rules:** D&D 5e current (2024) or D&D 5e legacy (2014) as the target, the other as fallback,
+     and the supplements, any of: Xanathar's Guide to Everything (2017), Guildmasters' Guide to Ravnica
+     (2018), Mythic Odysseys of Theros (2020), Tasha's Cauldron of Everything (2020), Fizban's Treasury
+     of Dragons (2021), Mordenkainen Presents: Monsters of the Multiverse (2022), Bigby Presents: Glory
+     of the Giants (2023). Choosing a book only tells the rules advisor which books the table uses; no
+     book's text is stored (the IP rule). The DM may upload their own ruleset, after confirming the
+     right to use it (the existing shared-content confirmation, recorded with who and when).
+  7. **House rules** and 8. **homebrew** (items, spells, monsters, lineages, classes...): files, links,
+     or a document of many links, through the existing homebrew import.
+  9. **Data for improving DMbot:** the DM's own choice for the campaign (#933's raw-transcript use);
+     every player still says yes to being recorded themselves, as always.
+  10. **Finish:** the campaign is made, the lore everyone knows is read, then the secrets (as spoilers),
+      and DMbot adds what it is sure of and goes on to the names to check by itself (#3878), with the
+      usual progress, notice and Undo. Nothing more to press.
+  **The party is the first entry of every campaign:** a group "the party" made with the campaign, its
+  player characters members of it, so the story graph starts from it. It is never a knower (STORY_MEMORY
+  9b): what the player characters know stays their own rows.
 - **One DM screen per campaign:** a channel such as `#dmb-dm-screen-rime-of-the-frostmaiden`,
   which the bot creates (see "Channel structure"). Who else can see it depends on the campaign's **DM-screen visibility**
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel

@@ -528,9 +528,9 @@ class BackstoryLinks:
     async def take_ready_notices(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
     ) -> Taken:
-        """The connections that became ready since the DM screen last said so (#2650), as a count
+        """The connections that became ready since they were last announced (#2650), as a count
         for each upload ("" for an old one), marked told as they are taken: said once, even if two
-        rounds overlap. Counts only: the DM screen never shows the connections themselves."""
+        rounds overlap. Counts only: the announcement never shows the connections themselves."""
         waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
         fresh = [w for w in waiting if w.ready and not w.told and w.id]
         if not fresh:
@@ -548,6 +548,18 @@ class BackstoryLinks:
                 ids.append(str(row["id"]))
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
         return Taken(counts, ids)
+
+    async def ready_counts(
+        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+    ) -> dict[str, int]:
+        """How many connections are ready to check now, for each upload ("" for an old one), told
+        or not: the live message in the DM Bot channel shows the whole count (#3874). Read-only;
+        counts only."""
+        counts: dict[str, int] = {}
+        for link in await self.waiting(guild_id, campaign_id, symmetric=symmetric):
+            if link.ready:
+                counts[link.upload] = counts.get(link.upload, 0) + 1
+        return counts
 
     async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
         """These connections were just announced some other way (an upload's own summary)."""
