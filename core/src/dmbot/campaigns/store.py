@@ -424,6 +424,9 @@ class CampaignStore:
         # bot enforces plans (DMBOT_ENFORCE_PLANS, #437).
         self._restore_needs_slot = restore_needs_slot
         self._sections: dict[str, ExportSection] = {}
+        # Run after a campaign is made (never for a restore): the party entry (#3954), registered
+        # by the bot's wiring so a test's campaign starts empty unless it asks for one.
+        self._on_create: list[Callable[[int, str], Awaitable[object]]] = []
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
         self.register_section(_ConfirmationsSection())
@@ -463,6 +466,11 @@ class CampaignStore:
     @property
     def db(self) -> Database:
         return self._db
+
+    def on_create(self, hook: Callable[[int, str], Awaitable[object]]) -> None:
+        """Run `hook(guild_id, campaign_id)` after each new campaign is made. A failing hook is
+        logged by its error type and never undoes the campaign."""
+        self._on_create.append(hook)
 
     def register_section(self, section: ExportSection) -> None:
         """Include another feature's per-campaign data in backups and deletes."""
@@ -635,9 +643,15 @@ class CampaignStore:
                         " WHERE guild_id = %s AND id = %s",
                         (invite, guild_id, campaign_id),
                     )
-                return await self._require(conn, guild_id, campaign_id)
+                made = await self._require(conn, guild_id, campaign_id)
         except pg_errors.UniqueViolation as exc:
             raise CampaignError(NAME_TAKEN) from exc
+        for hook in self._on_create:
+            try:
+                await hook(guild_id, made.id)
+            except Exception as exc:  # the type only: the campaign stands either way
+                log.warning("A new campaign's first step failed (%s)", type(exc).__name__)
+        return made
 
     async def rename(self, guild_id: int, campaign_id: str, new_name: str) -> Campaign:
         clean = clean_name(new_name)

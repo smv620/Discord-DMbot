@@ -17,6 +17,7 @@ import re
 import shutil
 import signal
 import time
+from collections import Counter
 from collections.abc import (
     Awaitable,
     Callable,
@@ -14750,6 +14751,35 @@ def register_backup_sections(
     campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 
 
+async def fill_parties(
+    campaigns: CampaignStore, make: Callable[[int, str], Awaitable[Any]]
+) -> Counter[str]:
+    """The one-time fill of the party entry (#3954), at each start: every campaign gets its party,
+    adopted from a group it already uses for it or made (`party.fill`). A campaign that has one is
+    one read. One failing campaign never stops the rest. Counts only in the log: the step each
+    campaign took, and how many knower rows a party holds (Supervisor's ruling: posted first, then
+    a follow-up turns them into the member characters' own rows)."""
+    steps: Counter[str] = Counter()
+    held = 0
+    try:
+        guilds = await campaigns.guilds_with_campaigns()
+    except Exception as exc:
+        log.warning("The party fill could not list the campaigns (%s)", type(exc).__name__)
+        return steps
+    for guild_id in guilds:
+        for campaign_id in sorted(await campaigns.campaign_ids(guild_id)):
+            try:
+                filled = await make(guild_id, campaign_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                steps["failed"] += 1
+                log.warning("The party fill failed for a campaign (%s)", type(exc).__name__)
+                continue
+            steps[filled.step] += 1
+            held += filled.knower_rows
+    log.info("Party fill: %s; knower rows on a party: %d", dict(steps), held)
+    return steps
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
@@ -14836,6 +14866,12 @@ async def run(settings: Settings) -> None:
             bot._picture_db = db
         if bot.image_desk is not None:  # the day's count lives in the database (#2450)
             bot.image_desk.counter = ImageUseStore(db)
+        if bot.memory is not None:
+            # The party is the first entry of every campaign (#3954): made with each new campaign,
+            # and once now for every campaign that has none (the fill, idempotent).
+            party_of = bot.memory.make_party
+            campaigns.on_create(party_of)
+            await fill_parties(campaigns, party_of)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

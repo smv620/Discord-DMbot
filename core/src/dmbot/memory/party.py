@@ -18,8 +18,15 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory._changes import ALIASES, ENTITIES, Changes
-from dmbot.memory.models import CONFIRMED, PARTY_SOURCE, PLAYER_CHARACTER, REJECTED, new_id
+from dmbot.memory._changes import ALIASES, ENTITIES, RELATIONS, Changes
+from dmbot.memory.models import (
+    CONFIRMED,
+    PARTY_SOURCE,
+    PLAYER_CHARACTER,
+    REJECTED,
+    name_key,
+    new_id,
+)
 
 PARTY_NAME = "The party"
 KNOWS, MEMBER_OF = "knows", "member_of"
@@ -98,26 +105,116 @@ async def is_replaced(w: Changes, entity_id: str, current: Collection[str]) -> b
     return bool(mine)
 
 
+# The names a group the DM made for the party goes by, for the one-time fill (#3954, Supervisor's
+# ruling: "the adventurers" added; not "the company" or "the heroes").
+PARTY_NAMES = frozenset({"the party", "party", "our party", "the group", "the adventurers"})
+
+
+@dataclass(frozen=True, slots=True)
+class Filled:
+    """What the fill did for one campaign, as a step name for the log: `had` (a flagged party),
+    `rejected`, `linked` (#3036's party flagged), `members` (a group of exactly its player
+    characters), `named` (a group named like the party), `made`. Counts only."""
+
+    step: str
+    party_id: str | None
+    knower_rows: int = 0
+
+
+async def flagged(w: Changes) -> dict[str, Any] | None:
+    """The campaign's party: the entry with the `party` flag (one per campaign, a unique index;
+    the flag moves with a merge). Whatever the DM renamed it to."""
+    rows = await w.select(ENTITIES, " AND party")
+    return rows[0] if rows else None
+
+
 async def find_or_make(w: Changes) -> tuple[str | None, bool]:
-    """(the party faction's id, whether it was just made). Found by its source, whatever the DM
-    renamed it to. One the DM rejected is their word that there is no such group: no id (None),
-    nothing is made again and nobody is added to it. A merged one is gone, and a new one is made."""
-    rows = await w.select(ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE])
-    live = [r for r in rows if r["status"] == CONFIRMED and r["merged_into"] is None]
-    if live:
-        return str(min(live, key=lambda r: (r["created_at"], r["id"]))["id"]), False
-    if any(r["status"] == REJECTED for r in rows):
-        return None, False
+    """(the party's id, whether it was just made). The flagged entry, live; one the DM rejected is
+    their word that there is no such group: no id (None), nothing is made again and nobody is added
+    to it. Otherwise a group the campaign already uses for the party is adopted (`adopt`), else
+    one is made."""
+    filled = await fill(w)
+    return filled.party_id, filled.step == "made"
+
+
+async def fill(w: Changes) -> Filled:
+    """The one party of the campaign (#3954), in Supervisor's order, the first that applies:
+    the flagged entry; none when the DM rejected it; else the party #3036 linked (`source =
+    'party'`); else a live group whose members are exactly its member player characters; else a
+    live group named like the party (`PARTY_NAMES`), the oldest each time; else a new one. A
+    found group gets the flag, in the caller's change (one Undo)."""
+    row = await flagged(w)
+    if row is not None:
+        if row["status"] == REJECTED:
+            return Filled("rejected", None)
+        if row["status"] != CONFIRMED:  # (forgotten, then wanted again: as `ensure_party`)
+            await w.update(ENTITIES, row["id"], {"status": CONFIRMED})
+        return Filled("had", str(row["id"]))
+    groups = sorted(
+        (
+            r for r in await w.select(
+                ENTITIES, " AND type = 'faction' AND status = %s AND merged_into IS NULL",
+                [CONFIRMED],
+            )
+        ),
+        key=lambda r: (r["created_at"], r["id"]),
+    )  # fmt: skip
+    if any(r["status"] == REJECTED for r in await w.select(
+        ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE]
+    )):  # fmt: skip
+        return Filled("rejected", None)  # (#3036's rule: a rejected linked party stays gone)
+    found = next((r for r in groups if r["source"] == PARTY_SOURCE), None)
+    step = "linked"
+    if found is None:
+        found, step = await _by_members(w, groups), "members"
+    if found is None:
+        found, step = await _by_name(w, groups), "named"
+    if found is not None:
+        await w.update(ENTITIES, found["id"], {"party": True})
+        return Filled(step, str(found["id"]))
+    return Filled("made", await _make(w))
+
+
+async def _by_members(w: Changes, groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+    members = set(await members_of(w))
+    if not members or not groups:
+        return None
+    links = await w.select(
+        RELATIONS,
+        " AND predicate = %s AND status = %s AND to_session_at IS NULL AND object_id = ANY(%s)",
+        [MEMBER_OF, CONFIRMED, [str(g["id"]) for g in groups]],
+    )
+    of: dict[str, set[str]] = {}
+    for r in links:
+        of.setdefault(str(r["object_id"]), set()).add(str(r["subject_id"]))
+    return next((g for g in groups if of.get(str(g["id"])) == members), None)
+
+
+async def _by_name(w: Changes, groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not groups:
+        return None
+    rows = await w.select(
+        ALIASES, " AND status = %s AND entity_id = ANY(%s)",
+        [CONFIRMED, [str(g["id"]) for g in groups]],
+    )  # fmt: skip
+    named = {str(r["entity_id"]) for r in rows if name_key(str(r["text"])) in PARTY_NAMES}
+    named |= {str(g["id"]) for g in groups if name_key(str(g["name"])) in PARTY_NAMES}
+    return next((g for g in groups if str(g["id"]) in named), None)
+
+
+async def _make(w: Changes) -> str:
+    """A new party: a confirmed group, "The party", flagged, as the DM's write. Always shown to the
+    players (they are in it)."""
     row = await w.insert(
         ENTITIES,
         {
             "id": new_id(), "type": "faction", "name": PARTY_NAME, "description": "",
             "status": CONFIRMED, "merged_into": None, "source": PARTY_SOURCE,
             "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
-            "unique_item": None, "hidden_from_players": False,
+            "unique_item": None, "hidden_from_players": False, "party": True,
         },
     )  # fmt: skip
     from dmbot.memory.store import _new_alias  # (the store imports this module)
 
     await w.insert(ALIASES, _new_alias(w, row["id"], PARTY_NAME, "full", CONFIRMED, False, None))
-    return str(row["id"]), True
+    return str(row["id"])
