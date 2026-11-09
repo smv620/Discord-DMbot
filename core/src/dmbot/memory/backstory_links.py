@@ -477,9 +477,9 @@ class BackstoryLinks:
     async def take_ready_notices(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
     ) -> Taken:
-        """The connections that became ready since the DM screen last said so (#2650), as a count
+        """The connections that became ready since they were last announced (#2650), as a count
         for each upload ("" for an old one), marked told as they are taken: said once, even if two
-        rounds overlap. Counts only: the DM screen never shows the connections themselves."""
+        rounds overlap. Counts only: the announcement never shows the connections themselves."""
         waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
         fresh = [w for w in waiting if w.ready and not w.told and w.id]
         if not fresh:

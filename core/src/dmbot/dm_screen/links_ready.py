@@ -36,14 +36,21 @@ def _short(text: str) -> str:
     return plain if len(plain) <= NAME_SHOWN else plain[: NAME_SHOWN - 1].rstrip() + "…"
 
 
-def notice(counts: Mapping[str, int]) -> str:
-    """The text for the DM screen: the total first, then which uploads (at most two, each cut
-    short) and what the button does."""
+def notice(counts: Mapping[str, int], *, named: bool = False) -> str:
+    """The text of the notice: the total, and what the button does. `named`: also which uploads
+    (at most two, each cut short), only for the DM screen, where an upload's name (the DM's own
+    words) is theirs alone; the DM Bot channel is seen by the campaign's people, so there it is a
+    count and nothing else (#3874)."""
     total = sum(n for n in counts.values() if n > 0)
     if not total:
         return ""
     noun = "connection" if total == 1 else "connections"
     verb = "is" if total == 1 else "are"
+    if not named:
+        return (
+            f"📜 {total} {noun} {verb} ready to check.\n"
+            "Press the button to keep or skip each one. Nothing goes to players."
+        )
     named = sorted(((k, n) for k, n in counts.items() if k and n > 0), key=lambda i: (-i[1], i[0]))
     if len(named) == 1 and named[0][1] == total:
         head = f"📜 {_short(named[0][0])}: {total} {noun} {verb} ready to check."

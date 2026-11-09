@@ -542,6 +542,77 @@ class WhenKept(NamesTest):
         edit.assert_awaited_once()
         self.assertIn("3 connections are ready to check", edit.await_args.kwargs["content"])
 
+    async def look_with(self, campaign: Any, *, post: Any = None, channel: Any = None) -> None:
+        self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+        self.bot.post_message = post or AsyncMock(return_value=SimpleNamespace(id=9001))  # type: ignore[method-assign]
+        with (
+            patch.object(DMBot, "guilds", PropertyMock(return_value=[SimpleNamespace(id=GUILD)])),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+            patch.object(DMBot, "get_channel", return_value=channel),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)
+
+    async def test_the_dm_bot_channel_gets_a_count_and_no_upload_name(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        (label,) = {w.upload for w in await self.waiting()}
+        await self.look_with(dataclasses.replace(self.campaign, dm_bot_channel_id=777))
+        text = self.bot.post_message.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertNotIn(label.split(",")[0], text)
+        self.assertIn("2 connections are ready to check", text)
+
+    async def test_the_dm_screen_fallback_may_name_the_upload(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        (label,) = {w.upload for w in await self.waiting()}
+        await self.look_with(dataclasses.replace(self.campaign, dm_screen_channel_id=555))
+        self.assertIn(label.split(",")[0], self.bot.post_message.await_args.args[1])  # type: ignore[attr-defined]
+
+    async def test_with_no_channel_at_all_nothing_is_posted_or_marked_told(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        await self.look_with(self.campaign)
+        self.bot.post_message.assert_not_awaited()
+        self.assertTrue(all(not w.told for w in await self.waiting()))
+
+    async def test_a_deleted_message_is_replaced_but_a_passing_error_is_not(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_bot_channel_id=777)
+        await self.look_with(campaign)  # the first post, remembered
+        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id], (777, 9001))
+
+        async def another(error: Exception) -> AsyncMock:
+            channel = MagicMock(spec=discord.TextChannel)
+            channel.get_partial_message.return_value = SimpleNamespace(
+                edit=AsyncMock(side_effect=error)
+            )
+            await self.untell_all()
+            post = AsyncMock(return_value=SimpleNamespace(id=9002))
+            await self.look_with(campaign, post=post, channel=channel)
+            return post
+
+        gone = discord.NotFound(MagicMock(status=404, reason="x"), "gone")
+        post = await another(gone)
+        post.assert_awaited_once()  # (replaced)
+        self.assertEqual(self.bot._links_ready_msgs[self.campaign.id], (777, 9002))
+        blip = discord.HTTPException(MagicMock(status=503, reason="x"), "busy")
+        post = await another(blip)
+        post.assert_not_awaited()  # (no second message; said again next time)
+        self.assertTrue(all(not w.told for w in await self.waiting()))
+
+    async def untell_all(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE backstory_links SET told = false")
+
+    async def test_the_ready_counts_are_by_upload_and_include_told_ones(self) -> None:
+        await self.read()
+        self.assertEqual(await self.store.ready_counts(GUILD, self.campaign.id), {})
+        await self.confirm_all()
+        await self.store.take_ready_notices(GUILD, self.campaign.id)  # (now told)
+        counts = await self.store.ready_counts(GUILD, self.campaign.id)
+        self.assertEqual(sum(counts.values()), 2)
+
     async def test_nothing_waiting_posts_nothing(self) -> None:
         campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
         self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]

@@ -1144,6 +1144,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # become ready instead of a new post each time (#3874); in memory: after a restart the next
         # one is a new message, and the button (persistent) works on both
         self._links_ready_msgs: dict[str, tuple[int, int]] = {}
+        self._links_ready_locks: dict[str, asyncio.Lock] = {}  # one say at a time for a campaign
         self._links_guilds: dict[str, int] = {}  # campaign -> its server, once found
         self._npcs_recall: RecallService | None = None
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -14088,8 +14089,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # One message that says the whole count (what is ready now, told before or not), so a
             # burst of answers never becomes a flood of posts.
             now = await store.ready_counts(guild_id, campaign_id, symmetric=symmetric)
-            text = links_ready.notice(now or taken.counts)
-            if text and not await self._say_links_ready(campaign_id, channel_id, text):
+            # (counts only in the DM Bot channel; the DM screen may name the upload, as it did)
+            text = links_ready.notice(now, named=not campaign.dm_bot_channel_id)
+            if not text:
+                return  # nothing is ready any more (a name changed since): say nothing untrue
+            async with self._links_ready_locks.setdefault(campaign_id, asyncio.Lock()):
+                said = await self._say_links_ready(campaign_id, channel_id, text)
+            if not said:
                 await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
 
     async def _say_links_ready(self, campaign_id: str, channel_id: int, text: str) -> bool:
@@ -14104,8 +14110,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         content=text, view=links_ready.view(campaign_id)
                     )
                     return True
-                except discord.HTTPException:  # gone, or not ours any more: a new one below
+                except (discord.NotFound, discord.Forbidden):
+                    # gone, or not ours any more: a new one below
                     self._links_ready_msgs.pop(campaign_id, None)
+                except discord.HTTPException:
+                    return False  # a passing problem: said again next time, never a second message
         sent = await self.post_message(channel_id, text, links_ready.view(campaign_id))
         if sent is None:
             return False
