@@ -144,6 +144,8 @@ STORE = {
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
     "reveal_stated_in": "writes: shows a held-back connection the table stated (#3963 c), only "
     "a confirmed, live, non-secret one whose ends are both shown",
+    "live_between": "which live, confirmed connections join two entries and which are held "
+    "back, so a catch-all claim beside one is held back too (#3975); shows players nothing",
 }
 
 
