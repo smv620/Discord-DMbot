@@ -208,7 +208,7 @@ class Card(unittest.IsolatedAsyncioTestCase):
         return SimpleNamespace(id=2)
 
     def campaign(self, invite: str | None) -> Any:
-        return SimpleNamespace(name="Rime", dndbeyond_invite=invite)
+        return SimpleNamespace(name="Rime", dndbeyond_invite=invite, channels_visibility="everyone")
 
     async def test_a_new_card_has_the_button_only_with_a_link(self) -> None:
         for invite in (LINK, None):
