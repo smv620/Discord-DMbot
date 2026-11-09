@@ -251,6 +251,27 @@ ADDRESS_ALONE = frozenset(
         *("your highness", "good sir", "young man", "old man"),
     }
 )
+# Titles and forms of address said before a name ("Lord Neverember", "Major Ursa", "Old Mother
+# Ashe"): a word that is never the name itself. The short-name rule (#3880) reads it; #3385 (never
+# ask about a title) is to read it too, in its own change, so the two never disagree. Single words,
+# lower case; the one-word forms of ADDRESS_ALONE are all in it.
+TITLE_WORDS = frozenset(
+    {
+        *(w for w in ADDRESS_ALONE if " " not in w),
+        *("the", "old", "young", "high", "grand", "great", "little", "big", "good", "saint", "st"),
+        *("king", "queen", "prince", "princess", "emperor", "empress", "regent", "chancellor"),
+        *("duke", "duchess", "baron", "baroness", "count", "countess", "earl", "marquis", "jarl"),
+        *("dame", "knight", "squire", "mistress", "lord", "lady", "sir", "madam", "mister", "miss"),
+        *("mr", "mrs", "ms", "dr", "doctor", "professor", "sage", "archmage", "magister"),
+        *("general", "commander", "major", "colonel", "sergeant", "lieutenant", "admiral"),
+        *("marshal", "warden", "sheriff", "constable", "mayor", "speaker", "councillor"),
+        *("chief", "chieftain", "elder", "abbot", "abbess", "bishop", "cardinal", "reverend"),
+        *("friar", "brother", "sister", "father", "mother", "uncle", "aunt", "auntie", "cousin"),
+        *("granny", "grandma", "grandpa", "grandmother", "grandfather", "captain", "master"),
+    }
+)
+
+
 _CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d+\s*(?:am|pm|o'?clock)\b", re.IGNORECASE)
 _ARTICLES = frozenset({"the", "a", "an", "of"})
 

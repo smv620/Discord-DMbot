@@ -9334,6 +9334,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # session's events: the lines the stored split labels so are left out. A session with
             # no split yet is read as all play.
             recap_lines = await self._recap_lines(gid, sid)
+            # (a character's first name said alone is their short name before the claims are
+            # matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
+            agreed = await self.consent.consenting(gid)
+            await self.add_short_names(gid, cid, extractor.heard_texts(lines, agreed, recap_lines))
             report = await extractor.run(
                 self.extractor_ai,
                 ClaimStore(self.memory),
@@ -10810,6 +10814,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
+    async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
+        """Add each character's first name as their short name where the rule allows it
+        (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
+        the story extractor. `texts` must hold only what may be read (people who agree). Never
+        stops what called it; counts only."""
+        if self.memory is None:
+            return
+        try:
+            written = await self.memory.add_short_names(gid, cid, texts)
+        except Exception as exc:
+            log.warning("Short names: couldn't add them (%s)", type(exc).__name__)
+            return
+        if written.value:
+            log.info("Short names: %d added", len(written.value))
+
     async def _propose_new_names(
         self,
         gid: int,
@@ -10827,6 +10846,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
         confirmed."""
         assert self.memory is not None
+        # A character's first name said alone ("Claude" for Claude Ambere) is their short name
+        # before the scan looks (#3880), so it is never offered as a new name.
+        await self.add_short_names(gid, cid, lines)
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
