@@ -173,6 +173,9 @@ async def add_guessed(
     earlier guess, stays. A knower row of an NPC or a group never shows a hidden statement to a
     player: the gate reads players' points of view and the party's, never an NPC's. Returns how
     many rows were added."""
+    # The mark of a guess is its certainty below 1.0 (Supervisor, #3941): today only DMbot writes a
+    # row below 1.0 for an NPC. Before any control lets a DM set a certainty below 1.0, add a
+    # `guessed` column to `memory_knowers` first, so a DM's own 0.6 never reads as DMbot's guess.
     if kind not in ("entry", "connection") or not guesses:
         return 0
     column, table = _COLUMNS[kind]
