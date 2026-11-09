@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { toldWords as w } from "../content/told-words";
 import { ApiError, type AccountApi, type ToldName } from "./api";
+import SavingWait from "./SavingWait";
 
 type Who = { id: string; name: string };
 
@@ -99,7 +100,8 @@ export default function ToldPanel({ api, campaignRef, entryId, entryName }: { ap
         </ul>
       ))}
       {/* Always there, so a screen reader hears what is put in it. */}
-      <p class="small" role="status">{busy ? w.working : said}</p>
+      <SavingWait active={busy} />
+      <p class="small" role="status">{said}</p>
       {problem && <p class="warn small" role="alert">{problem}</p>}
     </div>
   );
