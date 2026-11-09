@@ -23,10 +23,10 @@ export const wizardWords = {
   notYet: "This page isn't available yet.",
   loading: "Loading…",
   failed: "We couldn't load this. Reload the page to try again.",
-  expired: "Your unfinished setup was kept for 7 days and is gone now. You can start again.",
+  expired: "Your unfinished setup was kept for 7 days and has been removed. You can start again.",
   noRoom: "Your plan has no room for another campaign. Change your plan or remove a campaign, then come back.",
-  tooFast: "That was a bit quick. Wait a moment and try again.",
-  notAllowed: "Only a game master of this server can set up a campaign here.",
+  tooFast: "Too many tries at once. Wait a moment, then try again.",
+  notAllowed: "Only a DM of this server can set up a campaign here.",
   saved: "Saved. You can leave and come back: your answers are kept for 7 days.",
   saving: "Saving…",
   step: (n: number, of: number): string => `Step ${n} of ${of}`,
@@ -59,7 +59,7 @@ export const wizardWords = {
     inviteHint: "The link you send players so they can join on D&D Beyond.",
     inviteBad: "That doesn't look like a D&D Beyond campaign invite link. Copy it from the campaign's page and paste it here.",
     // The D&D Beyond limit, in the PLAN's plain words.
-    limit: "D&D Beyond keeps a campaign's page behind your sign-in, and DMbot never asks for your D&D Beyond password. So DMbot keeps the invite link as the campaign's \"Join on D&D Beyond\" button, and asks you for what it can read: each character's public sheet link.",
+    limit: "DMbot can't open a D&D Beyond campaign page, because it is behind your sign-in, and DMbot never asks for your password. It keeps your invite link as the campaign's \"Join on D&D Beyond\" button. To add characters, give each character's public sheet link, or paste the text of the campaign page below.",
     sheetLabel: "A character's public sheet link",
     sheetHint: "On D&D Beyond, open the character and make its sheet public, then copy its link.",
     sheetAdd: "Add the character",
@@ -93,7 +93,7 @@ export const wizardWords = {
   // Step 3: who plays each character.
   players: {
     heading: "Who plays each character?",
-    lead: "You can leave this empty. A character with no player is still a player character, and its player can be set later in Questions for you or on the Names page.",
+    lead: "You can skip this. Pick who plays each character, or set it later on the Names page.",
     pending: "Not set yet",
     none: "There are no characters to match yet.",
   },
@@ -105,10 +105,10 @@ export const wizardWords = {
   },
   secrets: {
     heading: "Secrets not yet revealed",
-    lead: "What only you know yet: hidden identities, plots and hiding places. DMbot keeps these as spoilers and never tells the players.",
+    lead: "What only you know so far: hidden identities, plots, hiding places. DMbot keeps these on your DM screen and does not send them to players.",
   },
   docs: {
-    checkOnly: "DMbot only checks that it can open each file and counts its pages and words. It doesn't read it for names until you finish.",
+    checkOnly: "DMbot only checks that it can open each file and counts its pages and words. It reads nothing until you press \"Make the campaign\".",
     add: "Add a file",
     addLink: "Add a link",
     addDrive: "Choose from Google Drive",
@@ -125,17 +125,17 @@ export const wizardWords = {
       too_big: "This file is too big. Split it into parts, or use Google Drive.",
       not_text: "DMbot can't read this kind of file. Use a text, Markdown, PDF or Word file.",
     } as Record<string, string>,
-    full: "A setup holds up to 20 files.",
+    full: "A setup holds up to 20 files. Remove one to add another.",
     // The right-to-use confirmation (CLAUDE.md, IP): required before DMbot reads shared material.
     rights: "I have the right to use what I add here.",
-    rightsNote: "DMbot doesn't check this. Who confirmed and when is recorded with the campaign.",
+    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files stay in this campaign only.",
     rightsNeeded: "Tick the box to say you have the right to use these files.",
   },
 
   // Step 6: rules.
   rules: {
     heading: "Which rules do you play?",
-    lead: "Pick the rules to use first. The other set is used only where the first has nothing.",
+    lead: "Pick the rules to use first. DMbot uses the other set only when the first has no answer.",
     current: "D&D 5e current (2024)",
     legacy: "D&D 5e legacy (2014)",
     targetLabel: "Play with",
@@ -144,7 +144,7 @@ export const wizardWords = {
     supplementsLabel: "Books your table uses",
     supplementsNote: "Choosing a book only tells DMbot's rules advisor which books you use. No book's text is stored.",
     ownLabel: "Your own ruleset",
-    ownLead: "You can add your own ruleset as a file. Tick the box first.",
+    ownLead: "To add your own rules as a file, tick the box first.",
     ownRights: "I have the right to use this ruleset.",
   },
 
@@ -161,16 +161,16 @@ export const wizardWords = {
   // Step 9: data for improving DMbot.
   data: {
     heading: "Help improve DMbot?",
-    lead: "You can let DMbot learn from this campaign's story to get better. It is your choice for this campaign.",
+    lead: "Let DMbot use this campaign's story and transcripts to improve itself? It is your choice, and only for this campaign.",
     yes: "Yes, use this campaign's story",
     no: "No, keep it to this campaign",
-    note: "Everyone at your table still says yes to being recorded themselves, as always.",
+    note: "Players still choose for themselves whether to be recorded.",
   },
 
   // Step 10: finish.
   finish: {
     heading: "Ready to make the campaign",
-    lead: "DMbot will make the campaign, read the lore everyone knows, then the secrets, and add what it is sure of. Then it goes on to the names for you to check by itself. There is nothing more to press.",
+    lead: "DMbot will make the campaign, read your lore, then your secrets, and add what it is sure of. Afterwards it lists names for you to check. You don't need to press anything else.",
     summaryName: "Name",
     summaryRules: "Rules",
     summaryFiles: (n: number): string => `${n} ${n === 1 ? "file" : "files"} added`,
@@ -186,16 +186,16 @@ export const wizardWords = {
       lore: "Reading the lore",
       secrets: "Reading the secrets",
       sure: "Adding what DMbot is sure of",
-      clean: "Tidying up",
+      clean: "Finishing up",
     } as Record<string, string>,
     done: "Your campaign is ready.",
     open: "Open the campaign",
     // The finish run's failure words (docs/WIZARD_DESIGN.md, 4.4).
     errors: {
       plan: "Your plan has no room for another campaign.",
-      "not-allowed": "Only a game master of this server can set up a campaign here.",
+      "not-allowed": "Only a DM of this server can set up a campaign here.",
       gone: "The setup was thrown away before it finished. Start again.",
-      "no-key": "Your campaign is ready. The lore is waiting for an AI key. Add one in Settings; nothing is lost.",
+      "no-key": "Your campaign is ready. DMbot can't read the lore until you add an AI key in Settings. Nothing is lost.",
       failed: "Something went wrong. Nothing you entered is lost. Try again in a minute.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
