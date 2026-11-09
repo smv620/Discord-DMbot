@@ -34,6 +34,7 @@ from dmbot.memory import (
     lore_pc_names,
     lore_read,
     pronouns,
+    traits_read,
     who_ask,
     who_resolve,
 )
@@ -64,6 +65,7 @@ from dmbot.memory.models import (
     MoreNames,
     NewName,
     Relation,
+    Trait,
     name_key,
 )
 from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
@@ -797,6 +799,8 @@ async def read_background(
         found = [
             replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
         ]
+    # A new character's lineage and classes the text states (#2959 item 3), stored with its name.
+    traits = _traits_of(read.trait_lines, upload.text, found, known, campaign, read.stats.dropped)
     stored = await store(
         memory,
         campaign,
@@ -809,6 +813,7 @@ async def read_background(
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
+        traits=traits,
     )
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
@@ -1097,6 +1102,7 @@ async def store(
     world: Collection[str] = (),
     fold_secret: bool = False,
     source: str = "",
+    traits: Mapping[str, Sequence[Trait]] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -1107,7 +1113,8 @@ async def store(
     not held back from them, with its other names, so the old flags show it once the DM confirms
     it and the who-knows list follows the flags (nothing is written to that list here).
     `fold_secret`: only when the DM chose "everyone knows it", a disguise the text gives is just
-    another public name.
+    another public name. `traits` (#2959 item 3): a new character's lineage and classes, by its
+    name's key, written in the same change as the name.
     `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
     known by that character, as a kept connection does; with none, it is the DM's alone. That is
     set after the names, in changes of its own: Undo of the names removes the name and, with it,
@@ -1143,6 +1150,7 @@ async def store(
                 # the players' line (#2967 slice a): only when the DM said the players know all of
                 # it; a spoilers upload, a smart guess and a backstory never fill it
                 players_text=item.about if known and fold_secret else "",
+                traits=tuple((traits or {}).get(name_key(item.name), ())),
             )
         )
         items.append(item)
@@ -1169,6 +1177,32 @@ async def store(
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+def _traits_of(
+    lines: Sequence[str],
+    text: str,
+    found: Sequence[bg.Found],
+    known: Collection[str],
+    campaign: Campaign,
+    dropped: Counter[str],
+) -> dict[str, list[Trait]]:
+    """The checked traits of this read's new names, by name key (`traits_read`). A lineage is found
+    in the rules newest first, in the campaign's target then fallback ruleset; a 2014-only entry
+    keeps its edition, so it shows `[Legacy 2014]`. Counts only, in the read's dropped counts."""
+    if not lines:
+        return {}
+    resolve = traits_read.rules_resolver(campaign.target_ruleset, campaign.fallback_ruleset)
+    names = [n for f in found for n in (f.name, *f.also)]
+    out: dict[str, list[Trait]] = {}
+    for got in traits_read.read_traits(lines, text, names, resolve, dropped, existing=known):
+        out.setdefault(name_key(got.name), []).append(got.trait)
+    # (a trait given under another name of the same entry belongs to that entry's main name)
+    for f in found:
+        for other in f.also:
+            if name_key(other) in out and name_key(other) != name_key(f.name):
+                out.setdefault(name_key(f.name), []).extend(out.pop(name_key(other)))
+    return out
 
 
 async def _secret_names_known_by(

@@ -110,6 +110,7 @@ from dmbot.memory.models import (
     BACKGROUND_SOURCE,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
+    CLASS,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -170,6 +171,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    Trait,
     WaitingJoin,
     Written,
     check_status_change,
@@ -227,6 +229,35 @@ _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
 )
+
+
+def _trait_rows(w: Changes, entity_id: str, traits: Sequence[Trait]) -> list[dict[str, Any]]:
+    """The rules-link rows for a new character's lineage and classes (#2959 item 3), checked as
+    `set_rule_link` checks one: one lineage (the first), classes without repeats, a known link
+    only with its source. A trait that fails a check is left out; the name is kept."""
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for t in traits:
+        name = clean_text(t.name, LINK_NAME_MAX)
+        source = t.rules_source if t.known else ""
+        if (
+            t.kind not in (SPECIES, CLASS)
+            or not name
+            or (t.known and not 0 < len(source) <= LINK_SOURCE_MAX)
+            or (t.edition is not None and t.edition not in LINK_EDITIONS)
+        ):
+            continue
+        key = (t.kind, source, name_key(name))
+        if key in seen or (t.kind == SPECIES and any(k[0] == SPECIES for k in seen)):
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "id": new_id(), "entity_id": entity_id, "kind": t.kind, "rules_source": source,
+                "name": name, "edition": t.edition, "known": t.known, "created_at": w.now,
+            }
+        )  # fmt: skip
+    return rows
 
 
 async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[str]:
@@ -2236,10 +2267,12 @@ class MemoryStore:
                 folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
             entities: list[dict[str, Any]] = []
+            links: list[dict[str, Any]] = []
             for n in names:
                 check_named(n.type, n.name)
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
+                is_character = onto.is_a(kind, "character")  # (`kind` is reused for aliases below)
                 _check_role(onto, kind, role, None)
                 # A waiting suggestion may be read as a player character (#3553: the text says so);
                 # it is confirmed only once the DM says who plays it. Anything else needs a player.
@@ -2283,10 +2316,14 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(entity_id)
+                if n.traits and is_character:
+                    links.extend(_trait_rows(w, entity_id, n.traits))
             # Two statements however long the list (#253): the entries, then all their
             # names, so the campaign's write lock is held for a moment, not seconds.
             await w.insert_many(ENTITIES, entities)
             await w.insert_many(ALIASES, aliases)
+            if links:  # (a new character's lineage and classes, in the same change: #2959)
+                await w.insert_many(RULE_LINKS, links)
             return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
@@ -2302,7 +2339,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
-                " ('memory_entities', 'memory_aliases')) AS names_only, count(*) AS n"
+                " ('memory_entities', 'memory_aliases', 'memory_rule_links'))"
+                # (a name or another name must be in it: a batch of rules links alone is no list)
+                " AND bool_or(table_name IN ('memory_entities', 'memory_aliases')) AS names_only,"
+                " count(*) AS n"
                 " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
                 (*w.ids, batch),
             )
