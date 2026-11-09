@@ -242,3 +242,133 @@ class TheSweep(FinishTest):
         left = await self.sql("SELECT user_id FROM wizard_drafts")
         self.assertEqual([r["user_id"] for r in left], [DM + 5])
         self.assertEqual(await self.sql("SELECT 1 FROM wizard_documents"), [])
+
+
+class TheReviewedGaps(FinishTest):
+    async def test_documents_without_the_rights_confirmation_are_never_read(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),), rights=0)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("failed", "no_rights"))
+        self.assertEqual(await self.sql("SELECT 1 FROM lore_uploads"), [])
+        self.assertEqual(await self.campaigns.list_campaigns(GUILD), [])  # (nothing made either)
+        self.assertEqual(len(await self.sql("SELECT 1 FROM wizard_drafts")), 1)  # (kept to fix)
+
+    async def test_a_new_wizard_after_a_finished_one_makes_its_own_campaign(self) -> None:
+        await self.draft({"name": "Frostmaiden"})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        await self.draft({"name": "Sunken City"})  # (the old finished row is still there)
+        await self.queue("b" * 32)
+        await wizard_finish.run_round(self.bot, GUILD)
+        names = sorted(c.name for c in await self.campaigns.list_campaigns(GUILD))
+        self.assertEqual(names, ["Frostmaiden", "Sunken City"])
+        self.assertEqual(
+            len(await self.sql("SELECT 1 FROM wizard_finishes WHERE state = 'done'")), 2
+        )
+
+    async def test_a_campaign_made_but_never_recorded_is_found_not_made_again(self) -> None:
+        await self.draft()
+        await self.queue()
+        made = await self.campaigns.create(GUILD, "Frostmaiden", DM)  # (the worker then stopped)
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([c.id for c in await self.campaigns.list_campaigns(GUILD)], [made.id])
+        self.assertEqual((await self.run_row())["made_campaign"], made.id)
+
+    async def test_the_right_to_use_is_recorded_once_however_often_the_run_is_tried(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.draft(docs=(("lore", "l.txt", "Words."),))  # (a retry of the same campaign)
+        draft = await self.runs.draft(GUILD, DM)
+        assert draft is not None
+        await wizard_finish._record_rights(self.bot, GUILD, campaign.id, DM, draft)
+        self.assertEqual(len(await self.campaigns.confirmations(GUILD, campaign.id)), 1)
+
+    async def test_a_run_that_made_its_campaign_and_lost_its_draft_is_done_not_gone(self) -> None:
+        await self.queue()
+        made = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        await self.sql("UPDATE wizard_finishes SET made_campaign = %s", made.id)
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+
+    async def test_a_server_list_that_is_not_ready_leaves_the_run_for_a_retake(self) -> None:
+        await self.draft()
+        await self.queue()
+        self.bot.get_guild = lambda gid: None
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual(row["state"], "working")  # (not failed: the next claim retakes it)
+        self.assertEqual(await self.campaigns.list_campaigns(GUILD), [])
+
+    async def test_a_worker_that_lost_the_run_cannot_delete_the_draft(self) -> None:
+        await self.draft()
+        await self.queue()
+        run = await self.runs.claim_next(GUILD)
+        assert run is not None
+        await self.sql("UPDATE wizard_finishes SET state = 'failed'")
+        await self.runs.delete_draft(GUILD, run)
+        self.assertEqual(len(await self.sql("SELECT 1 FROM wizard_drafts")), 1)
+
+    async def test_a_document_the_reader_failed_ends_the_run_with_lore_failed_and_the_rest_stands(
+        self,
+    ) -> None:
+        await self.draft(docs=(("lore", "a.txt", "One."), ("lore", "b.txt", "Two.")))
+        await self.queue()
+
+        async def work() -> None:
+            first = True
+            while True:
+                rows = await self.sql("SELECT id FROM lore_uploads WHERE state = 'waiting' LIMIT 1")
+                if rows:
+                    await self.sql(
+                        "UPDATE lore_uploads SET state = %s, text = '' WHERE id = %s",
+                        "failed" if first else "done", rows[0]["id"],
+                    )  # fmt: skip
+                    first = False
+                await asyncio.sleep(0.01)
+
+        self.worker = asyncio.create_task(work())
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "lore_failed"))
+        self.assertEqual(len(await self.sql("SELECT 1 FROM lore_uploads")), 2)  # (both tried)
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_an_upload_nobody_reads_in_time_is_taken_out_and_its_words_blanked(self) -> None:
+        await self.draft(docs=(("lore", "a.txt", "Secret words."),))
+        await self.queue()
+        with (
+            patch.object(wizard_finish, "LORE_POLL_S", 0.01),
+            patch.object(wizard_finish, "LORE_WAIT_S", 0.05),
+        ):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "lore_failed"))
+        [up] = await self.sql("SELECT state, text FROM lore_uploads")
+        self.assertEqual((up["state"], up["text"]), ("failed", ""))
+
+    async def test_an_upload_already_open_for_the_campaign_is_waited_for_not_collided_with(
+        self,
+    ) -> None:
+        await self.draft(docs=(("lore", "a.txt", "One."),))
+        await self.queue()
+        made = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        await self.sql("UPDATE wizard_finishes SET made_campaign = %s", made.id)
+        await self.sql(
+            "INSERT INTO lore_uploads (guild_id, campaign_id, id, user_id, source, text, choice,"
+            " rights_by, rights_at, created_at, updated_at) VALUES (%s, %s, %s, %s, 'file', 'x',"
+            " 'world', %s, %s, %s, %s)",
+            GUILD, made.id, "c" * 32, DM, DM, NOW, NOW, NOW,
+        )  # fmt: skip
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))

@@ -39,6 +39,7 @@ LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 # the other documents stand.
 NOT_ALLOWED, PLAN, GONE, FAILED = "not-allowed", "plan", "gone", "failed"
 DRIVE_GONE, LORE_FAILED, BAD_ANSWERS = "drive_gone", "lore_failed", "bad_answers"
+NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (DRIVE_GONE, LORE_FAILED)
 
 # The stage codes the page shows, in order.
@@ -53,6 +54,7 @@ class Run:
     claimed_at: int  # milliseconds: the token that lets only this worker write
     made_campaign: str = ""
     tries: int = 1
+    started_at: int = 0  # when the page queued it (seconds)
 
 
 @dataclass(slots=True)
@@ -65,6 +67,10 @@ class Draft:
 
 class Lost(Exception):
     """This worker no longer holds the run."""
+
+
+class Retry(Exception):
+    """Not the run's fault (the bot's server list is not ready yet): leave it for a retake."""
 
 
 class WizardFinishes:
@@ -82,7 +88,7 @@ class WizardFinishes:
                 " WHERE guild_id = %s AND created_at >= %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, user_id, made_campaign, tries",
+                " RETURNING id, user_id, made_campaign, tries, created_at",
                 (now_ms, now_ms // 1000, guild_id, now_ms // 1000 - GIVE_UP_S,
                  now_ms - RETAKE_AFTER_S * 1000),
             )  # fmt: skip
@@ -130,13 +136,16 @@ class WizardFinishes:
             return bool(cur.rowcount)
 
     async def earlier_campaign(self, guild_id: int, user_id: int) -> str:
-        """A campaign an earlier run of this person already made from a draft that still exists
-        (a run taken as lost and pressed again is a new row), or ''."""
+        """A campaign an earlier run made from THIS draft and did not finish (a run taken as lost
+        and pressed again is a new row), or ''. Only a failed run counts, and only one queued
+        after the draft began: a run that finished, or one for an older draft, never points a new
+        wizard at an old campaign."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT f.made_campaign FROM wizard_finishes f WHERE f.guild_id = %s"
-                " AND f.user_id = %s AND f.made_campaign <> '' AND EXISTS (SELECT 1 FROM"
-                " wizard_drafts d WHERE d.guild_id = f.guild_id AND d.user_id = f.user_id)"
+                "SELECT f.made_campaign FROM wizard_finishes f JOIN wizard_drafts d"
+                " ON d.guild_id = f.guild_id AND d.user_id = f.user_id"
+                " WHERE f.guild_id = %s AND f.user_id = %s AND f.made_campaign <> ''"
+                " AND f.state = 'failed' AND f.created_at >= d.created_at"
                 " ORDER BY f.created_at DESC LIMIT 1",
                 (guild_id, user_id),
             )
@@ -144,9 +153,9 @@ class WizardFinishes:
         return str(row["made_campaign"]) if row else ""
 
     async def draft(self, guild_id: int, user_id: int) -> Draft | None:
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, snapshot=True) as conn:
             cur = await conn.execute(
-                "SELECT answers, rights_shared_at, rights_ruleset_at FROM wizard_drafts"
+                "SELECT answers, rights_shared_at, rights_ruleset_at, created_at FROM wizard_drafts"
                 " WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
@@ -164,11 +173,35 @@ class WizardFinishes:
             documents,
         )  # fmt: skip
 
-    async def delete_draft(self, guild_id: int, user_id: int) -> None:
+    async def delete_draft(self, guild_id: int, run: Run) -> None:
+        """Remove the draft, only while this worker still holds the run (a worker that lost it
+        must not delete a draft a newer run is using)."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "DELETE FROM wizard_drafts WHERE guild_id = %s AND user_id = %s",
-                (guild_id, user_id),
+                "DELETE FROM wizard_drafts d WHERE d.guild_id = %s AND d.user_id = %s AND EXISTS"
+                " (SELECT 1 FROM wizard_finishes f WHERE f.guild_id = d.guild_id AND f.id = %s"
+                " AND f.state = 'working' AND f.claimed_at = %s)",
+                (guild_id, run.user_id, run.id, run.claimed_at),
+            )
+
+    async def open_upload(self, guild_id: int, campaign_id: str) -> str:
+        """The id of this campaign's open lore upload (the queue holds one at a time), or ''."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM lore_uploads WHERE guild_id = %s AND campaign_id = %s"
+                " AND state IN ('waiting', 'working')",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return str(row["id"]) if row else ""
+
+    async def cancel_upload(self, guild_id: int, upload: str) -> None:
+        """Take an upload nobody read in time out of the queue, and blank its words."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE lore_uploads SET state = 'failed', error = 'not_taken', text = '',"
+                " link = '' WHERE guild_id = %s AND id = %s AND state IN ('waiting', 'working')",
+                (guild_id, upload),
             )
 
     async def sweep(self, guild_id: int) -> int:
@@ -242,6 +275,9 @@ async def run_round(bot: Any, guild_id: int) -> int:
         except Lost:
             log.info("A wizard finish run was taken back; stopping")
             return 1
+        except Retry:
+            log.info("A wizard finish run waits for the server list; it is retaken")
+            return 1
         except Exception as exc:
             log.warning("A wizard finish run failed (%s)", type(exc).__name__)
             word = FAILED
@@ -259,14 +295,22 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     again here: minutes may have passed since the page queued it."""
     draft = await runs.draft(guild_id, run.user_id)
     if draft is None:
-        return GONE
+        # The campaign and its lore are done when a run that already made one finds no draft: the
+        # worker died after deleting it. Anything else is a draft that went (discarded, expired).
+        return "" if run.made_campaign else GONE
     answers = check_answers(draft.answers)
     if answers is None:
         return BAD_ANSWERS
+    needs_rights = any(d["slot"] in CHOICE_OF for d in draft.documents)
+    if needs_rights and not draft.rights_shared_at:
+        return NO_RIGHTS  # nothing is read, and none is made up, without the DM's confirmation
     guild = bot.get_guild(guild_id)
-    if guild is None or guild.get_member(run.user_id) is None:
+    if guild is None:
+        raise Retry  # the bot's server list is not ready (a start or reconnect)
+    if guild.get_member(run.user_id) is None:
         return NOT_ALLOWED  # the sender must still be in the server
     campaign_id = run.made_campaign or await runs.earlier_campaign(guild_id, run.user_id)
+    campaign_id = campaign_id or await _made_before(bot, guild_id, run, answers["name"])
     if not campaign_id:
         await runs.move(guild_id, run, stage="campaign")
         refused = await bot.create_refusal(guild_id, run.user_id)
@@ -283,10 +327,9 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
             log.info("A wizard campaign was refused: %s", type(exc).__name__)
             return FAILED
         campaign_id = made.id
+    if campaign_id != run.made_campaign:
         await runs.move(guild_id, run, stage="campaign", made_campaign=campaign_id)
-        await _record_rights(bot, guild_id, campaign_id, run.user_id, draft)
-    elif not run.made_campaign:
-        await runs.move(guild_id, run, stage="campaign", made_campaign=campaign_id)
+    await _record_rights(bot, guild_id, campaign_id, run.user_id, draft)  # (once, on any path)
     await runs.move(guild_id, run, stage="data_use")
     if "data_use" in answers:
         await bot.campaigns.set_share_improve(guild_id, campaign_id, bool(answers["data_use"]))
@@ -295,17 +338,34 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
         docs = [d for d in draft.documents if d["slot"] == slot]
         word = await _read_slot(runs, guild_id, run, campaign_id, draft, slot, docs) or word
     await runs.move(guild_id, run, stage="clean")
-    await runs.delete_draft(guild_id, run.user_id)
+    await runs.delete_draft(guild_id, run)
     return word
+
+
+async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:
+    """A campaign this person's earlier try made but never recorded (the worker stopped between
+    making it and writing its id): theirs, with this name, made since the run was queued."""
+    for campaign in await bot.campaigns.list_campaigns(guild_id):
+        if (
+            campaign.owner_user_id == run.user_id
+            and campaign.created_at >= run.started_at
+            and campaign.name.casefold() == name.casefold()
+        ):
+            return str(campaign.id)
+    return ""
 
 
 async def _record_rights(
     bot: Any, guild_id: int, campaign_id: str, user_id: int, draft: Draft
 ) -> None:
-    """The right-to-use confirmation goes onto the campaign with who and when (CLAUDE.md, IP):
-    only a fingerprint of the draft's documents' names, never their text."""
+    """The right-to-use confirmation goes onto the campaign with who and when (CLAUDE.md, IP),
+    once however many times the run is tried: only a fingerprint of the draft's documents' names
+    is kept, never their text."""
     if not draft.rights_shared_at:
         return
+    for done in await bot.campaigns.confirmations(guild_id, campaign_id):
+        if done["user"] == str(user_id) and done["purpose"] == OWN_WRITING:
+            return
     names = "|".join(sorted(str(d["name"]) for d in draft.documents if d["slot"] != "ruleset"))
     await bot.campaigns.record_confirmation(
         guild_id, campaign_id, user_id, OWN_WRITING, fingerprint(names or "wizard")
@@ -327,21 +387,46 @@ async def _read_slot(
             continue
         if doc["status"] != "ok" or not str(doc["text"]).strip():
             continue
-        upload = await runs.queue_lore(
-            guild_id, campaign_id, run.user_id, str(doc["text"]),
-            choice=CHOICE_OF[slot], rights_at=draft.rights_shared_at or int(time.time()),
-        )  # fmt: skip
-        waited = 0.0
-        while True:
-            state = await runs.lore_state(guild_id, upload)
-            if state in ("done", "failed", "gone"):
-                break
-            if waited >= LORE_WAIT_S:
-                state = "failed"
-                break
-            await asyncio.sleep(LORE_POLL_S)
-            waited += LORE_POLL_S
-            await runs.move(guild_id, run, stage=slot, part=number, of_parts=len(docs))
+        try:
+            state = await _read_one(
+                runs, guild_id, run, campaign_id, draft, slot, doc, number, len(docs)
+            )
+        except Lost:
+            raise
+        except Exception as exc:  # one document's trouble never stops the others
+            log.warning("A wizard document could not be read (%s)", type(exc).__name__)
+            state = "failed"
         if state != "done":
             word = word or LORE_FAILED
     return word
+
+
+async def _read_one(
+    runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str, draft: Draft, slot: str,
+    doc: dict[str, Any], number: int, of_parts: int,
+) -> str:  # fmt: skip
+    """Queue one document and wait for the reader. The queue holds one upload for a campaign at a
+    time, so an earlier one still open (a retaken run's) is waited for first, and one that is not
+    read in time is taken out, its words blanked."""
+    waited = 0.0
+    while (open_one := await runs.open_upload(guild_id, campaign_id)) != "":
+        if waited >= LORE_WAIT_S:
+            await runs.cancel_upload(guild_id, open_one)
+            return "failed"
+        await asyncio.sleep(LORE_POLL_S)
+        waited += LORE_POLL_S
+        await runs.move(guild_id, run, stage=slot, part=number, of_parts=of_parts)
+    upload = await runs.queue_lore(
+        guild_id, campaign_id, run.user_id, str(doc["text"]),
+        choice=CHOICE_OF[slot], rights_at=draft.rights_shared_at,
+    )  # fmt: skip
+    while True:
+        state = await runs.lore_state(guild_id, upload)
+        if state in ("done", "failed", "gone"):
+            return state
+        if waited >= LORE_WAIT_S:
+            await runs.cancel_upload(guild_id, upload)
+            return "failed"
+        await asyncio.sleep(LORE_POLL_S)
+        waited += LORE_POLL_S
+        await runs.move(guild_id, run, stage=slot, part=number, of_parts=of_parts)

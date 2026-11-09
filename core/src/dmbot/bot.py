@@ -13894,13 +13894,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
 
+    async def _wizard_round(self, guild_id: int) -> int:
+        """One server's finish round; a failure is logged (the class only) and never escapes."""
+        try:
+            return await wizard_finish.run_round(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
+            return 0
+
     async def _wizard_finish_loop(self) -> None:
         """Every few seconds: answer the website's start-up wizard finish runs (#3955;
         `wizard_finish`), and once an hour remove the drafts nobody came back to. A server's trouble
         never stops the others; a run takes minutes, so each server's runs in its own task."""
         await asyncio.sleep(WIZARD_FINISH_FIRST_S)
         running: dict[int, asyncio.Task[int]] = {}
-        swept = 0.0
+        swept = float("-inf")
         while True:
             now = time.monotonic()
             sweep = now - swept >= WIZARD_SWEEP_EVERY_S
@@ -13916,7 +13924,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if task is not None and not task.done():
                     continue
                 running[guild.id] = asyncio.create_task(
-                    wizard_finish.run_round(self, guild.id), name=f"wizard-finish-{guild.id}"
+                    self._wizard_round(guild.id), name=f"wizard-finish-{guild.id}"
                 )
             await asyncio.sleep(WIZARD_FINISH_EVERY_S)
 
