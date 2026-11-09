@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { PLAYERS_LINE_MAX, playersLineWords as w } from "../content/players-line-words";
 import type { NameChange, NameRow } from "./api";
+import SavingWait from "./SavingWait";
 
 export default function PlayersLine({ row, act }: { row: NameRow; act: (change: NameChange, ok: string) => Promise<string | null> }) {
   // What is saved now: the page's value, then what this box saved last.
@@ -74,6 +75,7 @@ export default function PlayersLine({ row, act }: { row: NameRow; act: (change: 
       <button type="submit" class="button secondary" disabled={busy || clean === saved}>
         {busy ? w.saving : w.save}
       </button>
+      <SavingWait active={busy} />
       <p class={note ? (note.ok ? "ok small" : "warn small") : "visually-hidden"} role="status">
         {note?.text ?? ""}
       </p>

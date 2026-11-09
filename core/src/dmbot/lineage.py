@@ -186,6 +186,7 @@ NOT_STAMPED: dict[str, str] = {
             "image_day_use",
             "hear_use",
             "upload_notices",
+            "campaign_channel_people",
             "npcs_channel_messages",
             "owner_campaigns",
             "pack_suggestions_sent",
