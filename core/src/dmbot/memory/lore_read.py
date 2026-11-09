@@ -322,6 +322,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
+        "- A relationship the text plainly implies but never says outright (two people named as "
+        "the same captain's crew know each other) may be listed too, with ' | inferred: <why, "
+        "from the text, a few words>' after its quote. Only a "
+        "relationship of the kinds below, never an event, a motive or a plan, and never family "
+        "(DMbot works family out itself). When in doubt, leave it out.\n"
         "- UNNAMED PEOPLE: a person the text describes but never names anywhere, who has to do "
         "with a NAMED person, group or place (family, work, a meeting, a deal, anything the text "
         "says they did together), goes under a fourth heading, UNNAMED, one line each, once for "
@@ -412,7 +417,8 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         + "). Leave out 'said:'. An "
         "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
-        f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
+        "'quote:'), inferred (its 'inferred:', else empty) and how, which reads 'a <how> b': "
+        f"exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
         'a character, creature or group it is tied to the place b: put in "words" '
@@ -543,14 +549,22 @@ def dedupe_traits(items: list[str]) -> list[str]:
     return out
 
 
+_INFERRED_MARK = re.compile(r"\|\s*inferred:", re.I)
+
+
 def dedupe(items: list[str]) -> list[str]:
-    seen: set[str] = set()
+    """One line for each entry, the first said; a stated line beats an inferred twin (#2959)."""
+    seen: dict[str, int] = {}
     out: list[str] = []
     for line in items:
         key = _entry_key(line)
-        if key and key not in seen:
-            seen.add(key)
+        if not key:
+            continue
+        if key not in seen:
+            seen[key] = len(out)
             out.append(line)
+        elif _INFERRED_MARK.search(out[seen[key]]) and not _INFERRED_MARK.search(line):
+            out[seen[key]] = line
     return out
 
 

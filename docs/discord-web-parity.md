@@ -153,6 +153,7 @@ match. "In Discord" says where the DM finds it today.
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
+| Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
 | What the characters learned (Keep / Not this) | reveal card | #3863 |

@@ -29,6 +29,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
+INFERRED_MAX = (
+    80  # why DMbot inferred a connection (#2959 item 5): a short reason, the column's limit
+)
 DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the column's limit)
 DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
 DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
@@ -65,6 +68,9 @@ class NewLink:
     known_by: str = ""
     # Every player character knows it once kept (#2959): the upload's choice, or the AI's call.
     world: int = 0  # lore_knowledge.NOT_KNOWN/SURE/GUESS
+    # DMbot inferred it, with why (#2959 item 5): "" for a connection the text states. Never kept
+    # without the DM's press (the sure step and Keep all leave it out).
+    inferred: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +135,7 @@ class Waiting:
     decided: str = ""  # how a pronoun was settled (#2790), else ""
     known_by: str = ""  # the character who knows it once kept (#2935), else ""
     world: int = 0  # how the players know it once kept: lore_knowledge.NOT_KNOWN/SURE/GUESS (#2959)
+    inferred: str = ""  # why DMbot inferred it (#2959 item 5), else "": only ever kept by a press
 
 
 class BackstoryLinks:
@@ -161,19 +168,29 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
-                    " known_by, world) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s) ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
+                    " known_by, world, inferred_reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
-                     int(link.world)),
+                     int(link.world), link.inferred[:INFERRED_MAX]),
                 )  # fmt: skip
                 added += cur.rowcount
-                if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
+                if cur.rowcount == 0 and link.truth and not link.inferred:
+                    # already waiting: the new word is 100% truth (never for DMbot's inference)
                     await conn.execute(
                         "UPDATE backstory_links SET truth = true WHERE guild_id = %s"
                         " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
-                        " AND object_id = %s",
+                        " AND object_id = %s AND inferred_reason = ''",
+                        (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
+                    )
+                if cur.rowcount == 0 and not link.inferred:
+                    # already waiting as DMbot's inference: a text that states it makes it stated
+                    await conn.execute(
+                        "UPDATE backstory_links SET inferred_reason = '' WHERE guild_id = %s"
+                        " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
+                        " AND object_id = %s AND inferred_reason <> ''",
                         (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
                     )
         return added
@@ -378,7 +395,7 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told, decided, known_by, world"
+                " created_at, upload, told, decided, known_by, world, inferred_reason"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -432,7 +449,7 @@ class BackstoryLinks:
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
-                        str(r["known_by"]), int(r["world"]),
+                        str(r["known_by"]), int(r["world"]), str(r["inferred_reason"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -442,12 +459,12 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told, decided, known_by, world)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " told, decided, known_by, world, inferred_reason)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
-                     r["decided"], r["known_by"], int(r["world"])),
+                     r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"]),
                 )  # fmt: skip
         return out
 
