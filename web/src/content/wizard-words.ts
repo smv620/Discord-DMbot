@@ -22,6 +22,7 @@ export const wizardWords = {
   title: "Set up a campaign",
   notYet: "This page isn't available yet.",
   loading: "Loading…",
+  noServer: "Open this page from Discord: use ＋ New campaign and pick \"Set up step by step on the website\".",
   failed: "We couldn't load this. Reload the page to try again.",
   expired: "Your unfinished setup was kept for 7 days and has been removed. You can start again.",
   noRoom: "Your plan has no room for another campaign. Change your plan or remove a campaign, then come back.",
