@@ -318,3 +318,22 @@ class ImportAdds(NamesTest):
         assert found is not None
         self.assertIsNone(found.source_kind)
         self.assertIsNone(found.source_id)
+
+    async def test_a_connection_the_dms_line_states_is_added_with_the_names(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.memory.claims import ClaimStore, Extracted
+
+        orrin = await self.scanned("Orrin", "place")
+        self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={self.MIRA, DM}))  # type: ignore[assignment]
+        await ClaimStore(self.memory).propose(
+            GUILD, self.campaign.id,
+            [Extracted("Karsk", "is in", "Orrin", "", ("1",), "dm_said")],
+            {"1": DM}, opted_in={DM}, prompt_version="p", model="m", session_started_at=5,
+        )  # fmt: skip
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA}, {self.place, orrin}, {"imp1"}, {5}
+        )
+        self.assertTrue(done)
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertEqual(notice.counts.get("connections"), 1)
+        self.assertTrue(notice.changes)  # (names and the connection: one Undo)

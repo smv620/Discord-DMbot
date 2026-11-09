@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from typing import Any
 
 import discord
@@ -205,13 +205,16 @@ async def add_sure(
     *,
     connections: bool = True,
     source: tuple[str, str] | None = None,
+    dm_claims: tuple[Collection[int], Collection[int], Collection[int]] | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
     None when nothing could be kept (no store). `connections=False`: names only (an import's).
     `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
-    by it (#3879). Never raises."""
+    by it (#3879). `dm_claims`: (the DMs' ids, who may be recorded now, the starts of this import's
+    sessions) to also keep the connections the DM's own lines state, once their names are in
+    (#3897; an import's). Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -226,6 +229,11 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
+        if dm_claims is not None:  # (after the names, so the claims about them are ready)
+            dms, opted_in, starts = dm_claims
+            await auto.accept_dm_claims(
+                memory, guild, cid, tally, dm_ids=dms, opted_in=opted_in, sessions=starts
+            )
         if (
             links is not None and connections
         ):  # (a bot without the connections store adds the names only)
