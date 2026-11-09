@@ -54,6 +54,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
+| DMbot adds what it is sure of after a lore upload or an import: the counts notice, Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
 | Node summary on the graph | `/account/web` | built, switched off | `NODE_SUMMARY_LIVE` |
 | Transcripts: read, download (text, theatre), put back or leave out a stretch | `/account/transcripts` | live | `THEATRE_DOWNLOAD_LIVE` |

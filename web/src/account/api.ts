@@ -121,7 +121,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -241,6 +241,8 @@ export interface CampaignSettings {
   fallbackRules?: "2024" | "2014" | "none";
   /** "Share this campaign's story to improve DMbot" (#3741): on or off; missing from an API older than that. */
   shareImprove?: boolean;
+  /** "Ask me before adding" (#3879; core #3887): on, DMbot asks before it adds what an upload found; off (the default), it adds what it is sure of. Missing from an API older than that. */
+  askBeforeAdding?: boolean;
   gameMasters: number;
 }
 
@@ -1322,6 +1324,27 @@ export interface LoreUpload {
   /** The same wait in the shared shape (#3534): its own stage codes, a count with its unit, and the server's word on stalled. */
   progress?: JobProgress | null;
 }
+/** What DMbot added by itself after a lore upload or an import, for the notice on the page (#3879; core #3887): counts and the
+ * upload's label only, never a name. `none` when nothing was added by itself (the setting was on, or the read is old). */
+export interface UploadNotice {
+  state: "applying" | "done" | "none";
+  /** While applying: the shared progress shape ("Adding what DMbot found: 40 of 110"). */
+  progress?: JobProgress | null;
+  label: string;
+  counts: { names: number; byKind: Record<string, number>; connections: number };
+  /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
+  undoUntil: number | null;
+  /** What an Undo took back, once pressed. */
+  undone: { took: number; of: number } | null;
+  /** The questions left for the DM from this upload. */
+  questionsLeft: number;
+  serverNow: number;
+}
+/** What one Undo this upload did (#3879): how many changes it took back of how many it had. */
+export interface UploadUndo {
+  took: number;
+  of: number;
+}
 /** The bot's answer to "Add all" or its Undo (#3222): counts and progress only, never a name. */
 export interface ConfirmAnswer {
   /** The server's states (all_names.read_action): waiting and working are still going; done and failed are not. */
@@ -2359,6 +2382,8 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "undo-late" // an upload older than 7 days cannot be undone (#3879)
+  | "undo-done" // an upload that was already undone (#3879)
   | "unavailable" // a player character's icon picture that is not there any more (#3621, #3622)
   | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
   | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
@@ -2746,6 +2771,11 @@ export interface AccountApi {
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** The sessions and lore a name can be found in, for the Names page's Partial campaign filter (#3675). */
   nameSources?(ref: string): Promise<NameSource[]>;
+  /** What DMbot added by itself after one lore upload or one import (#3879; core #3887). A DM or game master only. */
+  uploadNotice?(ref: string, source: { kind: "lore" | "import"; id: string }): Promise<UploadNotice>;
+  /** Undo this upload (#3879): queued for the bot, which takes back the upload's own changes newest first; resolves with what was
+   * taken back once it is done. Refusals: "too-late" (past 7 days), "already" (done once), "not-allowed". */
+  undoUpload?(ref: string, source: { kind: "lore" | "import"; id: string }, onLook?: (progress: JobProgress | null) => void): Promise<UploadUndo>;
   /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
   graphCleanup?(ref: string): Promise<CleanupView>;
   /** "Where was it said?" for one clean-up entry (#3767; core GET `.../web/cleanup/{id}/places`): the same places `NamePlaces` draws. A DM or game master only. */
@@ -3243,6 +3273,8 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   sort_failed: "sort-failed",
   bad_type: "bad-type",
   bad_clip: "bad-clip",
+  undo_late: "undo-late",
+  undo_done: "undo-done",
   voice_off: "voice-off",
   no_consent: "no-consent",
   not_a_dm: "not-allowed",
@@ -3297,7 +3329,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

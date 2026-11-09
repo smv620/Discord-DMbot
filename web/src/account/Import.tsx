@@ -15,6 +15,7 @@ import {
   confirmWords,
   importPage as words,
 } from "../content/import-words";
+import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { RECAPS_LIVE } from "../content/recap-words";
 import {
@@ -855,6 +856,9 @@ export default function Import({
           ))}
         </ul>
         {unchecked && <p class="small muted">{words.namesUnchecked}</p>}
+        {AUTO_ADD_LIVE && done && importId && api.uploadNotice && (
+          <LazyPanel load={() => import("./UploadNotice")} what="what DMbot added" props={{ api, campaignRef: ref, source: { kind: "import" as const, id: importId } }} />
+        )}
         {done && (
           <p role="status">
             {failed ? words.someFailed : words.allDone}{" "}
