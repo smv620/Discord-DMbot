@@ -1382,6 +1382,16 @@ the website's **Names** page and one to the **Story Graph**, and **Undo this upl
 notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
 one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
 
+**Who can see a campaign's channels (owner, 2026-11-09, #3891).** A per-campaign setting in ⚙️ Settings, **"Who can see
+this campaign's channels"**: **Everyone in the server**, or **Only this campaign's people** (the default, for new and existing
+campaigns). It covers the campaign's DM Bot and transcript channels; the DM screen keeps its own visibility rules. The
+campaign's people are its DMs, the members who play its player characters, the members recorded at its sessions, and anyone a
+DM adds by hand. DMbot keeps the channels' member permissions in step, the way it already does for the DM screen. Someone who
+can't see a channel gets no unread marks or notifications from it. Transcripts on the website follow the same setting. This
+replaces "anyone in the Discord server" for transcripts (2026-10-05) and "everyone in the server can see" the DM Bot channel
+(2026-10-17) with the campaign's choice. Backups are unchanged: anyone in the server may still download a paid campaign's
+backup, so a campaign survives its DM.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
