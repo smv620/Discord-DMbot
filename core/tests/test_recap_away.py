@@ -297,6 +297,15 @@ class TheThing(unittest.TestCase):
         )
         self.assertEqual(away.told_of(sheet), {"lantern": "Warding Lantern"})
 
+    def test_a_role_counts_and_an_empty_line_or_two_of_a_noun_does_not(self) -> None:
+        self.assertEqual(
+            away.told_of(("Ring of Embers (item, cursed): it burns its wearer",)),
+            {"ring": "Ring of Embers"},
+        )
+        self.assertEqual(away.told_of(("Warding Lantern (item):   ",)), {})
+        two = ("Warding Lantern (item): it glows near danger", "Hooded Lantern (item)")
+        self.assertEqual(away.told_of(two), {})  # (which lantern? neither is pointed at)
+
     def test_the_writer_is_sent_to_the_item_s_own_line_never_given_its_words(self) -> None:
         found = find(
             "Maris saw the lantern glow green.", "Tavi ran.", things=["lantern", "ring"],

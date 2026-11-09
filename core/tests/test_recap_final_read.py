@@ -180,4 +180,4 @@ class FinalRead(WorkerHarness):
 def test_the_final_read_uses_what_the_players_know_of_a_name() -> None:
     # (#2967: the who-and-what sheet's line after a name and kind is the players' line)
     assert "what the players know" in fr.FINAL_SYSTEM
-    assert "use those words to say who or what it is" in fr.FINAL_SYSTEM
+    assert "use what it says to tell who or what it is" in fr.FINAL_SYSTEM

@@ -49,7 +49,7 @@ about them and not a name in a list. If the material gives a character nothing, 
 them: never invent an action to give someone a turn.
 3. Context: every person, place, thing and creature is clear to a reader who missed the session. \
 A line on the who-and-what sheet that says more after its name and kind is what the players know \
-of it: use those words to say who or what it is. \
+of it: use what it says to tell who or what it is. \
 The party's goal and the stakes of the ending are said, when the material says them.
 4. Scenes: the listener always knows where a scene is set. A change of place, or of time where the \
 material gives it, is said plainly when it happens.

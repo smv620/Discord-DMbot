@@ -235,6 +235,9 @@ def findings(
 
 
 _ITEM_LINE = re.compile(r"^(.+?) \(item[,)]")
+# An item line that says what the players know of it after its kind (#2967): "Warding Lantern
+# (item): it glows near danger", or with a role, "(item, cursed): ..."
+_TOLD_LINE = re.compile(r"^(.+?) \(item(?:,[^)]*)?\):\s*\S")
 
 
 def things_of(sheet: Sequence[str]) -> tuple[str, ...]:
@@ -259,16 +262,18 @@ def told_of(sheet: Sequence[str]) -> dict[str, str]:
     what the players know of it: the players' line (#2967) the DM wrote or a "players know all of
     it" upload kept, written after the kind ("Warding Lantern (item): it glows near danger"). Only
     a name is given, never the words: the writer reads them on the sheet it already has."""
-    out: dict[str, str] = {}
+    told: dict[str, str] = {}
+    items: dict[str, int] = {}  # how many items on the sheet have each noun
     for line in sheet:
-        found = _ITEM_LINE.match(line.strip())
-        if not found or not re.search(r"\(item[^)]*\):\s*\S", line):
-            continue
-        name = found.group(1).strip()
         nouns = things_of([line])
-        if nouns:
-            out.setdefault(nouns[0], name)
-    return out
+        if not nouns:
+            continue
+        items[nouns[0]] = items.get(nouns[0], 0) + 1
+        found = _TOLD_LINE.match(line.strip())
+        if found:
+            told[nouns[0]] = found.group(1).strip()
+    # (two lanterns on the sheet: "the lantern" could be either, so neither line is pointed at)
+    return {noun: name for noun, name in told.items() if items[noun] == 1}
 
 
 def _quote(sentences: Sequence[str], number: int) -> str:
