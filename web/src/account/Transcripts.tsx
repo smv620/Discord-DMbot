@@ -348,7 +348,7 @@ function ScriptTab({ api, campaignRef, number }: { api: AccountApi; campaignRef:
   const load = useRead<{ none: true } | { lines: string[] }>(
     () =>
       api.transcriptScript!(campaignRef, number).then(
-        async (blob) => ({ lines: (await blob.text()).split(/\r?\n/) }),
+        async (blob) => ({ lines: (await blob.text()).split(/\r?\n/).filter((l, i, all) => l !== "" || i < all.length - 1) }),
         (error: unknown) => {
           if (error instanceof ApiError && error.kind === "no-script") return { none: true as const };
           throw error;
@@ -391,7 +391,6 @@ function ScriptTab({ api, campaignRef, number }: { api: AccountApi; campaignRef:
 /** The session notes (beat sheet), read on the page (#3898): the beats as the Session notes panel renders them, with Save. */
 function NotesTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: string; number: number }) {
   const [got, setGot] = useState<Opened | "none">("loading");
-  const [saving, setSaving] = useState(false);
   const [tries, setTries] = useState(0);
   useEffect(() => {
     let live = true;
@@ -412,7 +411,6 @@ function NotesTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: 
     };
   }, [api, campaignRef, number, tries]);
   function save(notes: Exclude<Opened, "loading" | "failed">): void {
-    setSaving(true);
     const href = URL.createObjectURL(new Blob([beatsToText(text.sessionTitle(number), notes)], { type: "text/plain" }));
     const link = document.createElement("a");
     link.href = href;
@@ -421,7 +419,6 @@ function NotesTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: 
     link.click();
     link.remove();
     URL.revokeObjectURL(href);
-    setSaving(false);
   }
   return (
     <>
@@ -435,8 +432,8 @@ function NotesTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: 
       ) : (
         <>
           <p>
-            <button type="button" class="button secondary" disabled={saving} onClick={() => save(got)}>
-              {saving ? text.savingNotes : text.saveNotes}
+            <button type="button" class="button secondary" onClick={() => save(got)}>
+              {text.saveNotes}
             </button>
           </p>
           <Beats got={got} onRetry={() => setTries((n) => n + 1)} />
