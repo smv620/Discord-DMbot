@@ -1,4 +1,4 @@
-"""0404_npc_guesses
+"""0405_npc_guesses
 
 DMbot's guesses of which NPCs and groups know a lore statement, waiting for the DM (#2959).
 """
