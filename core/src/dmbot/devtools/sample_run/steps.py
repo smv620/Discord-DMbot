@@ -452,6 +452,20 @@ async def backup(
     return path
 
 
+def master_key() -> dict[str, object]:
+    """The master answer key (lore and session), as `graph_key_check` reads it by default: what
+    the AI's decisions are scored against (#3900)."""
+    import json
+
+    from dmbot.devtools import graph_key_check
+
+    with graph_key_check.DEFAULT_KEY.open(encoding="utf-8") as f:
+        key = json.load(f)
+    if not isinstance(key, dict):
+        raise SampleError("the answer key is not readable")
+    return key
+
+
 def score(path: Path, docs: str) -> list[str]:
     """`graph_key_check --docs DOCS --counts-only` on a backup, as the command does, and its
     counts-only lines back."""
