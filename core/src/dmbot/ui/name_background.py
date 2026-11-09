@@ -945,14 +945,8 @@ async def _world(
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
 
-    def named(f: bg.Found) -> str:
-        parts = [f"also called {', '.join(f.also)}" if f.also else ""]
-        parts.append(f"hidden identity {', '.join(f.secret)}" if f.secret else "")
-        extra = "; ".join(p for p in parts if p)
-        return f.name + (f" ({extra})" if extra else "")
-
-    lines = [lore_knowledge.line("name", named(f), f.quote) for f in found] + [
-        lore_knowledge.line("connection", f"{c.a} — {c.how} — {c.b}", c.quote) for c in links
+    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
+        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
     ]
 
     def sorting(done: int, total: int) -> None:

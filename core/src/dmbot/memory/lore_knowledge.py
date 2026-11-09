@@ -89,6 +89,22 @@ def line(kind: str, text: str, quote: str = "") -> str:
     return at_word_end(f"{kind}: {text}{said}", LINE_MAX)  # (never cut inside a word)
 
 
+def name_line(
+    name: str, also: Sequence[str] = (), secret: Sequence[str] = (), quote: str = ""
+) -> str:
+    """A name as the sort sees it, with its other names and any hidden identity (the measure,
+    `devtools/smart_guess_score`, builds its lines with this too, so the two never drift)."""
+    parts = [f"also called {', '.join(also)}" if also else ""]
+    parts.append(f"hidden identity {', '.join(secret)}" if secret else "")
+    extra = "; ".join(p for p in parts if p)
+    return line("name", name + (f" ({extra})" if extra else ""), quote)
+
+
+def connection_line(a: str, how: str, b: str, quote: str = "") -> str:
+    """A connection as the sort sees it: its two ends and its stored kind ("serves")."""
+    return line("connection", f"{a} — {how} — {b}", quote)
+
+
 def _prompt(lines: Sequence[str]) -> str:
     numbered = "\n".join(f"{i}. {x}" for i, x in enumerate(lines))
     return (
