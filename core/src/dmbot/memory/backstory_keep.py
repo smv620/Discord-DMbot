@@ -237,6 +237,8 @@ async def keep_all(
     players were shown (#3025); False only when the DM pressed 🤫 Keep as secret, their own word.
     """
     done = KeptAll()
+    if one_press and len(links) != 1:
+        raise ValueError("One press keeps one connection.")
     if not one_press:
         links = [c for c in links if not c.inferred]
     total = len(links)
@@ -313,7 +315,7 @@ async def keep_all(
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
-        if c.truth:
+        if c.truth and not c.inferred:  # (DMbot's inference is never pinned as 100% truth)
             try:
                 await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
             except MemoryRuleError:  # kept all the same: pinning is one tap on its card

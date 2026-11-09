@@ -177,11 +177,20 @@ class BackstoryLinks:
                      int(link.world), link.inferred[:INFERRED_MAX]),
                 )  # fmt: skip
                 added += cur.rowcount
-                if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
+                if cur.rowcount == 0 and link.truth and not link.inferred:
+                    # already waiting: the new word is 100% truth (never for DMbot's inference)
                     await conn.execute(
                         "UPDATE backstory_links SET truth = true WHERE guild_id = %s"
                         " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
-                        " AND object_id = %s",
+                        " AND object_id = %s AND inferred_reason = ''",
+                        (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
+                    )
+                if cur.rowcount == 0 and not link.inferred:
+                    # already waiting as DMbot's inference: a text that states it makes it stated
+                    await conn.execute(
+                        "UPDATE backstory_links SET inferred_reason = '' WHERE guild_id = %s"
+                        " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
+                        " AND object_id = %s AND inferred_reason <> ''",
                         (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
                     )
         return added

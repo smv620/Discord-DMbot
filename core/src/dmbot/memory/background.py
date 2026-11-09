@@ -138,6 +138,11 @@ WORDS_CHARS = 40
 INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short reason
 
 
+def _family_words(label: str) -> bool:
+    """Whether a free label names family ("half-brother", "his aunt"): never an inference."""
+    return any(w in kin.ROLES or w in KIN_NEUTRAL for w in re.findall(r"[a-z]+", label.casefold()))
+
+
 def inferred_reason(raw: object) -> str:
     """The reason a shaped line says DMbot inferred it, or "" (a stated one, or nothing readable):
     one line, at most `INFERRED_CHARS`, cut at a word."""
@@ -1014,7 +1019,7 @@ def read_connections(
             lost["unreadable"] += 1
             continue
         inferred = inferred_reason(item.get("inferred"))
-        if inferred and how == "kin_of":
+        if inferred and (how == "kin_of" or _family_words(label)):
             # (family is never an inference: DMbot works it out from confirmed links, #2959 item 2)
             lost["inferred_family"] += 1
             continue
@@ -1228,6 +1233,8 @@ def keep_connections(
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
     knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
+    # an inferred line's place in `out`, by its `once` key: a stated twin read later clears it
+    inferred_at: dict[tuple[str, str, str, tuple[str, bool] | None], int] = {}
     # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
     # the pick itself and the way round it was said, so opposite roles are caught here too
     kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
@@ -1393,7 +1400,13 @@ def keep_connections(
                     # words for the same direction clash: the first stays and the clash is counted.
                     held_at = knows_held[(ka, kb)]
                     held_words = out[held_at].words
-                    if c.words and not held_words:
+                    if out[held_at].inferred and not c.inferred:
+                        # (the text states what DMbot had only inferred: it is stated now)
+                        out[held_at] = replace(out[held_at], inferred="")
+                        lost["inferred_stated"] += 1
+                    if c.inferred:  # (an inferred feeling is never added to a stated line)
+                        lost["same_pair"] += 1
+                    elif c.words and not held_words:
                         out[held_at] = replace(out[held_at], words=c.words)
                         lost["feeling_added"] += 1
                     elif c.words and held_words != c.words:
@@ -1409,6 +1422,11 @@ def keep_connections(
                 # same town are both kept, #3363)
                 once = (ka, c.how, kb, place_words.slot(c.words) if c.how == "located_in" else None)
                 if once in seen:
+                    at = inferred_at.pop(once, None)
+                    if at is not None and not c.inferred:
+                        # (the text states what DMbot had only inferred: it is stated now)
+                        out[at] = replace(out[at], inferred="")
+                        lost["inferred_stated"] += 1
                     lost["same_pair"] += 1
                     continue
                 seen.add(once)
@@ -1441,6 +1459,8 @@ def keep_connections(
                 lost["over_cap"] += 1
                 continue
             out.append(made)
+            if made.inferred:  # (never family: those are refused when read)
+                inferred_at[once] = len(out) - 1
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
             if c.how == "knows":

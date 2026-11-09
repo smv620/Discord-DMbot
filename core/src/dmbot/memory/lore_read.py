@@ -323,8 +323,8 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
         "- A relationship the text plainly implies but never says outright (two people named as "
-        "the same captain's crew work together; the keeper of a shop is tied to it) may be listed "
-        "too, with ' | inferred: <why, from the text, at most 12 words>' after its quote. Only a "
+        "the same captain's crew know each other) may be listed too, with ' | inferred: <why, "
+        "from the text, a few words>' after its quote. Only a "
         "relationship of the kinds below, never an event, a motive or a plan, and never family "
         "(DMbot works family out itself). When in doubt, leave it out.\n"
         "- UNNAMED PEOPLE: a person the text describes but never names anywhere, who has to do "
@@ -549,14 +549,22 @@ def dedupe_traits(items: list[str]) -> list[str]:
     return out
 
 
+_INFERRED_MARK = re.compile(r"\|\s*inferred:", re.I)
+
+
 def dedupe(items: list[str]) -> list[str]:
-    seen: set[str] = set()
+    """One line for each entry, the first said; a stated line beats an inferred twin (#2959)."""
+    seen: dict[str, int] = {}
     out: list[str] = []
     for line in items:
         key = _entry_key(line)
-        if key and key not in seen:
-            seen.add(key)
+        if not key:
+            continue
+        if key not in seen:
+            seen[key] = len(out)
             out.append(line)
+        elif _INFERRED_MARK.search(out[seen[key]]) and not _INFERRED_MARK.search(line):
+            out[seen[key]] = line
     return out
 
 

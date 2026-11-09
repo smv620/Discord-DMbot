@@ -1768,7 +1768,7 @@ async def queue_links(
                 c.quote,
                 c.secret or how == DISGUISED_AS,
                 c.words,
-                truth,
+                truth and not c.inferred,  # (DMbot's inference is never pinned as 100% truth)
                 upload,
                 c.decided,
                 known_by,
@@ -2261,8 +2261,11 @@ class ConnectionOffer(_Menu):
     def _this_upload(ready: list[Waiting]) -> list[Waiting]:
         """What Keep all keeps (#2650): the ready connections from the same upload as the first
         card, an old one (queued before uploads had names, upload "") counting as an upload of
-        its own, so a labelled backstory is never kept unseen and neither is an old one."""
-        return [w for w in ready if w.upload == ready[0].upload] if ready else []
+        its own, so a labelled backstory is never kept unseen and neither is an old one. One DMbot
+        inferred is never among them (#2959 item 5): it waits for its own ✅ Keep."""
+        if not ready:
+            return []
+        return [w for w in ready if w.upload == ready[0].upload and not w.inferred]
 
     def _set(self, ready: list[Waiting]) -> None:
         mine = self._this_upload(ready)
@@ -2350,7 +2353,9 @@ class ConnectionOffer(_Menu):
 
     def _scope(self, c: Waiting) -> str:
         """Which connections ✅ Keep all keeps, when the card is from a named upload (#2650)."""
-        mine = [w for w in self.shown if w.upload == c.upload] if c.upload else []
+        mine = (
+            [w for w in self.shown if w.upload == c.upload and not w.inferred] if c.upload else []
+        )
         if len(mine) < 2:
             return ""
         keeps = f"{len(mine)} from {_md(c.upload)}"
@@ -2464,7 +2469,7 @@ class ConnectionOffer(_Menu):
                 await keep.mark_guess(
                     memory, campaign.guild_id, campaign.id, "connection", [made.id]
                 )
-            if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
+            if c.truth and not c.inferred:  # the DM called this upload 100% truth (#2447)
                 try:
                     await memory.pin(
                         campaign.guild_id, campaign.id, kept.value[0].id, True, source=DM
@@ -2507,6 +2512,7 @@ class ConnectionOffer(_Menu):
             if self.current is None:
                 return
             todo = [w for w in todo if w.upload == self.current.upload]  # (this backstory only)
+            guessed = sum(1 for w in todo if w.inferred)  # (left waiting: Keep all never keeps one)
             self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
             changed(interaction, campaign)
             self.kept += len(self.all_done.kept)
@@ -2519,6 +2525,12 @@ class ConnectionOffer(_Menu):
                 if self.all_done.refused
                 else ""
             )
+            if guessed:
+                refused += (
+                    f" {guessed} that DMbot inferred still "
+                    f"{'waits' if guessed == 1 else 'wait'} for your yes: press 📜 Check the "
+                    "connections."
+                )
             waiting = self.all_done.worked_out  # (every one waiting now, not only the new ones)
             worked_out = (
                 f" {waiting} worked-out family link{'' if waiting == 1 else 's'} now "

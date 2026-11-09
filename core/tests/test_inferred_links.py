@@ -60,6 +60,44 @@ class TheRead(unittest.TestCase):
         )
         self.assertEqual((got, lost["inferred_family"]), ([], 1))
 
+    def test_family_in_free_words_is_never_an_inference(self) -> None:
+        lost: Counter[str] = Counter()
+        quote = "Mirelle the Pale and Brannoch both crew the Grey Gull"
+        got = bg.read_connections(
+            reply(link("other", quote, WHY, words="half-brother")), TEXT, dropped=lost
+        )
+        self.assertEqual(got, [])
+
+    def test_an_inferred_feeling_is_never_added_to_a_stated_line(self) -> None:
+        quote = "Mirelle the Pale and Brannoch both crew the Grey Gull"
+        names = [
+            bg.Found("Mirelle the Pale", "npc", (), (), quote),
+            bg.Found("Brannoch", "npc", (), (), quote),
+        ]
+        stated = bg.Connection("Mirelle the Pale", "knows", "Brannoch", quote)
+        guessed = bg.Connection(
+            "Mirelle the Pale", "knows", "Brannoch", quote, words="friendly", inferred=WHY
+        )
+        (kept,) = bg.keep_connections([[stated, guessed]], names, {})
+        self.assertEqual((kept.words, kept.inferred), ("", ""))
+
+    def test_a_stated_twin_makes_an_inference_stated(self) -> None:
+        quote = "Mirelle the Pale and Brannoch both crew the Grey Gull"
+        names = [
+            bg.Found("Mirelle the Pale", "npc", (), (), quote),
+            bg.Found("Brannoch", "npc", (), (), quote),
+        ]
+        guessed = bg.Connection("Mirelle the Pale", "owns", "Brannoch", quote, inferred=WHY)
+        stated = bg.Connection("Mirelle the Pale", "owns", "Brannoch", quote)
+        (kept,) = bg.keep_connections([[guessed, stated]], names, {})
+        self.assertEqual(kept.inferred, "")
+
+    def test_pass_1_keeps_a_stated_line_over_its_inferred_twin(self) -> None:
+        from dmbot.memory import lore_read
+
+        lines = ['- A — knows — B | quote: "x" | inferred: crew', '- A — knows — B | quote: "x"']
+        self.assertEqual(lore_read.dedupe(lines), [lines[1]])
+
     def test_a_long_reason_is_cut_at_a_word(self) -> None:
         reason = bg.inferred_reason("word " * 40)
         self.assertLessEqual(len(reason), bg.INFERRED_CHARS)
@@ -81,6 +119,24 @@ class NeverKeptUnasked(unittest.IsolatedAsyncioTestCase):
             done = await backstory_keep.keep_all(memory, SimpleNamespace(), 1, "c", [waiting("x")])  # type: ignore[arg-type]
         self.assertEqual((done.kept, done.refused), ([], 0))
         memory.ontology.assert_not_awaited()  # (nothing was left to keep: nothing was read)
+
+    async def test_one_press_is_one_connection(self) -> None:
+        with self.assertRaises(ValueError):
+            nothing: Any = SimpleNamespace()
+            await backstory_keep.keep_all(
+                nothing,
+                nothing,
+                1,
+                "c",
+                [waiting("x"), waiting("y")],
+                one_press=True,
+            )
+
+    def test_discord_s_keep_all_never_counts_an_inference(self) -> None:
+        from dmbot.ui.name_background import ConnectionOffer
+
+        mine = ConnectionOffer._this_upload([waiting(), waiting("x"), waiting()])
+        self.assertEqual(len(mine), 2)
 
     async def test_the_sure_step_counts_an_inference_as_waiting(self) -> None:
         links = SimpleNamespace(waiting=AsyncMock(return_value=[waiting("x"), waiting()]))
@@ -149,10 +205,30 @@ class TheStore(DatabaseTest):
         done = await backstory_keep.keep_all(
             self.memory, self.links, GUILD, cid, [row], one_press=True
         )
-        ((made, _batch),) = done.kept
+        self.assertEqual(len(done.kept), 1)
+        (made,) = [
+            r for r in await self.memory.relations(GUILD, cid, include_secret=True)
+            if r.subject_id == a and r.object_id == b
+        ]  # fmt: skip
         got = await self.memory.link_source(GUILD, cid, made.id)
         assert got is not None
         self.assertEqual(got[2], WHY)
+
+    async def test_a_stated_twin_queued_later_makes_it_stated(self) -> None:
+        cid = self.campaign.id
+        a, b = await self.person("Mirelle the Pale"), await self.person("Brannoch")
+        await self.links.add(GUILD, cid, [NewLink(a, "knows", b, "q", truth=True, inferred=WHY)])
+        await self.links.add(GUILD, cid, [NewLink(a, "knows", b, "q")])
+        (row,) = await self.links.waiting(GUILD, cid)
+        self.assertEqual(row.inferred, "")
+
+    async def test_an_inference_is_never_pinned_by_a_truth_upload(self) -> None:
+        cid = self.campaign.id
+        a, b = await self.person("Mirelle the Pale"), await self.person("Brannoch")
+        await self.links.add(GUILD, cid, [NewLink(a, "knows", b, "q", inferred=WHY)])
+        await self.links.add(GUILD, cid, [NewLink(a, "knows", b, "q", truth=True, inferred=WHY)])
+        (row,) = await self.links.waiting(GUILD, cid)
+        self.assertFalse(row.truth)
 
 
 if __name__ == "__main__":
