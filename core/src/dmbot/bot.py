@@ -12134,7 +12134,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         from dmbot.ui.upload_notice import DmClaims, add_sure
 
         try:
-            agreed = await self.consent.consenting(campaign.guild_id)
+            # An import is judged by who is recorded in THIS campaign's imported sessions (#3305):
+            # a speaker the uploader confirmed, with no Discord account, counts; a "no" on record
+            # does not.
+            agreed = await self.consent.recorded_in(campaign.guild_id, campaign.id)
             if self.memory is None or not (entries or starts) or not speakers <= agreed:
                 log.info("Import: names left as questions (consent changed, none, or no store)")
                 return False

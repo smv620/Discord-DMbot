@@ -238,7 +238,8 @@ async def add_sure(
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
         if dm_claims is not None:  # (after the names, so the claims about them are ready)
-            opted_in = await bot.consent.consenting(guild)  # (read again after the names)
+            # (read again after the names; an import counts who is recorded in its own sessions)
+            opted_in = await bot.consent.recorded_in(guild, cid)
             await auto.accept_dm_claims(
                 memory, guild, cid, tally,
                 dm_ids=dm_claims.dm_ids, opted_in=opted_in, sessions=dm_claims.sessions,
