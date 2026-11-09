@@ -341,6 +341,7 @@ _SETTABLE = frozenset(
         "recaps_text",
         "recaps_audio",
         "recaps_email",
+        "ask_before_adding",
     }
 )
 RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
@@ -962,6 +963,12 @@ class CampaignStore:
         """Whether rules cards show on the DM screen when a spell or creature is named
         (#931). Who may change it is checked by the caller (the campaign's DMs)."""
         return await self._set(guild_id, campaign_id, "rules_cards", bool(on))
+
+    async def set_ask_before_adding(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Ask me before adding" (#3878): on, a lore upload offers its names for the DM's yes
+        (Add all) as it always did; off (the default), what DMbot is sure of is added by itself.
+        Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "ask_before_adding", bool(on))
 
     async def set_paused(
         self, guild_id: int, campaign_id: str, user_id: int, paused: bool, now: int
@@ -1684,6 +1691,7 @@ class CampaignStore:
                 "recaps_text": campaign.recaps_text,
                 "recaps_audio": campaign.recaps_audio,
                 "recaps_email": campaign.recaps_email,
+                "ask_before_adding": campaign.ask_before_adding,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
                 "table_chat": campaign.table_chat,
@@ -1896,6 +1904,11 @@ class CampaignStore:
                     raise CampaignError(
                         "Another campaign just took that name. Please try again."
                     ) from exc
+            # The "Ask me before adding" choice (#3878); a backup from before it says nothing: off.
+            await conn.execute(
+                "UPDATE campaigns SET ask_before_adding = %s WHERE guild_id = %s AND id = %s",
+                (info["ask_before_adding"], guild_id, campaign_id),
+            )
             # A restore keeps the stamp each row was made with, NULL included, and never stamps a
             # row with the build that loaded it (#3739, `dmbot.lineage`).
             await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
@@ -2248,6 +2261,7 @@ def _to_campaign(row: dict[str, Any], roster: _Roster) -> Campaign:
         recaps_text=bool(row.get("recaps_text", True)),  # older schemas (tests) have none
         recaps_audio=bool(row.get("recaps_audio", True)),
         recaps_email=bool(row.get("recaps_email", True)),
+        ask_before_adding=bool(row.get("ask_before_adding", False)),  # (older schemas: off)
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -2502,6 +2516,11 @@ def _validate_backup(
     if not isinstance(table_chat, bool):
         raise CampaignError(DAMAGED)
 
+    # Backups made before the upload notices existed have "Ask me before adding" off.
+    ask_before_adding = campaign.get("ask_before_adding", False)
+    if not isinstance(ask_before_adding, bool):
+        raise CampaignError(DAMAGED)
+
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
     if invite is not None:
@@ -2538,5 +2557,6 @@ def _validate_backup(
         **recap_choices,
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
+        "ask_before_adding": ask_before_adding,
     }
     return info, {name: list(rows) for name, rows in sections.items()}
