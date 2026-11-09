@@ -1577,6 +1577,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             on_link_change=self._on_ears_link_change,
         )
         self._background: list[asyncio.Task[None]] = []
+        # A lore upload's summary message in the campaign's DM Bot channel, by (server, campaign,
+        # the upload's key): (channel id, message id, names it counts). Ids and a count, never
+        # words. Used once, by that upload's private question, and kept only in memory (#3873).
+        self._upload_summaries: dict[tuple[int, str, str], tuple[int, int, int]] = {}
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
@@ -11083,6 +11087,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         screen_channel_id: int | None,
         asks: list[Ask],
         about: str = "your last session",
+        links: dm_links.DMLinks | None = None,
     ) -> bool:
         """`send_asks` for a campaign with no table at a session (a lore upload, an import,
         #3314). True when the message reached a DM privately or was posted on the DM screen."""
@@ -11090,7 +11095,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if combined is None:
             return False
         text, view = combined
-        if await self.ask_privately(guild_id, campaign_id, text, view):
+        # (`links` only when the upload's summary is to be opened, so every other caller and
+        # stand-in of `ask_privately` sees the call it always saw)
+        private = (
+            await self.ask_privately(guild_id, campaign_id, text, view, links)
+            if links is not None
+            else await self.ask_privately(guild_id, campaign_id, text, view)
+        )
+        if private:
             return True
         posted = False
         for ask in ordered(asks):
@@ -11198,6 +11210,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             connections += await safe(what, count)
         return WaitingChecks(names=names, people=people, claims=claims, connections=connections)
 
+    def note_upload_summary(
+        self, gid: int, cid: str, key: str, message: discord.Message, names: int
+    ) -> None:
+        """A lore upload just posted its summary in the DM Bot channel (the one with the Add all
+        buttons): remember where it is for the private message about that same upload (`key`), so
+        its names and connections buttons can open it (#3873). Ids and a count only."""
+        summaries = self._upload_summaries
+        summaries.pop((gid, cid, key), None)
+        while len(summaries) >= 50:  # a bound, not a rule: the oldest goes
+            summaries.pop(next(iter(summaries)))
+        summaries[(gid, cid, key)] = (message.channel.id, message.id, names)
+
+    async def _upload_summary_for(self, gid: int, cid: str, key: str) -> tuple[str, int]:
+        """The address of this upload's summary message and the names it counts, once, or
+        ("", 0) when none is known or it can't be opened now (deleted, the channel gone, no
+        permission): the caller then keeps today's buttons, so nothing is a dead end. Never
+        raises."""
+        known = self._upload_summaries.pop((gid, cid, key), None)
+        if known is None:
+            return "", 0
+        channel_id, message_id, names = known
+        try:
+            channel = self.get_channel(channel_id) or await self.fetch_channel(channel_id)
+            fetch = getattr(channel, "fetch_message", None)
+            message = await fetch(message_id) if fetch is not None else None
+            url = dm_links.jump_link(message)
+        except discord.HTTPException:  # (NotFound, Forbidden, a failed request: no link this time)
+            url = ""
+        return (url, names) if url else ("", 0)
+
     async def tell_dm_waiting(
         self,
         gid: int,
@@ -11227,6 +11269,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return False
             waiting = await self.count_waiting(gid, cid)
             shown = waiting.minus(already) if already is not None else waiting
+            summary_url, summary_names = await self._upload_summary_for(gid, cid, key)
             asks = asks_for(
                 shown,
                 {
@@ -11236,13 +11279,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     CONNECTIONS: partial(links_ready.ReadyButton, cid),
                 },
                 where=where,
+                summary_url=summary_url,
+                summary_names=summary_names,
             )
             if not await sent.claim(gid, cid, key, f"{waiting.offered()} {note}".strip()):
                 return False  # (another round took it between the look and now)
             claimed = True
             if not asks:
                 return False  # nothing waits: the key is spent, nothing is sent
-            if await self._send_asks_for(gid, cid, campaign.dm_screen_channel_id, asks, where):
+            links = dm_links.DMLinks(discord_url=summary_url) if summary_url else None
+            if await self._send_asks_for(
+                gid, cid, campaign.dm_screen_channel_id, asks, where, links=links
+            ):
                 log.info("Waiting checks told (%s)", shown.offered())
                 return True
             await sent.release(gid, cid, key)  # (no DM and no screen: try again at the next round)
@@ -11417,8 +11465,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
                 try:
+                    # ("Open in Discord" opens the message itself, unless the caller gave another)
+                    own = not (links and links.discord_url)
                     if (
-                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=True)
+                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=own)
                         == "sent"
                     ):
                         sent = True

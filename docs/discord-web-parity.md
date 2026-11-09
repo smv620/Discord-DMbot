@@ -135,7 +135,7 @@ match. "In Discord" says where the DM finds it today.
 
 | Function | In Discord | Answer |
 |---|---|---|
-| Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
+| Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
 | Who is this? (same as a known name) | name card, look-alikes | Who is this? (the clarify page, #3604) |
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
