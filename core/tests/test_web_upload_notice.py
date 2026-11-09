@@ -41,7 +41,7 @@ class UploadNoticeRead(Script):
     ) -> dict[str, Any]:
         return await upload_notice.read(self.web, who or self.session, self.cref, kind, source_id)
 
-    async def refused(self, kind: str = "lore", source_id: str = "up1") -> str:
+    async def refusal(self, kind: str = "lore", source_id: str = "up1") -> str:
         with self.assertRaises(RecapError) as caught:
             await self.read(kind, source_id)
         return caught.exception.code
@@ -100,9 +100,9 @@ class UploadNoticeRead(Script):
         return caught.exception.code
 
     async def test_a_bad_kind_or_id_is_not_found(self) -> None:
-        self.assertEqual(await self.refused(kind="other"), "not_found")
-        self.assertEqual(await self.refused(source_id="x y"), "not_found")
-        self.assertEqual(await self.refused(source_id=""), "not_found")
+        self.assertEqual(await self.refusal(kind="other"), "not_found")
+        self.assertEqual(await self.refusal(source_id="x y"), "not_found")
+        self.assertEqual(await self.refusal(source_id=""), "not_found")
 
     async def test_the_window_closes_after_seven_days(self) -> None:
         made = await self.add()
