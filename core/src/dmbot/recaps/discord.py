@@ -88,6 +88,7 @@ from dmbot.transcript.cleaner import (
     clean,
 )
 from dmbot.transcript.import_job import ImportStore, Ready
+from dmbot.transcript.theatre_runs import TheatreRuns
 from dmbot.transcription.base import (
     TranscriptionProblem,
 )
@@ -1048,6 +1049,12 @@ class RecapFeatures:
         gid, cid = campaign.guild_id, campaign.id
         if not await self.recaps.enqueue(gid, cid, session_at, dm_user_id=dm):
             return False
+        if getattr(self.recaps, "script_wait", False):
+            try:  # a plan with no scripts: this recap has no script to wait for (#3901)
+                if not await self.plan_allows("story", gid, campaign, fail_open=False):
+                    await TheatreRuns(self.recaps.db).skip_session_at(gid, cid, session_at)
+            except Exception:
+                log.exception("Recap: couldn't tell whether to wait for a script")
         if say:
             await self._say_writing(campaign, channel_id, session_at)
         return True
@@ -1084,15 +1091,14 @@ class RecapFeatures:
         held = self.recaps is not None and await self.recaps.waiting_for_script(
             campaign.guild_id, campaign.id, session_at
         )
-        first = (
-            " It starts once the session's script is made (at most 10 minutes), or without it."
+        opening = (
+            "The recap of this session waits for its script (up to 10 minutes), then gets written."
             if held
-            else ""
+            else "Writing a recap of this session."
         )
         await self.post(
             channel_id,
-            f"📜 {lead}Writing a recap of this session.{first} {ready} "
-            f"Nothing goes to the table until you say so.{where}",
+            f"📜 {lead}{opening} {ready} Nothing goes to the table until you say so.{where}",
         )
 
     async def _say_group_writing(

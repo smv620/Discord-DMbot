@@ -40,6 +40,7 @@ from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 # Re-exported with the `as` form, which mypy strict needs: the tests import it from here.
 from dmbot.transcript.respell import RecapRespelled as RecapRespelled
 from dmbot.transcript.respell import respell
+from dmbot.transcript.theatre_runs import AUTO_SINCE_S
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -288,14 +289,16 @@ SCRIPT_WAIT_S = 10 * 60
 # True for a job whose session is still getting its script: scripts are on, the session has lines
 # and ended, no run has finished (done or failed) and the wait is not over. Used in `due` and
 # `lease`, so a gated job is skipped, never failed; it needs no column of its own. Parameters: the
-# wait in seconds, and now.
+# earliest session time that still gets a script by itself, the wait in seconds, and now.
 _SCRIPT_PENDING = (
     "EXISTS (SELECT 1 FROM transcript_sessions ts"
     " LEFT JOIN theatre_runs tr ON tr.guild_id = ts.guild_id AND tr.session_id = ts.id"
+    " LEFT JOIN session_imports i ON i.guild_id = ts.guild_id AND i.session_id = ts.id"
     " WHERE ts.guild_id = recap_jobs.guild_id AND ts.campaign_id = recap_jobs.campaign_id"
     " AND ts.started_at = recap_jobs.session_at AND ts.line_count > 0"
     " AND ts.ended_at IS NOT NULL AND ts.transcripts_deleted_at IS NULL"
     " AND COALESCE(tr.state, 'none') IN ('none', 'running')"
+    " AND COALESCE(i.imported_at, ts.ended_at) >= %s"  # the same window as the script round
     " AND GREATEST(ts.ended_at, recap_jobs.created_at) + %s > %s)"
 )
 
@@ -321,7 +324,14 @@ class RecapStore:
             cur = await conn.execute(
                 f"SELECT {_SCRIPT_PENDING} AS held FROM recap_jobs"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
-                (SCRIPT_WAIT_S, int(self._now()), guild_id, campaign_id, session_at),
+                (
+                    int(self._now()) - AUTO_SINCE_S,
+                    SCRIPT_WAIT_S,
+                    int(self._now()),
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                ),
             )
             row = await cur.fetchone()
         return bool(row and row["held"])
@@ -402,7 +412,17 @@ class RecapStore:
                 "   AND r2.campaign_id = recap_jobs.campaign_id AND r2.leased_to > %s)"
                 f" AND (NOT %s OR NOT {_SCRIPT_PENDING})"
                 " ORDER BY campaign_id, session_at LIMIT %s",
-                (guild_id, now, now, now, self.script_wait, SCRIPT_WAIT_S, now, limit),
+                (
+                    guild_id,
+                    now,
+                    now,
+                    now,
+                    self.script_wait,
+                    now - AUTO_SINCE_S,
+                    SCRIPT_WAIT_S,
+                    now,
+                    limit,
+                ),
             )
             return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
 
@@ -428,6 +448,7 @@ class RecapStore:
                     campaign_id,
                     now,
                     self.script_wait,
+                    now - AUTO_SINCE_S,
                     SCRIPT_WAIT_S,
                     now,
                 ),

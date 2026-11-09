@@ -734,7 +734,7 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         bot.recaps.waiting_for_script = AsyncMock(return_value=True)
         await bot._say_writing(campaign(), 66, AT)
         said = bot.post.await_args.args[1]
-        self.assertIn("once the session's script is made (at most 10 minutes), or without it", said)
+        self.assertIn("waits for its script (up to 10 minutes), then gets written", said)
 
     async def test_a_group_never_takes_in_another_campaigns_hold(self) -> None:
         mine = self.group(100, 2)

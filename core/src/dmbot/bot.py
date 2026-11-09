@@ -997,8 +997,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.backstory_links = backstory_links
         self.rule_sets = rule_sets  # shared house rules (#1190)
         self.recaps = recaps  # the cinematic recap of each session (#1382)
-        if recaps is not None:  # scripts are made by themselves, so a recap waits for its (#3901)
-            recaps.script_wait = settings.theatre_on
         self.recap_requests = RequestStore(recaps.db) if recaps is not None else None  # (#2113)
         # The DM's answers to a recap's names to check, from its page (#2113).
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
@@ -1864,6 +1862,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [self._watched(self._auto_script_loop(), "auto-scripts")]
                 if self.settings.theatre_on
+                and self.theatre_ai is not None
+                and self.memory is not None
+                and self.transcripts is not None
                 else []
             ),
             *(
@@ -13791,6 +13792,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _auto_script_loop(self) -> None:
         """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A
         server's trouble never stops the others."""
+        if self.recaps is not None:  # a recap waits for its script only while this round runs
+            self.recaps.script_wait = True
         await asyncio.sleep(AUTO_SCRIPT_FIRST_S)
         while True:
             for guild in list(self.guilds):

@@ -63,6 +63,39 @@ class Due(NamesTest):
         await self.runs.finish(GUILD, sid, token, ok=False)  # (a failed run is not retried)
         self.assertEqual(await self.due(), [])
 
+    async def test_a_session_stopped_in_the_middle_is_taken_up_again(self) -> None:
+        sid = await self.session(NOW - 600)
+        token = await self.runs.begin(GUILD, sid)
+        assert token is not None
+        self.assertEqual(await self.due(), [])  # (running and moving: someone is on it)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE theatre_runs SET moved_at = 1 WHERE session_id = %s", (sid,))
+        self.assertEqual(await self.due(), [sid])
+
+    async def test_an_imported_session_counts_from_when_it_was_imported(self) -> None:
+        old = await self.session(5_000)  # ended long ago: the original session's date
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at, state, scan_finished)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, 'done', FALSE)",
+                (GUILD, self.campaign.id, old, "a" * 32, "x.txt", 1, NOW - 600),
+            )
+        self.assertEqual(await self.due(), [])  # its name scan has not finished
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE session_imports SET scan_finished = TRUE")
+        self.assertEqual(await self.due(), [old])
+
+    async def test_a_campaign_with_no_scripts_is_marked_and_not_looked_at_again(self) -> None:
+        sessions = [await self.session(NOW - 900 + i) for i in range(4)]
+        me = bot_for(plan=False)
+        me.campaigns.db = self.db
+        await auto_script.run_round(me, GUILD, NOW)
+        for sid in sessions:  # (marked as finished without a script: the website's button remains)
+            self.assertEqual(await self.runs.state(GUILD, sid), "failed")
+        self.assertEqual(await self.due(), [])
+        me.post_message.assert_not_awaited()  # (nothing is said for a plan without scripts)
+
 
 def bot_for(*, on: bool = True, plan: bool = True, ok: bool = True) -> Any:
     campaign = SimpleNamespace(dm_bot_channel_id=CHANNEL, id="c" * 32)
@@ -107,8 +140,9 @@ class Round(NamesTest):
         me.outcome = job.Outcome("Nothing was changed.", started=True, ok=False)
         await self.run_with(me, [("c" * 32, "s" * 32)])
         said = me.post_message.await_args.args[1]
-        self.assertIn("couldn't be made", said)
+        self.assertIn("No script was made for session 3", said)
         self.assertIn("website", said)
+        self.assertNotIn("press the button", said.lower())
 
     async def test_nothing_is_made_with_the_switch_off(self) -> None:
         tried, make = await self.run_with(bot_for(on=False), [("c" * 32, "s" * 32)])

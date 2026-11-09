@@ -20,16 +20,21 @@ import time
 from typing import Any
 
 from dmbot.logs import log_context
-from dmbot.transcript.theatre_runs import TheatreRuns
+from dmbot.transcript.theatre_runs import AUTO_SINCE_S, TheatreRuns
 from dmbot.ui import theatre_button
 
 log = logging.getLogger(__name__)
 
 SETTLE_S = 120  # a live session's transcript is final this long after it ended
-SINCE_S = 7 * 24 * 3600  # older sessions are made from the website
+SINCE_S = AUTO_SINCE_S  # older sessions are made from the website
 SEEN = 50  # candidates read each round (some may be for campaigns whose plan has no scripts)
 PER_ROUND = 2  # scripts begun each round, so one server never takes the AI all at once
-LINE_FAILED = "📜 A script couldn't be made for session {number}: {why} Make it from the website."
+# The job's own failure words tell the DM to press a button that is not there for a script made by
+# itself, so a failure says its own: no reason is quoted, and the website makes it again.
+LINE_FAILED = (
+    "📜 No script was made for session {number}. Nothing was changed. "
+    "You can make it from your campaign's page on the website."
+)
 
 
 async def run_round(bot: Any, guild_id: int, now: int | None = None) -> int:
@@ -59,13 +64,18 @@ async def run_round(bot: Any, guild_id: int, now: int | None = None) -> int:
 
 
 async def _one(bot: Any, guild_id: int, campaign_id: str, session_id: str) -> int:
-    """One session: 1 when a run was begun, 0 when this campaign's plan has no scripts (the
-    session is looked at again next round, in case the plan changes)."""
+    """One session: 1 when a run was begun, 0 when none was (the plan has no scripts: the session
+    is marked so; or the campaign or session is gone)."""
     campaign = await bot.campaigns.get(guild_id, campaign_id)
     session = await bot.transcripts.session(guild_id, session_id)
     if campaign is None or session is None or session.lines == 0:
         return 0
     if not await bot.plan_allows("story", guild_id, campaign, fail_open=False):
+        # No script will come by itself for this session, and it must not keep being the oldest
+        # candidate (nor hold a recap's wait): a finished-without-a-script row says so. The
+        # website's button still makes one. (A plan that cannot be checked right now counts the
+        # same: the session is then the website button's, never retried in a loop.)
+        await TheatreRuns(bot.campaigns.db).skip(guild_id, session_id)
         return 0
 
     async def quiet(_text: str) -> None:
@@ -86,7 +96,7 @@ async def _tell(bot: Any, campaign: Any, number: int, outcome: Any) -> None:
     channel_id = getattr(campaign, "dm_bot_channel_id", None)
     if not channel_id:
         return
-    text = outcome.text if outcome.ok else LINE_FAILED.format(number=number, why=outcome.text)
+    text = outcome.text if outcome.ok else LINE_FAILED.format(number=number)
     try:
         await bot.post_message(channel_id, text)
     except Exception:
