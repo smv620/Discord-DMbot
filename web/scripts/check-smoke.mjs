@@ -133,8 +133,8 @@ await visit("A recap: read it, names, choices", "/account/recaps/200000000000000
   await page.getByRole("heading", { level: 1 }).first().waitFor();
   await page.getByRole("heading", { name: "The ferry at dusk" }).first().waitFor();
   await seen(page, "The ferry ferryman".split(" ")[0]); // the text of the recap
-  // The names part opens and lists the campaign's names.
-  await page.getByText("Names in this campaign").click();
+  // The names part opens and lists the names used in this recap.
+  await page.getByText("Names in this recap").click();
   await seen(page, "Ka'zeth");
   // The three choices: all there, and one saves and says so.
   for (const label of ["Write a recap after each session", "Make the narration and music", "Email me when it is ready"]) {

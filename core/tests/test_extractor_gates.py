@@ -203,6 +203,9 @@ class Gates(unittest.IsolatedAsyncioTestCase):
                 story_extractor_on=True,
                 story_readings_on=False,
                 story_deeds_on=False,
+                story_reveals_on=False,
+                story_reveals_precheck=False,
+                story_who_on=False,
                 story_family_only=False,
                 story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
@@ -213,6 +216,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
             plan_allows=AsyncMock(return_value=allowed),
             _recap_lines=AsyncMock(return_value=frozenset()),  # (no split yet: every line is play)
+            add_short_names=AsyncMock(),  # (#3880: tested in test_short_names)
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7}))),
             name_of=lambda gid, uid: f"<@{uid}>",
             post=AsyncMock(),
@@ -223,7 +227,10 @@ class Gates(unittest.IsolatedAsyncioTestCase):
     def table(self) -> Any:
         return SimpleNamespace(
             campaign_id="c", transcript_session_id="s", guild_id=1, dm_user_id=DM,
-            dm_user_ids=frozenset(), steward_tally=None, screen_channel_id=5,
+dm_user_ids=frozenset(),
+            dm_accounts=frozenset(),
+            steward_tally=None,
+            screen_channel_id=5,
         )  # fmt: skip
 
     async def test_the_family_only_mode_reaches_the_extractor(self) -> None:
@@ -397,7 +404,9 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         visibility: str = "private",
         dm: list[str] | None = None,
     ) -> Any:
-        campaign = SimpleNamespace(id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8])
+        campaign = SimpleNamespace(
+            id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8], dm_accounts=[7, 8]
+        )
         return SimpleNamespace(
             settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
             memory=SimpleNamespace(_db=object()),

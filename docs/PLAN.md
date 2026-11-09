@@ -1356,6 +1356,32 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**Which channel gets what (owner, 2026-11-09, #3874).** The **DM screen** is for the game while it is being played:
+anything that needs or asks for the DM's attention in the flow of play, such as conditions at the table, game-mechanics
+notices, rules alerts, answers to questions, the sidebar and the clock. The DM should only have to watch the DM screen
+during play. **Everything else goes to the DM Bot channel** (`dmb-dm-bot-<short name>`): campaign setup, pre-game items,
+post-game items, and anything that needs the DM's attention eventually but not now. That includes names, connections and
+claims to check, upload results, after-session reviews and notes, and recap readiness. Because the DM Bot channel is public
+(above), what DMbot posts there is **counts only** ("66 names to check: 30 NPCs, 24 places", "60 connections"), with no
+names, quotes or story words. Every button checks the presser is a DM of the campaign, and the cards that show the words open
+privately. Each upload or session gets **one live message** that DMbot edits as items are answered, ending as "✅ All
+answered" with its buttons removed, never a new message for each batch. **Private messages to the DM jump to the right
+message:** a question's "Open in Discord" and its review buttons open that live message in the DM Bot channel (or, for a
+live-play item, the DM screen). With no DM Bot channel, or no permission to post there, DMbot falls back to the private
+card as before.
+**Uploads and imports apply what DMbot is sure of (owner, 2026-11-09, #3878).** After about ten deploys of accepting every
+suggestion as it was, the owner's rule: when DMbot reads **background lore** or **imports earlier sessions**, it **adds what it
+found by itself** and only asks about what it is unsure of. "Sure" means what the **Add all** buttons would add today: new
+names, other names and spellings, and connections found in the text (family roles and feelings included), each through the
+store's own DM calls, so every rule is checked again (`devtools/accept_all` is the pattern). Still **asked**, never guessed:
+"Which one?", same-person questions, a name that needs to know who plays it, anything with no suggestion, and anything a rule
+refuses. What was added follows the usual rules: secret only when uploaded with spoilers, nothing revealed to players because
+it was added, and nothing anyone confirmed is overwritten. Afterwards the DM gets one notice, in the DM Bot channel (counts
+only) and privately: "Added 62 names and 48 connections from <label>", the few questions left with their buttons, a link to
+the website's **Names** page and one to the **Story Graph**, and **Undo this upload**. That undoes the whole batch, from the
+notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
+one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
@@ -3881,7 +3907,11 @@ are for this month only and don't roll over." The bot's "hours are used up" mess
 **Free access and the admin page (owner decision, 2026-10-08).** The owner's own Discord
 account never needs a plan: it is listed in the server's settings (`DMBOT_FREE_USERS`, Discord
 ids, never in the repository) and counts as having every feature with no hours or campaign
-cap. The owner can also give other Discord users free access by hand from an admin page on
+cap. The same for a whole server (owner request, 2026-11-08, #3788): `DMBOT_FREE_GUILDS` lists
+Discord server ids (never in the repository, never logged beyond a count), and a campaign in a listed
+server has free access whoever its DM is, so the owner's test server never meets a plan check. The
+bot's plan decisions read it through the server the transaction is set to; the website's account page
+is the person's own and does not know the server. The owner can also give other Discord users free access by hand from an admin page on
 the website: a *grant* names the Discord id, a level ("like Guild": 87 hours and 5 campaigns,
 the default, or "no limits"), an optional end date and a short note. Reason for the default:
 every hour spends AI and speech-to-text money, so unlimited access for others is a choice the
@@ -4617,6 +4647,25 @@ marked).** A DM manages every campaign from the website as fully as from Discord
    then a written table of every Discord campaign action with its website status (the parity list,
    #2554), then each missing group in that order of use. A new Discord campaign action ships with its
    website way, or with a held line on the parity list saying when.
+**Search the website** (owner, 2026-11-08, #3855, #3856). A search bar in the site's header answers in two lines.
+Line 1 appears at once: the getdmbot.com page that best matches the query ("a summary of episodes" gives the recaps page).
+It comes from an index built with the site, with a hand-kept list of the words people use for each page; it runs in the
+browser, costs nothing and sends nothing. Line 2 shows "[... thinking ...]" while DMbot writes a short answer about DMbot or
+its website, from DMbot's public, user-facing words only (site pages, help, What's new, the user-facing parts of this plan;
+a fixed allow-list built in at deploy time, never internal files, issues or anyone's data). It never invents: what the
+words don't cover gets "I don't know" and a link. Anyone may ask. **Cost limits** (owner, 2026-11-08): 100 questions an
+hour and 200 a day per visitor, and 300 an hour for the whole site. Over a limit, line 2 says "Too many requests to process,
+try again in about an hour." (after the daily limit: "Too many requests to process, try again tomorrow."); line 1 still
+works. A visitor is a keyed hash of their address, its key changed daily, kept only as counts for 24 hours and never logged.
+Answers are cached for a day (a cached answer doesn't count against the site's limit), and logs hold counts only.
+**The answer engine is free** (owner, 2026-11-08: "a free tier api call"; Supervisor, #3856): Cloudflare Workers AI's free
+daily allowance (10,000 Neurons, reset 00:00 UTC), a small model (Llama 3.2 3B, about 6 Neurons a question), called from
+core's `/site/ask` with a Cloudflare API token kept on the server like the other keys. Cloudflare doesn't train on or keep
+what is asked. Google's free tier was ruled out because it trains on questions and people may read them. The free allowance
+is the real daily ceiling: core stops at 1,500 answers a day (headroom under the allowance), and then line 2 says the daily
+words above. It never moves to a paid service on its own; paying past the allowance (about $0.50 a day at 300 an hour) is the
+owner's call. Website-only on purpose (it searches the site).
+
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
@@ -4719,8 +4768,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     name, or an `<apart>` link, is never used.
   - **Only an overall length target.** No paragraph count and no words per beat. The target is
     **250 words, plus 150 for every hour played**, rounded to the nearest 10, **at most 1,000** (1 hour
-    400, 3 hours 700; about seven minutes read aloud at most; owner, 2026-11-06, #3633: recaps were
-    being crunched down too much). It stays a target, never a check (#2597).
+    400, 3 hours 700; about seven minutes read aloud at most). Raised from 150 + 100 (at most 600) by the
+    owner on 2026-11-06 (#3633): recaps were being crunched down too much. It stays a target, never a check
+    (#2597), and the change is scored before and after like any recap-writer change.
   - **What the writer is asked for**, in its instructions: a self-contained short story, not a teaser;
     each scene opens by saying where it is, and a change of place is said in the first sentence of the
     new scene; anything new is introduced from the sheet, and left out only when nothing given explains
@@ -5409,8 +5459,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     respelling in plain letters with the stressed part in capitals ("kah-ZETH"). The DM sees it, edits it
     if needed and saves. Discord has no microphone for buttons, so the name card gets a **🎤 Say it**
     link button straight to that name on the website (one tap, the link-button rule).
-  - **🔊 Hear it:** the website reads the respelling aloud with the browser's own voice, so the DM can
-    check it. No cost, and it isn't the narrator's voice.
+  - **🔊 Hear it:** the website plays the respelling in the **recap narrator's voice** (the same voice and
+    speech model as the voice-over), so the DM hears how the recap will really say it (owner, 2026-11-08,
+    #3807; it was the browser's own voice). One short speech call per new text, cached so a second press
+    is free, rate-limited, only on plans with a voice-over, counted in the campaign's allowance. Only the
+    words in the box go to the voice company; logs hold counts. With no voice set up, the browser's voice
+    plays and the page says it isn't the narrator's.
   - **How the clip becomes letters:** a small speech-sound recogniser on our own server turns the clip
     into speech sounds (IPA). Plain code turns those into the respelling. No outside service hears the
     clip. If the recogniser isn't installed or fails, the DM is told plainly and types it instead.
@@ -5943,9 +5997,39 @@ dozen screens, and gets the same list, words and context in both places.
   4. **Where it was said:** up to three places, newest first, each with a line either side, the session and its
      date. Only lines from people who agreed. In Discord behind `📜 Where was it said?`; on the website the newest
      shows inline and the others open (#3384).
+  4a. **The scene** (owner, 2026-11-06, #3596): for every question about an entry or a connection, a short summary
+     written by the AI from the lines it came from, saying **who, where and what** happened around it, and for
+     an unnamed person everything the DM's narration said about them or what they did. Example: "When the party
+     entered the Three Flags tavern in Targos, this someone was just leaving and bumped into Claude while the
+     party talked to the bartender." Or: "the patron at the bar who put 5 copper down for Marge, the bartender,
+     to buy Claude a drink." It is kept until the question is answered (named, joined, removed or decided),
+     or for as long as its entry is linked to no player character or the party, so the graph clean-up page can show
+     it (Supervisor, 2026-11-07, #3740); it is
+     shown in Discord and on the website alike, and to the DM only. It is made only from lines of people who
+     agreed to be recorded, goes when any of them stops, never invents (a detail the lines don't give is left
+     out) and is counted, never logged, in words.
   5. **What each answer does**, said before it's pressed where it isn't obvious ("**the woman** is kept as how she
      was described, not as a name").
   6. **The answers**, the same buttons in the same order with the same words, then **Undo** until the next answer.
+- **A person the story never named** (owner, 2026-11-06, #3595, #3597): opened from the Names page's "Not named
+  yet", it offers every way to clear it up, plainly: **Give them a name**, **Same as someone DMbot knows…** (pick
+  the known name; they become one person and the description is kept as how they were described) and **Remove
+  this person** (asks once). Each has Undo. Its scene (4a) shows above the answers.
+- **Who is this? DMbot answers first** (owner, 2026-11-06, #3602, #3603, #3604): before asking about a name, DMbot
+  tries to answer with the AI, from the name, its scene, its lines and the campaign's own entries.
+  - **Sure:** it applies the answer itself and says so on the card with **Undo** and **That's wrong** ("DMbot took
+    **the man of steel** to be **Superman**"), and the after-session card counts these for the DM to check. This is
+    the one place DMbot settles a question without a press, so it is kept narrow: only "this new name is an other
+    name of X" or "this is a new <kind>", never a split, a merge of two existing entries or a removal, and **never**
+    when either side is secret, hidden from players, a disguise, a player character or a told-or-not name: those
+    always ask. Its threshold is set from the sample run's numbers (share applied, share undone) and starts
+    conservative.
+  - **Unsure:** the question shows DMbot's **top 5** answers, most likely first: an existing entry as `a.k.a. <name>,
+    <its most significant property or connection>` ("a.k.a. Superman, the Kryptonian superhero"), or `new NPC` (or
+    another kind). The label never shows a secret to anyone else.
+  - **None of those:** a 6th choice, **More options…**, links to the website's clarify page for that name: search,
+    filters, DMbot's top answers, the scene and where it was said, and a last answer, **Trivial: no need to track
+    this name**.
 - **What context each kind needs** (the card's parts 2 to 5):
 
   | Kind | About (with tags) | Why | Evidence | Consequence |
@@ -5974,6 +6058,50 @@ dozen screens, and gets the same list, words and context in both places.
   "beggar woman", "a hooded figure") never becomes an other name that matches on its own. A merge or reader that
   would add one keeps it as a description of that entry, shown on the entry and in its evidence, never used to place
   a new line. Readers file such people as unnamed (#2790) when the text gives no proper name.
+- **Unnamed people and groups still have a name** (owner, 2026-11-07, #3736): an entry the story never named is
+  written `unnamed - <its most distinguishing description>` ("unnamed - barmaid at Three Flags Sailing with red
+  hair", "unnamed - loud sailors sitting in the corner"). The name comes from what the story says, never an invented
+  personal name, and is unique in the campaign. It is kept, with a connection saved, when it interacts with a named
+  entry, a player character included, even in a small way. An unnamed entry connected only to other unnamed ones, or
+  to nothing yet, is **not** dropped, in the session or after it: a later session may link the chain to the story
+  (the bald man hands the eye-patch drunk a pouch). What to do with isolated entries is decided later, and nothing
+  deletes them meanwhile.
+- **Everything is kept; the DM cleans up** (owner, 2026-11-07): anyone who interacts with a player character is
+  kept, and so is anyone they interact with, and every entity is saved. An entry or group **not linked to any player
+  character by any chain** is "isolated". The website's graph clean-up page lists them, with their scene summaries, so
+  the DM can add the missing connections (#3740); Discord shows a count and the link. When the DM's fixes there have
+  been quiet for 15 minutes, a careful AI check asks whether the story held clues DMbot missed. A connection that
+  was only in the DM's head is fine and isn't reported. A missed clue is written up as
+  `DMbot_graph_improvements_<timestamp>.md` (#3741), and for campaigns that share to improve DMbot, posted as a
+  Discussion in the owner's **private** repository, never this public one (#3742).
+  **The sharing switch** (Supervisor, 2026-11-07, #3741): "Share this campaign's story to improve DMbot" is a
+  campaign setting only the DM turns on, off by default. Its words say that quotes from the story go privately to
+  DMbot's developers. Anyone who opted out of improving DMbot is still left out, checked when the check runs. Turning
+  it off queues nothing and deletes any check not yet run and any report not yet posted. Fixes made in Discord count
+  as well as the website's, and the clean-up page shows the DM a counts-only line ("DMbot will check your fixes in
+  12 minutes").
+  **What a report may quote** (Supervisor, 2026-11-08, #3741, #3742): the session lines (from people recorded now)
+  and the DM's own lore and backstory uploads, which are the campaign's story and are what the switch shares.
+  Never a passage from material the DM shared under the Shared story switch, or from a rulebook or supplement: that
+  stays in the campaign (the IP rule), so the report names it by its kind and id only. Removals don't start a check,
+  since they add nothing the story could have shown. Every check's outcome is kept, so the page can say "missed 0".
+- **Every thing DMbot makes records the commit that made it** (owner, 2026-11-07, #3739): entries, connections,
+  claims, recaps, music, voiceovers, map coordinates, pictures, transcript cleaning and anything else generated, so a
+  fault is pinned to a version, and an old row from a version that's already fixed isn't taken for a new bug.
+- **The sample run's answer keys follow the documents** (owner, 2026-11-07, #3714): when a deployed run finds a
+  clear improvement over the keys (something the sample documents plainly say that the key lacks), GraphEngineer
+  adds it to the keys in its own PR. The PR names the document line and records it in the README's "Changes to the
+  keys" log, and scores are only compared on the same key version (`core/tests/fixtures/story_graph/README.md`). A
+  find the documents don't support is reported on #3545, never added.
+- **Watching DMbot's AI calls on the upload pages** (owner, 2026-11-07, #3710): while a lore upload or a session
+  import is read, its page shows two read-only windows: each prompt DMbot sends to the AI and each reply. Each
+  entry is cut to its first 500 characters, then `[...]`, before it is stored. **An exception to "every wait
+  shows counts and stages only":** these windows show transcript and lore words, to the campaign's DM and game
+  masters only, never to players or peek viewers. Entries are deleted 24 hours after they're made, at once when
+  anyone in the server presses Stop recording me, and with the campaign. They're never in a backup and never logged,
+  and capturing a call never slows or fails it. The prompt shown is the material sent, not DMbot's fixed
+  instructions. Off by default (`DMBOT_AI_FEED` and the page's switch); whether paying customers' DMs get it is the
+  owner's call before it goes on for them.
 
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 

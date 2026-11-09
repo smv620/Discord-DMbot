@@ -147,7 +147,11 @@ class CombatSaidAloud(unittest.IsolatedAsyncioTestCase):
     def setup_bot(self, agreed: Agreed) -> tuple[Any, Any, Any]:
         table = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, listening=True)
         campaign = SimpleNamespace(
-            guild_id=GUILD, id="c" * 32, dm_user_ids=frozenset({self.DM}), name="Alpha"
+            guild_id=GUILD,
+            id="c" * 32,
+            dm_user_ids=frozenset({self.DM}),
+            dm_accounts=frozenset({self.DM}),
+            name="Alpha",
         )
         fake = SimpleNamespace(
             tables={GUILD: table},

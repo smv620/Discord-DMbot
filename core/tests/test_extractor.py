@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
-from dmbot.memory import deed_reading, extractor, readings
+from dmbot.memory import deed_reading, extractor, readings, reveal_reading
 from dmbot.memory.claims import ClaimStore, Extracted, Proposed
 from dmbot.sidebar import answer as sidebar
 from dmbot.transcript.models import (
@@ -617,10 +617,33 @@ class DeedPass(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Kept(), dm_session(10), deeds=True)
         self.assertEqual((report.deeds, report.deeds_cut, report.deeds_refused), (1, 1, 0))
 
-    async def test_an_ai_out_of_funds_on_the_deed_call_stops_the_run(self) -> None:
+    async def test_an_ai_out_of_funds_on_the_deed_call_stops_the_deeds_and_keeps_the_claims(
+        self,
+    ) -> None:
         report = await go(Deeding(fail=AIOutOfFunds()), Kept(), dm_session(25), deeds=True)
         self.assertEqual((report.stopped, report.deeds), ("out of funds", 0))
-        self.assertGreater(report.unsent, 0)  # (the batches after it were never sent)
+        self.assertEqual(report.calls, 3 + 1)  # (all three claims calls, then the one deed call)
+
+    async def test_readings_come_first_and_the_last_call_goes_to_them(self) -> None:
+        class Both(Deeding):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                if system is readings.READING_SYSTEM:
+                    self.systems.append(system)
+                    first = text.split("\n")[1].split(" ")[0]
+                    theory = {"rule": "theory", "who": "Mira", "shared": False, "strength": "",
+                              "subject": "Bram", "relationship": "carries",
+                              "object": "Heartseeker", "lines": [int(first)]}  # fmt: skip
+                    return Reply(json.dumps({"readings": [theory]}), False, 10, 5, "m-fast")
+                return await super().complete(system, text, max_tokens=max_tokens)
+
+        ai = Both()
+        report = await go(
+            ai, Kept(), dm_session(10), readings=True, deeds=True, max_calls=2
+        )  # one batch: claims, then readings; the limit leaves nothing for the deed
+        self.assertEqual((report.readings, report.deeds, report.calls), (1, 0, 2))
+        self.assertEqual(ai.systems, [extractor.SYSTEM, readings.READING_SYSTEM])
+        again = await go(Both(), Kept(), dm_session(10), readings=True, deeds=True, max_calls=3)
+        self.assertEqual((again.readings, again.deeds, again.calls), (1, 1, 3))
 
     async def test_someone_who_stops_during_the_deed_call_loses_their_deed(self) -> None:
         asked: list[int] = []
@@ -636,9 +659,232 @@ class DeedPass(unittest.IsolatedAsyncioTestCase):
 
     def test_the_deed_prompt_version_is_pinned_with_the_prompt(self) -> None:
         # a change to deed_reading.DEED_SYSTEM bumps this (it is stored with each proposal)
-        self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-1")
+        self.assertEqual(extractor.DEED_PROMPT_VERSION, "deeds-2")
+
+    async def test_the_proposals_are_handed_to_the_store_with_the_people_who_said_them(
+        self,
+    ) -> None:
+        class Store:
+            def __init__(self) -> None:
+                self.calls: list[Any] = []
+
+            async def store(
+                self, guild_id: int, campaign_id: str, proposals: Any, **kw: Any
+            ) -> Any:
+                from dmbot.memory.deed_proposals import Stored
+
+                self.calls.append((proposals, kw))
+                return Stored(stored=len(proposals))
+
+        deed_store = Store()
+        report = await go(
+            Deeding(),
+            Kept(),
+            dm_session(10),
+            deeds=True,
+            deed_store=deed_store,
+        )
+        ((proposals, kw),) = deed_store.calls
+        self.assertEqual([speakers for _deed, speakers in proposals], [(DM,)])
+        self.assertEqual(kw["prompt_version"], extractor.DEED_PROMPT_VERSION)
+        self.assertEqual((kw["opted_in"], report.deeds_stored), ({DM, ALICE, BOB}, 1))
+
+    async def test_a_store_that_fails_is_counted_and_never_fatal(self) -> None:
+        class Broken:
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                raise RuntimeError("down")
+
+        report = await go(
+            Deeding(),
+            Kept(),
+            dm_session(10),
+            deeds=True,
+            deed_store=Broken(),
+        )
+        self.assertEqual((report.failed, report.deeds_stored), (1, 0))
 
     async def test_family_only_asks_no_deeds(self) -> None:
         ai = Deeding()
         await go(ai, Kept(), dm_session(10), deeds=True, family_only=True)
         self.assertNotIn(deed_reading.DEED_SYSTEM, ai.systems)
+
+
+class Revealing(Deeding):
+    """A fake AI: no claims, a deed answer of nothing, and one reveal (Tran's successful Insight
+    check) citing the first line it is sent."""
+
+    async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+        self.systems.append(system)
+        if system is extractor.SYSTEM:
+            return Reply(json.dumps({"claims": []}), False, 10, 5, "m-fast")
+        if system is deed_reading.DEED_SYSTEM:
+            return Reply(json.dumps({"deeds": []}), False, 10, 5, "m-fast")
+        self.sent.append(text)
+        if self.fail is not None:
+            raise self.fail
+        first = text.split("\n")[1].split(" ")[0]
+        reveal = {"how": "check", "who": "Tran", "check": "Insight", "succeeded": True,
+                  "teller": "", "subject": "Bruno", "relationship": "knows", "object": "Shela",
+                  "lines": [int(first)]}  # fmt: skip
+        return Reply(self.answer or json.dumps({"reveals": [reveal]}), False, 10, 5, "m-fast")
+
+
+class Stash:
+    """A stand-in reveal store: keeps what it is given."""
+
+    def __init__(self) -> None:
+        self.got: list[Any] = []
+        self.opted_in: Collection[int] = ()
+
+    async def store(self, guild_id: int, campaign_id: str, proposals: Any, **kw: Any) -> Any:
+        from collections import Counter
+
+        self.got.extend(proposals)
+        self.opted_in = kw["opted_in"]
+        return SimpleNamespace(stored=len(proposals), counts=Counter({"reveal_unplaced": 0}))
+
+
+class RevealPass(unittest.IsolatedAsyncioTestCase):
+    async def test_off_by_default_nothing_is_asked(self) -> None:
+        ai = Revealing()
+        report = await go(ai, Kept(), dm_session(10))
+        self.assertNotIn(reveal_reading.REVEAL_SYSTEM, ai.systems)
+        self.assertEqual(report.reveals, 0)
+
+    async def test_on_a_check_the_dm_told_is_proposed_and_stored_counts_only_logged(self) -> None:
+        stash = Stash()
+        report = await go(Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=stash)
+        self.assertEqual((report.calls, report.reveals, report.reveals_stored), (2, 1, 1))
+        ((proposal, speakers),) = stash.got
+        self.assertEqual((proposal.who, proposal.check, speakers), ("Tran", "Insight", (DM,)))
+        self.assertNotIn("Tran", report.line())
+        self.assertIn("reveals: 1 found", report.line())
+
+    async def test_a_check_only_a_player_spoke_of_is_refused(self) -> None:
+        report = await go(Revealing(), Kept(), session(10), reveals=True, reveal_store=Stash())
+        self.assertEqual((report.reveals, report.reveals_check_refused), (0, 1))
+
+    async def test_reveals_come_after_the_deeds_and_the_last_call_goes_to_the_deeds(
+        self,
+    ) -> None:
+        ai = Revealing()
+        report = await go(
+            ai, Kept(), dm_session(10), deeds=True, reveals=True, reveal_store=Stash(), max_calls=2
+        )
+        self.assertEqual(ai.systems, [extractor.SYSTEM, deed_reading.DEED_SYSTEM])
+        self.assertEqual(report.reveals, 0)
+        both = Revealing()
+        await go(both, Kept(), dm_session(10), deeds=True, reveals=True, reveal_store=Stash())
+        self.assertEqual(
+            both.systems,
+            [extractor.SYSTEM, deed_reading.DEED_SYSTEM, reveal_reading.REVEAL_SYSTEM],
+        )
+
+    async def test_the_call_is_counted_and_a_failure_is_never_fatal(self) -> None:
+        counted: list[int] = []
+
+        async def count() -> None:
+            counted.append(1)
+
+        report = await go(
+            Revealing(fail=RuntimeError("down")), Kept(), dm_session(25), reveals=True,
+            reveal_store=Stash(), count_call=count,
+        )  # fmt: skip
+        self.assertEqual((report.reveals_failed, report.calls, len(counted)), (3, 6, 6))
+
+    async def test_someone_who_stopped_after_the_answer_takes_the_reveal_with_them(self) -> None:
+        ai = Revealing()
+
+        async def consenting() -> Collection[int]:
+            # recorded until the reveal question is answered, stopped right after
+            answered = reveal_reading.REVEAL_SYSTEM in ai.systems
+            return {ALICE} if answered else {DM, ALICE}
+
+        stash = Stash()
+        report = await go(ai, Kept(), dm_session(10), consenting, reveals=True, reveal_store=stash)
+        self.assertEqual((report.reveals, report.reveals_refused, stash.got), (0, 1, []))
+
+    async def test_the_store_is_given_who_is_recorded_after_the_last_answer(self) -> None:
+        ai = Revealing()
+
+        async def consenting() -> Collection[int]:
+            return {DM, ALICE, BOB} if reveal_reading.REVEAL_SYSTEM not in ai.systems else {DM}
+
+        stash = Stash()
+        await go(ai, Kept(), dm_session(10), consenting, reveals=True, reveal_store=stash)
+        self.assertEqual(set(stash.opted_in), {DM})
+
+    async def test_every_reveal_call_moves_the_progress_card(self) -> None:
+        seen: list[tuple[int, int]] = []
+
+        async def progress(done: int, total: int) -> None:
+            seen.append((done, total))
+
+        await go(
+            Revealing(), Kept(), dm_session(25), deeds=True, reveals=True,
+            reveal_store=Stash(), progress=progress,
+        )  # fmt: skip
+        self.assertEqual(seen, [(n, 9) for n in range(1, 10)])  # (3 claims, 3 deeds, 3 reveals)
+        alone: list[tuple[int, int]] = []
+
+        async def note(done: int, total: int) -> None:
+            alone.append((done, total))
+
+        await go(Revealing(), Kept(), dm_session(25), progress=note)
+        self.assertEqual(alone, [(1, 3), (2, 3), (3, 3)])  # (off: as before)
+
+    async def test_a_failing_store_is_counted_and_never_fatal(self) -> None:
+        class Broken(Stash):
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                raise RuntimeError("db down")
+
+        report = await go(Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Broken())
+        self.assertEqual((report.reveals, report.reveals_stored, report.failed), (1, 0, 1))
+
+    async def test_out_of_funds_on_the_reveal_call_stops_the_run(self) -> None:
+        report = await go(
+            Revealing(fail=AIOutOfFunds()), Kept(), dm_session(25), reveals=True,
+            reveal_store=Stash(),
+        )  # fmt: skip
+        self.assertEqual((report.stopped, report.calls), ("out of funds", 3 + 1))
+
+    async def test_why_the_store_dropped_some_reaches_the_log_line_as_counts(self) -> None:
+        from collections import Counter
+
+        class Dropping(Stash):
+            async def store(self, *a: Any, **kw: Any) -> Any:
+                return SimpleNamespace(stored=0, counts=Counter({"reveal_unplaced": 1}))
+
+        report = await go(
+            Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Dropping()
+        )
+        self.assertIn("1 reveal_unplaced", report.line())
+
+    async def test_the_pre_check_skips_a_batch_that_could_hold_no_reveal(self) -> None:
+        counted: list[int] = []
+
+        async def count() -> None:
+            counted.append(1)
+
+        plain = await go(
+            Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Stash(),
+            reveals_precheck=True, count_call=count,
+        )  # fmt: skip
+        self.assertEqual((plain.reveals_skipped, plain.calls), (1, 1))  # (only the claims call)
+        self.assertEqual(len(counted), 1)  # (the skip used none of the limit)
+        self.assertIn("1 batch(es) skipped", plain.line())
+        told = [line(n, DM, "Bruno told Tran the truth." if n == 3 else "") for n in range(1, 11)]
+        asked = await go(
+            Revealing(), Kept(), told, reveals=True, reveal_store=Stash(), reveals_precheck=True
+        )
+        self.assertEqual((asked.reveals_skipped, asked.reveals), (0, 1))
+        self.assertIn("asked for telling 1", asked.line())
+
+    async def test_without_the_pre_check_every_batch_is_asked(self) -> None:
+        report = await go(Revealing(), Kept(), dm_session(10), reveals=True, reveal_store=Stash())
+        self.assertEqual((report.reveals_skipped, report.reveals), (0, 1))
+
+    async def test_the_families_only_mode_asks_nothing(self) -> None:
+        ai = Revealing()
+        await go(ai, Kept(), dm_session(10), reveals=True, reveal_store=Stash(), family_only=True)
+        self.assertNotIn(reveal_reading.REVEAL_SYSTEM, ai.systems)

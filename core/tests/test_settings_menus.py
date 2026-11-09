@@ -85,7 +85,13 @@ class Menus(unittest.TestCase):
         self,
     ) -> None:
         owner, co_dm, manager = 7, 8, 9
-        c = replace(campaign(), owner_user_id=owner, dm_user_ids=frozenset({owner, co_dm}))
+        c = replace(
+            campaign(),
+            owner_user_id=owner,
+            owner_ids=frozenset({owner}),
+            dm_user_ids=frozenset({owner, co_dm}),
+            dm_accounts=frozenset({owner, co_dm}),
+        )
         mine = labels(management_view(c, None, owner))
         for wanted in (
             "Hand over",
@@ -110,7 +116,13 @@ class Menus(unittest.TestCase):
 
     def test_a_waiting_offer_can_be_taken_back_only_by_who_made_it(self) -> None:
         owner, co_dm = 7, 8
-        c = replace(campaign(), owner_user_id=owner, dm_user_ids=frozenset({owner, co_dm}))
+        c = replace(
+            campaign(),
+            owner_user_id=owner,
+            owner_ids=frozenset({owner}),
+            dm_user_ids=frozenset({owner, co_dm}),
+            dm_accounts=frozenset({owner, co_dm}),
+        )
         waiting = HandoverOffer(
             1,
             c.guild_id,
@@ -131,7 +143,7 @@ class Menus(unittest.TestCase):
 
     def test_a_paused_campaign_says_so_on_the_main_card_and_offers_unpause(self) -> None:
         owner = 7
-        c = replace(campaign(), owner_user_id=owner, paused=True)
+        c = replace(campaign(), owner_user_id=owner, owner_ids=frozenset({owner}), paused=True)
         self.assertIn("Paused", settings_text(c, None, owner))
         self.assertNotIn("Paused", settings_text(replace(c, paused=False), None, owner))
         shown = labels(management_view(c, None, owner))

@@ -405,7 +405,7 @@ class StartAnswersWithStarting(unittest.IsolatedAsyncioTestCase):
         seen: list[tuple[str, bool]] = []
         bot = SimpleNamespace(start_campaign_session=start)
         it = fake_interaction(bot)  # type: ignore[arg-type]
-        campaign = SimpleNamespace(id="c" * 32, dm_user_ids=(DM,))
+        campaign = SimpleNamespace(id="c" * 32, dm_user_ids=(DM,), dm_accounts=(DM,))
         picker = cmds.VoicePicker(campaign, 55)  # type: ignore[arg-type]
         picker.text = "Which voice channel is the table in?"
 

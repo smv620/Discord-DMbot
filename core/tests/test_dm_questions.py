@@ -127,7 +127,9 @@ class Live(unittest.IsolatedAsyncioTestCase):
     """`DMBot.ask_live` and the copies of a live question (#3210)."""
 
     def bot(self, reach: dict[int, bool]) -> Any:
-        campaign = SimpleNamespace(name="The *Table*", owner_user_id=8, dm_user_ids=set(reach))
+        campaign = SimpleNamespace(
+            name="The *Table*", owner_user_id=8, dm_user_ids=set(reach), dm_accounts=set(reach)
+        )
         order: list[int] = []
 
         async def dm_message(user_id: int, text: str, view: Any) -> Any:
@@ -138,6 +140,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
 
         return SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            settings=SimpleNamespace(site_url=""),
             _dm_message=dm_message,
             post_message=AsyncMock(return_value=SimpleNamespace(id=1, edit=AsyncMock())),
             order=order,
@@ -294,7 +297,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         me = self.bot({7: True, 8: True})
         sent: list[tuple[int, str]] = []
 
-        async def send_dm(user_id: int, text: str, view: Any = None) -> str:
+        async def send_dm(user_id: int, text: str, view: Any = None, **_: Any) -> str:
             sent.append((user_id, text))
             return "forbidden" if user_id == 7 else "sent"
 

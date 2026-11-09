@@ -130,6 +130,47 @@ def free_users() -> frozenset[int]:
     return _free_users
 
 
+_free_guilds: frozenset[int] = frozenset()
+
+
+def parse_free_guilds(raw: str) -> frozenset[int]:
+    """`DMBOT_FREE_GUILDS` (#3788): Discord server ids, comma-separated, checked like the free
+    users. A campaign in a listed server has free access whoever its DM is: the owner's test
+    server never meets a plan check. Raises ValueError (no id in the message: the setting is never
+    shown, and the real numbers never go in the repository)."""
+    ids = [part.strip() for part in raw.split(",") if part.strip()]
+    if not all(p.isascii() and p.isdigit() and 0 < int(p) < 2**63 for p in ids):
+        raise ValueError(
+            "DMBOT_FREE_GUILDS must be Discord server numbers (digits only, up to 19), "
+            "separated by commas. Fix it in .env and start again."
+        )
+    return frozenset(int(p) for p in ids)
+
+
+def configure_free_guilds(ids: Iterable[int]) -> None:
+    """Set the free server list once, at start (the bot and the web API). Logged as a count only."""
+    global _free_guilds
+    _free_guilds = frozenset(ids)
+    log.info(
+        "Free access servers: %d %s", len(_free_guilds), "id" if len(_free_guilds) == 1 else "ids"
+    )
+
+
+def free_guilds() -> frozenset[int]:
+    return _free_guilds
+
+
+async def on_free_guild(conn: Conn) -> bool:
+    """Is this transaction set to a listed server (`dmbot.guild_id`, as `Database.meter` and
+    `guild` set it)? One small query, and none at all while the list is empty."""
+    if not _free_guilds:
+        return False
+    cur = await conn.execute("SELECT current_setting('dmbot.guild_id', true) AS g")
+    row = await cur.fetchone()
+    raw = str(row["g"]) if row and row["g"] else ""
+    return raw.isascii() and raw.isdigit() and int(raw) in _free_guilds
+
+
 @dataclass(frozen=True)
 class Grant:
     user_id: int
@@ -231,14 +272,31 @@ def _larger(a: int | None, b: int | None) -> int | None:
     return None if a is None or b is None else max(a, b)
 
 
-def access_for(user_id: int, plan: Entitlement | None, grant: Grant | None, now: int) -> Access:
-    """The rule, pure: free list, then an active grant, then the paid plan; a grant and a
-    paid plan together give the larger of each cap."""
-    if user_id in _free_users:
-        return Access(
-            "free", FREE_ACCESS, None, None, True, recap_audio=True, **_covered(plan, now)
-        )
+def access_for(
+    user_id: int,
+    plan: Entitlement | None,
+    grant: Grant | None,
+    now: int,
+    *,
+    guild_id: int | None = None,
+) -> Access:
+    """The rule, pure: free list (the person, or the server the campaign is in, #3788), then an
+    active grant, then the paid plan; a grant and a paid plan together give the larger of each
+    cap."""
+    if _is_free(user_id, guild_id):
+        return free_access(plan, now)
     return access_without_free_list(plan, grant, now)
+
+
+def _is_free(user_id: int, guild_id: int | None) -> bool:
+    """On the free list: the person, or the server the campaign is in (#771, #3788)."""
+    return user_id in _free_users or (guild_id is not None and guild_id in _free_guilds)
+
+
+def free_access(plan: Entitlement | None, now: int) -> Access:
+    """Free access: no caps, every feature (#771; a listed server too, #3788). A paid plan that
+    still works under it is reported, as the account page says so."""
+    return Access("free", FREE_ACCESS, None, None, True, recap_audio=True, **_covered(plan, now))
 
 
 def access_without_free_list(plan: Entitlement | None, grant: Grant | None, now: int) -> Access:
@@ -288,8 +346,8 @@ async def inputs(
 ) -> tuple[Entitlement | None, Grant | None, Access]:
     """`effective`, with the paid plan and grant it came from: the hours meter needs them
     to find the month the hours belong to (dmbot.hours.month_for)."""
-    if user_id in _free_users:
-        return None, None, access_for(user_id, None, None, now)
+    if user_id in _free_users or await on_free_guild(conn):  # (the server: #3788)
+        return None, None, free_access(None, now)
     async with _as_person(conn, user_id):
         plan = await _read_plan(conn, user_id)
         grant = await _read_grant(conn, user_id)
@@ -297,21 +355,22 @@ async def inputs(
 
 
 async def plan_grant_access(
-    db: Database, user_id: int, now: int
+    db: Database, user_id: int, now: int, *, guild_id: int | None = None
 ) -> tuple[Entitlement | None, Grant | None, Access]:
     """The paid plan, the grant and what the person may do, from one read (the account page;
     the grant's start decides which month its hours are counted in)."""
+    free = _is_free(user_id, guild_id)
     async with db.user(user_id) as conn:
         plan = await _read_plan(conn, user_id)
-        grant = None if user_id in _free_users else await _read_grant(conn, user_id)
-    return plan, grant, access_for(user_id, plan, grant, now)
+        grant = None if free else await _read_grant(conn, user_id)
+    return plan, grant, access_for(user_id, plan, grant, now, guild_id=guild_id)
 
 
 async def plan_and_access(
-    db: Database, user_id: int, now: int
+    db: Database, user_id: int, now: int, *, guild_id: int | None = None
 ) -> tuple[Entitlement | None, Access]:
     """The paid plan and what the person may do, from one read."""
-    plan, _grant, access = await plan_grant_access(db, user_id, now)
+    plan, _grant, access = await plan_grant_access(db, user_id, now, guild_id=guild_id)
     return plan, access
 
 
@@ -410,7 +469,10 @@ async def owned_campaigns(conn: Conn, user_id: int) -> int:
     `owner_campaigns`, through a function that returns only a count (dmbot_owned_campaigns,
     schema 0034), so the website's role can ask it too. Needs an open transaction."""
     async with _as_person(conn, user_id):
-        cur = await conn.execute("SELECT dmbot_owned_campaigns() AS n")
+        # Campaigns in a listed free server take no slot of the owner's cap (#3792).
+        cur = await conn.execute(
+            "SELECT dmbot_owned_campaigns_outside(%s::bigint[]) AS n", (sorted(free_guilds()),)
+        )
         row = await cur.fetchone()
     assert row is not None  # a function call always gives a row
     return int(row["n"])

@@ -81,6 +81,8 @@ LOCKED_TABLES = (
     "recap_requests",
     "secret_exposures",
     "setting_actions",
+    "said_as_hears",
+    "said_as_listens",
     "picture_actions",
     "speaker_removals",
 )
@@ -91,6 +93,8 @@ WORKED_TABLES = (
     "name_answers",
     "recap_requests",
     "setting_actions",
+    "said_as_hears",
+    "said_as_listens",
     "picture_actions",
     "speaker_removals",
 )

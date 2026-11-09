@@ -28,11 +28,18 @@ BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#
 PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
 # A family link worked out from two stated ones (#2959, #2960): proposed for the DM, never stated
 WORKED_OUT_SOURCE = "worked_out"
+# DMbot's own answer to "Who is this?" (#3602, slice 4): the one join it may make without the DM,
+# through `MemoryStore.join_by_ai` only; the DM confirms or undoes it, and `merge` stays DM-only.
+WHO_SOURCE = "who"
+# A person's first name added as their short name by rule (#3880, `short_names.py`): proposed only.
+SHORT_NAME_SOURCE = "short_name"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
     PARTY_SOURCE,
     WORKED_OUT_SOURCE,
+    WHO_SOURCE,
+    SHORT_NAME_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -111,6 +118,10 @@ DM_ONLY_TYPES = (*THREAD_TYPES, DEED)
 DEED_TEXT_MAX = 200  # what the DM types for a deed
 DEED_NAME_MAX = 100  # an entry's name is at most this; the full words are its description
 DEED_VIEWERS_MAX = 5  # whom one deed can matter to
+# What kind of deed it was, for the story graph's summary (#3236): kept in the `did` connection's
+# detail. Empty is allowed and reads as "other deeds". Fixed words only; code never takes a kind
+# from a model's free text.
+DEED_KINDS = ("attack", "kill", "rescue", "save", "steal", "help")
 BEING_CONDITIONS = (ALIVE, DEAD, MISSING, CAPTURED, TRANSFORMED, UNKNOWN)
 THING_CONDITIONS = (INTACT, DESTROYED, LOST, UNKNOWN)
 CONDITIONS = (*BEING_CONDITIONS, INTACT, DESTROYED, LOST)
@@ -229,6 +240,12 @@ class NewName:
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
+    # An item the unique-item judge kept (#3373) is stored as one particular thing (#3618), so a
+    # second owner is flagged; None leaves it to the name guess and the DM's switch.
+    unique: bool | None = None
+    # The players' line (#2967 slice a): only from an upload the DM said the players know all of;
+    # "" for none. A line longer than `PLAYERS_TEXT_MAX` is not stored (the DM writes one).
+    players_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -515,6 +532,19 @@ class GroupJoined:
     made: tuple[str, ...]
     # Listed names left out: a known entry that is not a character, or a name DMbot can't keep.
     skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WaitingJoin:
+    """One of DMbot's own joins (#3602, slice 4) the DM has not confirmed or undone: the batch (its
+    Undo), the entry it joined to and the name that was joined (the waiting entry it came from)."""
+
+    batch: int
+    keep_id: str
+    gone_id: str
+    spelling: str
+    keep_name: str
+    made_at: int
 
 
 @dataclass(frozen=True, slots=True)

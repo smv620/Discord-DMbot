@@ -103,10 +103,13 @@ async def change_words(
     predicate: str,
     detail: str,
     first: str | None = None,
+    *,
+    dm_feeling: bool = False,
 ) -> Written[Relation] | None:
     """New words between the same two names, keeping who sees it, in ONE change (so one Undo
     puts the old words back). None when the words are the ones it already has, capitals aside:
-    nothing is written. The store does the work, for the website's edits too.
+    nothing is written (`dm_feeling`: unless the DM's Reputation changed, #3642). The store does
+    the work, for the website's edits too.
 
     A family role the DM types ("is the niece of") gives the connection a direction (#2457), even
     over an older connection that already says "niece" (its direction was arbitrary): `first` is
@@ -117,13 +120,19 @@ async def change_words(
     # Only a one-way role ("niece") has a side to be on; "cousin" reads the same both ways, so
     # retyping it must write nothing.
     swap = directional and first is not None and first == link.object_id
-    if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()) and not (
-        directional and (not link.directional or swap)
+    if (
+        (predicate, detail.casefold()) == (link.predicate, link.detail.casefold())
+        and not (directional and (not link.directional or swap))
+        and not dm_feeling  # (the same word picked again still sets the DM's Reputation, #3642)
     ):
         return None
     written = await memory.change_relation_words(
         guild_id, campaign_id, link.id, predicate, detail, source=DM,
-        directional=directional, swap=swap,
+        directional=directional, swap=swap, dm_feeling=dm_feeling,
     )  # fmt: skip
     unchanged = written.value.id == link.id and written.value.directional == link.directional
+    # (with `dm_feeling` the same words may still have set the DM's Reputation: an empty batch
+    # means nothing was written)
+    if dm_feeling:
+        return written if written.batch is not None else None
     return None if unchanged and not swap else written

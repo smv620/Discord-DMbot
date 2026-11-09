@@ -44,7 +44,9 @@ class Requests(MemoryTest):
         await super().asyncSetUp()
         self.t = float(START)
         self.store = wrr.RequestStore(self.db, clock=lambda: self.t)
-        self.campaign = SimpleNamespace(id=self.c, dm_user_ids=frozenset({DM}))
+        self.campaign = SimpleNamespace(
+            id=self.c, dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+        )
         self.n = 0
 
     async def ask(self, *, user: int = DM, at: int = START, state: str = "waiting",

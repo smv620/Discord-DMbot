@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
 import type { WebEdge, WebNode } from "../src/account/api";
-import { MAX_SIM_NAMES, MAX_SIM_STEPS, edgeKind, forceStep, kindAnchors, linkPairs, orderedKinds, settle, startNodes } from "../src/account/webForce";
+import { MAX_SIM_NAMES, MAX_SIM_STEPS, forceStep, kindAnchors, linkPairs, orderedKinds, settle, startNodes } from "../src/account/webForce";
 import { readMode, readPlaces, saveMode, savePlaces } from "../src/account/webPrefs";
 import { webPage as words } from "../src/content/web-words";
 
@@ -37,6 +37,11 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  try {
+    localStorage.removeItem("dmbot.web.details");
+  } catch {
+    // (no storage: nothing to clear)
+  }
   vi.unstubAllGlobals();
 });
 
@@ -118,12 +123,7 @@ describe("the free layout", () => {
     expect(apart).toBeGreaterThan(within("place"));
   });
 
-  it("works out a line's kind from its connections, and orders the kinds of name people first", () => {
-    const e = (a: string, b: string, ...kinds: (string | undefined)[]) => ({ a, b, links: kinds.map((kind) => ({ kind })) });
-    expect(edgeKind(e("a", "b", "family"))).toBe("family");
-    expect(edgeKind(e("a", "b", "family", "family"))).toBe("family");
-    expect(edgeKind(e("a", "b", "family", "work"))).toBe("other");
-    expect(edgeKind(e("a", "b", undefined))).toBe("other");
+  it("orders the kinds of name people first", () => {
     expect(orderedKinds(["item", "place", "npc", "player_character", "npc", "zebra", "event"])).toEqual(["player_character", "npc", "place", "item", "event", "zebra"]);
   });
 
@@ -596,7 +596,7 @@ describe("keeping the map calm", () => {
 
 
 describe("the details beside the map", () => {
-  it("shows the middle name's connections in words, then the name in focus's, and a secret is marked", () => {
+  it("shows the middle name's connections in words, then the clicked name's, and a secret is marked", () => {
     const withSecret: WebEdge[] = [{ ...edges[0]!, links: [link("l1", "serves"), { ...link("l2", "owes"), secret: true }] }, ...edges.slice(1)];
     render(<WebMap nodes={nodes} edges={withSecret} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
     const side = () => document.querySelector(".web-side")!;
@@ -604,15 +604,51 @@ describe("the details beside the map", () => {
     expect(side().textContent).toContain("Mira Voss serves Garrick");
     expect(side().textContent).toContain("Mira Voss lives at Far Hall");
     expect(side().textContent).toContain(words.secretMark);
-    fireEvent.pointerEnter(nodeOf("The Order"));
+    fireEvent.pointerEnter(nodeOf("The Order")); // (passing over a name changes nothing: only a click does)
+    expect(side().querySelector("h3")?.textContent).toBe("Mira Voss");
+    fireEvent.click(nodeOf("The Order"));
     expect(side().querySelector("h3")?.textContent).toBe("The Order");
     expect(side().textContent).toContain("Garrick leads The Order");
     expect(side().textContent).not.toContain("serves");
   });
 
+  it("puts the details on the right by default, and the game master can move them left or under", () => {
+    draw();
+    const button = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent === text) as HTMLButtonElement;
+    const stage = () => document.querySelector(".web-stage")!;
+    expect(stage().className).toContain("web-side-right");
+    fireEvent.click(button(words.sideLeft));
+    expect(stage().className).toContain("web-side-left");
+    expect(button(words.sideLeft).getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem("dmbot.web.details")).toBe("left");
+    fireEvent.click(button(words.sideUnder));
+    expect(stage().className).toContain("web-side-under");
+    cleanup();
+    draw(); // (the choice is remembered for the next visit)
+    expect(document.querySelector(".web-stage")!.className).toContain("web-side-under");
+  });
+
+  it("offers a way to the full editor for the clicked name, to the DM only", () => {
+    draw({ canEdit: false });
+    fireEvent.click(nodeOf("Garrick"));
+    expect(document.querySelector(".web-side a")).toBeNull();
+    cleanup();
+    draw({ canEdit: true });
+    fireEvent.click(nodeOf("Garrick"));
+    const link = document.querySelector(".web-side a") as HTMLAnchorElement;
+    expect(link.textContent).toBe(words.editFull("Garrick"));
+    expect(link.getAttribute("href")).toBe("/account/names/1.a#said=Garrick");
+  });
+
+  it("shows a chosen line in the same place as a name's details, instead of it", () => {
+    draw({ selected: { a: "m", b: "g" }, children: <section class="web-line-panel">The line</section> });
+    expect(document.querySelector(".web-side .web-line-panel")).not.toBeNull();
+    expect(document.querySelector("aside.web-side")).toBeNull();
+  });
+
   it("keeps a name in place and lets it go again, from a button, for the keyboard", () => {
     draw();
-    fireEvent.pointerEnter(nodeOf("Garrick"));
+    fireEvent.click(nodeOf("Garrick"));
     const button = () => document.querySelector(".web-side button") as HTMLButtonElement;
     expect(button().textContent).toBe(words.keepHere);
     fireEvent.click(button());
@@ -632,43 +668,7 @@ const kinded: WebEdge[] = [
 ];
 const drawKinded = () => render(<WebMap nodes={nodes} edges={kinded} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
 
-describe("kinds of connection", () => {
-  it("gives each line the class of its kind, and mixed or missing kinds the neutral one", () => {
-    drawKinded();
-    const kinds = [...document.querySelectorAll(".web-edge")].map((l) => [...l.classList].find((c) => c.startsWith("web-link-")));
-    expect(kinds).toEqual(["web-link-work", "web-link-family", "web-link-group"]);
-    cleanup();
-    draw();
-    expect([...document.querySelectorAll(".web-edge")].every((l) => l.classList.contains("web-link-other"))).toBe(true);
-  });
-
-  it("has a chip for each kind that is there, on by default, and no chips without kinds", () => {
-    drawKinded();
-    const chips = [...document.querySelectorAll(".web-chip")] as HTMLButtonElement[];
-    expect(chips.map((c) => c.textContent?.trim())).toEqual(["Family", "Clubs and groups", "Work"]);
-    expect(chips.every((c) => c.getAttribute("aria-pressed") === "true")).toBe(true);
-  });
-
-  it("hides the lines of a kind when its chip is turned off, and brings them back", () => {
-    drawKinded();
-    const chip = (label: string) => [...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes(label)) as HTMLButtonElement;
-    fireEvent.click(chip("Work"));
-    expect(chip("Work").getAttribute("aria-pressed")).toBe("false");
-    expect(document.querySelectorAll(".web-edge.web-link-work")).toHaveLength(0);
-    expect(document.querySelectorAll(".web-edge")).toHaveLength(2);
-    fireEvent.click(chip("Work"));
-    expect(document.querySelectorAll(".web-edge.web-link-work")).toHaveLength(1);
-  });
-
-  it("marks each connection with its kind's word and a dot, not by colour alone", () => {
-    drawKinded();
-    const side = document.querySelector(".web-side")!;
-    expect(side.textContent).toContain("Work: ");
-    expect(side.textContent).toContain("Family: ");
-    expect(side.querySelectorAll(".web-dot")).toHaveLength(2);
-    expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
-  });
-
+describe("kinds of name in the grouped layout", () => {
   it("labels the grouped areas with what the names are, never with the kinds of connection (#2990)", () => {
     saveMode("groups");
     drawKinded();
@@ -677,8 +677,6 @@ describe("kinds of connection", () => {
     expect(labels).toEqual(expect.arrayContaining(["NPCs", "Places"]));
     expect(labels.every((l) => !["Family", "Work", "Something else", "Friends and allies"].includes(l ?? ""))).toBe(true);
     expect(new Set(labels).size).toBe(labels.length); // an empty kind has no area, a kind has one
-    // The lines keep their own colour and the chips are still there.
-    expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
   });
 
   it("gives no area to a kind that has no names, and keeps the middle name out of every area", () => {
@@ -691,41 +689,82 @@ describe("kinds of connection", () => {
   });
 });
 
-describe("kinds of connection, edge cases", () => {
-  it("treats a kind this page does not know as the neutral one", () => {
-    expect(edgeKind({ links: [{ kind: "rival" }] })).toBe("other");
-    expect(edgeKind({ links: [{ kind: "rival" }, { kind: "work" }] })).toBe("other");
+describe("who knows a line (#3809)", () => {
+  const withWho = (...whos: (("dm" | "some" | "all") | undefined)[]): WebEdge[] => [
+    { a: "m", b: "g", label: "serves", more: 0, links: whos.map((who, i) => ({ ...link(`w${i}`, "serves"), ...(who ? { who } : {}) })) },
+  ];
+  const styleOf = (el: Element | null): string | undefined => [...(el?.classList ?? [])].find((c) => c.startsWith("web-know-"));
+  const drawWho = (list: WebEdge[], canEdit = true) =>
+    render(<WebMap nodes={nodes} edges={list} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} canEdit={canEdit} />);
+
+  it("draws no kind chips and no kind lines in the legend, and every line in one colour class", () => {
+    drawWho(withWho("all"));
+    expect(document.querySelectorAll(".web-chip")).toHaveLength(0);
+    expect(document.querySelector(".web-chips")).toBeNull();
+    const legend = document.querySelector(".web-legend")!.textContent ?? "";
+    for (const kind of ["Family", "Friends and allies", "Clubs and groups", "Work", "Something else"]) expect(legend).not.toContain(kind);
+    expect(document.querySelector("[class*='web-link-']")).toBeNull();
   });
 
-  it("lights no name through a line that is hidden", () => {
-    drawKinded();
-    fireEvent.click([...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement);
+  it("is solid for every connection known to all, dotted for every one hidden from the players, dash-dot for the rest", () => {
+    drawWho(withWho("all", "all"));
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+    cleanup();
+    drawWho(withWho("dm"));
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-dm");
+    cleanup();
+    drawWho(withWho("some"));
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-some");
+    cleanup();
+    drawWho(withWho("all", "dm"));
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-some");
+  });
+
+  it("counts a connection from an older API with no who as all, or as the DM's alone when it is secret", () => {
+    drawWho(withWho(undefined));
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+    cleanup();
+    const secret: WebEdge[] = [{ a: "m", b: "g", label: "serves", more: 0, links: [{ ...link("s1", "serves"), secret: true }] }];
+    drawWho(secret);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-dm");
+  });
+
+  it("draws every line solid in a view that is not the DM's, whatever the connections say", () => {
+    drawWho(withWho("dm"), false);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+    expect(document.querySelector(".web-legend")!.textContent).not.toContain("Dotted: hidden from every player");
+  });
+
+  it("draws every line solid in a view that is not the DM's, for a mixed line too", () => {
+    drawWho(withWho("all", "dm"), false);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+    cleanup();
+    drawWho(withWho("some"), false);
+    expect(styleOf(document.querySelector(".web-edge"))).toBe("web-know-all");
+  });
+
+  it("explains the three styles in the DM's legend, with the owner's words", () => {
+    drawWho(withWho("all"));
+    const legend = document.querySelector(".web-legend")!.textContent ?? "";
+    expect(legend).toContain("Solid: every player knows it");
+    expect(legend).toContain("Dash-dot: some players know part of it");
+    expect(legend).toContain("Dotted: hidden from every player");
+  });
+
+  it("keeps the 🤔 mark on a theory and gives it no dash of its own", () => {
+    const theory: WebEdge[] = [{ a: "m", b: "g", label: "serves", more: 0, links: [{ ...link("t1", "serves"), belief: { confidence: 0.5, status: "Party theory" }, who: "all" }] }];
+    drawWho(theory);
+    const edge = document.querySelector(".web-edge")!;
+    expect(edge.classList.contains("web-theory")).toBe(true);
+    expect(styleOf(edge)).toBe("web-know-all");
+    expect(edge.textContent).toContain(words.theoryMark);
+    expect(words.legendTheory).not.toMatch(/dotted/i);
+  });
+
+  it("lights a name through any line, since no kind can hide one any more", () => {
+    drawWho(withWho("all"));
     fireEvent.pointerEnter(nodeOf("Mira"));
-    // Garrick is joined to Mira only by the hidden work line, so he fades with the rest.
-    expect(nodeOf("Garrick").classList.contains("web-faded")).toBe(true);
-    expect(nodeOf("Far Hall").classList.contains("web-faded")).toBe(false);
-    expect(document.querySelector(".web-side")!.textContent).not.toContain("serves");
-  });
-
-  it("settles again when a connection's kind changes with the same number of lines", () => {
-    setup(false);
-    const ask = vi.fn(() => 1);
-    vi.stubGlobal("requestAnimationFrame", ask);
-    vi.stubGlobal("cancelAnimationFrame", () => {});
-    const props = { center: "m", refId: "1.a", selected: null, onCenter: () => {}, onLine: () => {} };
-    const { rerender } = render(<WebMap nodes={nodes} edges={kinded} {...props} />);
-    const first = ask.mock.calls.length;
-    const changed = kinded.map((e, i) => (i === 0 ? { ...e, links: [{ ...e.links[0]!, kind: "family" as const }] } : e));
-    rerender(<WebMap nodes={nodes} edges={changed} {...props} />);
-    expect(ask.mock.calls.length).toBeGreaterThan(first);
-  });
-
-  it("says a hidden kind is hidden to a screen reader", () => {
-    drawKinded();
-    const chip = [...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement;
-    expect(chip.textContent).not.toContain("(hidden)");
-    fireEvent.click(chip);
-    expect(chip.textContent).toContain(words.hiddenMark);
+    expect(nodeOf("Garrick").classList.contains("web-faded")).toBe(false);
   });
 });
 
@@ -751,7 +790,7 @@ describe("full screen (#2981)", () => {
   });
 
   it("draws the chosen line's panel inside the map, so full screen still shows it", () => {
-    draw({ children: <section class="web-line-panel">The line</section> });
+    draw({ selected: { a: "m", b: "g" }, children: <section class="web-line-panel">The line</section> });
     fireEvent.click(button(words.fullScreen));
     const map = document.querySelector(".web-map.web-full")!;
     expect(map.querySelector(".web-line-panel")?.textContent).toBe("The line");

@@ -520,7 +520,7 @@ def _public_entry(row: Mapping[str, Any], own_name_secret: bool) -> bool:
 
 def _unnamed_label(row: Mapping[str, Any], anchor_name: str | None) -> str:
     """An unnamed person's label as THIS viewer may read it: it hangs off an entry the viewer may
-    name, else "someone's sister (name unknown)". The stored name embeds the anchor's name as it
+    name, else "unnamed - someone's sister". The stored name embeds the anchor's name as it
     was when the person was made, which a hidden anchor must never leak."""
     from dmbot.memory import unnamed
 
@@ -768,12 +768,16 @@ def name_entries(
 
     def safe_text(entity_id: str, text: str) -> str:
         """An other name as this viewer may read it: a joined person's label is rebuilt."""
-        if not text.endswith(" (name unknown)") or seen.everything:
+        from dmbot.memory import unnamed
+
+        # (an old row's label too: a backup restored from before #3736 is brought forward on
+        # load, but a label that slipped through must still never pass to a player whole)
+        if not (unnamed.is_label(text) or unnamed.is_old_label(text)) or seen.everything:
             return text
         for gone in merged.get(entity_id, ()):
             if str(gone["name"]) == text:
                 return _unnamed_label(gone, anchor_name(gone))
-        return "someone (name unknown)"
+        return unnamed.SOMEONE
 
     out: dict[str, str | None] = {}
     for entity_id in entity_ids:

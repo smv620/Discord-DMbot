@@ -95,9 +95,9 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 6)
+        self.assertEqual(text.count("NAMES\n"), 7)
         self.assertEqual(text.count("RELATIONSHIPS\n"), 5)
-        self.assertEqual(text.count("UNNAMED\n"), 1)
+        self.assertEqual(text.count("UNNAMED\n"), 2)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -142,7 +142,9 @@ class TheExamples(unittest.TestCase):
             self.assertIn(rule, prompt)
         self.assertIn("person, player, place, group, god, item, event, idea", prompt)
         self.assertIn("patron_of", prompt)
-        self.assertIn(lr.EXAMPLES, prompt)
+        self.assertIn(
+            lr._ABOUT_PART.sub("", lr.EXAMPLES), prompt
+        )  # (no about: unless asked, #2967)
 
     def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
         prompt = lr.read_instructions()

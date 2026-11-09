@@ -436,7 +436,7 @@ class TheGate(unittest.IsolatedAsyncioTestCase):
 
     async def stop(self, **kw: Any) -> str | None:
         base: dict[str, Any] = {
-            "campaign": SimpleNamespace(dm_user_ids=frozenset({7})),
+            "campaign": SimpleNamespace(dm_user_ids=frozenset({7}), dm_accounts=frozenset({7})),
             "job": SimpleNamespace(status="draft"),
             "has_ai": True,
             "feedback_gate": AsyncMock(return_value=None),
@@ -450,7 +450,9 @@ class TheGate(unittest.IsolatedAsyncioTestCase):
     async def test_each_failure_stops_it_before_the_ai(self) -> None:
         gate = AsyncMock(return_value=None)
         cases: dict[str, dict[str, Any]] = {
-            "demoted": {"campaign": SimpleNamespace(dm_user_ids=frozenset({8}))},
+            "demoted": {
+                "campaign": SimpleNamespace(dm_user_ids=frozenset({8}), dm_accounts=frozenset({8}))
+            },
             "posted": {"job": SimpleNamespace(status="posted")},
             "gone": {"job": None},
             "no campaign": {"campaign": None},

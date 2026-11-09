@@ -133,7 +133,7 @@ class TheStore(WithImports):
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}), dm_screen_channel_id=66,
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
     )  # fmt: skip
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True),
@@ -721,6 +721,7 @@ class TheFollowUp(WithImports):
         def no_dm(b: Any, c: Any) -> None:
             c.owner_user_id = 0
             c.dm_user_ids = frozenset()
+            c.dm_accounts = frozenset()
 
         cases: dict[str, Callable[[Any, Any], None]] = {
             "recaps off": recaps_off,

@@ -60,14 +60,17 @@ def _parse(ref: str) -> tuple[int, str]:
 
 # Unlike the bot's `plan_gate`, which fails open so a slow database never locks a table out of a
 # Discord button, a plan that cannot be read here fails (a 500): nothing is shown unchecked.
-async def _plan_allows(db: Database, owner: str | None, now: int, *, enforce_plans: bool) -> None:
+async def _plan_allows(
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
+) -> None:
     """The bot's rule, from the campaign owner's plan: refuses with "not_in_plan". The owner's id
     comes from the door, which has already checked the caller is in the server."""
     if not enforce_plans:
         return
     access = None
     if owner is not None and owner.isascii() and owner.isdecimal():
-        _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+        # The campaign's server: a listed free server allows what the bot allows there (#3792).
+        _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     if not plan_rules.allowed(plan_rules.RULE_OF["transcript"], access):
         raise RecapError("not_in_plan")
 
@@ -80,7 +83,7 @@ async def list_campaigns(
     (the owner's plan, once per owner), so a campaign whose transcripts would be refused is left
     out. Each has its address (`<server>.<campaign>`), its name, its server's name and a count."""
     out: list[dict[str, Any]] = []
-    allowed: dict[str | None, bool] = {}
+    allowed: dict[tuple[str | None, int], bool] = {}
     async with db.user(session.user_id, session=session.id_hash) as conn:
         found: list[tuple[Any, list[dict[str, Any]]]] = []
         for guild in session.guilds[:MAX_GUILDS]:
@@ -94,13 +97,16 @@ async def list_campaigns(
     for guild, campaigns in found:
         for item in campaigns:
             owner = item.get("owner")
-            if owner not in allowed:
+            kept = (owner, int(guild.id))  # (a listed free server changes the answer: per server)
+            if kept not in allowed:
                 try:
-                    await _plan_allows(db, owner, now, enforce_plans=enforce_plans)
-                    allowed[owner] = True
+                    await _plan_allows(
+                        db, owner, now, enforce_plans=enforce_plans, guild_id=int(guild.id)
+                    )
+                    allowed[kept] = True
                 except RecapError:
-                    allowed[owner] = False
-            if allowed[owner]:
+                    allowed[kept] = False
+            if allowed[kept]:
                 out.append(
                     {
                         "ref": f"{guild.id}.{item['id']}",
@@ -128,7 +134,7 @@ async def _sessions(
     found = row["found"] if row else None
     if found is None:
         raise RecapError("not_found")
-    await _plan_allows(db, found.get("owner"), now, enforce_plans=enforce_plans)
+    await _plan_allows(db, found.get("owner"), now, enforce_plans=enforce_plans, guild_id=guild_id)
     return guild_id, campaign_id, found
 
 

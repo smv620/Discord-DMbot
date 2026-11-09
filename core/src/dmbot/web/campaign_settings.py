@@ -36,6 +36,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "level": ("quiet", "normal"),
     "retention": ("forever", "365", "90", "30"),
     "story_mode": ("off", "watch", "guide"),  # the Shared story switch (#2985)
+    # a tenth: "Share this campaign's story to improve DMbot", off by default (#3741)
+    "share_improve": ("on", "off"),
 }
 
 

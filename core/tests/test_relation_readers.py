@@ -19,10 +19,17 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 CONFIRMED_ONLY = "reads confirmed connections only (and, for players, only those the party holds)"
 DM_ONLY = "DM-side by design"
 READERS = {
+    "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
     "memory/importance_rank.py": CONFIRMED_ONLY
     + ": counts current, confirmed connections for a rank floor; never shown to a player",
+    "memory/importance_step.py": CONFIRMED_ONLY
+    + ": the connections the importance reading is shown, DM-only; never for a player",
+    "memory/reveal_proposals.py": CONFIRMED_ONLY
+    + ": who learned what is placed only on a confirmed connection, for the DM (#2996)",
+    "memory/role_store.py": CONFIRMED_ONLY
+    + ": the roles current, confirmed connections show, for the DM's why; never for a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
@@ -58,6 +65,9 @@ READERS = {
     + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
     " confirmed, because the DM chooses what to change",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
+    "memory/graph_review_run.py": DM_ONLY
+    + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
+    "the report is DM-only and never shown to players",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
     "memory/set_definitions.py": "is a relationship word in use: any status, on purpose",
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
@@ -73,6 +83,7 @@ READERS = {
 # new query in it pass unseen. Every function that names the table is here with how it treats a
 # guess connection (proposed, secret, the extractor's).
 STORE = {
+    "_ai_join_refusal": DM_ONLY + ": a secret, held-back or disguise link makes it say no",
     "_close_stale_flags": DM_ONLY + ": flags",
     "_sync_plays": "plays links only (scan proposals, never secret guesses)",
     "_threads": CONFIRMED_ONLY,
@@ -126,6 +137,8 @@ STORE = {
     "change_relation_words": "requires a confirmed connection",
     "undo_connection": DM_ONLY + ": an Undo",
     "link_party": DM_ONLY + ": a writer's own check (every status); shows players nothing",
+    "isolated_rows_in": "kept and waiting links, no guess connections, for the DM's graph "
+    "clean-up (#3740); ids and words only, never shown to a player",
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
 }
 

@@ -219,7 +219,9 @@ class Judging(unittest.TestCase):
         self.assertEqual(self.judge(said("Nobody", "knows", "Hesper")), claims.UNKNOWN_NAME_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Ash")), claims.TWO_ENTRIES_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Bram")), claims.SAME_ENTRY_REASON)
-        self.assertIn("doesn't fit", self.judge(said("Veldmoor", "carries", "Chapel")))
+        # (a known word between kinds it doesn't take is kept on the catch-all, not dropped, #3033;
+        # a kind that takes no such pair at all, like a condition, is still refused)
+        self.assertEqual(self.judge(said("Veldmoor", "carries", "Chapel")), "")
         self.assertEqual(self.judge(said("Veldmoor", "is", "dead")), claims.STATE_REASON)  # a place
 
     def test_a_claim_that_reads_like_an_instruction_is_dropped(self) -> None:
@@ -253,7 +255,10 @@ class Steward(unittest.TestCase):
 
     def test_a_near_spelling_reuses_the_existing_term(self) -> None:
         tally = Tally()
-        self.assertEqual(self.place("locatedin", tally), ("located_in", False, ""))
+        term, from_object, label = place_relationship(
+            ONTO, "locatedin", "character", "place", tally
+        )  # (a place tie, so the ends fit it: two characters would keep the words, #3033)
+        self.assertEqual((term.key, from_object, label), ("located_in", False, ""))
         self.assertEqual((tally.reused, tally.accepted, sum(tally.refused.values())), (1, 0, 0))
 
     def test_a_term_nobody_can_vouch_for_goes_on_the_catch_all_with_its_words_as_the_label(
@@ -559,6 +564,25 @@ class Stored(ConfirmedMemoryTest):
             ],
         )
 
+    async def test_a_kind_of_creature_the_rules_hold_is_no_entry_but_a_named_one_is(self) -> None:
+        # (#3634) "owlbears" and "an owlbear" are kinds the rules hold; "Owlbear Mama" is one
+        got = await self.propose(
+            said("Bram", "fights", "owlbears"),
+            said("Bram", "fights", "an owlbear"),
+            said("Bram", "fights", "Owlbear Mama"),
+        )
+        self.assertEqual(got.reasons, {claims.RULES_REASON: 2})
+        self.assertEqual(got.rules_dropped, 2)
+        self.assertEqual(got.new, ("Owlbear Mama",))
+
+    async def test_a_leading_a_and_a_bracketed_note_are_not_part_of_a_name(self) -> None:
+        got = await self.propose(
+            said("Bram", "knows", "Okthandom's cousin Ren (no name given yet)"),
+            said("Bram", "knows", "an old hermit named Garrick"),
+        )
+        self.assertEqual(got.tidied, 2)
+        self.assertEqual(sorted(got.new), ["Okthandom's cousin Ren", "old hermit named Garrick"])
+
     async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
         # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
         got = await self.propose(
@@ -633,7 +657,7 @@ class Stored(ConfirmedMemoryTest):
             entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)},
             guarded=frozenset(),
         )
-        self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
+        self.assertEqual(sentence(lookup, rel), "Bram “is blood-bound to” Hesper")  # type: ignore[arg-type]
 
     async def test_a_place_word_is_the_place_tie_with_that_word_kept(self) -> None:
         # (#3363) "works at" is no new relationship: it is `located_in` with its one wording

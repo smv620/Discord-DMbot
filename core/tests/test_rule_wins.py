@@ -68,6 +68,16 @@ class TheStore(DatabaseTest):
         # (the set's rule 2 is not the campaign's rule 2)
         self.assertEqual([w.winner for w in await self.wins.all(GUILD_A, self.one.id)], [SET_RULE])
 
+    async def test_forgetting_one_pair_leaves_the_others(self) -> None:
+        other = RuleRef("", 3)
+        await self.wins.record(GUILD_A, self.one.id, winner=OWN, loser=OTHER, by=DM)
+        await self.wins.record(GUILD_A, self.one.id, winner=OWN, loser=other, by=DM)
+        # either order names the same pair
+        self.assertTrue(await self.wins.forget_pair(GUILD_A, self.one.id, OTHER, OWN))
+        self.assertFalse(await self.wins.forget_pair(GUILD_A, self.one.id, OTHER, OWN))
+        self.assertIsNone(await self.wins.winner_of(GUILD_A, self.one.id, OWN, OTHER))
+        self.assertEqual(await self.wins.winner_of(GUILD_A, self.one.id, OWN, other), OWN)
+
     async def test_changing_or_removing_a_rule_forgets_what_was_decided_about_it(self) -> None:
         from dmbot.rules.house import HouseRuleStore
 

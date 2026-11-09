@@ -20,6 +20,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
+from dmbot import ai_feed
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript.cleaner import clean
@@ -48,6 +49,9 @@ _UNREAD = (
 STALE_SCAN_S = 15 * 60  # a name scan claimed this long ago and never finished is taken again
 RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped; it is taken again
 CHUNK_LINES = 120  # lines cleaned between two yields to the bot's other work, and between saves
+# The step the AI feed shows while a session is cleaned (#3710): the import page's own word for it
+# (web/src/content/import-words.ts, `stage.cleaning`).
+TIDYING = "Tidying the transcript"
 MAX_WINDOWS = 1_200  # AI windows (WINDOW_LINES lines each) for one session, about 7,200 lines
 TOPIC_FAILURES_BEFORE_REST = 3  # windows failing one after another before the AI is left alone
 
@@ -166,12 +170,12 @@ class ImportStore:
         """The filter leans to keeping here too (#2567): once the lines are labelled, what the AI
         was not sure about is kept, as at the end of a live session (`settle_topics`), with the
         campaign's DMs, before the name scan reads the lines."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT user_id FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
-            )
-            dms = {int(r["user_id"]) for r in await cur.fetchall()}
+        # The Discord IDs that can act as a DM, not the account numbers the table holds: lines are
+        # labelled with the speaker's Discord ID (#2533).
+        from dmbot.campaigns.store import CampaignStore
+
+        campaign = await CampaignStore(self._db).get(guild_id, campaign_id)
+        dms = set(campaign.dm_user_ids) if campaign is not None else set()
         return await TranscriptStore(self._db).settle_topics(guild_id, session_id, dms)
 
     async def ready_for_scan(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
@@ -450,7 +454,7 @@ class ImportStore:
         lines done."""
         if not cleaned:
             return
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             await conn.execute(
                 "UPDATE transcript_lines t SET text = c.text, topic = c.topic"
                 " FROM unnest(%s::bigint[], %s::text[], %s::text[]) AS c(id, text, topic)"
@@ -509,7 +513,10 @@ class ImportJob:
         """Clean one claimed session. Whatever goes wrong, it never stays `working`: it fails with
         a reason, or (if the bot is stopping) goes back to waiting."""
         try:
-            await self._run(guild_id, campaign_id, session_id)
+            # Every AI call of this cleaning belongs to this session's import, for the DM's live
+            # window on the import page (#3710); the import page knows its sessions by this id.
+            with ai_feed.job(guild_id, campaign_id, "import", session_id, step=TIDYING):
+                await self._run(guild_id, campaign_id, session_id)
         except asyncio.CancelledError:
             await asyncio.shield(self.store.back_to_waiting(guild_id, session_id))
             raise
@@ -529,8 +536,10 @@ class ImportJob:
         windows_left = MAX_WINDOWS
         failures = 0
         partly = False
+        parts = max(1, -(-len(rows) // CHUNK_LINES))
         for start in range(0, len(rows), CHUNK_LINES):
             chunk = rows[start : start + CHUNK_LINES]
+            ai_feed.step(f"{TIDYING} (part {start // CHUNK_LINES + 1} of {parts})")
             agreed = await self._agreed(guild_id, campaign_id)  # asked again for every chunk
             texts: list[str | None] = []
             for row in chunk:

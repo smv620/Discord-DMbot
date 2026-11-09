@@ -18,7 +18,11 @@ GUILD, CID, CHANNEL, DM, PLAYER = 1, "c" * 32, 700, 10, 20
 
 def campaign(channel_id: int | None = CHANNEL) -> Any:
     return SimpleNamespace(
-        id=CID, guild_id=GUILD, dm_user_ids=frozenset({DM}), dmbchat_channel_id=channel_id
+        id=CID,
+        guild_id=GUILD,
+        dm_user_ids=frozenset({DM}),
+        dm_accounts=frozenset({DM}),
+        dmbchat_channel_id=channel_id,
     )
 
 
@@ -116,6 +120,33 @@ class TheNotice(unittest.IsolatedAsyncioTestCase):
         me.post.assert_not_awaited()
         # (a cache miss is not proof it is gone: the stored id stays; the button forgets it)
         me.campaigns.set_dmbchat_channel.assert_not_awaited()
+
+
+class TheWords(unittest.TestCase):
+    def test_the_notice_names_the_channel_and_promises_no_deletion(self) -> None:
+        text = old_chat.notice_text(555)
+        self.assertIn("<#555>", text)
+        self.assertIn("is still there", text)
+        self.assertIn("will not delete it by itself", text)
+
+    def test_the_notice_has_no_jargon(self) -> None:
+        text = old_chat.notice_text(555)
+        self.assertNotIn("dmb-chat", text)
+        self.assertNotIn("webhook", text.casefold())
+
+    def test_the_confirmation_names_the_channel_and_warns(self) -> None:
+        text = old_chat.confirm_text("dmb-chat-red")
+        self.assertIn("**dmb-chat-red**", text)
+        self.assertIn("for good", text)
+        self.assertIn("can't be undone", text)
+
+    def test_a_channel_name_cannot_break_the_markdown(self) -> None:
+        self.assertIn(r"a\*b\_c", old_chat.confirm_text("a*b_c"))
+        self.assertNotIn("a*b_c", old_chat.confirm_text("a*b_c"))
+
+    def test_both_are_short(self) -> None:
+        self.assertLess(len(old_chat.notice_text(555)), 600)
+        self.assertLess(len(old_chat.confirm_text("*" * 100)), 600)
 
 
 if __name__ == "__main__":

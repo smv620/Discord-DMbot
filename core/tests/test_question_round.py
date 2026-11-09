@@ -251,6 +251,7 @@ class TheRound(Base):
 
         bot = MagicMock()
         bot._dm_message = AsyncMock(return_value=MagicMock(id=7))
+        bot.settings.site_url = ""
         await DiscordSender(bot).send(ALICE.id, "x")
         view = bot._dm_message.await_args.args[2]
         self.assertTrue(any(isinstance(item, NotNowButton) for item in view.children))

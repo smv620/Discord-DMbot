@@ -220,3 +220,100 @@ class TheRankInputs(unittest.TestCase):
         bare = {**self.INPUTS, "assessed": []}
         ranks = run.ranks_of(bare)
         assert ranks["ally"] >= 3  # (a player character's companion, and heard in two sessions)
+
+
+class TheDeeds(unittest.TestCase):
+    """A recorded deed is `doer —did→ deed —affected→ viewer` (#1732): the summary reads it as one
+    fact between the doer and each viewer and never names the deed entry (#3236 slice 3)."""
+
+    def deed_world(
+        self, kind: str, effect: str = "Helped them"
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        src, kn = world([("l1", PC, VEIL, "did"), ("l2", VEIL, KESH, "affected")], {})
+        for link in src["links"]:
+            link["secret"] = True
+            link["detail"] = kind if link["id"] == "l1" else effect
+        for item in src["names"]:
+            if item["id"] == VEIL:
+                item["kind"] = "deed"
+                item["name"] = "Saved the mill"
+        for row in kn["entities"]:
+            if row["id"] == VEIL:
+                row["name"], row["type"] = "Saved the mill", "deed"
+        return src, kn
+
+    def text(self, src: dict[str, Any], kn: dict[str, Any], node: str) -> str:
+        got = run.summary_for(src, kn, RANKS, node, clicker=gate.Viewer.the_dm(), peek=False)
+        assert got is not None
+        return got.text
+
+    def test_the_doer_and_the_viewer_read_one_fact_each_way(self) -> None:
+        src, kn = self.deed_world("rescue")
+        self.assertIn("rescued by them", self.text(src, kn, PC))  # (said of Kesh about Cerric)
+        self.assertIn("rescued them", self.text(src, kn, KESH))
+
+    def test_the_deed_entry_is_never_named_as_a_neighbour(self) -> None:
+        src, kn = self.deed_world("rescue")
+        self.assertNotIn("Saved the mill", self.text(src, kn, PC))
+        self.assertNotIn("Saved the mill", self.text(src, kn, KESH))
+
+    def test_a_deed_with_no_kind_says_how_it_landed(self) -> None:
+        src, kn = self.deed_world("", "Hurt them")
+        self.assertIn("hurt by them", self.text(src, kn, PC))
+        self.assertIn("hurt them", self.text(src, kn, KESH))
+
+    def test_a_life_and_death_deed_is_kept_over_a_plain_knows_between_the_same_two(self) -> None:
+        src, kn = self.deed_world("kill")
+        src["links"].append(
+            {"id": "l3", "a": PC, "b": KESH, "predicate": "knows", "detail": "",
+             "directional": False, "secret": False, "at": 10, "ended": False, "plan": False,
+             "via": None}
+        )  # fmt: skip
+        kn["connections"]["l3"] = [PC, KESH]
+        text = self.text(src, kn, PC)
+        self.assertIn("killed by them", text)  # (a stronger fact drops the bare "knows")
+        self.assertNotIn("knows", text)
+
+    def test_a_player_never_sees_a_deed(self) -> None:
+        src, kn = self.deed_world("rescue")
+        src["isDm"] = False
+        got = run.summary_for(src, kn, RANKS, KESH, clicker=gate.Viewer.player([PC]), peek=True)
+        self.assertTrue(
+            got is None or ("rescued" not in got.text and "Saved the mill" not in got.text)
+        )
+
+    def test_a_deed_with_three_viewers_gives_three_facts(self) -> None:
+        src, kn = self.deed_world("save")
+        src["links"].append(
+            {"id": "l3", "a": VEIL, "b": DORN, "predicate": "affected", "detail": "Helped them",
+             "directional": False, "secret": True, "at": 10, "ended": False, "plan": False,
+             "via": None}
+        )  # fmt: skip
+        kn["connections"]["l3"] = [VEIL, DORN]
+        text = self.text(src, kn, PC)
+        self.assertIn("Kesh", text)
+        self.assertIn("Dorn", text)
+
+    def test_a_deed_nobody_was_affected_by_shows_nothing(self) -> None:
+        src, kn = self.deed_world("rescue")
+        src["links"] = [link for link in src["links"] if link["id"] == "l1"]
+        self.assertNotIn("rescued", self.text(src, kn, PC))
+
+    def test_an_unknown_effect_falls_back_to_the_kind_and_an_unknown_kind_to_the_effect(
+        self,
+    ) -> None:
+        src, kn = self.deed_world("rescue", "Loved them")
+        self.assertIn("rescued by them", self.text(src, kn, PC))
+        src, kn = self.deed_world("murder", "Hurt them")
+        self.assertIn("hurt by them", self.text(src, kn, PC))
+
+    def test_a_deed_two_characters_did_gives_each_a_fact(self) -> None:
+        src, kn = self.deed_world("save")
+        src["links"].append(
+            {"id": "l4", "a": DORN, "b": VEIL, "predicate": "did", "detail": "save",
+             "directional": False, "secret": True, "at": 10, "ended": False, "plan": False,
+             "via": None}
+        )  # fmt: skip
+        kn["connections"]["l4"] = [DORN, VEIL]
+        self.assertIn("Kesh", self.text(src, kn, PC))
+        self.assertIn("Kesh", self.text(src, kn, DORN))

@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.entitlements import RECAP_AUDIO_PLANS, plan_grant_access
+from dmbot.entitlements import RECAP_AUDIO_PLANS, Access, plan_grant_access
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.notify import parse_ref
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -38,8 +38,31 @@ def _parse(ref: str) -> tuple[int, str]:
     return parsed[0], parsed[1]
 
 
+async def owner_access(
+    db: Database, session: Session, guild_id: int, campaign_id: str, now: int
+) -> Access | None:
+    """The campaign owner's plan access, for a paid call a DM of the campaign presses on the
+    website (the Names page's Suggest and Hear, #3806, #3807). The owner comes from
+    `dmbot_web_recap_choices`, which answers a DM and nobody else, so a non-DM is "not found". None
+    when the campaign has no owner: nobody's plan can be charged."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_recap_choices(%s, %s) AS found", (guild_id, campaign_id)
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    if found is None:
+        raise RecapError("not_found")
+    owner = found.get("owner")
+    if not isinstance(owner, str) or not owner.isascii() or not owner.isdecimal():
+        return None
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
+    return access
+
+
 async def _audio_facts(
-    db: Database, owner: str | None, now: int, *, enforce_plans: bool
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
 ) -> dict[str, Any]:
     """Whether the narration switch is offered and may be turned on, and how the plan has it
     (`recap_panel.audio_how`'s two answers), from the campaign owner's plan. With
@@ -49,7 +72,7 @@ async def _audio_facts(
     if owner is None or not owner.isascii() or not owner.isdecimal():
         return {"canAudio": False, "audioHow": "", "limited": True}
     # The owner's plan, as the bot reads it (`recap_plan_facts`), not the signed-in person's.
-    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     if not (access.works and access.recap_audio):  # the bot's `can_recap_audio`
         return {"canAudio": False, "audioHow": "", "limited": True}
     # As the panel says it: "part of your plan" unless it is a paid plan outside Guild and Pro.
@@ -91,7 +114,9 @@ async def read_choices(
     found = row["found"] if row else None
     if found is None:
         raise RecapError("not_found")
-    facts = await _audio_facts(db, found.get("owner"), now, enforce_plans=enforce_plans)
+    facts = await _audio_facts(
+        db, found.get("owner"), now, enforce_plans=enforce_plans, guild_id=guild_id
+    )
     limited = bool(facts.pop("limited"))
     why = ""
     if not audio_on:

@@ -359,10 +359,6 @@ class Scoring(unittest.TestCase):
             gkc.check({"sections": {}}, KEY)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ThePlayerCharacters(unittest.TestCase):
     """#3553: the check says how many of the key's player characters the campaign has as such."""
 
@@ -389,3 +385,241 @@ class ThePlayerCharacters(unittest.TestCase):
         report = gkc.check(self.entries(roles), self.key(), "lore")
         self.assertEqual(report.players_found, 2)
         self.assertIn("Player characters found: 2 of 4", gkc.render(report, counts_only=True))
+
+
+class TheFeelingScore(unittest.TestCase):
+    """#3606: each key feeling is scored exact, one step off, over-read or under-read."""
+
+    def test_the_scale(self) -> None:
+        from dmbot.memory import reputation_words as w
+
+        self.assertEqual(w.compare("wary", "wary"), w.EXACT)
+        self.assertEqual(w.compare("wary", "distrusts"), w.ONE_STEP)
+        self.assertEqual(w.compare("wary", "hostile"), w.OVER_READ)  # the Belleros and Brewner case
+        self.assertEqual(w.compare("hostile", "wary"), w.UNDER_READ)
+        self.assertEqual(w.compare("friendly", "devoted"), w.OVER_READ)
+        self.assertEqual(w.compare("-", "hostile"), w.EXACT)
+        self.assertEqual(w.compare("+", "hostile"), w.WRONG_SIDE)
+        self.assertEqual(w.compare("wary", "adores"), w.UNDER_READ)
+        self.assertEqual(w.compare("wary", "neutral"), w.ONE_STEP)  # (neutral stores nothing)
+        self.assertEqual(w.compare("neutral", "wary"), w.ONE_STEP)
+        self.assertEqual(w.compare("wary", "trusts"), w.OVER_READ)  # (a real 0 against +40)
+        self.assertEqual(w.compare("wary", "devoted"), w.OVER_READ)
+        self.assertEqual(w.compare("distrusts", "devoted"), w.WRONG_SIDE)
+        self.assertEqual(w.compare("hostile", "trusts"), w.WRONG_SIDE)
+        self.assertEqual(w.compare("friendly", "trusts"), w.ONE_STEP)
+        self.assertEqual(w.compare("devoted", "close"), w.ONE_STEP)
+        self.assertEqual(w.compare(" + ", "friendly"), w.EXACT)  # (a sign is trimmed)
+        self.assertEqual(w.compare("0", "wary"), w.EXACT)
+        self.assertEqual(w.compare("+", "distrusts"), w.WRONG_SIDE)
+
+    def test_a_backup_scores_the_stored_word_against_the_key(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Belleros", "kind": "person"},
+                {"name": "Brewner", "kind": "person"},
+            ],
+            "pairs": [
+                {
+                    "id": "m081", "a": "Belleros", "relation": "knows", "b": "Brewner",
+                    "feeling": "wary", "tier": "stated", "must_find": False, "in": ["lore"],
+                }
+            ],
+        }  # fmt: skip
+        rel = {
+            "table": "relation", "id": "r1", "subject_id": "e1", "predicate": "knows",
+            "object_id": "e2", "detail": "hostile", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup([("e1", "Belleros", "character"), ("e2", "Brewner", "character")], [rel])
+        report = gkc.check(data, key, "lore")
+        self.assertEqual(report.feelings, [("m081", "over_read")])
+        self.assertIn("over-read 1", gkc.render(report, counts_only=True))
+
+    def feelings(self, key_feeling: str, rows: list[tuple[str, str, str, str]], **tie: Any) -> Any:
+        key = {
+            "nodes": [{"name": "A", "kind": "person"}, {"name": "B", "kind": "person"}],
+            "pairs": [
+                {
+                    "id": "t1", "a": "A", "relation": tie.pop("relation", "knows"), "b": "B",
+                    "feeling": key_feeling, "tier": tie.pop("tier", "stated"),
+                    "must_find": False, "in": ["lore"],
+                }
+            ],
+        }  # fmt: skip
+        relations = [
+            {
+                "table": "relation", "id": f"r{n}", "subject_id": s, "predicate": p,
+                "object_id": o, "detail": d, "status": "confirmed", "secret": False,
+            }
+            for n, (s, o, p, d) in enumerate(rows)
+        ]  # fmt: skip
+        data = backup([("e1", "A", "character"), ("e2", "B", "character")], relations)
+        return gkc.check(data, key, "lore").feelings
+
+    def test_the_closest_of_several_rows_is_scored_in_any_order(self) -> None:
+        over = ("e1", "e2", "knows", "hostile")
+        exact = ("e1", "e2", "knows", "wary")
+        near = ("e1", "e2", "knows", "distrusts")
+        self.assertEqual(self.feelings("wary", [over, exact]), [("t1", "exact")])
+        self.assertEqual(self.feelings("wary", [exact, over]), [("t1", "exact")])
+        self.assertEqual(self.feelings("wary", [over, near]), [("t1", "one_step_off")])
+
+    def test_a_knows_with_no_word_is_neutral_and_a_garbled_detail_is_no_feeling_row(self) -> None:
+        self.assertEqual(
+            self.feelings("wary", [("e1", "e2", "knows", "")]), [("t1", "one_step_off")]
+        )
+        self.assertEqual(self.feelings("wary", [("e1", "e2", "knows", "his cousin")]), [])
+
+    def test_the_wrong_end_of_a_knows_is_not_scored_but_an_enemy_of_reads_both_ways(self) -> None:
+        self.assertEqual(self.feelings("wary", [("e2", "e1", "knows", "wary")]), [])
+        got = self.feelings("hostile", [("e2", "e1", "enemy_of", "")], relation="enemy_of")
+        self.assertEqual(got, [("t1", "exact")])
+
+    def test_by_rule_ties_and_missing_ties_are_not_scored(self) -> None:
+        row = ("e1", "e2", "knows", "wary")
+        self.assertEqual(self.feelings("wary", [row], tier="by_rule"), [])
+        self.assertEqual(self.feelings("wary", []), [])
+
+    def test_the_render_names_the_over_and_under_reads_by_id(self) -> None:
+        key = {
+            "nodes": [{"name": "A", "kind": "person"}, {"name": "B", "kind": "person"}],
+            "pairs": [
+                {
+                    "id": "t1", "a": "A", "relation": "knows", "b": "B", "feeling": "wary",
+                    "tier": "stated", "must_find": False, "in": ["lore"],
+                }
+            ],
+        }  # fmt: skip
+        rel = {
+            "table": "relation", "id": "r1", "subject_id": "e1", "predicate": "knows",
+            "object_id": "e2", "detail": "trusts", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup([("e1", "A", "character"), ("e2", "B", "character")], [rel])
+        text = gkc.render(gkc.check(data, key, "lore"), counts_only=True)
+        self.assertIn("  t1  over_read", text)
+
+
+class ThePlaceholders(unittest.TestCase):
+    """#3545: a `Player 1234` stand-in nothing uses is not an extra entry; one with a tie is."""
+
+    def key(self) -> dict[str, Any]:
+        return load("lore_key.json")
+
+    def test_an_unused_placeholder_is_left_out_and_counted(self) -> None:
+        data = backup([("p1", "Player 4821", "person"), ("p2", "Player 1177", "person")], [])
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual(report.placeholders, 2)
+        self.assertEqual(sum(report.extra_entries.values()), 0)
+        self.assertIn("Player placeholders left out (not extras): 2", gkc.render(report))
+
+    def test_a_placeholder_that_only_plays_a_character_is_left_out(self) -> None:
+        plays = {
+            "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "plays",
+            "object_id": "x1", "detail": "", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup(
+            [("p1", "Player 4821", "person"), ("x1", "Cerric Vanya'elen", "character")], [plays]
+        )
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual(report.placeholders, 1)
+        self.assertEqual(sum(report.extra_entries.values()), 0)
+
+    def test_a_placeholder_with_a_connection_is_still_an_extra(self) -> None:
+        rel = {
+            "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "knows",
+            "object_id": "x1", "detail": "", "status": "confirmed", "secret": False,
+        }  # fmt: skip
+        data = backup([("p1", "Player 4821", "person"), ("x1", "Someone Else", "character")], [rel])
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual(report.placeholders, 0)
+        self.assertEqual(sum(report.extra_entries.values()), 2)
+
+
+class ByDesign(unittest.TestCase):
+    """#3545: a kind of creature the rules hold is left out on purpose, so it is not a miss."""
+
+    def key(self) -> dict[str, Any]:
+        return load("lore_key.json")
+
+    def test_the_three_kinds_are_marked(self) -> None:
+        marked = {n["name"] for n in self.key()["nodes"] if n.get("by_design")}
+        self.assertEqual(marked, {"Yeti", "Ice troll", "Mind flayer"})
+
+    def test_absent_they_are_listed_apart_and_never_missed(self) -> None:
+        report = gkc.check(backup([], []), self.key(), "lore")
+        by_design = {e.id for e in report.entries if e.status == gkc.BY_DESIGN}
+        self.assertEqual(by_design, {"Yeti", "Ice troll", "Mind flayer"})
+        self.assertFalse(any(e.must for e in report.entries if e.status == gkc.BY_DESIGN))
+        creatures = gkc.summarize(report)["entries"]["creature"]
+        self.assertEqual(creatures[gkc.BY_DESIGN], 3)
+        self.assertEqual(creatures["must_missed"], creatures["total"] - 3)  # (the rest are misses)
+        text = gkc.render(report, counts_only=True)
+        self.assertIn("Entries left out by design (kinds the rules hold, not misses): 3", text)
+
+    def test_found_they_count_as_found(self) -> None:
+        report = gkc.check(backup([("e1", "Yeti", "character")], []), self.key(), "lore")
+        row = next(e for e in report.entries if e.id == "Yeti")
+        self.assertEqual(row.status, gkc.FOUND)
+
+
+class UnnamedPeople(unittest.TestCase):
+    """A person the story never named is found by its description (#3736), in today's form and an
+    older backup's, and one the key does not list is counted on its own line."""
+
+    def test_found_by_description_and_counted_apart(self) -> None:
+        data = backup(
+            [
+                ("c1", "Cerric", "character"),
+                ("u1", "unnamed - Cerric's sister", "character"),
+                ("u2", "a hooded figure (name unknown)", "character"),
+                ("u3", "unnamed - loud sailors in the corner", "character"),
+            ],
+            [],
+        )
+        for row in data["sections"]["memory"]:
+            if str(row.get("id", "")).startswith("u"):
+                row["unnamed"] = True
+        graph = gkc.Graph(gkc._tables(data))
+        self.assertEqual(graph.ids(["Cerric's sister"]), {"u1"})
+        self.assertEqual(graph.ids(["The hooded figure"]), {"u2"})  # (no article either side)
+        self.assertEqual(graph.ids(["Cerric"]), {"c1"})  # (a name never meets a description)
+        report = gkc.check(data, KEY)
+        self.assertEqual(report.unnamed_extras, 3)
+        self.assertEqual(sum(report.extra_entries.values()), 0)
+
+    def raider_key(self) -> dict[str, Any]:
+        return {
+            "nodes": [{"name": "The barbarian with the maul", "kind": "person",
+                       "aliases": ["maul barbarian"], "unnamed": True, "must_find": False}],
+            "pairs": [], "must_not_names": ["maul barbarian"],
+        }  # fmt: skip
+
+    def test_an_unnamed_key_entry_is_found_by_description_never_by_a_name(self) -> None:
+        # (Supervisor's ruling on #3545: the raider is right as a person the story never names,
+        # and still a miss when his description is stored as a name)
+        named = backup([("n1", "maul barbarian", "character")], [])
+        report = gkc.check(named, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.MISSING)
+        self.assertFalse(row.must)  # (a good find, not a must)
+        self.assertEqual(report.violations, ["maul barbarian"])
+        unnamed = backup([("u1", "unnamed - maul barbarian", "character")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        report = gkc.check(unnamed, self.raider_key())
+        (row,) = report.entries
+        self.assertEqual(row.status, gkc.FOUND)
+        self.assertEqual(report.violations, [])  # (a description is no must-not name)
+        old = backup([("u2", "maul barbarian (name unknown)", "character")], [])
+        old["sections"]["memory"][0]["unnamed"] = True  # (an older backup's form)
+        report = gkc.check(old, self.raider_key())
+        self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
+
+    def test_other_must_not_names_still_count_as_descriptions(self) -> None:
+        key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
+        data = backup([("u1", "unnamed - the attackers", "character")], [])
+        data["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(data, key).violations, ["the attackers"])
+
+
+if __name__ == "__main__":
+    unittest.main()

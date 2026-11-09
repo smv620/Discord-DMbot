@@ -10,11 +10,17 @@ import { campaignPage as words } from "../content/campaign-page";
 import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { PAUSE_LIVE } from "../content/pause-switch";
+import { stageWords } from "../content/work-progress";
+import { SHARE_STORY_LIVE } from "../content/share-story-switch";
+import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
+import { KIND_OFFERS_LIVE } from "../content/kind-offers-switch";
 import { RULESETS_LIVE } from "../content/rulesets-switch";
 import { STORY_MODE_LIVE } from "../content/story-mode-switch";
-import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
+import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName, type JobProgress } from "./api";
 import LazyPanel from "./LazyPanel";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
 
 // (the timings are re-exported for the pages and tests that already import them from here)
@@ -22,8 +28,8 @@ export { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS };
 
 type Phase =
   | { kind: "idle" }
-  | { kind: "saving"; slow: boolean }
-  | { kind: "offline" }
+  // `late`: past OFFLINE_AFTER_MS, so the page says DMbot is not answering, but keeps any progress the bot still reports.
+  | { kind: "saving"; seen: "waiting" | "working"; progress?: JobProgress | null | undefined; late?: boolean }
   | { kind: "saved"; note: string }
   | { kind: "error"; message: string }
   | { kind: "confirm"; value: string };
@@ -85,20 +91,16 @@ function Control({
   onConfirm: (v: string) => void;
   onKeep: () => void;
 }) {
-  const busy = phase.kind === "saving" || phase.kind === "offline"; // offline: a second tap would queue a second change
+  const busy = phase.kind === "saving"; // (also while the bot is not answering: a second tap would queue a second change)
   const options = words.options[setting] ?? [];
+  // The wait shows the shared panel (#3347); only a finished or refused change is said in words.
+  const seen = useObservedWait(phase.kind === "saving", phase.kind === "saving" ? phase.seen : "");
   const line =
-    phase.kind === "saving"
-      ? phase.slow
-        ? `${words.saving} ${words.slow}`
-        : words.saving
-      : phase.kind === "offline"
-        ? words.offline
-        : phase.kind === "saved"
-          ? phase.note || words.saved // the bot's own note already starts with "Saved."
-          : phase.kind === "error"
-            ? phase.message
-            : "";
+    phase.kind === "saved"
+      ? phase.note || words.saved // the bot's own note already starts with "Saved."
+      : phase.kind === "error"
+        ? phase.message
+        : "";
   return (
     <li>
       <div role="group" aria-labelledby={id} class="stack">
@@ -133,6 +135,17 @@ function Control({
           </p>
         </div>
       )}
+      {phase.kind === "saving" && seen.startedAt !== null && (
+        <WorkProgress
+          stage={stageWords(words.stage, phase.seen === "working" ? "saving" : "waiting")}
+          startedAt={phase.progress?.startedAt ?? seen.startedAt}
+          updatedAt={phase.progress?.updatedAt ?? seen.movedAt}
+          // With no progress from the bot, the page's own clock is used: no skew correction for it.
+          serverNow={phase.progress?.serverNow ?? Math.floor(Date.now() / 1000)}
+          state={phase.progress?.state ?? (phase.late || seen.quiet ? "stalled" : "running")}
+        />
+      )}
+      {phase.kind === "saving" && phase.late && <p class="small">{words.offline}</p>}
       {/* Two steady live regions: a region whose role changes after it appears is often not read out. */}
       <p class="small muted" role="status">
         {phase.kind === "error" ? "" : line}
@@ -175,7 +188,7 @@ export default function CampaignSettings({
 
   async function send(setting: CampaignSettingName, value: string, confirm: boolean) {
     if (!api.setCampaignSetting || !api.campaignSettingAnswer) return set(setting, { kind: "error", message: words.failed });
-    set(setting, { kind: "saving", slow: false });
+    set(setting, { kind: "saving", seen: "waiting" });
     let answer: string;
     try {
       answer = await api.setCampaignSetting(campaignRef, { setting, value, ...(confirm ? { confirm: true } : {}) });
@@ -190,9 +203,16 @@ export default function CampaignSettings({
       const waited = Date.now() - started;
       // What the page says while it waits, whether the look worked or not: a site that cannot be
       // reached must not leave "Saving…" showing for an hour.
-      const say = () => {
-        if (waited > OFFLINE_AFTER_MS) set(setting, { kind: "offline" });
-        else if (waited > SLOW_AFTER_MS) set(setting, { kind: "saving", slow: true });
+      // While the bot has not answered, the wait shows its stage and progress; past the offline time it also says so,
+      // and keeps showing whatever progress the bot still reports.
+      const say = (state?: "waiting" | "working", progress?: JobProgress | null) => {
+        const late = waited > OFFLINE_AFTER_MS;
+        if (state !== undefined) return set(setting, { kind: "saving", seen: state === "working" ? "working" : "waiting", progress, late });
+        if (late && live.current)
+          setPhases((before) => {
+            const cur = before[setting];
+            return cur.kind === "saving" ? { ...before, [setting]: { ...cur, late: true } } : before;
+          });
       };
       // The queue forgets a choice after an hour. Look once more before giving up, in case the
       // answer came just now.
@@ -219,7 +239,7 @@ export default function CampaignSettings({
       }
       if (final) return set(setting, { kind: "error", message: words.timedOut });
       // Offline is a thing to say, not a reason to stop: the bot may still answer within the hour.
-      say();
+      say(got.state, got.progress);
     }
   }
 
@@ -275,6 +295,9 @@ export default function CampaignSettings({
       {PAUSE_LIVE && owner && s && api.setCampaignSetting && (
         <LazyPanel load={() => import("./PausePanel")} what="pause" props={{ api, campaignRef, paused: pausedNow ?? s.paused, onChanged: setPausedNow }} />
       )}
+      {SHARE_STORY_LIVE && s && s.shareImprove !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareImprove }} />
+      )}
       {STORY_MODE_LIVE && s?.storyMode && api.setCampaignSetting && (
         <LazyPanel load={() => import("./StoryModePanel")} what="the shared story" props={{ api, campaignRef, mode: s.storyMode }} />
       )}
@@ -286,6 +309,12 @@ export default function CampaignSettings({
       )}
       {CO_DMS_LIVE && api.campaignGameMasters && (
         <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
+      )}
+      {KIND_OFFERS_LIVE && api.campaignKindOffers && (
+        <LazyPanel load={() => import("./KindOffersPanel")} what="the words DMbot stopped asking about" props={{ api, campaignRef }} />
+      )}
+      {FEATURES_LIST_LIVE && page.features && (
+        <LazyPanel load={() => import("./FeaturesList")} what="what is switched on" props={{ features: page.features }} />
       )}
       {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
         <LazyPanel

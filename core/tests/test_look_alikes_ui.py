@@ -252,7 +252,7 @@ class ThePanelButton(unittest.TestCase):
         row = next(c for c in dm.children if getattr(c, "label", "") == "🔗 Look-alikes (4)").row
         self.assertEqual(row, 1)
         self.assertLessEqual(len(dm.children), 25)
-        all_reviews = Reviews(heard=1, people=1, claims=1, said=1)
+        all_reviews = Reviews(heard=1, people=1, claims=1, said=1, joined=1)
         full = NamesHome(
             "c1", 3, [("e1", "Belleros", "npc")], all_reviews, connections=2, look_alikes=4
         )

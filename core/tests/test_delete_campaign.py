@@ -25,7 +25,13 @@ CID = "0123456789abcdef0123456789abcdef"
 
 class Words(unittest.TestCase):
     def campaign(self, owner: int | None = OWNER, dms: frozenset[int] = frozenset({OWNER})) -> Any:
-        return SimpleNamespace(name="Curse of  Strahd", owner_user_id=owner, dm_user_ids=dms)
+        return SimpleNamespace(
+            name="Curse of  Strahd",
+            owner_user_id=owner,
+            dm_user_ids=dms,
+            dm_accounts=dms,
+            is_owner=lambda user_id: user_id == owner,
+        )
 
     def test_only_the_owner_who_is_still_a_game_master_holds_the_plan(self) -> None:
         both = frozenset({OWNER, OTHER_DM})

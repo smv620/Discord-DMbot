@@ -73,7 +73,9 @@ def campaign(since: int | None = None, owner: int | None = 77) -> Campaign:
     return replace(
         base_campaign("c" * 32),
         dm_user_ids=frozenset({DM, 88}),
+        dm_accounts=frozenset({DM, 88}),
         owner_user_id=owner,
+        owner_ids=frozenset() if owner is None else frozenset({owner}),
         owner_missing_since=since,
     )
 

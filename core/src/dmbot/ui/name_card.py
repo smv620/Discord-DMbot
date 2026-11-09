@@ -17,7 +17,7 @@ import dataclasses
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +34,7 @@ from dmbot.memory.link_words import (
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    OLD_FEELINGS,
     back_after,
     back_words,
     campaign_back,
@@ -49,6 +50,7 @@ from dmbot.memory.models import (
     MERGED,
     PLAYERS_TEXT_MAX,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
     Alias,
     Entity,
@@ -62,8 +64,10 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
+from dmbot.memory.standing import dm_line_word
 from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
+from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
 from dmbot.ui import all_names, logic, player_id, told_name
 from dmbot.ui import companion as companion_ui
@@ -93,6 +97,8 @@ from dmbot.ui.names import (
     already_known,
     changed,
     known_as,
+    scene_line,
+    scene_of,
     sees_secrets,
     split_names,
 )
@@ -156,15 +162,18 @@ NAME_LIMIT = 100  # what a form field may hold
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
 
 
-def fact_words(r: Relation, subject_kind: str = "") -> str:
+def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) -> str:
     """How one fact reads between its two names. On the catch-all, the words it was said in
     ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's.
     `subject_kind` is the first name's kind, so a character's place reads "was last seen in",
-    never "is in" (#3363)."""
+    never "is in" (#3363). `feeling`: the reader is the DM, who alone is told how a name feels about
+    another (#3610)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return _md(r.detail)  # transcript words: never let them format or ping
+        # transcript words: never let them format or ping. In quotes, so the table's own words are
+        # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
+        return f"“{_md(r.detail)}”"
     return link_words(
-        r.predicate, r.detail, r.directional, subject_kind
+        r.predicate, r.detail, r.directional, subject_kind, feeling=feeling
     )  # (family reads with its role: "is the niece of")
 
 
@@ -183,12 +192,13 @@ def _safe(r: Relation, guard: NameGuard) -> Relation:
     return r if safe == r.detail else dataclasses.replace(r, detail=safe)
 
 
-def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
+def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> str | None:
     """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(_safe(r, _guard(lookup)), subject.type)} {obj.name}"
+    words = fact_words(_safe(r, _guard(lookup)), subject.type, feeling=feeling)
+    return f"{subject.name} {words} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -256,16 +266,24 @@ class Row:
 
 
 def _rows(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[Row]:
     """The connections the card shows, in its order: those that read the same together, in the
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
-    list the card, Show all and the Edit a connection menu all read, so they never disagree."""
+    list the card, Show all and the Edit a connection menu all read, so they never disagree.
+    `standing`: the DM's own Reputation for pairs (`MemoryStore.dm_line_scores`), whose word wins
+    on a `knows` line (#3642); read only when `secrets`, so a player's card never shows it."""
     found: dict[str, list[Row]] = {}
     guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if not secrets and r.predicate in OLD_FEELINGS:
+            r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
@@ -275,8 +293,13 @@ def _rows(
         first = lookup.entities.get(r.subject_id)  # the connection's own first name
         subject_kind = first.type if first is not None else ""
         shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
+        # (only the line's own side words a feeling: from the other end it reads "is known to")
+        if secrets and standing and ahead and shown.predicate == "knows":
+            word = dm_line_word(standing, r.subject_id, r.object_id, r.detail)
+            if word is not None:  # the DM's word always wins over a reader's (#3642)
+                shown = dataclasses.replace(shown, detail=word)
         words = (
-            fact_words(shown, subject_kind)
+            fact_words(shown, subject_kind, feeling=secrets)
             if ahead
             else (
                 f"is linked (“{_md(shown.detail)}”) to"
@@ -303,12 +326,16 @@ def _rows(
 
 
 def _groups(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Connections grouped by how they're connected, read from this name's side: "is a member of
     **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
     groups: dict[str, list[str]] = {}
-    for row in _rows(lookup, entity_id, connections, secrets):
+    for row in _rows(lookup, entity_id, connections, secrets, standing):
         groups.setdefault(row.words, []).append(
             f"**{_md(row.other)}**"
             + (f" {row.after}" if row.after else "")
@@ -334,7 +361,12 @@ PAGE_LINES = 25  # most lines in one Show all message, then Earlier / Later
 
 
 def sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Every entry of each section the card cuts, in the card's words and order. A section with
     nothing in it is left out, and the secret names and secret connections only when `secrets`
@@ -349,7 +381,7 @@ def sections(
         SECRETS: [_md(e.text) for e in mine if e.secret] if secrets else [],
         LINKS: [
             f"{words} {who}"
-            for words, group in _groups(lookup, entity_id, connections, secrets).items()
+            for words, group in _groups(lookup, entity_id, connections, secrets, standing).items()
             for who in group
         ],
     }
@@ -357,10 +389,15 @@ def sections(
 
 
 def cut_sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[tuple[str, str]]:
     """(key, "Other names (12)") for each section the card shows only the start of."""
-    full = sections(lookup, entity_id, connections, secrets=secrets)
+    full = sections(lookup, entity_id, connections, secrets=secrets, standing=standing)
     # (the connections are one line each and the card cuts them only at Discord's limit, where
     # show_card offers every section)
     cut_keys = [key for key, lines in full.items() if key != LINKS and len(lines) > SHOWN]
@@ -408,12 +445,14 @@ def card_text(
     book_line: str | None = None,
     more_url: str = "",
     title: str = "",
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
     kind or one a campaign added under it (None: only the core kind counts). `title`: the name with
     its tag for the DM's card, when it is only a description (#3431). `more_url`: the
-    website page that lists every connection, for the ones that don't fit (#2323)."""
+    website page that lists every connection, for the ones that don't fit (#2323). `standing`: the
+    DM's own Reputation for pairs, whose word wins on a `knows` line (#3642; DMs only)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -469,10 +508,20 @@ def card_text(
     if secrets and hidden:
         lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
     text = "\n".join(lines)
-    rows = _rows(lookup, entity_id, connections, secrets)
+    rows = _rows(lookup, entity_id, connections, secrets, standing)
     if rows:
         text = _with_connections(text, rows, limit, more_url)
     return cut(text, limit)
+
+
+async def _dm_standing(
+    memory: MemoryStore, campaign: Campaign, entity_id: str, secrets: bool
+) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for the pairs this card's `knows` lines join (#3642): read only for
+    a reader who sees secrets, so a player's card is never handed it."""
+    if not secrets:
+        return {}
+    return await memory.dm_line_scores(campaign.guild_id, campaign.id, entity_id)
 
 
 async def _names(interaction: discord.Interaction, campaign: Campaign) -> CampaignLookup | None:
@@ -525,6 +574,7 @@ async def show_card(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     player = sheet = None
     has_sheet = False
@@ -613,6 +663,7 @@ async def show_card(
         book_line=book_line,
         more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
         title=title,
+        standing=dm_standing,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -620,14 +671,15 @@ async def show_card(
         else:
             await _tell(interaction, GONE)
         return
-    cuts = cut_sections(names, entity_id, connections, secrets=secrets)
+    cuts = cut_sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
         limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
+        standing=dm_standing,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
-        everything = sections(names, entity_id, connections, secrets=secrets)
+        everything = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
         cuts = [(k, f"{SECTION_WORDS[k]} ({len(v)})") for k, v in everything.items()]
     own = name_key(entity.name)
     others = any(
@@ -642,6 +694,12 @@ async def show_card(
             "(they read this in recaps and answers)"
         )
         if len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets and (entity.status == PROPOSED or entity.unnamed):
+        # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
+        # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
+        line = scene_line(await scene_of(interaction, campaign, entity))
+        if line and len(text) + len(line) <= CARD_MAX:
             text += line
     # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
     # narrator's dictionary goes to the voice company; the store refuses it too).
@@ -664,6 +722,7 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        suggest=say and getattr(interaction.client, "said_as_ai", None) is not None,
         players_line=(sees_secrets(campaign, interaction.user.id) and entity.type != "person"),
         say_it_url=(
             all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
@@ -742,11 +801,12 @@ async def show_section(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         await _tell(interaction, GONE)
         return
-    lines = sections(names, entity_id, connections, secrets=secrets).get(key)
+    lines = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing).get(key)
     if not lines:  # changed since the card was drawn, or a secret section for someone who can't
         await _tell(interaction, NOTHING_MORE)
         return
@@ -831,6 +891,7 @@ class NameCard(_Menu):
         led: bool = False,
         book: bool = False,
         say: bool = False,
+        suggest: bool = False,
         say_it_url: str = "",
         players_line: bool = False,
         hide: bool | None = None,
@@ -923,6 +984,11 @@ class NameCard(_Menu):
             # thread's five buttons, made the card fail to build (#2339: "item would not fit at
             # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
+        if suggest:  # on the first row with room, as the players' line is: row 2 can be full
+            for row in (2, 3, 1):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=row))
+                    break
         if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
             try:  # placed wherever there is room; a card that is full simply goes without it
                 self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
@@ -1155,6 +1221,8 @@ class NameCard(_Menu):
                 include_secret=secrets,
             ),
             secrets,
+            # (the menu reads the card's words, the DM's Reputation included, #3642)
+            await _dm_standing(memory, campaign, self.entity_id, secrets),
         )
         self.stop()
         back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""
@@ -1213,6 +1281,43 @@ class NameCard(_Menu):
         said = await memory.said_as(campaign.guild_id, campaign.id, self.entity_id)
         self.origin = None  # the form's answer replaces this message; cancel keeps it
         await interaction.response.send_modal(SayForm(self.campaign_id, self.entity_id, name, said))
+
+    async def _suggest(self, interaction: discord.Interaction) -> None:
+        """💡 Suggest (#2316): DMbot offers how to say this name, from the name and its kind
+        alone. Nothing is saved until the DM presses Use this."""
+        await _answer_first(interaction, in_place=False)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        ai = getattr(interaction.client, "said_as_ai", None)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if ai is None or not await _spoken_recaps(interaction, campaign):
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        if entity is None:
+            await _tell(interaction, GONE)
+            return
+        try:
+            # (A spoken-recaps plan always includes a working one, so no separate AI-plan check.)
+            async with asyncio.timeout(SUGGEST_WAIT_S):
+                spelling = await said_as_suggest.suggest(ai, name, entity.type)
+        except (said_as_suggest.SuggestFailed, TimeoutError):
+            await _tell(interaction, SUGGEST_FAILED)
+            return
+        if not spelling:
+            await _tell(interaction, SUGGEST_NONE)
+            return
+        view = SuggestOffer(self.campaign_id, self.entity_id, spelling)
+        await _send(
+            interaction,
+            f"💡 DMbot suggests the narrator say **{_md(name)}** as **{_md(spelling)}**. Use it?",
+            view,
+        )
 
     async def _add(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -1482,6 +1587,7 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
+SUGGEST_BUTTON = "💡 Suggest saying"  # DMbot offers a spelling for the DM to take or not (#2316)
 PLAYERS_LINE_BUTTON = "💬 Line for the players"  # the players' line for an entry (#2967)
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
 
@@ -1535,6 +1641,61 @@ class PlayersLineForm(discord.ui.Modal, title="Line for the players"):
         )
         changed(interaction, campaign)
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+SUGGEST_WAIT_S = 30  # a hung AI call ends with the failure words, not an endless "thinking"
+SUGGEST_NONE = "No suggestion for this name. Press 🔊 How to say it to type your own."
+SUGGEST_FAILED = (
+    "Couldn't get a suggestion. Try 💡 again in a minute, or press 🔊 How to say it to type "
+    "your own."
+)
+
+
+class SuggestOffer(_Menu):
+    """DMbot's suggested spelling, for the DM to take or leave (#2316). The DM decides: Use this
+    saves it exactly as ✏️ would (a DM only, spoken recaps still on, checked again now)."""
+
+    def __init__(self, campaign_id: str, entity_id: str, spelling: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.spelling = spelling
+        self.add_item(_Button(self._use, label="✅ Use this", style=discord.ButtonStyle.success))
+        self.add_item(_Button(self._no, label="Skip", style=discord.ButtonStyle.secondary))
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _replace(interaction, "👍 Left as it was.", None)
+
+    async def _use(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _name = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on any press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if not await _spoken_recaps(interaction, campaign):  # the plan may have lapsed meanwhile
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        try:
+            await memory.set_said_as(
+                campaign.guild_id, campaign.id, self.entity_id, self.spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        await show_card(
+            interaction,
+            campaign.id,
+            self.entity_id,
+            replace=True,
+            note=f"🔊 Saved. The narrator will say it like **{_md(self.spelling)}**.",
+        )
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
@@ -1937,7 +2098,7 @@ class UndoConnectionButton(
             return
         changed(interaction, campaign)
         names = await _names(interaction, campaign)
-        said = sentence(names, written.value) if names is not None else None
+        said = sentence(names, written.value, feeling=True) if names is not None else None
         note = f"Put back: {_md(said or 'that connection')}."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
