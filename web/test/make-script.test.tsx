@@ -83,6 +83,14 @@ describe("Make the script", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(w.failed);
     expect(screen.getByRole("button", { name: w.button })).toBeTruthy();
   });
+  it("busy shows the still-making-it words and not the failure words", async () => {
+    const api = asOwner(mockApi("table"));
+    api.makeScript = async () => Promise.reject(new ApiError("still-waiting"));
+    await openScript(api, 2);
+    fireEvent.click(await screen.findByRole("button", { name: w.button }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.problems["still-waiting"]);
+    expect(screen.queryByText(w.failed)).toBeNull();
+  });
   it("gives the refusal's own words", async () => {
     const api = asOwner(mockApi("table"));
     api.makeScript = async () => Promise.reject(new ApiError("plan-needed"));
