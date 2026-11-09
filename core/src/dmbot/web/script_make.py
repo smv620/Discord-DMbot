@@ -100,7 +100,10 @@ async def offer(
         now=now,
         enforce_plans=enforce_plans,
     )
-    state = "exists" if got["exists"] else "running" if got["running"] else "none"
+    # A script DMbot is making by itself (the automatic script, Discord's button) counts as running
+    # too, so the page waits for it instead of offering a second press (`auto`, 0406).
+    running_now = bool(got["running"] or got.get("auto"))
+    state = "exists" if got["exists"] else "running" if running_now else "none"
     return {
         "state": state,
         "cost": estimate_line(lines) if state == "none" and why is None else None,
