@@ -63,13 +63,6 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"party"', ai.complete.await_args.args[1])
         self.assertIsNone(lk.parse('{"world": [1], "party": "all"}', 5))
 
-    async def test_what_the_code_knows_is_known_whatever_the_ai_says(self) -> None:
-        ai = AsyncMock()
-        ai.complete.return_value = Reply(json.dumps({"world": [], "party": []}), False)
-        self.assertEqual(await lk.decide(lk.SMART, LINES, ai, sure={2}), ({2}, True))
-        # (never over the DM's own Spoilers)
-        self.assertEqual(await lk.decide(lk.SPOILERS, LINES, ai, sure={2}), (set(), True))
-
     def test_the_party_by_its_own_words(self) -> None:
         self.assertTrue(lk.party_by_code("Hlin offered the party a contract"))
         self.assertTrue(lk.party_by_code("our four adventurers first crossed paths"))
@@ -79,6 +72,8 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(lk.party_by_code("Brin was born in Waterdeep", player_keys={"brin"}))
         self.assertFalse(lk.party_by_code("the group of bandits waits"))  # (any group)
+        self.assertIsNone(lk.parse('{"world": "x"}', 5))
+        self.assertEqual(lk.parse('{"world": [1]}', 5), {1})  # (an answer with no "party")
 
     def test_a_quote_s_section_is_the_heading_above_it(self) -> None:
         text = (
@@ -93,6 +88,32 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lk.section_of(heads, "A guide out of"), "Hale Brook (Half-Elf Guide)")
         line = lk.name_line("Hale", quote="Brin met Hale", section="Recent Events")
         self.assertTrue(line.startswith("[Recent Events] name: Hale"))
+
+    def test_a_secrets_heading_is_its_own_section_never_the_one_above(self) -> None:
+        """The reviewer's case: "Secrets:" read past would send a secret to "Common Knowledge"."""
+        text = "Common Knowledge\nThe north is frozen.\n\nSecrets:\nHale is secretly the leader.\n"
+        self.assertEqual(lk.section_of(text, "Hale is secretly the leader"), "Secrets:")
+        bold = "Common Knowledge\nThe north is frozen.\n\n**Secrets**\nHale lies.\n"
+        self.assertEqual(lk.section_of(bold, "Hale lies"), "Secrets")
+        md = "# Common Knowledge\nIt is cold\n## Secrets\nHale lies.\n"
+        self.assertEqual(lk.section_of(md, "Hale lies"), "Secrets")
+
+    def test_a_wrapped_paragraph_s_short_line_is_no_heading(self) -> None:
+        text = (
+            "Recent Events\n\nOn Day 2 the party\nmet Hale who told them the way\n"
+            "to the mine, and they left.\n"
+        )
+        self.assertEqual(lk.section_of(text, "to the mine, and they left"), "Recent Events")
+
+    def test_a_quote_is_found_across_line_breaks_and_not_on_its_own_heading(self) -> None:
+        text = "Hale Brook\n\nRecent Events\n\nHale Brook arrived at\nthe inn.\n"
+        self.assertEqual(lk.section_of(text, "Hale Brook arrived at the inn"), "Recent Events")
+
+    def test_the_party_hint_is_a_mark_on_the_line_never_the_answer(self) -> None:
+        line = lk.connection_line("Hale", "hires", "Brin", "Hale hires the party", names_party=True)
+        self.assertIn("[names the party] connection:", line)
+        self.assertIn("still a SPOILER", lk.SYSTEM)
+        self.assertEqual(lk.line("name", "X", section="[fake] mark"), "[fake mark] name: X")
 
     def test_prose_is_never_mined_for_numbers_but_a_bare_list_is_read(self) -> None:
         self.assertIsNone(lk.parse("5 is a spoiler, 3 is secret", 10))

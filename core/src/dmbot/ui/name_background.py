@@ -789,7 +789,9 @@ async def read_background(
         progress,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
         text=upload.text,
-        party_keys=await _party_keys(memory, campaign),
+        party_keys=(
+            await _party_keys(memory, campaign) if choice == lore_knowledge.SMART else set()
+        ),
         player_keys=player_keys,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
@@ -966,35 +968,38 @@ async def _world(
     the connections (by their two names' keys and the kind), and whether it could all be sorted.
     Spoilers: nothing. World: all of it. Smart guess: the AI's call on one short line each (the
     document's section it is in, the kind, the name with its other names and disguises, and the
-    quote the read kept), a spoiler wherever it does not say otherwise; and, before the AI, one
-    whose quote names the party or two of its characters is the party's by code (#3963)."""
+    quote the read kept), a spoiler wherever it does not say otherwise. Each line says which section
+    of the document it is in, and whether its words name the party (#3963), as hints the AI weighs:
+    never the answer by themselves."""
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
+    smart = choice == lore_knowledge.SMART
+    # The sections and the party hint matter only to the AI's sort (#3963): worked out once.
+    sections = lore_knowledge.Sections(text) if smart and text else None
 
-    quotes = [f.quote for f in found] + [c.quote for c in links]
+    def where(quote: str) -> str:
+        return sections.of(quote) if sections is not None else ""
+
+    def hint(quote: str) -> bool:
+        return smart and lore_knowledge.party_by_code(quote, party_keys, player_keys)
+
     lines = [
         lore_knowledge.name_line(
-            f.name, f.also, f.secret, f.quote, lore_knowledge.section_of(text, f.quote)
+            f.name, f.also, f.secret, f.quote, where(f.quote), names_party=hint(f.quote)
         )
         for f in found
     ] + [
         lore_knowledge.connection_line(
-            c.a, c.how, c.b, c.quote, lore_knowledge.section_of(text, c.quote)
+            c.a, c.how, c.b, c.quote, where(c.quote), names_party=hint(c.quote)
         )
         for c in links
     ]
-    sure = {
-        i for i, q in enumerate(quotes)
-        if lore_knowledge.party_by_code(q, party_keys, player_keys)
-    }  # fmt: skip
 
     def sorting(done: int, total: int) -> None:
         if progress is not None:
             progress("sorting", done, total)
 
-    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting, until, sure=sure)
-    if sure:
-        log.info("Lore knowledge: %d statements the party's by its own words", len(sure))
+    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting, until)
     names = {name_key(f.name) for i, f in enumerate(found) if i in known}
     keys = {_link_key(c.a, c.how, c.b) for i, c in enumerate(links, len(found)) if i in known}
     return names, keys, ok
