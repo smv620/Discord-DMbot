@@ -124,6 +124,8 @@ from dmbot.memory.models import (
     FACT_STATUSES,
     FIX,
     KEEP,
+    KNOWS_HOWS,
+    KNOWS_MET,
     LINE_REF_MAX,
     LINK_EDITIONS,
     LINK_KINDS,
@@ -173,6 +175,7 @@ from dmbot.memory.models import (
     clean_text,
     days,
     is_id,
+    knows_rank,
     lookup_key,
     name_key,
     new_id,
@@ -209,6 +212,8 @@ TRAVELS_WITH = "travels_with"  # a companion goes along with a player character 
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
+# How two people know each other is a `knows` thing only (#3881).
+KNOWS_HOW_ONLY = 'Only a "knows" connection says whether they\'ve met.'
 ANALYZE_AFTER_NAMES = 500  # a list this long refreshes the planner's statistics (#2376)
 INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
@@ -302,7 +307,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
-        r.get("decided"), r.get("via_alias_id"),
+        r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
     )  # fmt: skip
 
 
@@ -328,6 +333,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "directional": rel.directional,
         "decided": rel.decided,
         "via_alias_id": rel.via_alias_id,
+        "knows_how": rel.knows_how,
     }
 
 
@@ -4782,6 +4788,7 @@ class MemoryStore:
         known_by: Sequence[str] = (),
         keep_flags: bool = False,
         by_hand: bool = False,
+        knows_how: str = "",
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -4799,7 +4806,7 @@ class MemoryStore:
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided, keep_flags=keep_flags,
-                by_hand=by_hand,
+                by_hand=by_hand, knows_how=knows_how,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -4837,6 +4844,7 @@ class MemoryStore:
         made_by: str | None = None,
         keep_flags: bool = False,
         by_hand: bool = False,
+        knows_how: str = "",
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -4844,8 +4852,11 @@ class MemoryStore:
         about a rejected fact is a new proposal, not a revival). `leave`: a twin that is there
         is returned as it is, never upgraded (a belief is hung on it, the fact is not restated).
         `made_by`: the source to record when it is not the write's own (a guess a player voiced is
-        the extractor's, whoever pressed the button)."""
+        the extractor's, whoever pressed the button). `knows_how` (#3881): on a `knows` only, how
+        the two know each other ("met", "aware" or ""); restating a known one only ever moves it up,
+        and "met" moves the other's existing `knows` back up too."""
         source = made_by or w.source
+        _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         _check_choice(status, LIVE, "relation status")
@@ -4896,6 +4907,7 @@ class MemoryStore:
             tuple(mention_ids), from_session_at, to_session_at, None, None,
             secret or pred.key == DISGUISED_AS, w.now,
             pred.version, unrevealed, directional, (decided or None),
+            knows_how=knows_how if pred.key == KNOWS else "",
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -4914,12 +4926,18 @@ class MemoryStore:
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": s, "object_id": o,
                 }  # fmt: skip
+            if knows_rank(new.knows_how) > knows_rank(same.knows_how):  # only ever up (#3881)
+                upgrade = {**upgrade, "knows_how": new.knows_how}
+            if new.knows_how == KNOWS_MET:
+                await _met_back(w, s, o, existing)
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
             revived, _ = await _settle_whereabouts(w, _relation(row), types, by_hand=by_hand)
             return revived, []
         await w.insert(RELATIONS, _relation_row(new))
+        if new.knows_how == KNOWS_MET:
+            await _met_back(w, s, o, existing)
         # An item has one current whereabouts (#3363): see `whereabouts`
         new, ended = await _settle_whereabouts(w, new, types, by_hand=by_hand)
         existing = [r for r in existing if r.id not in ended]
@@ -4932,6 +4950,29 @@ class MemoryStore:
             )  # fmt: skip
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
         return new, flags
+
+    async def set_knows_how(
+        self, guild_id: int, campaign_id: str, relation_id: str, how: str, *, source: str
+    ) -> Written[Relation]:
+        """How two people know each other, on one `knows` (#3881): "met", "aware" or "" (not
+        said). The DM may set it either way; anything else only moves it up. "Met" moves the
+        other's existing `knows` back up too, and never makes one. One change, so one Undo."""
+        _check_choice(how, KNOWS_HOWS, "how they know each other")
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None:
+                raise MemoryRuleError(NOT_FOUND)
+            if current["predicate"] != KNOWS:
+                raise MemoryRuleError(KNOWS_HOW_ONLY)
+            row = current
+            if how != current["knows_how"] and (
+                source == DM or knows_rank(how) > knows_rank(str(current["knows_how"]))
+            ):
+                row = await w.update(RELATIONS, relation_id, {"knows_how": how})
+            if how == KNOWS_MET:
+                s_id, o_id = str(current["subject_id"]), str(current["object_id"])
+                await _met_back(w, s_id, o_id, await _relations_touching(w, s_id, o_id))
+            return Written(_relation(row), w.batch)
 
     async def update_relation(
         self,
@@ -6861,6 +6902,23 @@ async def _load_ontology(scope: Scope) -> Ontology:
     types = [_type_term(r) for r in await scope.select(TYPES)]
     predicates = [_predicate_term(r) for r in await scope.select(PREDICATES)]
     return Ontology.build(types, predicates)
+
+
+async def _met_back(
+    w: Changes, subject_id: str, object_id: str, existing: Collection[Relation]
+) -> None:
+    """Two people who met have both met (#3881, Supervisor's ruling): the other's existing `knows`
+    toward the first moves up to "met". One is never made: the story may say nothing of how the
+    other feels, and a feeling is never invented."""
+    for r in existing:
+        if (
+            r.predicate == KNOWS
+            and r.subject_id == object_id
+            and r.object_id == subject_id
+            and r.status != REJECTED
+            and knows_rank(r.knows_how) < knows_rank(KNOWS_MET)
+        ):
+            await w.update(RELATIONS, r.id, {"knows_how": KNOWS_MET})
 
 
 async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
