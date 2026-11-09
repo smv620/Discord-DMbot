@@ -241,6 +241,9 @@ def spoken_recap(said: Sequence[Said], dm_ids: Collection[int]) -> Split | None:
     while (
         last + 1 < len(opening)
         and opening[last + 1].user_id in dm_ids
+        # (a line left out between them, someone not recorded or off-topic talk, breaks the run:
+        # the recap is the DM's unbroken words, never a line that might later be read)
+        and opening[last + 1].number == opening[last].number + 1
         # (a closing line, "and so we continue…", ends the recap: what the DM says next is play)
         and not _CLOSING_HEARD.search(opening[last].text)
     ):
@@ -248,6 +251,11 @@ def spoken_recap(said: Sequence[Said], dm_ids: Collection[int]) -> Split | None:
     if sum(len(s.text) for s in opening[first : last + 1]) < SPOKEN_RECAP_MIN_CHARS:
         return None
     a, b = opening[first].number, opening[last].number
+    run = last - first + 1
+    # The same limits the AI split is held to: never most of the session, never all of it (a DM's
+    # long opening narration, or a session where only the DM is recorded, stays play)
+    if b >= said[-1].number or run > MAX_RECAP_LINES or run > len(said) * MAX_RECAP_SHARE:
+        return None
     parts = [Part(RECAP, a, b)]
     if said[0].number < a:
         parts.insert(0, Part(PLAY, said[0].number, a - 1))

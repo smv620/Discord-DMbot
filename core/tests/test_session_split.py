@@ -53,6 +53,10 @@ def first_session(recap: list[str], *, dm_first: bool = True, by_player: bool = 
     )
 
 
+async def _without_alice() -> set[int]:
+    return {fx.DM, fx.BOB}
+
+
 class FakeStore:
     def __init__(self, kept: dict[str, Any] | None = None, session: str = SESSION) -> None:
         self.kept, self.saves, self.session = kept, 0, session
@@ -188,6 +192,49 @@ class TheSplitForASession(unittest.IsolatedAsyncioTestCase):
         assert got is not None
         self.assertEqual(got.label_of(4), sp.RECAP)  # (the closing line)
         self.assertEqual(got.label_of(5), sp.PLAY)  # (the DM's next line is play)
+
+    async def test_the_floor_is_400_characters(self) -> None:
+        for size, marked in ((399, False), (400, True)):
+            with self.subTest(size):
+                head = "Last time, "
+                words = [head + "x" * (size - len(head))]
+                got = await self.ask(self.splitter(FakeStore(), FakeClient(), first_session(words)))
+                assert got is not None
+                self.assertEqual(got.has(sp.RECAP), marked)
+
+    async def test_never_all_of_it_and_never_most_of_it(self) -> None:
+        from dmbot.transcript.models import Line
+
+        only_dm = [Line(n * 1000, fx.DM, t, t) for n, t in enumerate(RECAP_WORDS, start=1)]
+        alone = Inputs(
+            lines=only_dm, dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="",
+            day=None, earlier=None,
+        )  # fmt: skip
+        long_run = [*RECAP_WORDS, *("The snow falls on the road." for _ in range(8))]
+        for found in (alone, first_session(long_run)):
+            got = await self.ask(self.splitter(FakeStore(), FakeClient(), found))
+            assert got is not None
+            self.assertEqual([p.label for p in got.parts], [sp.PLAY])
+
+    async def test_a_line_left_out_breaks_the_run(self) -> None:
+        from dmbot.transcript.models import Line
+
+        texts = [RECAP_WORDS[0], RECAP_WORDS[1], "I check the door.", "It creaks."]
+        users = [fx.DM, fx.DM, fx.BOB, fx.DM]
+        lines = [
+            Line(n * 1000, u, t, t)
+            for n, (u, t) in enumerate(zip(users, texts, strict=True), start=1)
+        ]
+        lines.insert(1, Line(1500, fx.ALICE, "(someone not recorded)", "(someone not recorded)"))
+        found = Inputs(
+            lines=lines, dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="",
+            day=None, earlier=None,
+        )  # fmt: skip
+        got = await self.splitter(FakeStore(), FakeClient(), found).split_for(
+            G, C, SESSION, AT, _without_alice
+        )
+        assert got is not None
+        self.assertEqual(got.label_of(3), sp.PLAY)  # (the DM's line after the gap is not recap)
 
     async def test_each_ruled_opening_and_a_lead_in_count(self) -> None:
         for opening in ("Last time, ", "Last session ", "When we left off, ", "When we last left ",
