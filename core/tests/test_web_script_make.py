@@ -124,6 +124,24 @@ class ScriptMake(Script):
         self.assertIsNone(got["running"])  # (no press of the website's is going)
         self.assertIsNone(got["cost"])
 
+    async def test_a_press_while_dmbot_makes_it_by_itself_is_refused_and_queues_nothing(
+        self,
+    ) -> None:
+        await self._auto_run(moved_ago=30)
+        self.assertEqual(await self.refused(self.press), "busy")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM script_makes")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_a_finished_automatic_run_does_not_show_as_running(self) -> None:
+        await self._auto_run(moved_ago=30)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE theatre_runs SET state = 'done'")
+        self.assertEqual((await self.offer())["state"], "none")
+        self.assertTrue(await self.press())
+
     async def test_an_automatic_run_that_stopped_moving_is_not_shown_as_running(self) -> None:
         await self._auto_run(moved_ago=3600)
         self.assertEqual((await self.offer())["state"], "none")

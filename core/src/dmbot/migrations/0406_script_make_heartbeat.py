@@ -15,7 +15,8 @@ from __future__ import annotations
 #    `created_at` and `claimed_at / 1000` (a waiting press has no `claimed_at`: 0).
 # 2. The offer says `auto` while the session's own script run (`theatre_runs`: the automatic
 #    script, the Discord button) is running and has moved in the last 30 minutes, so the page shows
-#    "making it" instead of offering a second press. The run's row holds only ids and counts.
+#    "making it" instead of offering a second press, and a press made anyway (a stale tab) is
+#    refused as `busy` and queues nothing. The run's row holds only ids and counts.
 _LAST = "GREATEST(m.created_at, m.claimed_at / 1000)"
 
 SQL = (
@@ -84,6 +85,12 @@ SQL = (
             WHERE m.guild_id = g AND m.session_id = sid AND m.state IN ('waiting', 'working');
         IF running IS NOT NULL THEN
             RETURN jsonb_build_object('status', 'ok', 'id', running);
+        END IF;
+        -- DMbot is making it by itself (the automatic script, Discord's button): never a second run
+        IF EXISTS (SELECT 1 FROM theatre_runs r
+                   WHERE r.guild_id = g AND r.session_id = sid
+                     AND r.state = 'running' AND r.moved_at >= now_s - 1800) THEN
+            RETURN jsonb_build_object('status', 'busy');
         END IF;
         IF (SELECT count(*) FROM script_makes m
             WHERE m.guild_id = g AND m.campaign_id = c AND m.created_at >= now_s - 60) >= 10 THEN
