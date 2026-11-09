@@ -7,6 +7,7 @@ names."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 from dmbot import entitlements
 from dmbot.web import script_make
@@ -56,14 +57,33 @@ class ScriptMake(Script):
         self.assertEqual(await self.refused(self.press, theatre_on=False), "script_off")
         self.assertEqual((await self.offer())["state"], "none")  # (nothing was queued)
 
-    async def test_a_plan_without_story_memory_says_so_and_queues_nothing(self) -> None:
-        got = await self.offer(enforce_plans=True)
-        self.assertEqual((got["allowed"], got["why"]), (False, "plan"))
-        self.assertEqual(await self.refused(self.press, enforce_plans=True), "script_plan")
+    async def test_a_plan_without_transcripts_is_refused_before_anything_is_queued(self) -> None:
+        # The session list's own plan rule answers first: a Try It campaign never sees sessions.
+        self.assertEqual(await self.refused(self.offer, enforce_plans=True), "not_in_plan")
+        self.assertEqual(await self.refused(self.press, enforce_plans=True), "not_in_plan")
         self.assertEqual((await self.offer())["state"], "none")
         entitlements.configure_free_users({ALICE.id})  # the owner, on the free list
         self.addCleanup(entitlements.configure_free_users, ())
         self.assertTrue((await self.offer(enforce_plans=True))["allowed"])
+
+    async def test_a_plan_with_transcripts_but_no_story_memory_says_so_and_queues_nothing(
+        self,
+    ) -> None:
+        # The story rule is its own door: patched to deny, the rest of the plan being allowed.
+        real = script_make.plan_rules.allowed
+        deny_story = lambda rule, access: (
+            rule != script_make.plan_rules.RULE_OF["story"]
+            and real(  # noqa: E731
+                rule, access
+            )
+        )
+        entitlements.configure_free_users({ALICE.id})
+        self.addCleanup(entitlements.configure_free_users, ())
+        with patch.object(script_make.plan_rules, "allowed", deny_story):
+            got = await self.offer(enforce_plans=True)
+            self.assertEqual((got["allowed"], got["why"]), (False, "plan"))
+            self.assertEqual(await self.refused(self.press, enforce_plans=True), "script_plan")
+        self.assertEqual((await self.offer())["state"], "none")
 
     async def test_a_run_lost_for_half_an_hour_lets_the_session_be_pressed_again(self) -> None:
         first = await self.press()
