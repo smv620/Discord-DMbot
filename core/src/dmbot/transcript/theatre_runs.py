@@ -53,6 +53,28 @@ class TheatreRuns:
             row = await cur.fetchone()
         return None if row is None else str(row["state"])
 
+    async def sessions_without_script(
+        self, guild_id: int, *, since: int, settled_before: int, limit: int
+    ) -> list[tuple[str, str]]:
+        """(campaign, session) ids of sessions that should get their script by themselves
+        (#3901): ended at or after `since` (older ones are the website button's) and at or before
+        `settled_before` (the transcript is final), with lines, not deleted, no run ever begun
+        (a failed one is not tried again by itself), and, for an imported session, its name scan
+        finished. Oldest first, at most `limit`. Ids only."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT s.campaign_id, s.id FROM transcript_sessions s"
+                " LEFT JOIN theatre_runs r ON r.guild_id = s.guild_id AND r.session_id = s.id"
+                " LEFT JOIN session_imports i ON i.guild_id = s.guild_id AND i.session_id = s.id"
+                " WHERE s.guild_id = %s AND r.session_id IS NULL AND s.line_count > 0"
+                " AND s.transcripts_deleted_at IS NULL AND s.ended_at IS NOT NULL"
+                " AND s.ended_at >= %s AND s.ended_at <= %s"
+                " AND (i.session_id IS NULL OR (i.state = 'done' AND i.scan_finished))"
+                " ORDER BY s.ended_at, s.id LIMIT %s",
+                (guild_id, since, settled_before, limit),
+            )
+            return [(str(r["campaign_id"]), str(r["id"])) for r in await cur.fetchall()]
+
     async def moved(
         self, guild_id: int, session_id: str, token: str, part: int, parts: int
     ) -> bool:
