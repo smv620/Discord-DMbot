@@ -49,6 +49,7 @@ export default function AddAll({
   const [problem, setProblem] = useState<Problem>("");
   const lastAt = useRef<number | null>(null);
   // The page's own start of the wait, from the press: the bot has not answered yet at that point, so its own start is not there.
+  // Once the bot answers, the clock moves to its start, which is a second or two later than the press: the time drops then.
   const wait = useObservedWait(busy !== null, String(progress?.at ?? ""));
 
   // Poll the bot's answer until it is done or failed; the wait panel shows each look.
@@ -174,7 +175,7 @@ export default function AddAll({
 
       {busy !== null && (
         <>
-          {/* The panel shows the parts as its own count and bar, and its stalled line; the page's stalled words are its "what to do". */}
+          {/* The panel shows the count as its bar and its stalled line, so the page's stalled words are only the "what to do". */}
           <WorkProgress
             stage={busy === "undo" ? w.undoing : w.adding}
             done={progress?.done ?? null}

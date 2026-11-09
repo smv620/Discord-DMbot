@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AddAll from "../src/account/AddAll";
 import { ApiError, type AccountApi, type ConfirmAnswer, type LoreUpload } from "../src/account/api";
 import { addAllWords as w, countsList, plainKindSingular, sumCounts } from "../src/content/add-all-words";
+import { workWords } from "../src/content/work-progress";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/confirm-kinds-switch", () => ({
@@ -170,6 +171,7 @@ describe("the press and its wait", () => {
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     await vi.advanceTimersByTimeAsync(61_000);
     expect(screen.getAllByText(w.stalled)).toHaveLength(1);
+    expect(screen.getAllByText(workWords.stalled)).toHaveLength(1);
   });
 
   it("shows the part count as the bar, once", async () => {
@@ -177,6 +179,7 @@ describe("the press and its wait", () => {
     const { container } = render(<AddAll api={apiWith([counted], { confirmAnswer: async () => counted })} campaign="100.cmp1" upload={upload({ place: 5 })} />);
     fireEvent.click(screen.getByRole("button", { name: w.addAll(5) }));
     expect(await screen.findByText("2 of 5")).toBeTruthy();
+    expect(screen.getAllByText("2 of 5")).toHaveLength(1);
     expect(container.querySelector("progress")?.getAttribute("max")).toBe("5");
   });
 
