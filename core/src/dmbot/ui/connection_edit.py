@@ -10,6 +10,7 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -46,6 +47,8 @@ from dmbot.ui.name_card import (
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
+
+log = logging.getLogger(__name__)
 
 WHO_BUTTON = "👁️ Who knows this?"
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
@@ -186,6 +189,7 @@ async def show_one(
         + (" 📌" if found.pinned else "")
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
+        + await why_line(found)  # DMs only: the DM's own text
         + (
             (
                 "Change the words, say if they've met, hide it, or remove it."
@@ -197,6 +201,35 @@ async def show_one(
         ),
         view,
     )
+
+
+# The DM's "Why?" (#3606), in the words Discord uses for the upload ("📜 Upload campaign lore") and
+# the website's line panel uses for the same line.
+WHY_LINE = 'Why: your lore "{label}" says \u201c{quote}\u201d'
+WHY_NO_QUOTE = 'Read from your lore "{label}". DMbot didn\'t keep the words.'
+
+
+async def why_line(found: Found) -> str:
+    """Where a kept lore connection came from and the reader's short quote of the DM's own text,
+    for the DM alone (#3606), as the website's line panel shows it. Empty for anyone else (a second
+    lock: the page checks too), when nothing is recorded (a connection from a session reads its
+    lines through "Where was it said?"), or when it can't be read: it never stops the page."""
+    if not found.secrets:
+        return ""
+    c = found.campaign
+    try:
+        got = await found.memory.link_source(c.guild_id, c.id, found.relation.id)
+    except MemoryRuleError:
+        return ""  # (the campaign went since the page was found: nothing to say)
+    except Exception:
+        log.exception("Couldn't read where a connection came from")
+        return ""
+    if got is None:
+        return ""
+    label, quote = _md(got[0]), _md(got[1])
+    return (
+        WHY_LINE.format(label=label, quote=quote) if quote else WHY_NO_QUOTE.format(label=label)
+    ) + "\n"
 
 
 class OneConnection(_Menu):

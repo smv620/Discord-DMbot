@@ -313,6 +313,11 @@ body:has(.account-wide) .wrap {
   gap: var(--space-2, 0.5rem);
 }
 
+/* The name editor takes its own full line in the name's row, so its saving wait is never beside the buttons (#3803). */
+.account .web-name-more > .web-node-editor {
+  flex-basis: 100%;
+}
+
 /* Tighter spacing on this page so the map starts as high as it can (owner, #2984). */
 .account .web-page {
   gap: var(--space-2, 0.5rem);
