@@ -93,6 +93,9 @@ class Finding:
     kind: str
     sentence: int  # 1-based, as the critics number the draft's sentences; 0: the draft as a whole
     name: str = ""  # a name or a player character, where the kind has one
+    # For "the <noun>" of an item (#2967): the item's name on the who-and-what sheet when its line
+    # there carries the players' line, so the writer is pointed at those words, "" otherwise.
+    told: str = ""
 
 
 def _first_word(sentence: str) -> str:
@@ -165,11 +168,13 @@ def findings(
     present: Collection[str],
     things: Collection[str] = (),
     threads: Sequence[str] = (),
+    told: Mapping[str, str] | None = None,
 ) -> list[Finding]:
     """What a reader who was away could not follow. `names` are the confirmed names (never a
     secret one), `previous` the earlier recap, `present` the player characters in the session,
     `things` the nouns of the items the players know ("lantern"), `threads` the open story threads
-    the players may know (#2950)."""
+    the players may know (#2950), `told` each noun's item whose sheet line has the players' line
+    (`told_of`, #2967)."""
     if not sentences:
         return []
     out: list[Finding] = []
@@ -199,9 +204,9 @@ def findings(
             if not found:
                 continue
             before = sentence[: found.start()]
-            told = bool(re.search(r"\b(?:a|an)\s+(?:[\w'-]+\s+){0,2}$", before, re.IGNORECASE))
-            if not told and not _WHO_AFTER.match(sentence[found.end() :]):
-                out.append(Finding(INTRODUCE, number, f"the {noun}"))
+            led = bool(re.search(r"\b(?:a|an)\s+(?:[\w'-]+\s+){0,2}$", before, re.IGNORECASE))
+            if not led and not _WHO_AFTER.match(sentence[found.end() :]):
+                out.append(Finding(INTRODUCE, number, f"the {noun}", (told or {}).get(noun, "")))
             break  # the first mention is the one that has to say what it is
     for number, sentence in enumerate(sentences, start=1):
         if number == len(sentences) or not _THREAD.search(sentence) or _RESULT.search(sentence):
@@ -249,6 +254,23 @@ def things_of(sheet: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
+def told_of(sheet: Sequence[str]) -> dict[str, str]:
+    """For each item noun on the sheet (`things_of`), the item's name, when its line there says
+    what the players know of it: the players' line (#2967) the DM wrote or a "players know all of
+    it" upload kept, written after the kind ("Warding Lantern (item): it glows near danger"). Only
+    a name is given, never the words: the writer reads them on the sheet it already has."""
+    out: dict[str, str] = {}
+    for line in sheet:
+        found = _ITEM_LINE.match(line.strip())
+        if not found or not re.search(r"\(item[^)]*\):\s*\S", line):
+            continue
+        name = found.group(1).strip()
+        nouns = things_of([line])
+        if nouns:
+            out.setdefault(nouns[0], name)
+    return out
+
+
 def _quote(sentences: Sequence[str], number: int) -> str:
     return f'sentence {number} ("{sentences[number - 1].strip()}")' if number else "the draft"
 
@@ -262,6 +284,13 @@ def changes(found: Sequence[Finding], sentences: Sequence[str]) -> list[Change]:
         if f.kind == OPENING:
             ask = f"{where}: open with the name of who it is about, not a pronoun"
             note = "Check: the recap opens without saying who it is about."
+        elif f.kind == INTRODUCE and f.told:
+            # (the sheet's own line for it is what the players know: the writer is sent to it)
+            ask = (
+                f"{where}: say in a few words what {f.name} is, from what the who-and-what "
+                f"sheet's line for {f.told} says the players know of it"
+            )
+            note = f"Check: {f.name} is named without saying what it is."
         elif f.kind == INTRODUCE:
             ask = (
                 f"{where}: say in a few words who or what {f.name} is, using only the names list, "

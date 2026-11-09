@@ -289,6 +289,34 @@ class TheThing(unittest.TestCase):
                 found = find(*sentences, things=["lantern"])
                 self.assertNotIn("introduce", [k for k, _, _ in kinds(found)])
 
+    def test_an_item_with_a_players_line_on_the_sheet_is_told(self) -> None:
+        sheet = (
+            "Warding Lantern (item): it glows green when a monster is near",
+            "Ring of Protection (item)",  # (no players' line: nothing to point at)
+            "Roan (character, smith): the smith of Oakmere",
+        )
+        self.assertEqual(away.told_of(sheet), {"lantern": "Warding Lantern"})
+
+    def test_the_writer_is_sent_to_the_item_s_own_line_never_given_its_words(self) -> None:
+        found = find(
+            "Maris saw the lantern glow green.", "Tavi ran.", things=["lantern", "ring"],
+            told={"lantern": "Warding Lantern"},
+        )  # fmt: skip
+        (lantern,) = [f for f in found if f.name == "the lantern"]
+        self.assertEqual(lantern.told, "Warding Lantern")
+        (change,) = away.changes([lantern], ["Maris saw the lantern glow green.", "Tavi ran."])
+        self.assertIn("the who-and-what sheet's line for Warding Lantern", change.text)
+        self.assertNotIn("glows", change.text)  # (a pointer, never the words)
+
+    def test_with_no_line_the_ask_is_as_before(self) -> None:
+        found = find("Maris saw the lantern glow green.", "Tavi ran.", things=["lantern"])
+        (change,) = [
+            c
+            for c in away.changes(found, ["Maris saw the lantern glow green.", "Tavi ran."])
+            if "lantern" in c.text
+        ]
+        self.assertIn("if none of them says, leave the detail out", change.text)
+
     def test_a_comma_and_the_is_not_an_introduction(self) -> None:
         found = find("Maris saw the lantern, the door opened.", "Tavi ran.", things=["lantern"])
         self.assertIn(("introduce", 1, "the lantern"), kinds(found))
