@@ -289,6 +289,9 @@ class Confirmed:
     # A connection the story held back that this claim stated, now shown to the players (#3963 c):
     # the caller says so to the DM.
     shown: bool = False
+    # Written held back beside a connection the story already holds back between the same two
+    # (#3975): the caller tells the DM, who shows it with 👁️ Reveal when the players should see it.
+    held: bool = False
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -2130,7 +2133,7 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = False
+            shown = held = False
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2170,10 +2173,12 @@ class ClaimStore:
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                # (a secret one is the DM's own choice, and says so already)
+                held = hold and not secret and relation.id not in live
             row = await w.update(
                 CLAIMS,
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch, shown)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held)

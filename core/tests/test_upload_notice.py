@@ -42,6 +42,13 @@ class Words(NamesTest):
         self.assertIn("**1 name** (1 NPC)", text)
         self.assertIn("**2 connections** said at the table are now shown to your players", text)
 
+    def test_a_connection_kept_hidden_beside_a_hidden_one_is_said(self) -> None:
+        """#3979: an import's claims kept hidden beside a connection DMbot already hides."""
+        text = un.notice_text("a session", {"held": 1}, 0)
+        self.assertIn("**1 connection** is hidden from your players for now", text)
+        self.assertIn("👁️ Reveal when they should see it", text)
+        self.assertNotIn("held", text)
+
 
 class Undoing(NamesTest):
     async def asyncSetUp(self) -> None:

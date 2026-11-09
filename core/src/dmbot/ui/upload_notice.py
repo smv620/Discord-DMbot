@@ -56,7 +56,9 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     """ "📜 Added **62 names** (30 NPCs, 24 places) and **48 connections** from <label>." and, when
     something is left, "**3 questions** need you." Counts only."""
     kinds = {
-        k: v for k, v in counts.items() if k not in ("connections", "other_names", "shown") and v
+        k: v
+        for k, v in counts.items()
+        if k not in ("connections", "other_names", "shown", "held") and v
     }
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
@@ -77,6 +79,14 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
         text += (
             f"\n👁️ **{shown} connection{'' if shown == 1 else 's'}** said at the table "
             f"{'is' if shown == 1 else 'are'} now shown to your players."
+        )
+    held = counts.get("held", 0)
+    if held:  # (an import's: kept hidden beside a connection DMbot already hides, #3979)
+        text += (
+            f"\n🙈 **{held} connection{'' if held == 1 else 's'}** "
+            f"{'is' if held == 1 else 'are'} hidden from your players for now: DMbot already hides "
+            f"another connection between the same two. Press 👁️ Reveal when they should see "
+            f"{'it' if held == 1 else 'them'}."
         )
     if questions:
         text += (
@@ -273,6 +283,8 @@ async def add_sure(
             counts["other_names"] = tally.accepted[auto.OTHER_NAMES]
         if tally.shown:
             counts["shown"] = tally.shown
+        if tally.held:
+            counts["held"] = tally.held
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]
