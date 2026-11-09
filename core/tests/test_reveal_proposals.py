@@ -10,7 +10,7 @@ from typing import Any
 from dmbot.campaigns.models import CampaignError
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.gate import CONNECTION
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from dmbot.memory.reveal_proposals import RevealProposals, Stored, forget
 from dmbot.memory.reveal_proposals_backup import RevealProposalsSection
 from dmbot.memory.reveal_reading import RevealProposal
@@ -290,3 +290,123 @@ class BackupAndIsolation(Base):
             prompt_version="reveals-1", model="m",
         )  # fmt: skip
         self.assertEqual(far.stored, 0)
+
+
+class Answering(Base):
+    async def one(self, *proposals: tuple[RevealProposal, tuple[int, ...]]) -> Any:
+        await self.put(*(proposals or ((check(), (DM_ID,)),)))
+        return (await self.reveals.waiting(GUILD_A, self.c, opted_in=RECORDED))[0]
+
+    async def test_the_card_reads_the_words_now_and_says_who_and_how(self) -> None:
+        shown = await self.reveals.describe(GUILD_A, self.c, await self.one())
+        assert shown is not None
+        self.assertEqual(
+            (shown.who, shown.what, shown.how, shown.player, shown.guessing),
+            ("Tran", "Bruno knows Shela", "a successful Insight check", False, False),
+        )
+
+    async def test_a_player_character_and_a_guess_are_said(self) -> None:
+        pc = self.ids["okthandom"]
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, self.rel, {pc: 0.3}, source="dm"
+        )
+        waiting = await self.one((check(who="Okthandom"), (DM_ID,)))
+        shown = await self.reveals.describe(GUILD_A, self.c, waiting)
+        assert shown is not None
+        self.assertEqual((shown.player, shown.guessing), (True, True))
+
+    async def test_keep_is_the_dm_s_learn_once_with_one_undo(self) -> None:
+        waiting = await self.one()
+        batch = await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        assert batch is not None
+        got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [self.rel])
+        self.assertEqual(got[self.rel], [self.tran])
+        (row,) = await self.rows()
+        self.assertEqual(row["status"], "kept")
+        with self.assertRaisesRegex(MemoryRuleError, "no longer waiting"):  # (a second press)
+            await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")
+        self.assertEqual(
+            await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [self.rel]), {}
+        )
+
+    async def test_only_the_dm_and_only_while_every_speaker_is_recorded(self) -> None:
+        waiting = await self.one()
+        for call in (self.reveals.keep, self.reveals.dismiss):
+            with self.subTest(call.__name__), self.assertRaises(MemoryRuleError):
+                if call is self.reveals.keep:
+                    await call(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="scan")
+                else:
+                    await self.reveals.dismiss(GUILD_A, self.c, waiting.id, source="scan")
+        with self.assertRaisesRegex(MemoryRuleError, "no longer waiting"):
+            await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in={ALICE}, source="dm")
+        self.assertEqual(await self.rows(), [])  # (the stopped speaker took it with them)
+
+    async def test_a_statement_gone_since_is_said_and_turned_down(self) -> None:
+        waiting = await self.one()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'rejected' WHERE id = %s", (self.rel,)
+            )
+        self.assertIsNone(await self.reveals.describe(GUILD_A, self.c, waiting))
+        with self.assertRaisesRegex(MemoryRuleError, "nothing to keep"):
+            await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        (row,) = await self.rows()
+        self.assertEqual(row["status"], "dismissed")
+
+    async def test_not_this_turns_it_down_for_good(self) -> None:
+        waiting = await self.one()
+        await self.reveals.dismiss(GUILD_A, self.c, waiting.id, source="dm")
+        self.assertEqual(await self.reveals.waiting(GUILD_A, self.c, opted_in=RECORDED), [])
+        self.assertEqual((await self.put((check(), (DM_ID,)))).stored, 0)
+        with self.assertRaisesRegex(MemoryRuleError, "no longer waiting"):
+            await self.reveals.dismiss(GUILD_A, self.c, waiting.id, source="dm")
+
+    async def test_a_store_failure_puts_it_back_to_wait(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        waiting = await self.one()
+        with (
+            patch.object(self.memory, "learn_statement", AsyncMock(side_effect=RuntimeError("x"))),
+            self.assertRaises(RuntimeError),
+        ):
+            await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        (row,) = await self.rows()
+        self.assertEqual(row["status"], "proposed")
+
+    async def test_keep_that_changes_nothing_returns_no_batch(self) -> None:
+        waiting = await self.one()
+        await self.memory.learn_statement(
+            GUILD_A, self.c, CONNECTION, self.rel, self.tran, source="dm"
+        )
+        batch = await self.reveals.keep(GUILD_A, self.c, waiting.id, opted_in=RECORDED, source="dm")
+        self.assertIsNone(batch)
+
+    async def test_the_card_for_an_entry_and_for_a_teller_gone_since(self) -> None:
+        await self.know(CONNECTION, self.rel, [self.clyde])
+        await self.put((check(subject="The Sword", rel="", obj=""), (DM_ID,)), (tell(), (DM_ID,)))
+        both = await self.reveals.waiting(GUILD_A, self.c, opted_in=RECORDED)
+        entry = next(w for w in both if w.kind == "entry")
+        told = next(w for w in both if w.how == "tell")
+        shown = await self.reveals.describe(GUILD_A, self.c, entry)
+        assert shown is not None
+        self.assertEqual(shown.what, "The Sword exists")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE id = %s", (self.clyde,)
+            )
+        gone_teller = await self.reveals.describe(GUILD_A, self.c, told)
+        assert gone_teller is not None
+        self.assertEqual(gone_teller.how, "another character told them")
+
+    async def test_nothing_to_show_once_the_character_is_gone_or_sure_of_it(self) -> None:
+        waiting = await self.one()
+        await self.memory.learn_statement(
+            GUILD_A, self.c, CONNECTION, self.rel, self.tran, source="dm"
+        )
+        self.assertIsNone(await self.reveals.describe(GUILD_A, self.c, waiting))  # (sure now)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE id = %s", (self.tran,)
+            )
+        self.assertIsNone(await self.reveals.describe(GUILD_A, self.c, waiting))

@@ -148,6 +148,7 @@ match. "In Discord" says where the DM finds it today.
 | Make these words a kind of connection | kind offer | #3577 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
+| What the characters learned (Keep / Not this) | reveal card | #3863 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
