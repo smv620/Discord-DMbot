@@ -139,6 +139,7 @@ from dmbot.memory.models import (
     MERGE_MANY_MAX,
     MERGED,
     NPC,
+    PARTY_SOURCE,
     PLAYER_CHARACTER,
     PLAYERS_TEXT_MAX,
     PROPOSED,
@@ -1370,17 +1371,29 @@ class MemoryStore:
         """The campaign's party (#3954: the one entry with the `party` flag): the flagged one, or a
         group the campaign already uses for the party, flagged, or a new "The party" (the DM can
         rename it), as `party.fill` finds it. Its members are its confirmed player characters. The
-        DM's own choice here also brings back one they rejected."""
+        DM's own choice here also brings back one they rejected or put aside, the flagged one or
+        else #3036's linked one."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
             found = await party_mod.flagged(w)
-            if found is not None and found["status"] == REJECTED:  # (the DM wants it again)
+            if found is not None and found["status"] != CONFIRMED:  # (the DM wants it again)
                 await w.update(ENTITIES, found["id"], {"status": CONFIRMED})
+            elif found is None:
+                gone = sorted(
+                    await w.select(
+                        ENTITIES, " AND source = %s AND type = 'faction' AND status = %s",
+                        [PARTY_SOURCE, REJECTED],
+                    ),
+                    key=lambda r: (r["created_at"], r["id"]),
+                )  # fmt: skip
+                if gone:  # (#3036's party, rejected: the DM's press brings it back, flagged)
+                    await w.update(ENTITIES, gone[0]["id"], {"status": CONFIRMED})
             filled = await party_mod.fill(w)
-            assert filled.party_id is not None  # (a rejected one was brought back above)
-            row = await w.get(ENTITIES, filled.party_id)
-            assert row is not None
+            party_id = filled.party_id or await party_mod._make(w)
+            row = await w.get(ENTITIES, party_id)
+            if row is None:
+                raise MemoryRuleError(NOT_FOUND)
             return _entity(row)
 
     async def make_party(self, guild_id: int, campaign_id: str) -> party_mod.Filled:
@@ -1394,9 +1407,11 @@ class MemoryStore:
             held = 0
             if filled.party_id is not None:
                 cur = await w.conn.execute(
-                    "SELECT count(*) AS n FROM memory_knowers k JOIN memory_perspectives p"
-                    " ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
-                    " AND p.id = k.perspective_id WHERE k.guild_id = %s AND k.campaign_id = %s"
+                    "SELECT (SELECT count(*) FROM memory_knowers k WHERE k.guild_id = p.guild_id"
+                    "  AND k.campaign_id = p.campaign_id AND k.perspective_id = p.id)"
+                    " + (SELECT count(*) FROM memory_alias_knowers a WHERE a.guild_id = p.guild_id"
+                    "  AND a.campaign_id = p.campaign_id AND a.perspective_id = p.id) AS n"
+                    " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
                     " AND p.entity_id = %s",
                     (guild_id, campaign_id, filled.party_id),
                 )

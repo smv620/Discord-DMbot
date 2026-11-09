@@ -129,56 +129,65 @@ async def flagged(w: Changes) -> dict[str, Any] | None:
 
 
 async def find_or_make(w: Changes) -> tuple[str | None, bool]:
-    """(the party's id, whether it was just made). The flagged entry, live; one the DM rejected is
-    their word that there is no such group: no id (None), nothing is made again and nobody is added
-    to it. Otherwise a group the campaign already uses for the party is adopted (`adopt`), else
-    one is made."""
+    """(the party's id, whether it was just made). The flagged entry, live; one the DM rejected or
+    put aside is their word that there is no such group: no id (None), nothing is made again and
+    nobody is added to it (only the DM's own `ensure_party` brings it back). Otherwise a group the
+    campaign already uses for the party is flagged (`fill`), else one is made."""
     filled = await fill(w)
     return filled.party_id, filled.step == "made"
 
 
 async def fill(w: Changes) -> Filled:
     """The one party of the campaign (#3954), in Supervisor's order, the first that applies:
-    the flagged entry; none when the DM rejected it; else the party #3036 linked (`source =
-    'party'`); else a live group whose members are exactly its member player characters; else a
-    live group named like the party (`PARTY_NAMES`), the oldest each time; else a new one. A
-    found group gets the flag, in the caller's change (one Undo)."""
+    the flagged entry; none when the DM rejected it (or the #3036 one) or put it aside; else the
+    party #3036 linked (`source = 'party'`); else a group whose members are exactly its member
+    player characters; else a group named like the party (`PARTY_NAMES`) with no member but them,
+    the oldest each time; else a new one. The party is always shown (a trigger shows a flagged
+    entry), so a group found by its name alone must be shown already: it may be the DM's own
+    secret. A clue only some know is never adopted. A found group gets the flag, in the caller's
+    change (one Undo)."""
     row = await flagged(w)
     if row is not None:
-        if row["status"] == REJECTED:
-            return Filled("rejected", None)
-        if row["status"] != CONFIRMED:  # (forgotten, then wanted again: as `ensure_party`)
-            await w.update(ENTITIES, row["id"], {"status": CONFIRMED})
-        return Filled("had", str(row["id"]))
+        if row["status"] == CONFIRMED and row["merged_into"] is None:
+            return Filled("had", str(row["id"]))
+        return Filled("rejected", None)  # (rejected, or put aside: the DM's to bring back)
+    if any(r["status"] == REJECTED for r in await w.select(
+        ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE]
+    )):  # fmt: skip
+        return Filled("rejected", None)  # (#3036's rule: a rejected linked party stays gone)
     groups = sorted(
         (
             r for r in await w.select(
-                ENTITIES, " AND type = 'faction' AND status = %s AND merged_into IS NULL",
+                ENTITIES,
+                " AND type = 'faction' AND status = %s AND merged_into IS NULL"
+                " AND NOT audience_limited",
                 [CONFIRMED],
             )
         ),
         key=lambda r: (r["created_at"], r["id"]),
     )  # fmt: skip
-    if any(r["status"] == REJECTED for r in await w.select(
-        ENTITIES, " AND source = %s AND type = 'faction'", [PARTY_SOURCE]
-    )):  # fmt: skip
-        return Filled("rejected", None)  # (#3036's rule: a rejected linked party stays gone)
     found = next((r for r in groups if r["source"] == PARTY_SOURCE), None)
     step = "linked"
     if found is None:
-        found, step = await _by_members(w, groups), "members"
-    if found is None:
-        found, step = await _by_name(w, groups), "named"
+        members = set(await members_of(w))
+        of = await _members(w, groups)
+        # (a group of exactly the party's characters IS the party: the players know it, so it is
+        # adopted even while it waits to be said, as every name the DM adds does, #2404)
+        found, step = _by_members(groups, of, members), "members"
+        if found is None:
+            # (by its name alone it may be the DM's own secret group: only one already shown)
+            shown = [g for g in groups if not g["hidden_from_players"]]
+            found, step = await _by_name(w, shown, of, members), "named"
     if found is not None:
         await w.update(ENTITIES, found["id"], {"party": True})
         return Filled(step, str(found["id"]))
     return Filled("made", await _make(w))
 
 
-async def _by_members(w: Changes, groups: list[dict[str, Any]]) -> dict[str, Any] | None:
-    members = set(await members_of(w))
-    if not members or not groups:
-        return None
+async def _members(w: Changes, groups: list[dict[str, Any]]) -> dict[str, set[str]]:
+    """Each group's current confirmed members (`member_of`)."""
+    if not groups:
+        return {}
     links = await w.select(
         RELATIONS,
         " AND predicate = %s AND status = %s AND to_session_at IS NULL AND object_id = ANY(%s)",
@@ -187,19 +196,35 @@ async def _by_members(w: Changes, groups: list[dict[str, Any]]) -> dict[str, Any
     of: dict[str, set[str]] = {}
     for r in links:
         of.setdefault(str(r["object_id"]), set()).add(str(r["subject_id"]))
+    return of
+
+
+def _by_members(
+    groups: list[dict[str, Any]], of: dict[str, set[str]], members: set[str]
+) -> dict[str, Any] | None:
+    if not members:
+        return None
     return next((g for g in groups if of.get(str(g["id"])) == members), None)
 
 
-async def _by_name(w: Changes, groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+async def _by_name(
+    w: Changes, groups: list[dict[str, Any]], of: dict[str, set[str]], members: set[str]
+) -> dict[str, Any] | None:
+    """A group named like the party, by its name or a confirmed public other name, whose members
+    are only the party's characters (or none): a group with an NPC in it is the DM's own faction,
+    and adopting it would stop its knowledge reaching its NPCs."""
     if not groups:
         return None
     rows = await w.select(
-        ALIASES, " AND status = %s AND entity_id = ANY(%s)",
+        ALIASES, " AND status = %s AND NOT secret AND entity_id = ANY(%s)",
         [CONFIRMED, [str(g["id"]) for g in groups]],
     )  # fmt: skip
     named = {str(r["entity_id"]) for r in rows if name_key(str(r["text"])) in PARTY_NAMES}
     named |= {str(g["id"]) for g in groups if name_key(str(g["name"])) in PARTY_NAMES}
-    return next((g for g in groups if str(g["id"]) in named), None)
+    return next(
+        (g for g in groups if str(g["id"]) in named and of.get(str(g["id"]), set()) <= members),
+        None,
+    )
 
 
 async def _make(w: Changes) -> str:

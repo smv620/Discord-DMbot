@@ -1078,6 +1078,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
         self.importance = ImportanceCache(memory) if memory is not None else None
+        self.party_fill: asyncio.Task[Counter[str]] | None = None  # the start's party fill (#3954)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources: SourceStore | None = (
@@ -14828,7 +14829,15 @@ async def fill_parties(
         log.warning("The party fill could not list the campaigns (%s)", type(exc).__name__)
         return steps
     for guild_id in guilds:
-        for campaign_id in sorted(await campaigns.campaign_ids(guild_id)):
+        try:
+            listed = sorted(await campaigns.campaign_ids(guild_id))
+        except Exception as exc:  # (one server's list failing never stops the rest, nor the start)
+            steps["failed"] += 1
+            log.warning(
+                "The party fill could not list a server's campaigns (%s)", type(exc).__name__
+            )
+            continue
+        for campaign_id in listed:
             try:
                 filled = await make(guild_id, campaign_id)
             except Exception as exc:  # the type only: a database error can quote a row
@@ -14929,10 +14938,14 @@ async def run(settings: Settings) -> None:
             bot.image_desk.counter = ImageUseStore(db)
         if bot.memory is not None:
             # The party is the first entry of every campaign (#3954): made with each new campaign,
-            # and once now for every campaign that has none (the fill, idempotent).
+            # and for every campaign that has none by the fill, in the background once the bot is
+            # starting, so it never holds up the login (idempotent: one read for a campaign that
+            # has its party). The task is kept on the bot, so it is not collected half done.
             party_of = bot.memory.make_party
             campaigns.on_create(party_of)
-            await fill_parties(campaigns, party_of)
+            bot.party_fill = asyncio.get_running_loop().create_task(
+                fill_parties(campaigns, party_of)
+            )
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
