@@ -717,11 +717,19 @@ function pretendReadings(): Reading[] {
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 /** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
-function pretendWaiting(): Waiting {
+/** Two claims for a campaign ref ending `.shown-held`: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
+function pretendWaiting(ref = ""): Waiting {
+  const shownHeld: WaitingClaim[] = ref.endsWith(".shown-held")
+    ? [
+        { id: "c3-shown", statement: "Tavin is Mira's cousin", canSecret: false },
+        { id: "c4-held", statement: "Mira Voss grew up in Far Hall", canSecret: false },
+      ]
+    : [];
   return {
     claims: [
       { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
       { id: "c2", statement: "Roan is dead", canSecret: false },
+      ...shownHeld,
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
@@ -2168,7 +2176,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       return structuredClone({
         ...waiting,
         counts: {
@@ -2187,7 +2195,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       // Family ties (#3463): a pick settles one name of a kept claim (the claim becomes an ordinary waiting one
       // once none is left), and Undo puts it back; "None of these" is the ordinary reject below.
@@ -2229,7 +2237,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
-      if (answer.kind === "claim" && answer.action === "confirm") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
+      if (answer.kind === "claim" && answer.action === "confirm") {
+        // A yes the bot showed to the players, or kept hidden beside another hidden connection (#3974, #3986).
+        if (answer.id.endsWith("-shown")) return { shown: 1 };
+        if (answer.id.endsWith("-held")) return { held: 1 };
+        return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
+      }
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
