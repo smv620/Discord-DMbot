@@ -83,6 +83,7 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    reveal_stated_in,
 )
 from dmbot.memory.voice import (
     EFFECT,
@@ -2150,6 +2151,9 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
+                if not secret and await reveal_stated_in(w, relation.id):
+                    # (the table said it: a connection the story held back is the party's now)
+                    logger.info("A held-back connection the table stated is shown")
             row = await w.update(
                 CLAIMS,
                 claim_id,

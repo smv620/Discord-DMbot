@@ -640,6 +640,53 @@ class Stored(ConfirmedMemoryTest):
         counts = await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE)
         self.assertEqual(counts, {"proposed": 1, "names": 1, "dropped": 1})
 
+    async def held_back(self, *, end_hidden: bool = False) -> str:
+        """Bram is in Veldmoor, a connection the story holds back (#2404), between two names the
+        players have been shown (or, with `end_hidden`, one they have not)."""
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
+            status="confirmed", confidence=1.0, unrevealed=True,
+        )  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = (id = %s AND %s)"
+                " WHERE guild_id = %s AND campaign_id = %s AND id IN (%s, %s)",
+                (self.town, end_hidden, GUILD_A, self.c, self.bram, self.town),
+            )
+        return made.value[0].id
+
+    async def unrevealed(self, relation_id: str) -> bool:
+        (rel,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id == relation_id]  # fmt: skip
+        return rel.unrevealed
+
+    async def test_a_held_back_connection_the_table_states_is_shown_and_undo_hides_it(self) -> None:
+        """#3963 (c): the session reader extracted it and the claim became it, so the party knows
+        it now; one Undo takes back the claim and the showing together."""
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual(done.claim.fact_id, rel)
+        self.assertFalse(await self.unrevealed(rel))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_secret_claim_or_an_unseen_end_shows_nothing(self) -> None:
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=True)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_an_end_the_players_have_not_seen_keeps_it_held_back(self) -> None:
+        rel = await self.held_back(end_hidden=True)
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(await self.unrevealed(rel))
+
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
         await self.propose(said("Bram", "is blood-bound to", "Hesper"))
