@@ -160,6 +160,7 @@ NOT_STAMPED: dict[str, str] = {
             "setting_actions",
             "said_as_hears",
             "said_as_listens",
+            "script_makes",
             "web_backup_parts",
             "web_backups",
             "web_house_file_actions",

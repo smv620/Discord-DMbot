@@ -59,6 +59,21 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g.await_args.kwargs["session_started_at"], 9)
         self.assertEqual(run.await_args.kwargs["max_calls"], 10)
 
+    async def test_an_import_s_own_list_of_who_was_recorded_is_used(self) -> None:
+        # (an import passes `recorded_in`, Supervisor on #3918: the server's list isn't asked)
+        me = self.fake()
+        items = [ir.Item(1, "e" * 32, "Vex", "character", 1)]
+        recorded = AsyncMock(return_value=frozenset({8, -3}))
+        canned = AsyncMock(return_value=(items, {}, {}))
+        with patch.object(importance_step, "gather", canned) as g, \
+                patch.object(importance_step, "run", AsyncMock(
+                    return_value=importance_step.Report())) as run:  # fmt: skip
+            await DMBot._read_importance(me, 1, "c", "s", consenting=recorded)
+        assert g.await_args is not None and run.await_args is not None
+        self.assertEqual(g.await_args.kwargs["agreed"], frozenset({8, -3}))
+        self.assertIs(run.await_args.kwargs["consenting"], recorded)
+        me.consent.consenting.assert_not_awaited()
+
     async def test_no_calls_left_reads_nothing(self) -> None:
         me = self.fake()
         me.transcripts.extraction = AsyncMock(return_value=(0, 480))

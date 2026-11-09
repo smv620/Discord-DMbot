@@ -48,7 +48,9 @@ log = logging.getLogger(__name__)
 
 RETRY_AFTER_S = 3600  # the one retry waits an hour
 DEADLINE_S = AUDIO_LEASE_S - 120  # all the work must end before the lease can lapse
-DEFAULT_MAX_CREDITS = 15_000  # about $3 at the Creator plan's price: a recap is about 7,000
+# About $4 at the Creator plan's price. A recap at the 1,000-word ceiling (#3633) costs about
+# 13,700-15,650 credits and one at 600 words about 9,500, so the cap leaves room above both.
+DEFAULT_MAX_CREDITS = 20_000
 
 NOT_INCLUDED = "Narration and music aren't part of this campaign's plan, so they weren't made."
 STOPPED = "A player stopped being recorded, so the audio wasn't made. The text is not changed."
