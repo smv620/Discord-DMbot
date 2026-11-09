@@ -72,69 +72,124 @@ describe("the bar", () => {
   });
   const open = () => fireEvent.click(screen.getByRole("button", { name: w.open }));
   const type = (v: string) => fireEvent.input(screen.getByLabelText(w.label), { target: { value: v } });
+  const wait = (ms: number) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
-  it("asks nothing while typing, only on Ask or Enter", async () => {
+  it("uses the owner's exact words", () => {
+    expect(w.cant).toBe("DMbot can't answer right now. Try again in a little while.");
+    expect(w.limit.hour).toBe("Too many requests to process, try again in about an hour.");
+    expect(w.limit.day).toBe("Too many requests to process, try again tomorrow.");
+  });
+  it("asks once after a 600 ms pause, with no button pressed", async () => {
     const fetcher = vi.fn(reply(200, { answer: "Yes." }));
     vi.stubGlobal("fetch", fetcher);
     render(<SearchBar />);
     open();
     type("how much does it cost");
+    await wait(500);
     expect(fetcher).not.toHaveBeenCalled();
+    await wait(200);
+    expect(await screen.findByText("Yes.")).toBeTruthy();
+    await wait(2000);
+    expect(fetcher).toHaveBeenCalledTimes(1); // (the same words are not asked twice)
+  });
+  it("does not ask while typing carries on inside 600 ms", async () => {
+    const fetcher = vi.fn(reply(200, { answer: "Yes." }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<SearchBar />);
+    open();
+    for (const v of ["h", "ho", "how", "how m"]) {
+      type(v);
+      await wait(400);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("drops the earlier call when the words change, and asks again", async () => {
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal("fetch", (_u: string, init: RequestInit) => {
+      signals.push(init.signal as AbortSignal);
+      return new Promise<Response>(() => {});
+    });
+    render(<SearchBar />);
+    open();
+    type("first question");
+    await wait(700);
+    type("second question");
+    await wait(700);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+  });
+  it("asks at once on Enter, and Ask does the same", async () => {
+    const fetcher = vi.fn(reply(200, { answer: "Yes." }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<SearchBar />);
+    open();
+    type("how much does it cost");
     fireEvent.keyDown(screen.getByLabelText(w.label), { key: "Enter" });
     expect(await screen.findByText("Yes.")).toBeTruthy();
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
-  it("shows thinking with the seconds, then 'Still thinking' after 20, then the answer; line 1 stays", async () => {
-    let finish: (r: Response) => void = () => {};
-    vi.stubGlobal("fetch", () => new Promise<Response>((go) => (finish = go)));
-    render(<SearchBar />);
-    open();
-    type("how much does it cost");
-    fireEvent.click(screen.getByRole("button", { name: w.ask }));
-    expect(await screen.findByText(w.thinking, { exact: false })).toBeTruthy();
-    expect(screen.queryByText(w.stillThinking)).toBeNull();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(21_000);
+  it("shows thinking at once, the seconds from 3 s, and the cant line at 12 s with the call dropped", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", (_u: string, init: RequestInit) => {
+      signal = init.signal as AbortSignal;
+      return new Promise<Response>(() => {});
     });
-    expect(screen.getByText(w.stillThinking)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Prices" })).toBeTruthy(); // (line 1 is unchanged while waiting)
-    await act(async () => finish(new Response(JSON.stringify({ answer: "From 0 to 12 dollars.", link: "/pricing" }), { status: 200 })));
-    expect(await screen.findByText("From 0 to 12 dollars.", { exact: false })).toBeTruthy();
-    expect(screen.queryByText(w.thinking, { exact: false })).toBeNull();
-    expect(screen.getAllByRole("link", { name: "/pricing" })).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "Prices" })).toBeTruthy();
-  });
-  it("says it can't answer when it fails, and keeps line 1", async () => {
-    vi.stubGlobal("fetch", reply(503, {}));
     render(<SearchBar />);
     open();
     type("how much does it cost");
-    fireEvent.click(screen.getByRole("button", { name: w.ask }));
+    fireEvent.keyDown(screen.getByLabelText(w.label), { key: "Enter" });
+    expect(await screen.findByText(w.thinking)).toBeTruthy();
+    await wait(2000);
+    expect(screen.getByText(w.thinking)).toBeTruthy(); // (no seconds yet)
+    await wait(2000);
+    expect(screen.getByText(w.thinkingFor(4))).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Prices" })).toBeTruthy(); // (line 1 stays)
+    await wait(9000);
+    expect(screen.getByText(w.cant)).toBeTruthy();
+    expect(signal?.aborted).toBe(true);
+    expect(screen.queryByText("Still thinking…", { exact: false })).toBeNull();
+  });
+  it("shows the answer with at most one link to this site, and reads it as text", async () => {
+    vi.stubGlobal("fetch", reply(200, { answer: "See <b>prices</b>.", link: "/pricing" }));
+    render(<SearchBar />);
+    open();
+    type("how much does it cost");
+    fireEvent.keyDown(screen.getByLabelText(w.label), { key: "Enter" });
+    expect(await screen.findByText("See <b>prices</b>.", { exact: false })).toBeTruthy();
+    expect(document.querySelector(".site-search-answer b")).toBeNull();
+    expect(screen.getAllByRole("link", { name: "/pricing" })).toHaveLength(1);
+  });
+  it("says it can't answer when the call fails, and keeps line 1; a retry is allowed", async () => {
+    const fetcher = vi.fn(reply(503, {}));
+    vi.stubGlobal("fetch", fetcher);
+    render(<SearchBar />);
+    open();
+    type("how much does it cost");
+    fireEvent.keyDown(screen.getByLabelText(w.label), { key: "Enter" });
     expect(await screen.findByText(w.cant)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Prices" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.ask }));
+    await wait(10);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("says what a limit means", async () => {
     vi.stubGlobal("fetch", reply(429, { limit: "day" }));
     render(<SearchBar />);
     open();
     type("anything");
-    fireEvent.click(screen.getByRole("button", { name: w.ask }));
+    fireEvent.keyDown(screen.getByLabelText(w.label), { key: "Enter" });
     expect(await screen.findByText(w.limit.day)).toBeTruthy();
   });
-  it("clears an old answer when the words change, and drops a pending one on close", async () => {
-    vi.stubGlobal("fetch", reply(200, { answer: "Old answer." }));
-    render(<SearchBar />);
-    open();
-    type("one");
-    fireEvent.click(screen.getByRole("button", { name: w.ask }));
-    await screen.findByText("Old answer.");
-    type("two");
-    expect(screen.queryByText("Old answer.")).toBeNull();
-  });
-  it("has no Ask button while the switch is off", () => {
+  it("asks nothing and shows no Ask button while the switch is off", async () => {
     live.on = false;
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
     render(<SearchBar />);
     open();
+    type("how much does it cost");
+    await wait(2000);
+    expect(fetcher).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: w.ask })).toBeNull();
   });
 });

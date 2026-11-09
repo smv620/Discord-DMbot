@@ -6,15 +6,13 @@ export const searchWords = {
   hint: "Type a few words, like “how much does it cost”.",
   best: "Best match:",
   none: "No page matches that. Try other words.",
-  // Line 2 (#3855): the short answer. The failure line is Supervisor's, word for word.
+  // Line 2 (#3855): the short answer. These words are the owner's and docs/PLAN.md's ("Search the website"), exactly.
   ask: "Ask",
   thinking: "[... thinking ...]",
-  stillThinking: "Still thinking…",
-  seconds: (n: number): string => `${n}s`,
-  cant: "DMbot can't answer right now. The page above is the best match.",
-  // Over a limit: 429 with the hour or the day. Plain words, and what to do next.
+  thinkingFor: (n: number): string => `[... thinking ... ${n} s]`,
+  cant: "DMbot can't answer right now. Try again in a little while.",
   limit: {
-    hour: "That's all the questions for this hour. Try again in a bit, or use the page above.",
-    day: "That's all the questions for today. Try again tomorrow.",
+    hour: "Too many requests to process, try again in about an hour.",
+    day: "Too many requests to process, try again tomorrow.",
   },
 } as const;

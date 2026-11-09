@@ -13,6 +13,10 @@ import { type Asked, askSite, ASK_MAX } from "./ask";
 import { bestMatch } from "./match";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
+/** How long typing must pause before the question is asked. */
+export const PAUSE_MS = 600;
+/** The server gives up at 10 s, so a reply after 12 s is not coming: stop waiting and say so. */
+export const GIVE_UP_MS = 12_000;
 
 export default function SearchBar() {
   const [open, setOpen] = useState(false);
@@ -23,27 +27,60 @@ export default function SearchBar() {
   const [line2, setLine2] = useState<Asked | "thinking" | null>(null);
   const [waited, setWaited] = useState(0);
   const asking = useRef<AbortController | null>(null);
+  const lastAsked = useRef("");
   useEffect(() => {
     if (line2 !== "thinking") return;
     setWaited(0);
     const timer = setInterval(() => setWaited((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [line2]);
+  // Ask once typing has paused for 600 ms (the owner's request: no button to press); a pause with changed words drops the
+  // earlier call and asks again, and the same words are not asked twice. Enter asks at once.
+  useEffect(() => {
+    if (!SEARCH_ASK_LIVE || !open) return;
+    const words = text.trim();
+    if (words === "") {
+      asking.current?.abort();
+      asking.current = null;
+      lastAsked.current = "";
+      setLine2(null);
+      return;
+    }
+    if (words === lastAsked.current) return;
+    const pause = setTimeout(() => void ask(), PAUSE_MS);
+    return () => clearTimeout(pause);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, open]);
   useEffect(() => {
     if (open) field.current?.focus();
   }, [open]);
   const found = text.trim() === "" ? null : bestMatch(text);
   const ask = async (): Promise<void> => {
-    if (!SEARCH_ASK_LIVE || text.trim() === "" || line2 === "thinking") return;
+    const words = text.trim();
+    if (!SEARCH_ASK_LIVE || words === "" || words === lastAsked.current) return;
+    asking.current?.abort(); // (changed words drop the earlier call)
     const mine = new AbortController();
     asking.current = mine;
+    lastAsked.current = words;
     setLine2("thinking");
-    const got = await askSite(text, base, fetch, mine.signal);
-    if (asking.current === mine) setLine2(got);
+    const giveUp = setTimeout(() => {
+      mine.abort();
+      if (asking.current === mine) {
+        setLine2({ kind: "failed" });
+        lastAsked.current = ""; // (so Enter or Ask can try the same words again)
+      }
+    }, GIVE_UP_MS);
+    const got = await askSite(words, base, fetch, mine.signal);
+    clearTimeout(giveUp);
+    if (asking.current === mine) {
+      setLine2(got);
+      if (got.kind === "failed") lastAsked.current = "";
+    }
   };
   const close = (): void => {
     asking.current?.abort();
     asking.current = null;
+    lastAsked.current = "";
     setLine2(null);
     setOpen(false);
     setText("");
@@ -74,7 +111,6 @@ export default function SearchBar() {
           maxLength={SEARCH_ASK_LIVE ? ASK_MAX : undefined}
           onInput={(e) => {
             setText((e.target as HTMLInputElement).value);
-            if (line2 !== "thinking") setLine2(null); // (an answer is for the question it was asked of)
           }}
           onKeyDown={(e) => {
             if (SEARCH_ASK_LIVE && e.key === "Enter") {
@@ -84,7 +120,7 @@ export default function SearchBar() {
           }}
         />
         {SEARCH_ASK_LIVE && (
-          <button type="button" class="button secondary" disabled={text.trim() === "" || line2 === "thinking"} onClick={() => void ask()}>
+          <button type="button" class="button secondary" disabled={text.trim() === ""} onClick={() => void ask()}>
             {w.ask}
           </button>
         )}
@@ -104,7 +140,7 @@ export default function SearchBar() {
           <div role="status" aria-live="polite" class="site-search-answer">
             {line2 === "thinking" && (
               <p class="muted">
-                {w.thinking} {waited >= 1 && <span class="small">{w.seconds(waited)}</span>} {waited >= 20 && <span>{w.stillThinking}</span>}
+                {waited >= 3 ? w.thinkingFor(waited) : w.thinking}
               </p>
             )}
             {line2 !== null && line2 !== "thinking" && line2.kind === "answer" && (
