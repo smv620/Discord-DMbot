@@ -1356,6 +1356,19 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**Uploads and imports apply what DMbot is sure of (owner, 2026-11-09, #3878).** After about ten deploys of accepting every
+suggestion as it was, the owner's rule: when DMbot reads **background lore** or **imports earlier sessions**, it **adds what it
+found by itself** and only asks about what it is unsure of. "Sure" means what the **Add all** buttons would add today: new
+names, other names and spellings, and connections found in the text (family roles and feelings included), each through the
+store's own DM calls, so every rule is checked again (`devtools/accept_all` is the pattern). Still **asked**, never guessed:
+"Which one?", same-person questions, a name that needs to know who plays it, anything with no suggestion, and anything a rule
+refuses. What was added follows the usual rules: secret only when uploaded with spoilers, nothing revealed to players because
+it was added, and nothing anyone confirmed is overwritten. Afterwards the DM gets one notice, in the DM Bot channel (counts
+only) and privately: "Added 62 names and 48 connections from <label>", the few questions left with their buttons, a link to
+the website's **Names** page and one to the **Story Graph**, and **Undo this upload**. That undoes the whole batch, from the
+notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
+one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
