@@ -344,7 +344,7 @@ class ThePath(NamesTest):
         # These tests are of the Add all flow: "Ask me before adding" is on. The default (off) adds
         # what DMbot is sure of by itself, which `test_upload_notice.py` and the tests marked
         # "by itself" below cover (#3878).
-        await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
 
     async def asyncTearDown(self) -> None:
         _ai_busy.clear()  # module state: other tests' document reads must not see ours
@@ -371,7 +371,7 @@ class ThePath(NamesTest):
     async def read_by_itself(self, channel_id: int | None = None) -> tuple[Any, Any]:
         """The reading with "Ask me before adding" off (the default): what DMbot is sure of is added
         by itself. The bot's posts are stood in; returns the DM's card press and the stand-in."""
-        await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
         if channel_id is not None:
             await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
         sent = SimpleNamespace(
