@@ -189,7 +189,7 @@ async def show_one(
         + (" 📌" if found.pinned else "")
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
-        + (await why_line(found) if found.secrets else "")  # DMs only: the DM's own text
+        + await why_line(found)  # DMs only: the DM's own text
         + (
             (
                 "Change the words, say if they've met, hide it, or remove it."
@@ -203,25 +203,33 @@ async def show_one(
     )
 
 
-WHY_FROM = "From your notes: "  # (#3606: where a kept lore connection came from)
+# The DM's "Why?" (#3606), in the words Discord uses for the upload ("📜 Upload campaign lore") and
+# the website's line panel uses for the same line.
+WHY_LINE = 'Why: your lore "{label}" says \u201c{quote}\u201d'
+WHY_NO_QUOTE = 'Read from your lore "{label}". DMbot didn\'t keep the words.'
 
 
 async def why_line(found: Found) -> str:
-    """Where the connection was kept from and the reader's short quote, for the DM's "Why?"
-    (#3606), as the website's line panel shows it: the upload's own label and up to 240 characters
-    of the DM's own text. Empty when nothing is recorded (a connection from a session reads its
+    """Where a kept lore connection came from and the reader's short quote of the DM's own text,
+    for the DM alone (#3606), as the website's line panel shows it. Empty for anyone else (a second
+    lock: the page checks too), when nothing is recorded (a connection from a session reads its
     lines through "Where was it said?"), or when it can't be read: it never stops the page."""
+    if not found.secrets:
+        return ""
     c = found.campaign
     try:
         got = await found.memory.link_source(c.guild_id, c.id, found.relation.id)
+    except MemoryRuleError:
+        return ""  # (the campaign went since the page was found: nothing to say)
     except Exception:
         log.exception("Couldn't read where a connection came from")
         return ""
     if got is None:
         return ""
-    label, quote = got
-    line = f"{WHY_FROM}{_md(label)}"
-    return line + (f" \u2014 \u201c{_md(quote)}\u201d" if quote else "") + "\n"
+    label, quote = _md(got[0]), _md(got[1])
+    return (
+        WHY_LINE.format(label=label, quote=quote) if quote else WHY_NO_QUOTE.format(label=label)
+    ) + "\n"
 
 
 class OneConnection(_Menu):
