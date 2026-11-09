@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import discord
@@ -211,15 +211,6 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
     if problem or session is None or campaign is None:
         await interaction.edit_original_response(content=problem or GONE)
         return job.Outcome(problem or GONE, started=False)
-    ai, memory = bot.theatre_ai, bot.memory
-    assert ai is not None and memory is not None  # (the switch check above)
-
-    async def ask(instructions: str, scene: str) -> Any:
-        return await ai.complete(instructions, scene)
-
-    async def agreed_now() -> Any:
-        return await bot.consent.consenting(guild_id)
-
     edit_failed = False
 
     async def edit(text: str) -> None:
@@ -229,6 +220,49 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
             edit_failed = False
         except discord.HTTPException:
             edit_failed = True  # (the card's 15 minutes ran out, or it was dismissed)
+
+    outcome = await make_for(bot, guild_id, session_id, session, campaign, edit)
+    if not outcome.started and not outcome.taken_over:
+        await edit(outcome.text)  # a second card for a run already going: say so, never hang
+    elif outcome.started and not outcome.taken_over and edit_failed:
+        # The last word still reaches the DM, with the script's page on the website (#3663).
+        site = bot.settings.site_url
+        # (the address is built here, but only for a site Discord would take: an https one)
+        page = (
+            script_link(site, guild_id, session.campaign_id, session.number)
+            if dm_links.site_link(site, "transcripts", guild_id, session.campaign_id)
+            else ""
+        )
+        view = dm_links.for_campaign(
+            None,
+            site,
+            guild_id,
+            session.campaign_id,
+            dm_links.DMLinks(page="transcripts", site_url_override=page),
+        )
+        await bot.sidebar_send_dm(user, outcome.text, view)
+    return outcome
+
+
+async def make_for(
+    bot: Any,
+    guild_id: int,
+    session_id: str,
+    session: Any,
+    campaign: Any,
+    edit: Callable[[str], Awaitable[None]],
+) -> job.Outcome:
+    """Make a session's script with the consent re-checked as the job runs (`edit` shows its
+    progress: the DM's private card, or nothing when DMbot makes it by itself, #3901). The caller
+    has checked who asked, the switch and the plan."""
+    ai, memory = bot.theatre_ai, bot.memory
+    assert ai is not None and memory is not None  # (the switch check above)
+
+    async def ask(instructions: str, scene: str) -> Any:
+        return await ai.complete(instructions, scene)
+
+    async def agreed_now() -> Any:
+        return await bot.consent.consenting(guild_id)
 
     agreed = await agreed_now()
     lines = await bot.transcripts.lines(guild_id, session_id)
@@ -253,25 +287,6 @@ async def run(interaction: discord.Interaction, guild_id: int, session_id: str) 
         await read_relationships(
             bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
         )
-    if not outcome.started and not outcome.taken_over:
-        await edit(outcome.text)  # a second card for a run already going: say so, never hang
-    elif outcome.started and not outcome.taken_over and edit_failed:
-        # The last word still reaches the DM, with the script's page on the website (#3663).
-        site = bot.settings.site_url
-        # (the address is built here, but only for a site Discord would take: an https one)
-        page = (
-            script_link(site, guild_id, session.campaign_id, session.number)
-            if dm_links.site_link(site, "transcripts", guild_id, session.campaign_id)
-            else ""
-        )
-        view = dm_links.for_campaign(
-            None,
-            site,
-            guild_id,
-            session.campaign_id,
-            dm_links.DMLinks(page="transcripts", site_url_override=page),
-        )
-        await bot.sidebar_send_dm(user, outcome.text, view)
     return outcome
 
 

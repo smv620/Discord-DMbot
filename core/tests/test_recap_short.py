@@ -81,7 +81,9 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
         plan_allows=plan_allows,
         recap_worker=object(),
         recaps=SimpleNamespace(
-            enqueue=AsyncMock(return_value=True), get=AsyncMock(return_value=None)
+            enqueue=AsyncMock(return_value=True),
+            get=AsyncMock(return_value=None),
+            waiting_for_script=AsyncMock(return_value=False),
         ),
         transcripts=SimpleNamespace(
             session=AsyncMock(

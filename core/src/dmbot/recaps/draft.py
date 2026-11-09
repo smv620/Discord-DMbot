@@ -5,8 +5,8 @@ The prose is written from the beat sheet only, never the transcript, and the che
 the sheet whatever the model says (CLAUDE.md: DMbot never invents story; DM-screen content never
 goes to players):
 
-- it opens with an emotion cue `《…》` and its length follows the session's: about 75 words plus
-  75 for each hour played (`length_for`), at most 450. That is a target in the writer's
+- it opens with an emotion cue `《…》` and its length follows the session's: about 250 words plus
+  150 for each hour played (`length_for`), at most 1,000. That is a target in the writer's
   instructions and never a check: whatever length comes back is used (owner, 2026-10-24, #2597);
 - no quotation, and no run of 6 words in a row taken from the table;
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
@@ -58,9 +58,9 @@ from dmbot.transcript.import_plan import SPOKEN_WORDS_PER_HOUR as SPOKEN_WORDS_P
 
 log = logging.getLogger(__name__)
 
-BASE_WORDS = 150  # the recap's length: this many words, and 100 more for each hour played (#2954)
-WORDS_PER_HOUR = 100
-WORDS_CEILING = 600  # a 4.5-hour session or longer
+BASE_WORDS = 250  # the recap's length: this many words, and 150 more for each hour played (#3633)
+WORDS_PER_HOUR = 150
+WORDS_CEILING = 1000  # a 5-hour session or longer (about seven minutes read aloud)
 ROOM_TIMES = 2.5  # the output room is sized for a draft this many times the target (a ceiling)
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 # The recap text the database holds (`recap_jobs.summary`, backups) and the web editor takes: the
@@ -294,9 +294,9 @@ class Length:
 
 
 def length_for(hours: float) -> Length:
-    """150 words and 100 for each hour played, to the nearest 10 with a half rounding up (Python's
-    round() would make 2.5 hours 390) and at most 600: 0.5 hours 200, 1 hour 250, 3 hours 450,
-    4.5 hours or more 600 (#2954; it was 75 + 75 an hour up to 450). The other numbers follow:
+    """250 words and 150 for each hour played, to the nearest 10 with a half rounding up (Python's
+    round() would make 2.5 hours 620) and at most 1,000: 0.5 hours 330, 1 hour 400, 3 hours 700,
+    5 hours or more 1,000 (#3633; it was 150 + 100 an hour up to 600, #2954). The rest follows:
     3 beats an hour (3 to 10), a section for every 70 words (1 to 6), 8 characters for each word
     of the longest room (so the cap never cuts a draft) and a token budget for the words, the
     music prompts and the form. The words are a target in the instructions: no draft is refused
@@ -694,8 +694,9 @@ def prose_message(
         pairs = "; ".join(f"{quoted(a)} and {quoted(b)}" for a, b in apart[:50])
         parts.append(
             "Each pair of names in <apart> has a connection the Dungeon Master keeps secret. They "
-            "may be in the same scene, but never say or hint that they are connected, and never "
-            f"explain how they know each other.\n<apart>\n{pairs}\n</apart>"
+            "may be in the same scene. You may hint at the connection cryptically, such as a "
+            "familiar look passing between them, but never state it and never explain how they "
+            f"know each other.\n<apart>\n{pairs}\n</apart>"
         )
     parts.append(f"Game day: {day}." if day else "The game day is not known: do not mention a day.")
     return "\n".join(parts)
@@ -956,6 +957,8 @@ def respelled(
     setting: str | None = None,
     transcript: str = "",
     aliases: Mapping[str, str] | None = None,
+    who_and_what: Sequence[str] = (),
+    story: Sequence[str] = (),
 ) -> tuple[Prose, tuple[str, ...]]:
     """The prose with a character's misheard spelling put back to its name (#2573), and what is
     too close to a secret name (#2591). Since #2628 the names of the transcript are settled by
@@ -985,7 +988,7 @@ def respelled(
         summary,
         names=sorted(names),
         secret_names=secret_names,
-        known_words=_known(beats, allowed_names, previous, setting),
+        known_words=_known(beats, allowed_names, previous, setting, who_and_what, story),
         ordinary_words=plain_words,
     )
     return Prose(summary, prose.music), strict.refused  # (the text is not used: no respelling)
@@ -1224,11 +1227,12 @@ def check_prose(
     aliases: Mapping[str, str] | None = None,
     who_and_what: Sequence[str] = (),
     story: Sequence[str] = (),
+    advisory: list[str] | None = None,
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
     `who_and_what`, `story` (#2954): the sheet and the earlier recaps the writer was given. Their
     words are known (a name only they give is not refused, and the DM's name check sees it), and a
-    run of 6 words taken from an earlier recap is a copy, like one from the table.
+    run of 6 words taken from an earlier recap is counted as advisory, never a retry (#2965).
     `name_counts`: filled with how many words taken for names outside the beat sheet there are of
     each kind (`NAME_CATEGORIES`), for a report that never shows the names (#2741).
     `identity_ties`: a 🤫 spelling and its entry's public names: a sentence naming both says who is
@@ -1313,14 +1317,11 @@ def check_prose(
             f"it copies the table word for word{hint}: tell that part in your own words"
         )
     for earlier in story:  # an earlier recap is facts, not wording (#2954)
-        taken = copied_run(narration, earlier)
-        if taken:
-            hint = (
-                "" if names_a_secret(taken, secret_names, allowed_names) else f' starting "{taken}"'
-            )
-            problems.append(
-                f"it copies an earlier recap word for word{hint}: say it in your own words"
-            )
+        if copied_run(narration, earlier):
+            # Advisory (#2965): counted in the job's report, never a reason to retry; a run of six
+            # words is too often a fixed phrase ("the Dark Forest") to fail a recap for it.
+            if advisory is not None:
+                advisory.append("earlier")
             break
     # The style examples are for how it sounds only (#2075): a run taken from one is a copy.
     for example in style:
@@ -1692,8 +1693,13 @@ def facts_message(
     *,
     who_and_what: Sequence[str] = (),
     story: Sequence[str] = (),
+    previous: str = "",
 ) -> str:
     numbered = "\n".join(f"[{i}] {t}" for i, t in enumerate(sentences_of(summary), start=1))
+    # The earlier recaps the writer was given; with none trimmed to the story (#2965 item 3),
+    # the bridge recap stands in for them, so a name only it mentions is not called invented.
+    recaps = list(story) or [" ".join(previous.split())[:PREVIOUS_MAX]]
+    recaps = [r for r in recaps if r]
     confirmed = (
         f"\n<confirmed>\n{_data(chr(10).join(corrections))}\n</confirmed>" if corrections else ""
     )
@@ -1707,9 +1713,9 @@ def facts_message(
     )
     earlier = (
         "\n<story_so_far>\n"
-        + "\n".join(f"<recap>{_data(r)}</recap>" for r in story)
+        + "\n".join(f"<recap>{_data(r)}</recap>" for r in recaps)
         + "\n</story_so_far>"
-        if story
+        if recaps
         else ""
     )
     return (
