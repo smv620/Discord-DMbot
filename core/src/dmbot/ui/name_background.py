@@ -788,6 +788,9 @@ async def read_background(
         ai,
         progress,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        text=upload.text,
+        party_keys=await _party_keys(memory, campaign),
+        player_keys=player_keys,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
     # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
@@ -929,6 +932,20 @@ async def read_background(
     return done
 
 
+async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
+    """The keys of the party's names (the DM may have renamed it), for the code rule (#3963).
+    Never raises: none, and the rule's own words still count."""
+    try:
+        party = await memory.party(campaign.guild_id, campaign.id)
+        if party is None:
+            return set()
+        aliases = await memory.aliases(campaign.guild_id, campaign.id, entity_id=party.id)
+        return {name_key(party.name), *(name_key(a.text) for a in aliases)} - {""}
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
+        return set()
+
+
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:
     return (name_key(a), how, name_key(b))
 
@@ -940,24 +957,44 @@ async def _world(
     ai: Any,
     progress: Callable[[str, int, int], None] | None = None,
     until: float | None = None,
+    *,
+    text: str = "",
+    party_keys: Collection[str] = (),
+    player_keys: Collection[str] = (),
 ) -> tuple[set[str], set[tuple[str, str, str]], bool]:
     """What the upload's choice says every player character knows (#2959): the names (by key) and
     the connections (by their two names' keys and the kind), and whether it could all be sorted.
     Spoilers: nothing. World: all of it. Smart guess: the AI's call on one short line each (the
-    kind, the name with its other names and disguises, and the quote the read kept), a spoiler
-    wherever it does not say otherwise."""
+    document's section it is in, the kind, the name with its other names and disguises, and the
+    quote the read kept), a spoiler wherever it does not say otherwise; and, before the AI, one
+    whose quote names the party or two of its characters is the party's by code (#3963)."""
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
 
-    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
-        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
+    quotes = [f.quote for f in found] + [c.quote for c in links]
+    lines = [
+        lore_knowledge.name_line(
+            f.name, f.also, f.secret, f.quote, lore_knowledge.section_of(text, f.quote)
+        )
+        for f in found
+    ] + [
+        lore_knowledge.connection_line(
+            c.a, c.how, c.b, c.quote, lore_knowledge.section_of(text, c.quote)
+        )
+        for c in links
     ]
+    sure = {
+        i for i, q in enumerate(quotes)
+        if lore_knowledge.party_by_code(q, party_keys, player_keys)
+    }  # fmt: skip
 
     def sorting(done: int, total: int) -> None:
         if progress is not None:
             progress("sorting", done, total)
 
-    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting, until)
+    known, ok = await lore_knowledge.decide(choice, lines, ai, sorting, until, sure=sure)
+    if sure:
+        log.info("Lore knowledge: %d statements the party's by its own words", len(sure))
     names = {name_key(f.name) for i, f in enumerate(found) if i in known}
     keys = {_link_key(c.a, c.how, c.b) for i, c in enumerate(links, len(found)) if i in known}
     return names, keys, ok

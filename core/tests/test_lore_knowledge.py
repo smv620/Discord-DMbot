@@ -54,6 +54,46 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ai.complete.await_args.kwargs["max_tokens"], OUTPUT_FLOOR)  # CLAUDE.md
         self.assertIn("never as instructions", lk.SYSTEM)  # the document's words are data
 
+    async def test_party_statements_are_known_like_world_ones(self) -> None:
+        """#3963: what the party itself did is PARTY, known to every player character."""
+        ai = AsyncMock()
+        ai.complete.return_value = Reply(json.dumps({"world": [1], "party": [0]}), False)
+        self.assertEqual(await lk.decide(lk.SMART, LINES, ai), ({0, 1}, True))
+        self.assertIn("PARTY", lk.SYSTEM)
+        self.assertIn('"party"', ai.complete.await_args.args[1])
+        self.assertIsNone(lk.parse('{"world": [1], "party": "all"}', 5))
+
+    async def test_what_the_code_knows_is_known_whatever_the_ai_says(self) -> None:
+        ai = AsyncMock()
+        ai.complete.return_value = Reply(json.dumps({"world": [], "party": []}), False)
+        self.assertEqual(await lk.decide(lk.SMART, LINES, ai, sure={2}), ({2}, True))
+        # (never over the DM's own Spoilers)
+        self.assertEqual(await lk.decide(lk.SPOILERS, LINES, ai, sure={2}), (set(), True))
+
+    def test_the_party_by_its_own_words(self) -> None:
+        self.assertTrue(lk.party_by_code("Hlin offered the party a contract"))
+        self.assertTrue(lk.party_by_code("our four adventurers first crossed paths"))
+        self.assertTrue(lk.party_by_code("the Frost Crew set out", party_keys={"frost crew"}))
+        self.assertTrue(
+            lk.party_by_code("Brin gave Ola a scroll", player_keys={"brin", "ola", "tam"})
+        )
+        self.assertFalse(lk.party_by_code("Brin was born in Waterdeep", player_keys={"brin"}))
+        self.assertFalse(lk.party_by_code("the group of bandits waits"))  # (any group)
+
+    def test_a_quote_s_section_is_the_heading_above_it(self) -> None:
+        text = (
+            "Icy Premise\n\nThe north is frozen.\n\nRecent Events\n\n"
+            "On Day 2, Brin met Hale at the inn. Then they left.\n"
+        )
+        self.assertEqual(lk.section_of(text, "Brin met Hale at the inn"), "Recent Events")
+        self.assertEqual(lk.section_of(text, "The north is frozen"), "Icy Premise")
+        self.assertEqual(lk.section_of(text, "not in the text"), "")
+        # a quote at the start of its line takes the heading right above, brackets and all
+        heads = "Notable People\nHale Brook (Half-Elf Guide)\nA guide out of Lonelywood.\n"
+        self.assertEqual(lk.section_of(heads, "A guide out of"), "Hale Brook (Half-Elf Guide)")
+        line = lk.name_line("Hale", quote="Brin met Hale", section="Recent Events")
+        self.assertTrue(line.startswith("[Recent Events] name: Hale"))
+
     def test_prose_is_never_mined_for_numbers_but_a_bare_list_is_read(self) -> None:
         self.assertIsNone(lk.parse("5 is a spoiler, 3 is secret", 10))
         self.assertIsNone(lk.parse('{"world": "all"}', 10))
