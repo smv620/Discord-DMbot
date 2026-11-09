@@ -290,6 +290,20 @@ class TheStage(unittest.IsolatedAsyncioTestCase):
         self.assertIn(9, got.batches)
 
 
+class TheOwnMatches(unittest.IsolatedAsyncioTestCase):
+    async def test_dmbot_s_own_matches_are_scored_against_the_key(self) -> None:
+        joins = [
+            SimpleNamespace(spelling="Tran", keep_name="Tran Vosk"),  # (the key agrees)
+            SimpleNamespace(spelling="unnamed - guard at the gate", keep_name="Bruno Hale"),
+            SimpleNamespace(spelling="Someone", keep_name="Bruno Hale"),  # (not in the key)
+        ]
+        memory = SimpleNamespace(waiting_joins=AsyncMock(return_value=joins))
+        (line,) = await d.own_matches(memory, j.Key(KEY), 1, "c1")
+        self.assertEqual(
+            line, "DMbot's own matches: 3 (the key agrees with 1, keeps apart 1, doesn't hold 1)"
+        )
+
+
 class TheSteps(unittest.IsolatedAsyncioTestCase):
     async def test_the_decide_steps_are_a_run_of_their_own(self) -> None:
         from dmbot.devtools.sample_run import plan, steps

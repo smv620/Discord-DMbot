@@ -264,6 +264,10 @@ async def run(
                 decider.extend([asker, close])
             asker = decider[0]
             asker.stage = label
+            for line in await decide_mod.own_matches(
+                memory, judge.Key(steps.master_key()), gid, cid
+            ):
+                say(line)
             calls, cost = asker.run.calls, asker.run.cost
             try:
                 await decide_mod.run(
