@@ -59,7 +59,9 @@ class ACapitalisedKindIsNoName(unittest.TestCase):
                 self.assertTrue(descriptions.is_described(text))
 
     def test_a_real_name_stays_a_name(self) -> None:
-        for text in ("Minotaur Bob", "the Dwarven Valley", "Mira's sister Ren", "Captain Vel"):
+        for text in ("Minotaur Bob", "the Dwarven Valley", "Mira's sister Ren", "Captain Vel",
+                     "the Hag", "the Bard of Waterdeep", "Ranger Kel", "the Bard Tavin",
+                     "Elf Hollow", "the Ranger's Rest", "Dwarf Fortress Inn"):  # fmt: skip
             with self.subTest(text):
                 self.assertFalse(descriptions.is_described(text))
 

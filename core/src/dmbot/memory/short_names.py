@@ -30,7 +30,9 @@ from dmbot.names import not_names
 
 MIN_LETTERS = 3
 # What a creature is, said with a capital before a name ("Goblin Grik", "Dragon Queen"): the kind,
-# never the person's own name. The species and classes the table says are in scan.GAME_TERMS.
+# never the person's own name. The species and classes the table says are in scan.GAME_TERMS. Also
+# read by `descriptions` ("the Minotaur captain", #3431). `auto_accept.CREATURE_KINDS` is the sure
+# step's own longer list (#3878); a kind added to one belongs in the other.
 CREATURE_KINDS = frozenset(
     {
         *("aberration", "beast", "celestial", "construct", "dragon", "elemental", "fey", "fiend"),
