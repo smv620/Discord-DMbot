@@ -810,6 +810,7 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
     )
+    await _record_sources(memory, campaign, stored, upload, label)
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
     short = getattr(bot, "add_short_names", None)
@@ -1169,6 +1170,29 @@ async def store(
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+async def _record_sources(
+    memory: MemoryStore,
+    campaign: Campaign,
+    stored: Mapping[str, Sequence[str]],
+    upload: Upload,
+    label: str,
+) -> None:
+    """Which upload made the names just stored (#3675 Part B), for the Names page's filter: the
+    website's upload id when there is one, else the dated label the DM sees. Only names this read
+    made (a name another entry already had is not this upload's). Never a reason to lose a name:
+    a failed write is logged by its type and the names stay."""
+    made = [i for ids in stored.values() for i in ids]
+    record = getattr(memory, "record_name_sources", None)  # (a stand-in store may not have it)
+    if not made or record is None:
+        return
+    try:
+        await record(
+            campaign.guild_id, campaign.id, made, upload_key=upload.source_id or label, label=label
+        )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Couldn't record which upload the names came from (%s)", type(exc).__name__)
 
 
 async def _secret_names_known_by(

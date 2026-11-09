@@ -122,6 +122,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_name_sources": "which upload a name was read from, for the Names page's filter: "
+    "provenance of working data (an upload id or label and a time, never a word of it), made again "
+    "by the next read; a restored campaign's names read as not known yet (#3675)",
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",
