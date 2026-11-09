@@ -175,7 +175,9 @@ class TheStore(DatabaseTest):
         rid = await self.knows(self.tran, self.bruno, KNOWS_AWARE)
         other = await self.person("Tran the Elder")
         await self.knows(other, self.bruno, KNOWS_MET)
-        await self.memory.merge(GUILD, self.campaign.id, self.tran, other, source=DM_SOURCE)
+        await self.memory.merge(
+            GUILD, self.campaign.id, self.tran, other, source=DM_SOURCE, dm_said_same=True
+        )
         self.assertEqual(await self.how(rid), KNOWS_MET)
 
     async def test_a_place_or_a_thing_is_never_met(self) -> None:
