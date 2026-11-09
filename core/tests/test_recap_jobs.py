@@ -543,9 +543,9 @@ class Working(WorkerHarness):
 
     async def test_a_recap_much_longer_than_the_target_is_used_whole_at_once(self) -> None:
         # Length is a target in the instructions, never a check (#2597): a 1-hour session aims at
-        # about 150 words, and a 209-word answer is used as it came, with no retry and no note.
+        # about 400 words, and a 1,000-word answer is used as it came, with no retry and no note.
         long = fx.prose_answer(
-            "《Tense》 " + " ".join(["calm"] * 208) + " Oskar", "1. Low strings."
+            "《Tense》 " + " ".join(["calm"] * 998) + " Oskar", "1. Low strings."
         )
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
@@ -557,7 +557,7 @@ class Working(WorkerHarness):
         job = await self.go()
         self.assertEqual(job.state, "ready")
         self.assertIn(" ".join(["calm"] * 20), job.summary)
-        self.assertGreater(len(job.summary.split()), 200)
+        self.assertGreater(len(job.summary.split()), 900)
         self.assertEqual(self.careful.sent, [])  # no retry for its length
         self.assertEqual(notes, [])
 
