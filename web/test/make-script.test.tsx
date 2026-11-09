@@ -100,3 +100,47 @@ describe("Make the script", () => {
     expect(base.calls.some((c) => c.startsWith("scriptOffer"))).toBe(false);
   });
 });
+
+describe("a script that is already being made", () => {
+  it("follows the job with no button until it exists, then shows the script", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = asOwner(mockApi("table"));
+    let looks = 0;
+    api.scriptOffer = async () => (++looks < 3 ? { state: "running", cost: null, allowed: true, why: null, progress: { stage: "script_writing", done: 1, total: 3, unit: "parts", startedAt: 100, updatedAt: 101, serverNow: 102, state: "running" } } : { state: "exists", cost: null, allowed: true, why: null });
+    api.transcriptScript = async () => (looks < 3 ? Promise.reject(new ApiError("no-script")) : new Blob(["The script, session 2.\n"]));
+    await openScript(api, 2);
+    expect(await screen.findByText(w.stage)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.button })).toBeNull(); // (a second press can never queue a second charge)
+    await act(async () => void (await vi.advanceTimersByTimeAsync(7000)));
+    expect(await screen.findByText(/The script, session 2\./)).toBeTruthy();
+    vi.useRealTimers();
+  });
+});
+
+describe("the presses and the offer", () => {
+  it("ignores a second press while the first is in flight", async () => {
+    const api = asOwner(mockApi("table"));
+    let calls = 0;
+    api.makeScript = () => {
+      calls += 1;
+      return new Promise<void>(() => {});
+    };
+    await openScript(api, 2);
+    const button = await screen.findByRole("button", { name: w.button });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(calls).toBe(1);
+  });
+  it("tells a game master when the offer cannot be read, and shows a player nothing", async () => {
+    const api = asOwner(mockApi("table"));
+    api.scriptOffer = async () => Promise.reject(new ApiError("server"));
+    await openScript(api, 2);
+    expect(await screen.findByText(w.failed)).toBeTruthy();
+    cleanup();
+    const player = asOwner(mockApi("table"));
+    player.scriptOffer = async () => Promise.reject(new ApiError("not-allowed"));
+    await openScript(player, 2);
+    await act(async () => void (await new Promise((r) => setTimeout(r, 30))));
+    expect(screen.queryByText(w.failed)).toBeNull();
+  });
+});

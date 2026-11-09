@@ -1465,10 +1465,6 @@ export interface TranscriptSessionItem {
   transcriptsDeletedAt?: number | null;
 }
 
-export type TranscriptVersion = "cleaned" | "heard";
-
-/** One session to read: the file's header lines (`notes`) and its transcript, one string per line,
- * both made by the bot's own export, with the file's name for the download. */
 /** Where a session's script stands (#3899): `none` offers the button, `exists` says it was already made, `running` is the wait. */
 export interface ScriptOffer {
   state: "none" | "exists" | "running";
@@ -1480,6 +1476,10 @@ export interface ScriptOffer {
   progress?: JobProgress | null;
 }
 
+export type TranscriptVersion = "cleaned" | "heard";
+
+/** One session to read: the file's header lines (`notes`) and its transcript, one string per line,
+ * both made by the bot's own export, with the file's name for the download. */
 export interface TranscriptView {
   number: number;
   version: TranscriptVersion;

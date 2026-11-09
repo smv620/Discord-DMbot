@@ -15,7 +15,7 @@ export const makeScriptWords = {
     "script-off": "Scripts are switched off right now.",
     "script-already": "A script was already made for this session.",
     "not-allowed": "Only a game master can make the script.",
-    "still-waiting": "DMbot is still making it. Check back in a few minutes.",
+    "still-waiting": "DMbot is still making it. You can leave this page and come back.",
   } as Record<string, string>,
   failed: "Couldn't make the script. Try again in a minute.",
 } as const;

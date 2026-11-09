@@ -143,14 +143,18 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       const base = `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/script`;
       const queued = (await call("POST", base, {}, false, undefined, false, makeScriptErrorKinds)) as { id: string };
       if (!queued?.id) throw new ApiError("server");
+      let misses = 0;
       for (let i = 0; i < 300; i++) {
         let got = null as { state?: string; error?: string; progress?: unknown } | null;
         try {
           got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`, undefined, false, undefined, false, makeScriptErrorKinds)) as NonNullable<typeof got>;
-          onLook?.(sharedOf(got?.progress as never));
+          misses = 0;
         } catch (error) {
-          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed"].includes(error.kind)) throw error;
+          // A refusal ends it; a trouble in reaching the server is waited out, a few looks, then said.
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed", "plan-needed", "script-off", "script-already"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
         }
+        if (got) onLook?.(sharedOf(got.progress as never));
         if (got?.state === "done") return;
         if (got?.state === "failed") throw new ApiError(makeScriptErrorKinds[got.error ?? ""] ?? "server");
         await new Promise((r) => setTimeout(r, 2000));
