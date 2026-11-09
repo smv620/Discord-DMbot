@@ -252,8 +252,8 @@ ADDRESS_ALONE = frozenset(
     }
 )
 # Titles and forms of address said before a name ("Lord Neverember", "Major Ursa", "Old Mother
-# Ashe"): a word that is never the name itself. The short-name rule (#3880) reads it; #3385 (never
-# ask about a title) is to read it too, in its own change, so the two never disagree. Single words,
+# Ashe"): a word that is never the name itself. The short-name rule (#3880) and the never-ask-about-
+# a-title rule (#3385, through TITLES_ALONE) both read it, so the two never disagree. Single words,
 # lower case; the one-word forms of ADDRESS_ALONE are all in it.
 TITLE_WORDS = frozenset(
     {
@@ -269,6 +269,14 @@ TITLE_WORDS = frozenset(
         *("friar", "brother", "sister", "father", "mother", "uncle", "aunt", "auntie", "cousin"),
         *("granny", "grandma", "grandpa", "grandmother", "grandfather", "captain", "master"),
     }
+)
+
+
+# The ones that are a title or a form of address said ALONE ("Hello, Friend", "Yes, Major", "Thank
+# you, Doctor"): never asked about as a name (#3385). Describing words are left out: "Old", "Little"
+# or "Grand" alone can be a nickname, and before a name they only describe it.
+TITLES_ALONE = TITLE_WORDS - frozenset(
+    {"the", "old", "young", "high", "grand", "great", "little", "big", "good", "saint", "st"}
 )
 
 
@@ -306,7 +314,7 @@ def shape_of(candidate: str) -> str | None:
     words = _words_of(candidate)
     if not words:
         return None
-    if " ".join(words) in ADDRESS_ALONE:
+    if " ".join(words) in ADDRESS_ALONE or (len(words) == 1 and words[0] in TITLES_ALONE):
         return "address"
     if _clause(candidate):
         return "clause"

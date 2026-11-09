@@ -18,6 +18,17 @@ class Shapes(unittest.TestCase):
         ]:  # fmt: skip
             self.assertEqual(why_not(text), why, text)
 
+    def test_a_title_alone_from_the_shared_list_is_an_address(self) -> None:
+        # (the same list the short-name rule reads, `TITLE_WORDS`, so the two never disagree)
+        for text in ("Major", "Doctor", "Mayor", "Duke", "Sergeant", "Reverend", "Mistress"):
+            self.assertEqual(why_not(text), "address", text)
+
+    def test_a_describing_word_alone_is_left_to_the_other_checks(self) -> None:
+        for text in ("Old", "Little", "Grand", "Saint"):
+            self.assertIsNone(why_not(text, text=text), text)
+        for text in ("Major Ursa", "Doctor Hale", "Duke Tran"):
+            self.assertIsNone(why_not(text, text=text), text)
+
     def test_real_names_are_kept(self) -> None:
         for text in ["Captain Vel", "Speaker Masthew", "Sister Nora", "Third Tower",
                      "Second Wind", "Area 51", "Aldmoor", "Boy"]:  # fmt: skip
