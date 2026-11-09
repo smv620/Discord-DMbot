@@ -29,92 +29,11 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, Entity, MemoryRuleError
 from dmbot.memory.ontology import rules_word_for
 from dmbot.memory.store import MemoryStore
+from dmbot.names.not_names import CREATURE_KINDS
 
 log = logging.getLogger(__name__)
 
 NAMES, OTHER_NAMES, CONNECTIONS = "names", "other names", "connections"
-
-# A kind of creature is not a name (it would make "Owlbear" a person or a place). A small list of
-# the common ones, as a stopgap: GraphEngineer owns what the readers mark, and may replace it.
-CREATURE_KINDS = frozenset(
-    [
-        "aboleth",
-        "banshee",
-        "basilisk",
-        "bat",
-        "bear",
-        "beholder",
-        "boar",
-        "bugbear",
-        "centaur",
-        "chimera",
-        "cockatrice",
-        "cultist",
-        "demon",
-        "devil",
-        "dire",
-        "wolf",
-        "dragon",
-        "drake",
-        "dryad",
-        "dwarf",
-        "elemental",
-        "elf",
-        "ettin",
-        "ghast",
-        "ghost",
-        "ghoul",
-        "giant",
-        "gnoll",
-        "gnome",
-        "goblin",
-        "golem",
-        "gorgon",
-        "griffon",
-        "hag",
-        "harpy",
-        "hellhound",
-        "hobgoblin",
-        "hydra",
-        "imp",
-        "kobold",
-        "kraken",
-        "lich",
-        "lizardfolk",
-        "manticore",
-        "medusa",
-        "mimic",
-        "minotaur",
-        "mummy",
-        "naga",
-        "ogre",
-        "orc",
-        "otyugh",
-        "owlbear",
-        "pegasus",
-        "phoenix",
-        "pixie",
-        "rat",
-        "roc",
-        "sahuagin",
-        "satyr",
-        "shadow",
-        "skeleton",
-        "sprite",
-        "stirge",
-        "troll",
-        "unicorn",
-        "vampire",
-        "werewolf",
-        "wight",
-        "wolf",
-        "worg",
-        "wraith",
-        "wyvern",
-        "xorn",
-        "zombie",
-    ]
-)
 
 
 def _words(text: str) -> str:

@@ -136,7 +136,7 @@ match. "In Discord" says where the DM finds it today.
 | Function | In Discord | Answer |
 |---|---|---|
 | Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
-| Uploads add what DMbot is sure of; Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel, ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
+| Uploads and imports add what DMbot is sure of; Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
 | Who is this? (same as a known name) | name card, look-alikes | Who is this? (the clarify page, #3604) |
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
@@ -144,6 +144,7 @@ match. "In Discord" says where the DM finds it today.
 | Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645) |
 | Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
 | Change a connection; its feeling | connection edit | Story Graph: change a connection; feeling picker (#3607) |
+| Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
