@@ -395,9 +395,7 @@ class ThePath(NamesTest):
         self.assertEqual(channel, 77)  # the DM Bot channel
         self.assertIn("Added **", text)
         self.assertNotIn("Brannoch", text)  # counts only: no name, no word of the text
-        self.assertTrue(
-            any("upload:undo" in str(getattr(c, "custom_id", "")) for c in view.children)
-        )
+        self.assertTrue(any("up:undo" in str(getattr(c, "custom_id", "")) for c in view.children))
         card = press.edit_original_response.await_args.kwargs
         self.assertIn(sent.jump_url, card["content"])
         self.assertIsNone(card["view"])
@@ -410,7 +408,7 @@ class ThePath(NamesTest):
         card = press.edit_original_response.await_args.kwargs
         self.assertIn("Added **", card["content"])
         self.assertTrue(
-            any("upload:undo" in str(getattr(c, "custom_id", "")) for c in card["view"].children)
+            any("up:undo" in str(getattr(c, "custom_id", "")) for c in card["view"].children)
         )
 
     async def test_by_itself_the_notice_is_kept_for_undo(self) -> None:

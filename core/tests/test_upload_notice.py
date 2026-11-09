@@ -118,9 +118,7 @@ class Undoing(NamesTest):
         assert old is not None
         self.assertFalse(old.can_undo(old.created_at + UNDO_SECONDS + 5))
         view = un.notice_view(old, site_url="https://getdmbot.com")
-        self.assertFalse(
-            any("upload:undo" in str(getattr(c, "custom_id", "")) for c in view.children)
-        )
+        self.assertFalse(any("up:undo" in str(getattr(c, "custom_id", "")) for c in view.children))
         press = self.it(DM)
         await self.button(notice).callback(press)
         self.assertEqual(set((await self.statuses()).values()), {"confirmed"})

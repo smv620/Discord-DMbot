@@ -76,6 +76,10 @@ class NamesTest(DatabaseTest):
             memory=self.memory,
         )
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        # The tests built on this one are of the Add all flow and the cards. A lore upload adds what
+        # DMbot is sure of by itself unless the campaign asks first (#3878), so the campaign asks
+        # first here; the tests of the default say so (`ask_before_adding` off).
+        await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
 
     async def forget_old_undo(self) -> None:
         """Jump past the days Undo works for, then run the after-session cleanup (#164)."""

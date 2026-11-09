@@ -104,14 +104,14 @@ def notice_view(
 
 class UndoUploadButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:upload:undo:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})",
+    template=r"dmbot:up:undo:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})",
 ):
     def __init__(self, guild_id: int, campaign_id: str, notice_id: str) -> None:
         super().__init__(
             discord.ui.Button(
                 label=UNDO_LABEL,
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"dmbot:upload:undo:{guild_id}:{campaign_id}:{notice_id}",
+                custom_id=f"dmbot:up:undo:{guild_id}:{campaign_id}:{notice_id}",
             )
         )
         self.guild_id, self.campaign_id, self.notice_id = guild_id, campaign_id, notice_id
