@@ -3,6 +3,6 @@ import type { Item } from "../whats-new-types";
 export const entry: Item = {
   date: "2026-11-09",
   title: "Lineage and class from your lore",
-  what: "When your lore says a new character is, say, a dwarf and a cleric, DMbot keeps that on the character, and your name card shows it to you alone. It never changes a character you already have.",
+  what: "When your lore says someone is, say, a dwarf cleric, DMbot adds that to their name card, where only you can see it. It only uses what your lore says, and never changes names DMbot already has.",
   order: 84,
 };
