@@ -13805,7 +13805,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             # The channels are made whatever the lookup does; the DMs are always among the people.
             log.exception("Couldn't work out who may see a campaign's channels")
-            return frozenset(i for i in campaign.dm_user_ids if i > 0)
+            return frozenset(campaign.dm_user_ids)
 
     async def _channel_sync_loop(self) -> None:
         """Keep every campaign's DM Bot and transcript channels in step with who may see them

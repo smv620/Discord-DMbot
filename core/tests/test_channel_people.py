@@ -5,10 +5,11 @@ Invented ids."""
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.dm_screen import channel_people as cp
-from dmbot.dm_screen.rules import FULL, HIDDEN, READ_ONLY, Target, everyone
+from dmbot.dm_screen.rules import FULL, HIDDEN, READ_ONLY, Perms, Target, everyone
 from tests.pg import DatabaseTest
 
 GUILD, BOT, DM, ALICE, BOB, EVE = 1000, 2000, 11, 12, 13, 14
@@ -48,7 +49,7 @@ class Plans(unittest.TestCase):
 
 
 class Exposure(unittest.TestCase):
-    def found(self, overwrites: dict[Target, dict[str, bool]]) -> cp.Exposure:
+    def found(self, overwrites: Mapping[Target, Perms]) -> cp.Exposure:
         return cp.find_exposure(
             cp.PEOPLE, overwrites, guild_id=GUILD, bot_id=BOT, people=[DM, ALICE]
         )
@@ -58,12 +59,16 @@ class Exposure(unittest.TestCase):
         self.assertFalse(self.found(dict(plan)))
 
     def test_a_server_role_that_can_see_it_is_reported(self) -> None:
-        plan = dict(cp.channel_plan(cp.PEOPLE, guild_id=GUILD, bot_id=BOT, people=[DM, ALICE]))
+        plan: dict[Target, Perms] = dict(
+            cp.channel_plan(cp.PEOPLE, guild_id=GUILD, bot_id=BOT, people=[DM, ALICE])
+        )
         plan[Target("role", ROLE)] = {"view_channel": True}
         self.assertEqual(self.found(plan).roles, (ROLE,))
 
     def test_a_member_who_is_not_one_of_the_people_is_reported(self) -> None:
-        plan = dict(cp.channel_plan(cp.PEOPLE, guild_id=GUILD, bot_id=BOT, people=[DM, ALICE]))
+        plan: dict[Target, Perms] = dict(
+            cp.channel_plan(cp.PEOPLE, guild_id=GUILD, bot_id=BOT, people=[DM, ALICE])
+        )
         plan[Target("member", EVE)] = {"view_channel": True}
         self.assertEqual(self.found(plan).members, (EVE,))
 

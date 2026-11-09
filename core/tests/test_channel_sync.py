@@ -47,8 +47,9 @@ class Access(DatabaseTest):
         self.guild = guild
         await self.store.set_transcript_channel(GUILD, made.id, TRANSCRIPT)
         await self.store.set_dm_bot_channel(GUILD, made.id, DMBOT_CHANNEL)
-        self.campaign = await self.store.get(GUILD, made.id)
-        assert self.campaign is not None
+        found = await self.store.get(GUILD, made.id)
+        assert found is not None
+        self.campaign = found
 
     def edited(self, channel: Any) -> dict[Any, discord.PermissionOverwrite] | None:
         calls = channel.edit.await_args_list
