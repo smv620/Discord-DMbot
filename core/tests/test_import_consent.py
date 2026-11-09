@@ -409,6 +409,22 @@ class Confirming(WithImports):
         await consent.grant(THURSDAY.id, TOMAS)  # and saying yes again clears the no
         self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
 
+    async def test_a_stop_whose_revoke_failed_is_never_read_again_in_an_import(self) -> None:
+        # (#3964) `stop_now` holds the person back at once; if saving the "no" then fails, nothing
+        # is in `consent_refusals`, so the held-back list alone must keep them out of `recorded_in`
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        consent.stop_now(THURSDAY.id, TOMAS)
+        async with self.db.guild(THURSDAY.id) as conn:  # (the revoke never got saved)
+            cur = await conn.execute(
+                "SELECT 1 FROM consent_refusals WHERE guild_id = %s", (THURSDAY.id,)
+            )
+            self.assertEqual(await cur.fetchall(), [])
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        self.assertIn(MIRA, await consent.recorded_in(THURSDAY.id, self.one.id))  # others stay
+
 
 class TheBackup(WithImports):
     """The new sections in a backup: a round trip, and a damaged file is refused cleanly."""
