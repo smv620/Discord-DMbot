@@ -208,7 +208,7 @@ async def show_one(
 WHY_LINE = 'Why: your lore "{label}" says \u201c{quote}\u201d'
 WHY_NO_QUOTE = 'Read from your lore "{label}". DMbot didn\'t keep the words.'
 # A connection DMbot inferred from the lore and the DM kept (#2959 item 5): never the DM's own word.
-WHY_INFERRED = 'Why: DMbot inferred this from your lore "{label}": {reason}'
+WHY_INFERRED = 'Why: DMbot\'s guess from your lore "{label}": {reason}'
 
 
 async def why_line(found: Found) -> str:

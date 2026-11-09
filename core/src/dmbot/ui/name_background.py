@@ -1184,7 +1184,7 @@ def inferred_line(reason: str) -> str:
     but doesn't say it, so it is DMbot's suggestion, never the DM's own words."""
     if not reason:
         return ""
-    return f"🤔 **Inferred by DMbot:** {_md(reason)} (your text doesn't say it outright)\n"
+    return f"🤔 **DMbot's guess:** {_md(reason)} (your lore doesn't say so)\n"
 
 
 def _traits_of(
@@ -2527,8 +2527,8 @@ class ConnectionOffer(_Menu):
             )
             if guessed:
                 refused += (
-                    f" {guessed} that DMbot inferred still "
-                    f"{'waits' if guessed == 1 else 'wait'} for your yes: press 📜 Check the "
+                    f" {guessed} of DMbot's guess{'' if guessed == 1 else 'es'} still "
+                    f"{'needs' if guessed == 1 else 'need'} your yes: press 📜 Check the "
                     "connections."
                 )
             waiting = self.all_done.worked_out  # (every one waiting now, not only the new ones)

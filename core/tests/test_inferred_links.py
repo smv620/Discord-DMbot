@@ -156,7 +156,7 @@ class TheWords(unittest.IsolatedAsyncioTestCase):
     def test_the_card_says_dmbot_inferred_it(self) -> None:
         self.assertEqual(
             inferred_line(WHY),
-            f"🤔 **Inferred by DMbot:** {WHY} (your text doesn't say it outright)\n",
+            f"🤔 **DMbot's guess:** {WHY} (your lore doesn't say so)\n",
         )
         self.assertEqual(inferred_line(""), "")
 
@@ -168,7 +168,7 @@ class TheWords(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
         self.assertEqual(
             await connection_edit.why_line(found),
-            f'Why: DMbot inferred this from your lore "Notes, 9 Nov": {WHY}\n',
+            f'Why: DMbot\'s guess from your lore "Notes, 9 Nov": {WHY}\n',
         )
 
 
