@@ -115,6 +115,14 @@ export interface WizardApi {
 /** The largest file the server reads, in bytes (core name_documents.MAX_DOCUMENT_BYTES); a bigger one is refused before sending. */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
+/** The largest PDF the page sends, in bytes: the website takes less than Discord (100 MB), since a file goes as base64 in one request. Must match core MAX_WEB_PDF_BYTES (core/src/dmbot/web/wizard_check.py). */
+export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+
+/** The size limit for a file by its name: a PDF (any case) gets MAX_PDF_BYTES, every other type MAX_FILE_BYTES. */
+export function maxBytesFor(name: string): number {
+  return name.toLowerCase().endsWith(".pdf") ? MAX_PDF_BYTES : MAX_FILE_BYTES;
+}
+
 /** Bytes as base64, in pieces so a big file does not overflow the call stack. */
 export function toBase64(bytes: Uint8Array): string {
   let text = "";
