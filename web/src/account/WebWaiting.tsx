@@ -46,7 +46,7 @@ const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep al
 
 type Said = { ok: boolean; text: string; n: number; more?: string } | null;
 /** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
-type Answered = { kept?: number; shown?: number; held?: number };
+type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -130,7 +130,9 @@ export default function WebWaiting({
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
       // A yes on one connection says whether it was shown to the players or kept hidden (the second line).
-      const more = answer.kind === "claim" && answer.action === "confirm" ? (got.shown ? w.shownOne : got.held ? w.heldOne : undefined) : undefined;
+      const more = answer.kind === "claim" && answer.action === "confirm"
+        ? got.shown ? w.shownOne : got.held ? w.heldOne : got.scene ? w.sceneOne : got.split ? w.splitOne : undefined
+        : undefined;
       setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
       onChanged?.();
     } catch (error) {
