@@ -1991,7 +1991,6 @@ class RecapWorker:
             present=present,
             things=away.things_of(given.who_and_what) if given else (),
             threads=_touched(given.threads, sheet) if given else (),
-            told=away.told_of(given.who_and_what) if given else None,  # (#2967)
         )
         return sentences, found
 
