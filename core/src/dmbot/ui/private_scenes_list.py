@@ -19,7 +19,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import Campaign
-from dmbot.discord_limits import fit_message
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.private_scene_store import Kept, PrivateScenes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _Select, _tell
@@ -41,7 +41,7 @@ EMPTY = (
 DM_ONLY = "Only a DM of this campaign can see this list."
 NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
-MESSAGE_LIMIT = 1990  # Discord's 2,000, with room to spare
+MESSAGE_LIMIT = MESSAGE_MAX  # (the one message limit, #1835)
 
 
 def notice(kept: int) -> str:
