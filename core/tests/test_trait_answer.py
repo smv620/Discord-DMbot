@@ -159,3 +159,33 @@ class Answers(NamesTest):
         await trait_answer.run_round(self.fake_bot(), GUILD)
         self.assertEqual((await self.row(rid))["error"], trait_answer.FAILED)
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 2)
+
+    async def test_a_no_for_a_question_already_gone_ends_gone(self) -> None:
+        rid = await self.queue("never")
+        await self.store.never(GUILD, self.campaign.id, self.offer(DWARF))
+        await trait_answer.run_round(self.fake_bot(), GUILD)
+        self.assertEqual((await self.row(rid))["error"], trait_answer.GONE)
+
+    async def test_the_question_is_matched_on_its_kind_too(self) -> None:
+        same_name_class = Trait(CLASS, "Dwarf", "SRD 5.2.1", "2024", True)
+        answer = trait_answer.Answer(
+            "i", self.campaign.id, DM, self.torvin, CLASS, self.offer(DWARF).key, "keep", 0
+        )
+        self.assertIsNone(trait_answer._find([self.offer(DWARF)], answer))
+        self.assertIsNotNone(trait_answer._find([self.offer(same_name_class)], answer))
+
+    async def test_without_memory_nothing_is_taken(self) -> None:
+        rid = await self.queue()
+        me = self.fake_bot()
+        me.memory = None
+        self.assertEqual(await trait_answer.run_round(me, GUILD), 0)
+        self.assertEqual((await self.row(rid))["state"], "waiting")
+
+    async def test_a_retaken_yes_whose_write_already_landed_ends_done(self) -> None:
+        rid = await self.queue()
+        await self.store.keep(self.memory, GUILD, self.campaign.id, self.offer(DWARF))
+        async with self.db.guild(GUILD) as conn:  # (it was taken once, then the bot stopped)
+            await conn.execute("UPDATE trait_answers SET tries = 1")
+        await trait_answer.run_round(self.fake_bot(), GUILD)
+        row = await self.row(rid)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))

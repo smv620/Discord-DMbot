@@ -18,7 +18,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.logs import log_context
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import MemoryRuleError, name_key
 from dmbot.memory.trait_offers import NotWaiting, Offer, TraitOfferStore
 
 log = logging.getLogger(__name__)
@@ -35,6 +35,8 @@ NOT_ALLOWED, GONE, REFUSED, FAILED = "not-allowed", "gone", "refused", "failed"
 WORDS = (NOT_ALLOWED, GONE, REFUSED, FAILED)
 
 
+# There is no heartbeat as `script_make` has: applying an answer is a few quick writes, far inside
+# RETAKE_AFTER_S, so a claim that stops moving really was lost.
 @dataclass(slots=True)
 class Answer:
     id: str
@@ -126,9 +128,15 @@ async def _apply(bot: Any, guild_id: int, answer: Answer) -> tuple[str, int | No
         return GONE, None
     if not campaign.is_dm(answer.user_id):  # still a DM of this campaign
         return NOT_ALLOWED, None
-    store = TraitOfferStore(bot.memory._db)
+    store = TraitOfferStore(bot.campaigns.db)
     offer = _find(await store.waiting(guild_id, answer.campaign_id), answer)
     if offer is None:
+        if (
+            answer.tries > 1
+            and answer.action == "keep"
+            and await _already_linked(bot, guild_id, answer)
+        ):
+            return "", None  # a retaken Yes whose write landed before the close failed
         return GONE, None  # answered in Discord meanwhile, or the character is gone
     try:
         if answer.action == "keep":
@@ -140,6 +148,13 @@ async def _apply(bot: Any, guild_id: int, answer: Answer) -> tuple[str, int | No
     except MemoryRuleError:
         return REFUSED, None
     return "", None
+
+
+async def _already_linked(bot: Any, guild_id: int, answer: Answer) -> bool:
+    """Whether the character already has the link a Yes would write (the bot stopped between the
+    write and closing the row, so the page must not show a failure for a change that happened)."""
+    links = await bot.memory.rule_links(guild_id, answer.campaign_id, {answer.entity_id})
+    return any(lk.kind == answer.kind and name_key(lk.name) == answer.name_key for lk in links)
 
 
 def _find(waiting: list[Offer], answer: Answer) -> Offer | None:

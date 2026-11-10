@@ -13954,7 +13954,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             for guild in list(self.guilds):
                 try:
-                    await trait_answer.run_round(self, guild.id)
+                    while await trait_answer.run_round(self, guild.id):  # drain what waits
+                        pass
                 except Exception as exc:
                     log.warning("A lineage answer round failed (%s)", type(exc).__name__)
             await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
