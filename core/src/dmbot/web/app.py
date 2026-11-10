@@ -3616,6 +3616,7 @@ def create_app(
         return {
             "id": made, "name": name, "slot": slot, "pages": checked.pages,
             "words": checked.words, "status": checked.status, "reason": checked.reason,
+            "picturePages": checked.picture_pages,
         }  # fmt: skip
 
     @app.delete("/me/wizard/{guild}/documents/{doc}")

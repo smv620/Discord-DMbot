@@ -392,6 +392,27 @@ class TheRoutes(Wizard):
         bad = await c.put(f"{base}/step", json={"step": 9, "answers": {"data_use": True}})
         self.assertEqual((bad.status_code, bad.json()), (422, {"error": "bad_key"}))
 
+    async def test_a_pdf_with_picture_pages_answers_how_many_over_http(self) -> None:
+        import base64
+
+        from tests.test_adventure import pdf
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        await c.post(base, json={"name": "x"})
+        words = "The party reaches the old keep at dusk and finds the gate open."
+        data = base64.b64encode(pdf([[words], [], [words]])).decode()
+        got = await c.post(
+            f"{base}/documents", json={"slot": "lore", "name": "h.pdf", "data": data}
+        )
+        self.assertEqual((got.json()["pages"], got.json()["picturePages"]), (3, 1))
+        text = base64.b64encode(b"The gate is open.").decode()
+        plain = await c.post(
+            f"{base}/documents", json={"slot": "lore", "name": "n.txt", "data": text}
+        )
+        self.assertEqual(plain.json()["picturePages"], 0)
+
     async def test_a_bad_file_body_and_a_stranger_are_refused(self) -> None:
         from tests.test_web_api import ALICE
 

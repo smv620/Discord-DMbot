@@ -36,6 +36,7 @@ class Checked:
     words: int
     status: str  # "ok" or "unreadable"
     reason: str  # "" when ok; else one of the door's reason codes
+    picture_pages: int = 0  # PDF pages with only pictures, counted not skipped in silence (#4000)
 
 
 def _unreadable(reason: str) -> Checked:
@@ -85,11 +86,15 @@ async def check_file(filename: str, raw: bytes) -> Checked:
         return _unreadable(_reason(exc))
     except Exception:  # a damaged or hostile file must never escape as another error
         return _unreadable("not_text")
+    pdf_pages = int(
+        getattr(text, "pages", 0)
+    )  # (kept before the cleaning below, which gives a str)
+    pictures = int(getattr(text, "picture_pages", 0))
     text = text.replace("\x00", "")
     count = words_of(text)
     if count == 0:
         return _unreadable("empty")
-    return Checked(text, pages_of(count), count, "ok", "")
+    return Checked(text, pdf_pages or pages_of(count), count, "ok", "", pictures)
 
 
 def check_text(text: str) -> Checked:
