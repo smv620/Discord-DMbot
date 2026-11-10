@@ -698,6 +698,71 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual((done.claim.fact_id, done.shown), (rel, False))
         self.assertTrue(await self.unrevealed(rel))
 
+    async def session_lines(self) -> None:
+        """The session the claims cite (it began at 500), its lines spoken at 510, 520 and 650 s,
+        written in reverse so their ids don't give the spoken order."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s500', %s, %s, 500)",
+                (GUILD_A, self.c),
+            )
+            for ms in (650_000, 520_000, 510_000):
+                await conn.execute(
+                    "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                    " heard) VALUES (%s, 's500', %s, 7, 'x')",
+                    (GUILD_A, ms),
+                )
+
+    async def confirm_in_veldmoor(self, *lines: str) -> Any:
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", *lines))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        return await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+
+    async def test_the_cited_lines_moment_decides_not_the_sessions_start(self) -> None:
+        """Together at 500, split at 600: line 3 (650 s) was in one group's scene."""
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_line_after_the_party_rejoined_is_shown(self) -> None:
+        """Split at the session's start (400), together again at 600: line 3 (650 s) is shown,
+        so the line, not the start, decided."""
+        await self.session_lines()
+        await self.clock_row(400, 1)
+        await self.clock_row(600, None)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertTrue(done.shown)
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_one_cited_line_in_a_split_holds_it(self) -> None:
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("1", "3")
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_line_no_longer_there_holds_it_when_the_session_was_ever_split(self) -> None:
+        """Fails closed: the cited line is gone, and a split began during the session."""
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", "1"))
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM transcript_lines WHERE guild_id = %s", (GUILD_A,))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
     async def test_a_party_together_again_is_shown_as_before(self) -> None:
         await self.clock_row(100, 1)
         await self.clock_row(450, None)  # (rejoined before the session)

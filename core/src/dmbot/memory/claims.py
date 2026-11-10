@@ -2177,7 +2177,8 @@ class ClaimStore:
                     # party's now, #3963 c; one already shown stays as it is)
                     # (never while the game clock had the party split: only one group was there)
                     shown = (
-                        not secret
+                        live[relation.id]  # (held back: one already shown needs no check)
+                        and not secret
                         and not await split_when_said(w, claim.session_started_at, claim.lines)
                         and await reveal_stated_in(w, relation.id)
                     )
