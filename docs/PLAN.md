@@ -423,6 +423,13 @@ commands are only visible to the person who used them.
   **The party is the first entry of every campaign:** a group "the party" made with the campaign, its
   player characters members of it, so the story graph starts from it. It is never a knower (STORY_MEMORY
   9b): what the player characters know stays their own rows.
+  **A player may play several player characters at once** (owner, 2026-11-10): nothing limits a player
+  to one character at the table. Every confirmed player character is a member of the party, whoever
+  plays it (or "pending"), and stays one until the DM says it has left (it died, retired or left the
+  party: the DM removes it, and a removal sticks). DMbot never retires a character because the same
+  player has another, newer one. This replaces the "newest character of each player" rule (#3363,
+  Supervisor 2026-11-05). Where DMbot needs "the characters of the people who took part", it takes all
+  the characters each of them plays, never one guessed per player (#3998).
 - **One DM screen per campaign:** a channel such as `#dmb-dm-screen-rime-of-the-frostmaiden`,
   which the bot creates (see "Channel structure"). Who else can see it depends on the campaign's **DM-screen visibility**
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
