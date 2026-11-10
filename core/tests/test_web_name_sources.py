@@ -6,6 +6,7 @@ names."""
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import httpx
 
@@ -17,6 +18,7 @@ from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_all_names import MEMBER, Listing
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
+from tests.test_web_relationships import BOB_USER
 
 
 def choice(upload_key: str) -> str:
@@ -97,14 +99,16 @@ class NameSources(Listing):
         with self.assertRaises(RecapError):
             await all_names.list_sources(self.web, self.session, other)
 
-    async def door(self, name: str, *args: object) -> object:
+    async def door(self, name: str, *args: object) -> Any:
         """A source door called directly, as the website's role, for the DM."""
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             cur = await conn.execute(
                 f"SELECT {name}(%s, %s, %s) AS r", (self.g, self.one.id, *args)
             )
-            return (await cur.fetchone())["r"]
+            found = await cur.fetchone()
+            assert found is not None
+            return found["r"]
 
     async def test_the_doors_never_reach_another_campaign_s_names_or_labels(self) -> None:
         theirs = await self.memory.add_entity(
@@ -115,8 +119,8 @@ class NameSources(Listing):
             self.g, self.two.id, [theirs.value.id], upload_key="up1", label="Theirs"
         )
         ids = await self.door("dmbot_web_name_source_ids", [choice("up1")])
-        self.assertNotIn(theirs.value.id, ids)  # type: ignore[operator]
-        self.assertEqual(len(ids), 2)  # type: ignore[arg-type]
+        self.assertNotIn(theirs.value.id, ids)
+        self.assertEqual(len(ids), 2)
         listed = str(await all_names.list_sources(self.web, self.session, self.cref))
         self.assertNotIn("Theirs", listed)
 
@@ -161,7 +165,7 @@ class OverHttp(Listing):
         self.assertEqual([n["name"] for n in got.json()["names"]], ["Greywater Keep", "Mira Voss"])
 
     async def test_a_player_is_refused_the_choices_over_http(self) -> None:
-        token = await sessions.sign_in(self.web, BOB, [MEMBER], now=NOW, days=30)
+        token = await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
         self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         got = await self.client.get(f"/me/campaigns/{self.cref}/name-sources")
         self.assertEqual(got.status_code, 404)
