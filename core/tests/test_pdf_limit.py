@@ -52,7 +52,7 @@ class TheLimit(unittest.TestCase):
         self.assertIn("up to 10 MB", str(caught.exception))
 
 
-class TheChild(unittest.TestCase):
+class TheChild(unittest.IsolatedAsyncioTestCase):
     def test_the_childs_memory_grows_only_for_a_file_over_the_usual_size(self) -> None:
         base = document_reader.MEMORY_BYTES
         self.assertEqual(document_reader.memory_for(0), base)
