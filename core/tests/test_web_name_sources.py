@@ -97,6 +97,29 @@ class NameSources(Listing):
         with self.assertRaises(RecapError):
             await all_names.list_sources(self.web, self.session, other)
 
+    async def door(self, name: str, *args: object) -> object:
+        """A source door called directly, as the website's role, for the DM."""
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                f"SELECT {name}(%s, %s, %s) AS r", (self.g, self.one.id, *args)
+            )
+            return (await cur.fetchone())["r"]
+
+    async def test_the_doors_never_reach_another_campaign_s_names_or_labels(self) -> None:
+        theirs = await self.memory.add_entity(
+            self.g, self.two.id, type="npc", name="Other One", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        await self.memory.record_name_sources(
+            self.g, self.two.id, [theirs.value.id], upload_key="up1", label="Theirs"
+        )
+        ids = await self.door("dmbot_web_name_source_ids", [choice("up1")])
+        self.assertNotIn(theirs.value.id, ids)  # type: ignore[operator]
+        self.assertEqual(len(ids), 2)  # type: ignore[arg-type]
+        listed = str(await all_names.list_sources(self.web, self.session, self.cref))
+        self.assertNotIn("Theirs", listed)
+
     async def test_a_name_from_another_campaign_s_upload_is_not_found_here(self) -> None:
         mine = await self.memory.add_entity(
             self.g, self.two.id, type="npc", name="Other One", source=DM_SOURCE,
@@ -136,6 +159,12 @@ class OverHttp(Listing):
             f"/me/campaigns/{self.cref}/all-names", params={"sources": choice("up1")}
         )
         self.assertEqual([n["name"] for n in got.json()["names"]], ["Greywater Keep", "Mira Voss"])
+
+    async def test_a_player_is_refused_the_choices_over_http(self) -> None:
+        token = await sessions.sign_in(self.web, BOB, [MEMBER], now=NOW, days=30)
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        got = await self.client.get(f"/me/campaigns/{self.cref}/name-sources")
+        self.assertEqual(got.status_code, 404)
 
     async def test_a_choice_the_page_never_offers_is_refused(self) -> None:
         url = f"/me/campaigns/{self.cref}/all-names"

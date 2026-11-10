@@ -127,6 +127,8 @@ async def read_page(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if sources:
+            if only is not None:
+                raise RecapError("bad_page")  # (two ways to pick the same names: one would be lost)
             # Only the names found in the chosen uploads (#3675): a DM's choice, so the door gives
             # nothing to anyone else. An empty result is "", which matches no name, never all.
             cur = await conn.execute(
