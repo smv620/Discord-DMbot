@@ -2690,7 +2690,14 @@ class ConnectionOffer(_Menu):
         if len(mine) < 2:
             return ""
         keeps = f"{len(mine)} from {_md(c.upload)}"
-        return f"\n✅ Keep all keeps the {keeps}, and none from other uploads."
+        # The count in "Connection 1 of 9" is everything waiting; Keep all is only this upload's, so
+        # say what happens to the rest (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3").
+        rest = len(self.shown) - len(mine)
+        if rest <= 0:
+            return f"\n✅ Keep all keeps the {keeps}."
+        return (
+            f"\n✅ Keep all keeps the {keeps}. The other {rest} stay for you to decide one by one."
+        )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
