@@ -160,6 +160,27 @@ describe("the wizard", () => {
     expect(screen.getAllByText(/pictures only/)).toHaveLength(2);
   });
 
+  it("the pretend server keeps the count off the stored draft, but answers it once", async () => {
+    const api = await start();
+    const doc = await api.docAdd(G, "lore", { name: "lore-pictures.pdf", source: "upload", text: "the harbour town and its bells" });
+    expect(doc.picturePages).toBe(3);
+    const again = await api.get(G);
+    expect(again?.documents.find((d) => d.id === doc.id)?.picturePages).toBeUndefined();
+  });
+
+  it("a file that cannot be read shows no pictures-only note", async () => {
+    await start();
+    await next(2);
+    await next(3);
+    await next(4);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const scanned = new File(["   "], "scan-pictures.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [scanned] } });
+    expect(await screen.findByText("scan-pictures.pdf")).toBeTruthy();
+    expect(screen.queryByText(/pictures only/)).toBeNull();
+  });
+
   it("a file over the server's limit is refused with the way out before anything is sent", async () => {
     const api = await start();
     for (let to = 2; to <= 4; to++) await next(to);

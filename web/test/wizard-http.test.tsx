@@ -186,10 +186,15 @@ describe("the pictures-only count (#4030)", () => {
     expect(doc.picturePages).toBe(3);
   });
 
+  it("a server that omits the count gives none, not a made-up one", async () => {
+    const { api } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d8", slot: "lore", name: "plain.txt", pages: 0, words: 9, status: "ok", reason: "" } } });
+    const doc = await api.docAdd(G, "lore", { name: "plain.txt", source: "upload", data: toBase64(new TextEncoder().encode("hello")) });
+    expect(doc.picturePages).toBe(0);
+  });
+
   it("a re-read draft's documents have no pictures-only count", async () => {
     const { api } = net({ [`GET /me/wizard/${G}`]: { body: draft({ documents: [{ id: "d1", slot: "lore", name: "lore-pictures.pdf", source: "upload", pages: 4, words: 40, status: "ok", reason: "", picturePages: 3 }] }) } });
     const got = await api.get(G);
     expect(got?.documents[0]?.picturePages).toBeUndefined();
   });
 });
-

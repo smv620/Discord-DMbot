@@ -322,7 +322,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
             <li key={d.id}>
               {d.name}{" "}
               {d.status === "ok" ? <span class="small">{d.source === "upload" ? t.counts(d.pages, d.words) : ""}</span> : <span role="alert">{t.unreadable[d.reason] ?? w.failed}</span>}{" "}
-              {d.status === "ok" && pictures[d.id] ? <span class="small">{t.picturePages(pictures[d.id]!)}</span> : null}{" "}
+              {d.status === "ok" && (pictures[d.id] ?? 0) > 0 ? <span class="small">{t.picturePages(pictures[d.id] ?? 0)}</span> : null}{" "}
               <button type="button" class="link" onClick={() => void remove(d.id)}>
                 {t.remove}
               </button>
