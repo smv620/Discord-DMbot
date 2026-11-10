@@ -127,4 +127,11 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
 - The owner is found once per job (`DMBot._owner_of_campaign`); a campaign nobody owns is recorded under
   owner 0 and never added to a month.
 - A failed write is one counts-only warning; the AI work goes on.
+- **Rounding:** each call is rounded up to a whole credit, so a very small call costs 1 credit (about
+  $0.001) and a read made of many tiny calls reads a little high. Accepted for step 1, which measures;
+  the estimate's unit table is tuned from these numbers, so it errs high as the design wants.
+- **A slow database never holds up an answer:** the write is shielded and ends after 5 seconds with one
+  warning (the count for that call is lost, never the answer).
+- **Owed before the limit (step 4):** an account move must carry `owner_credits` (as `owner_hours` is
+  merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
 

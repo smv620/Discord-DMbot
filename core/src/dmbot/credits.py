@@ -17,6 +17,7 @@ reply, a name or a file name (CLAUDE.md, privacy).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import logging
@@ -36,6 +37,9 @@ log = logging.getLogger(__name__)
 
 # 1 credit = 1,000 millionths of a dollar (10 credits = $0.01). The one place the unit is set.
 MICRO_PER_CREDIT = 1000
+# A charge that takes longer than this is dropped with one warning: a slow database must never hold
+# up an answer DMbot already paid for.
+WRITE_TIMEOUT_S = 5.0
 
 # Every job that prepares material and so must open `preparing`, as (module, function): a test
 # reads each function's source and fails if it does not, so a new job that forgets the scope is
@@ -121,7 +125,11 @@ async def record(reply: Reply, feature: str | None) -> int:
         )
         if credits <= 0:
             return 0
-        await _write(_db, scope, (feature or "-")[:40], credits)
+        # Shielded, so a cancelled job does not lose the count half way, and bounded, so a hung
+        # database costs one warning instead of stalling the answer.
+        await asyncio.wait_for(
+            asyncio.shield(_write(_db, scope, (feature or "-")[:40], credits)), WRITE_TIMEOUT_S
+        )
     except Exception as exc:  # the meter must never fail the real work
         log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
         return 0

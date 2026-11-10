@@ -168,6 +168,23 @@ class Ledger(DatabaseTest):
             ["AI credits: a charge could not be written (OSError)"],
         )
 
+    async def test_a_hung_write_costs_one_warning_not_the_answer(self) -> None:
+        async def hangs(_guild: int, _campaign: str) -> int | None:
+            await asyncio.sleep(60)
+            return OWNER
+
+        credits.configure(self.db, hangs, lambda: NOW)
+        with (
+            patch.object(credits, "WRITE_TIMEOUT_S", 0.05),
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="WARNING") as logged,
+        ):
+            self.assertEqual(await credits.record(reply(), "names"), 0)
+        self.assertEqual(
+            [r.getMessage() for r in logged.records],
+            ["AI credits: a charge could not be written (TimeoutError)"],
+        )
+
     async def test_each_servers_rows_are_its_own(self) -> None:
         with credits.preparing(GUILD_B, self.b.id, "lore"):
             await credits.record(reply(), "names")
