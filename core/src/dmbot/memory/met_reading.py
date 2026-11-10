@@ -3,9 +3,10 @@ database, no AI call, nothing written.
 
 A wolf on the road, two ambushers, the sled dogs: the owner's rank 0, "anyone or anything met;
 kept so they can be raised later". The session reader is asked for them in the same call as its
-claims (`MET_ADDENDUM`, so the switch costs no extra call), and the store keeps each as a quiet
-unnamed entry at rank 0 (`MemoryStore.add_met`). Lore uploads keep their own rule
-(`unnamed_read`); this is for play only (Supervisor's ruling on #3172, 2026-11-01).
+claims (`MET_ADDENDUM`, so the switch costs no extra call), and `met_store` keeps each apart from
+the names (`memory_met`, quiet by construction) until the DM names one, which then enters at rank 0
+(#4045). Lore uploads keep their own rule (`unnamed_read`); this is for play only (Supervisor's
+rulings on #3172, 2026-11-01 and option C on 2026-11-10).
 
 Rules held in code, not trust (Supervisor's ruling, 2026-11-10):
 - **Only the DM's own words.** Every item cites at least one line the DM spoke, and its words are

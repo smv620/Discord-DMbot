@@ -50,6 +50,7 @@ from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
 from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
 from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
+from dmbot.memory.met_store import speakers_of
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import Tally
 from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
@@ -64,7 +65,7 @@ from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
 if TYPE_CHECKING:
-    from dmbot.memory.store import MemoryStore
+    from dmbot.memory.met_store import MetStore
 
 log = logging.getLogger(__name__)
 
@@ -558,7 +559,8 @@ async def run(
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     recap_lines: Collection[int] = (),
     met: bool = False,
-    met_store: MemoryStore | None = None,
+    met_store: MetStore | None = None,
+    session_id: str | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -607,7 +609,8 @@ async def run(
     `met` (#3172 slice 5, DMBOT_MET_UNNAMED): the claims call is also asked who and what the party
     met that is never named (`met_reading.MET_ADDENDUM`), in the same call, so it costs no call.
     Only the DM's own lines count; the session's items are joined by their words, capped, and kept
-    by `met_store.add_met` as quiet rank-0 entries after the claims. Never in `family_only`."""
+    by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
+    claims. Never in `family_only`."""
     report = Report()
     readings = readings and not family_only
     deeds = deeds and not family_only
@@ -899,18 +902,19 @@ async def run(
             report.deferred += stored.deferred
             for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
-    if met and met_store is not None and report.met_proposals:
-        await _keep_met(report, met_store, guild_id, campaign_id, everyone, consenting,
-                        session_started_at, skip)  # fmt: skip
+    if met and met_store is not None and session_id is not None and report.met_proposals:
+        await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone,
+                        consenting, session_started_at, skip)  # fmt: skip
     report.through_ms = reached
     return report
 
 
 async def _keep_met(
     report: Report,
-    met_store: MemoryStore,
+    met_store: MetStore,
     guild_id: int,
     campaign_id: str,
+    session_id: str,
     everyone: Mapping[str, int | None],
     consenting: Consenting,
     session_started_at: int | None,
@@ -932,10 +936,11 @@ async def _keep_met(
     if not items:
         return
     try:
-        added = await met_store.add_met(
+        added = await met_store.add(
             guild_id,
             campaign_id,
-            [(m.what, m.count, m.lines) for m in items],
+            session_id,
+            [(m.what, m.count, m.lines, speakers_of(m.lines, everyone)) for m in items],
             session_started_at=session_started_at,
         )
     except Exception as exc:  # only the type: the row holds the words

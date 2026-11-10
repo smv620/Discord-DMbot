@@ -41,8 +41,8 @@ SOURCE_PLOTBOT, SOURCE_RULE = "plotbot", "rule"
 READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
     "reading", "dm_corrected", "revealed", "demoted", "rule",
 )  # fmt: skip
-# A being met in play that the story never named, kept quietly at rank 0 (#3172 slice 5,
-# `MemoryStore.add_met`): the reason is what marks it as quiet.
+# A being met in play that the story never named, once the DM names or joins it from the list of
+# them (#3172 slice 5, #4045): it enters at rank 0 with this reason.
 MET_IN_PLAY = "met_in_play"
 REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY)
 ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)

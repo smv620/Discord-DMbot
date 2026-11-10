@@ -114,8 +114,9 @@ class Settings:
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
-    # Unnamed beings met in play kept as quiet rank-0 entries (#3172 slice 5), asked in the claims
-    # call itself. Off until the DM's list of them (#4045) has merged (Supervisor, 2026-11-10).
+    # Unnamed beings met in play kept apart from the names until the DM names one (#3172 slice 5),
+    # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
+    # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.

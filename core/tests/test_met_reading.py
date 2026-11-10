@@ -1,7 +1,8 @@
-"""Unnamed beings met in play, kept quietly at rank 0 (#3172 slice 5, DMBOT_MET_UNNAMED): the
-reader's rules (only the DM's own words, one item per encounter, the cap), the extractor's use of
-the claims call (no extra call), and the store (one entry per encounter, found again in the same
-session, a name the campaign has is no unnamed being). Invented names only; the AI is canned."""
+"""Unnamed beings met in play, kept apart from the names (#3172 slice 5, DMBOT_MET_UNNAMED;
+Supervisor's option C): the reader's rules (only the DM's own words, one item per encounter, the
+cap), the extractor's use of the claims call (no extra call), and the table `memory_met` (one row
+per encounter, found again in the same session, a name the campaign has is no unnamed being, and
+gone with its session, its transcript and the speaker it cites). Invented names, a canned AI."""
 
 from __future__ import annotations
 
@@ -11,10 +12,14 @@ from collections.abc import Collection, Sequence
 from typing import Any
 
 from dmbot.ai import Reply
-from dmbot.memory import extractor, importance_rank, met_reading
+from dmbot.memory import extractor, met_reading
 from dmbot.memory.met_reading import Met, gathered, in_words_of, parse_met
+from dmbot.memory.met_store import MetAdded, MetRow, MetStore
 from dmbot.memory.models import CONFIRMED
+from dmbot.transcript.models import Line
+from dmbot.transcript.store import TranscriptStore
 from tests.test_extractor import DM, Kept, dm_session, go, line, session
+from tests.test_memory_names import DM as DM_ID
 from tests.test_memory_names import GUILD, NamesTest
 
 SAID = {
@@ -24,7 +29,7 @@ SAID = {
 }
 
 
-def answer(*items: dict[str, Any]) -> str:
+def answer(*items: object) -> str:
     return json.dumps({"claims": [], "met": list(items)})
 
 
@@ -99,18 +104,17 @@ class MetAnswer:
 
 
 class Keeping:
-    """A store that remembers what `add_met` was handed."""
+    """A met store that remembers what it was handed."""
 
     def __init__(self) -> None:
-        self.kept: list[list[tuple[str, int, Sequence[str]]]] = []
+        self.kept: list[list[tuple[str, int, Sequence[str], Sequence[int]]]] = []
 
-    async def add_met(
-        self, guild_id: int, campaign_id: str, met: Sequence[tuple[str, int, Sequence[str]]],
+    async def add(
+        self, guild_id: int, campaign_id: str, session_id: str,
+        met: Sequence[tuple[str, int, Sequence[str], Sequence[int]]],
         *, session_started_at: int | None,
-    ) -> Any:  # fmt: skip
+    ) -> MetAdded:  # fmt: skip
         self.kept.append(list(met))
-        from dmbot.memory.store import MetAdded
-
         return MetAdded(made=len(met))
 
 
@@ -120,17 +124,17 @@ DOGS = {"what": "sled dogs", "count": 7, "lines": [1]}
 class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
     async def test_off_by_default_the_prompt_is_the_claims_one_and_nothing_is_kept(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
-        report = await go(ai, Kept(), dm_session(10), met_store=store)
+        report = await go(ai, Kept(), dm_session(10), met_store=store, session_id="s")
         self.assertEqual(ai.systems, [extractor.SYSTEM])
         self.assertEqual((report.met, store.kept), (0, []))
 
     async def test_on_it_costs_no_call_and_keeps_what_the_dm_said(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
         lines = [line(1, DM, "The sled dogs pull hard."), *dm_session(10)[1:]]
-        report = await go(ai, Kept(), lines, met=True, met_store=store)
+        report = await go(ai, Kept(), lines, met=True, met_store=store, session_id="s")
         self.assertEqual(report.calls, 1)  # (asked in the claims call itself)
         self.assertIn(met_reading.MET_ADDENDUM, ai.systems[0])
-        self.assertEqual(store.kept, [[("sled dogs", 7, ("1",))]])
+        self.assertEqual(store.kept, [[("sled dogs", 7, ("1",), [DM])]])
         self.assertEqual(report.met_made, 1)
         self.assertNotIn("sled", report.line())  # counts only in the log line
         self.assertIn("met: 1 found", report.line())
@@ -138,7 +142,7 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
     async def test_a_players_line_is_refused(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
         lines = [line(1, text="The sled dogs pull hard."), *session(10)[1:]]  # (a player's)
-        report = await go(ai, Kept(), lines, met=True, met_store=store)
+        report = await go(ai, Kept(), lines, met=True, met_store=store, session_id="s")
         self.assertEqual((report.met_not_dm, store.kept), (1, []))
 
     async def test_someone_who_stopped_by_the_end_loses_the_item(self) -> None:
@@ -151,57 +155,63 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
             return {DM} if asked == 1 else set()
 
         lines = [line(1, DM, "The sled dogs pull hard."), *dm_session(10)[1:]]
-        report = await go(ai, Kept(), lines, consenting, met=True, met_store=store)
+        report = await go(ai, Kept(), lines, consenting, met=True, met_store=store, session_id="s")
         self.assertEqual(store.kept, [])
         self.assertEqual(report.met_made, 0)
 
     async def test_never_in_the_families_only_mode(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
-        await go(ai, Kept(), dm_session(10), met=True, met_store=store, family_only=True)
+        await go(ai, Kept(), dm_session(10), met=True, met_store=store, session_id="s",
+                 family_only=True)  # fmt: skip
         self.assertEqual(ai.systems, [extractor.SYSTEM])
 
 
 class Store(NamesTest):
-    async def met(self, *items: tuple[str, int], at: int = 500) -> Any:
-        return await self.memory.add_met(
-            GUILD, self.campaign.id, [(w, n, ("4",)) for w, n in items], session_started_at=at
+    """The table `memory_met` (Supervisor's option C): apart from the names, so quiet."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.met_store = MetStore(self.db)
+        self.transcripts = TranscriptStore(self.db)
+        self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
+        await self.transcripts.add_lines(
+            GUILD, self.sid, [Line(1_700_000_001_000, DM_ID, "Two barbarians jump out.", "x")]
         )
+        await self.transcripts.end_session(GUILD, self.sid, 1_700_001_000)
 
-    async def entries(self) -> list[Any]:
-        return [e for e, _label in await self.memory.unnamed(GUILD, self.campaign.id)]
+    async def met(self, *items: tuple[str, int], sid: str | None = None) -> MetAdded:
+        return await self.met_store.add(
+            GUILD, self.campaign.id, sid or self.sid,
+            [(w, n, ("1",), (DM_ID,)) for w, n in items], session_started_at=1_700_000_000,
+        )  # fmt: skip
 
-    async def test_one_quiet_entry_per_encounter_at_rank_0(self) -> None:
+    async def rows(self) -> list[MetRow]:
+        return await self.met_store.of_session(GUILD, self.campaign.id, self.sid)
+
+    async def test_one_row_per_encounter_and_no_entry_at_all(self) -> None:
         done = await self.met(("barbarians", 2), ("a monstrosity", 1))
         self.assertEqual((done.made, done.again, done.named), (2, 0, 0))
-        made = {e.unnamed_what: e for e in await self.entries()}
-        self.assertEqual(made["barbarians"].type, "faction")  # (a group)
-        self.assertEqual(made["a monstrosity"].type, "character")
-        self.assertEqual(made["barbarians"].description, "2 of them")
-        for e in made.values():
-            self.assertEqual(e.status, "proposed")
-            self.assertTrue(e.unseen_by_players)
+        rows = await self.rows()
+        self.assertEqual(
+            sorted((r.what, r.count, r.lines) for r in rows),  # (one moment: no order between)
+            [("a monstrosity", 1, ("1",)), ("barbarians", 2, ("1",))],
+        )
+        # quiet by construction: nothing is a name, so no list, count or check can show it
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT rank, reason, source, session_started_at, lines FROM memory_importance"
-                " WHERE guild_id = %s",
+                "SELECT count(*) AS n FROM memory_entities WHERE guild_id = %s AND unnamed",
                 (GUILD,),
             )
-            rows = await cur.fetchall()
-        self.assertEqual(
-            {(r["rank"], r["reason"], r["source"], r["session_started_at"]) for r in rows},
-            {(0, importance_rank.MET_IN_PLAY, importance_rank.SOURCE_RULE, 500)},
-        )
-        self.assertEqual(rows[0]["lines"], [4])
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+        self.assertEqual(await self.memory.unnamed(GUILD, self.campaign.id), [])
 
-    async def test_the_same_session_finds_it_again_and_another_session_makes_a_new_one(
-        self,
-    ) -> None:
+    async def test_the_same_words_in_the_session_are_found_again(self) -> None:
         await self.met(("barbarians", 2))
-        again = await self.met(("the barbarians", 2))  # (a restarted read of the same session)
+        again = await self.met(("the Barbarians", 2))  # (a restarted read)
         self.assertEqual((again.made, again.again), (0, 1))
-        later = await self.met(("barbarians", 2), at=900)  # (two ambushes a month apart)
-        self.assertEqual(later.made, 1)
-        self.assertEqual(len(await self.entries()), 2)
+        self.assertEqual(len(await self.rows()), 1)
 
     async def test_a_name_the_campaign_has_is_no_unnamed_being(self) -> None:
         await self.memory.add_entity(
@@ -209,4 +219,29 @@ class Store(NamesTest):
         )
         done = await self.met(("Boy", 1))
         self.assertEqual((done.made, done.named), (0, 1))
-        self.assertEqual(await self.entries(), [])
+        self.assertEqual(await self.rows(), [])
+
+    async def test_it_goes_with_the_sessions_transcript(self) -> None:
+        await self.met(("barbarians", 2))
+        gone = await self.transcripts.delete_session_transcript(
+            GUILD, self.campaign.id, self.sid, 2_000_000_000, 1
+        )
+        self.assertEqual(gone, 1)  # (the control: the transcript did go)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_it_goes_with_the_session_itself(self) -> None:
+        await self.met(("barbarians", 2))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "DELETE FROM transcript_sessions WHERE guild_id = %s AND id = %s", (GUILD, self.sid)
+            )
+            cur = await conn.execute("SELECT count(*) AS n FROM memory_met WHERE guild_id = %s",
+                                     (GUILD,))  # fmt: skip
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_it_goes_when_the_speaker_it_cites_is_removed(self) -> None:
+        await self.met(("barbarians", 2))
+        await self.transcripts.remove_speaker(GUILD, self.campaign.id, DM_ID)
+        self.assertEqual(await self.rows(), [])

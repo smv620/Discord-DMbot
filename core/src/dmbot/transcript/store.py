@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.memory import evidence, forget_readings
+from dmbot.memory import evidence, forget_readings, met_store
 from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
@@ -1310,6 +1310,7 @@ class TranscriptStore:
             )
             await theatre_store.forget_session(conn, guild_id, session_id)
             await rel_store.forget_session(conn, guild_id, session_id)
+            await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1466,6 +1467,8 @@ async def _forget_memory_traces(
         " AND (%s::text IS NULL OR campaign_id = %s)",
         (guild_id, user_id, campaign_id, campaign_id),
     )
+    # the beings met in play that cite their lines (#3172 slice 5): words from those lines
+    await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
 
 
 async def _drop_log_rows(
