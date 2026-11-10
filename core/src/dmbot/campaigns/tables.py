@@ -198,6 +198,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
+    "upload_undos": _WAIT,  # a press of Undo this upload: ids and counts, gone in a day (#3879)
     "trait_answers": _WAIT,  # a Yes or No on a lineage or class question, gone in a day (#3946)
     "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
