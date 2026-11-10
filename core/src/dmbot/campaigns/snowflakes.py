@@ -25,15 +25,17 @@ JS_SAFE = 2**53 - 1  # the largest integer a double holds exactly
 ID_DIGITS_MAX = 20  # a 64-bit id is at most 20 digits
 
 # The keys (database column names in the parts and the memory section; the sections' own names for
-# the rest) whose values are Discord ids. `test_backup_ids` walks a full backup and fails on any
-# number above JS_SAFE, so a field named some other way cannot slip through.
+# the rest) whose values are Discord ids that the sections check as numbers. The `dms` and
+# `confirmations` sections already wrote their ids as strings (`user`) and check them so: not here.
+# `test_backup_ids` walks a full backup and fails on any number above JS_SAFE, so a field named
+# some other way cannot slip through.
 ONLY_IDS = re.compile(
-    r"^(user_id|guild|user|users|speakers|speaker_ids|players|dms|roles|owner_user_id|played_by"
+    r"^(user_id|guild|speakers|speaker_ids|players|roles|owner_user_id|played_by"
     r"|imported_by|dm_user_ids|dm_accounts|channel_id|message_id)$|_user_id$|_channel_id$"
 )
 ID_KEY = re.compile(
     r"(_id|_ids|_by|_accounts|_users)$"
-    r"|^(guild|user|users|speakers|speaker_ids|players|dms|roles|channels|owner|owners)$"
+    r"|^(guild|speakers|speaker_ids|players|roles|channels|owner|owners)$"
 )
 
 
