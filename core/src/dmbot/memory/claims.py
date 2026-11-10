@@ -289,6 +289,10 @@ class Confirmed:
     # A connection the story held back that this claim stated, now shown to the players (#3963 c):
     # the caller says so to the DM.
     shown: bool = False
+    # Written held back beside a connection the story already holds back between the same two
+    # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
+    # players on the website) when the players should see it.
+    held: bool = False
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -2134,7 +2138,7 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = False
+            shown = held = False
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2147,7 +2151,7 @@ class ClaimStore:
                 # A claim the reader could only file under the catch-all, between two entries the
                 # story already holds a connection back for, may be that connection in other
                 # words: it is written held back too, never shown beside it (#3975). The DM
-                # decides with 👁️ Reveal; DMbot never guesses which one it means.
+                # decides when to show it; DMbot never guesses which one it means.
                 live = await live_between(w, subject_id, object_id)
                 hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
@@ -2174,10 +2178,12 @@ class ClaimStore:
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                # (a secret one is the DM's own choice, and says so already)
+                held = hold and not secret and relation.id not in live
             row = await w.update(
                 CLAIMS,
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch, shown)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held)

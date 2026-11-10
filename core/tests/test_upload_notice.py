@@ -42,6 +42,16 @@ class Words(NamesTest):
         self.assertIn("**1 name** (1 NPC)", text)
         self.assertIn("**2 connections** said at the table are now shown to your players", text)
 
+    def test_a_connection_kept_hidden_beside_a_hidden_one_is_said(self) -> None:
+        """#3979: an import's claims kept hidden beside a connection the story hides, never
+        counted as names."""
+        text = un.notice_text("a session", {"held": 1}, 0)
+        self.assertIn("**1 connection** is kept hidden from your players", text)
+        self.assertIn("To show it: open either name, ✏️ Edit a connection…", text)
+        self.assertIn("👁️ Everyone at the table.", text)
+        self.assertIn("**1 name**", un.notice_text("a session", {"npc": 1, "held": 2}, 0))
+        self.assertNotIn("held", text)
+
 
 class Undoing(NamesTest):
     async def asyncSetUp(self) -> None:

@@ -707,6 +707,8 @@ class Stored(ConfirmedMemoryTest):
 
         self.assertIn("1 of them was said at the table", claims_review.shown_line(1))
         self.assertIn("3 of them were said at the table", claims_review.shown_line(3))
+        self.assertIn("1 of them is kept hidden from your players", claims_review.held_line(1))
+        self.assertIn("To show them: open either name", claims_review.held_line(2))
 
     async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
         await self.propose(said("Bram", "is in", "Veldmoor"))
@@ -730,7 +732,7 @@ class Stored(ConfirmedMemoryTest):
         it; it keeps its own words and Undo, and the held row is untouched."""
         rel, new, done = await self.catch_all_over_held_back()
         self.assertEqual(done.claim.fact_id, new.id)
-        self.assertFalse(done.shown)
+        self.assertEqual((done.shown, done.held), (False, True))  # (the DM is told, #3979)
         self.assertEqual((new.predicate, new.detail), ("associated_with", "is blood-bound to"))
         self.assertTrue(new.unrevealed)
         self.assertFalse(new.secret)
@@ -743,6 +745,7 @@ class Stored(ConfirmedMemoryTest):
     async def test_a_secret_catch_all_claim_over_a_held_back_row_stays_secret(self) -> None:
         rel, new, done = await self.catch_all_over_held_back(secret=True)
         self.assertEqual((new.secret, new.unrevealed, done.shown), (True, True, False))
+        self.assertFalse(done.held)  # (the DM's own secret press says so already)
         self.assertTrue(await self.unrevealed(rel))
 
     async def test_a_held_back_row_the_other_way_round_holds_the_catch_all_back_too(self) -> None:
@@ -758,7 +761,7 @@ class Stored(ConfirmedMemoryTest):
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
                   if r.id != rel]  # fmt: skip
-        self.assertEqual((new.unrevealed, done.shown), (True, False))
+        self.assertEqual((new.unrevealed, done.shown, done.held), (True, False, True))
         self.assertTrue(await self.unrevealed(rel))
 
     async def confirm_blood_bound(self) -> Any:
@@ -788,7 +791,7 @@ class Stored(ConfirmedMemoryTest):
         done = await self.confirm_blood_bound()
         back = await self.relation(done.claim.fact_id)
         self.assertEqual((back.id, back.status), (twin, "confirmed"))
-        self.assertEqual((back.unrevealed, done.shown), (True, False))
+        self.assertEqual((back.unrevealed, done.shown, done.held), (True, False, True))
         self.assertTrue(await self.unrevealed(rel))
 
     async def test_a_held_catch_all_said_in_the_same_words_is_shown_as_said(self) -> None:
@@ -799,7 +802,7 @@ class Stored(ConfirmedMemoryTest):
         )  # fmt: skip
         rel = made.value[0].id
         done = await self.confirm_blood_bound()
-        self.assertEqual((done.claim.fact_id, done.shown), (rel, True))
+        self.assertEqual((done.claim.fact_id, done.shown, done.held), (rel, True, False))
         self.assertFalse(await self.unrevealed(rel))
 
     async def test_an_ended_held_back_row_holds_nothing_back(self) -> None:
@@ -811,6 +814,7 @@ class Stored(ConfirmedMemoryTest):
             )
         done = await self.confirm_blood_bound()
         self.assertFalse((await self.relation(done.claim.fact_id)).unrevealed)
+        self.assertFalse(done.held)
 
     async def test_a_claim_of_its_own_kind_beside_a_held_row_is_written_as_before(self) -> None:
         """Only the catch-all is held back: a claim the reader named a kind for is its own
@@ -820,15 +824,13 @@ class Stored(ConfirmedMemoryTest):
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
         new = await self.relation(done.claim.fact_id)
-        self.assertEqual((new.predicate, new.unrevealed), ("leads", False))
+        self.assertEqual((new.predicate, new.unrevealed, done.held), ("leads", False, False))
         self.assertTrue(await self.unrevealed(rel))
 
     async def test_a_catch_all_claim_with_nothing_held_back_is_shown_as_before(self) -> None:
-        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
-        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
-        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        done = await self.confirm_blood_bound()
         (new,) = await self.memory.relations(GUILD_A, self.c, include_secret=True)
-        self.assertFalse(new.unrevealed)
+        self.assertEqual((new.unrevealed, done.held), (False, False))
 
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
