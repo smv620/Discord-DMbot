@@ -294,6 +294,7 @@ class WorkerHarness(Base):
         story: Any = None,
         critics: bool = False,
         final_read: bool = False,
+        cache_front: bool = False,
         musts: Sequence[str] = (),
         stored_split: Any = None,
     ) -> None:
@@ -337,6 +338,7 @@ class WorkerHarness(Base):
             story=story,
             critics=critics,
             final_read=final_read,
+            cache_front=cache_front,
             stored_split=stored_split,
         )
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)

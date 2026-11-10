@@ -936,9 +936,9 @@ class AnthropicClient:
                     }
                     for image in images
                 ),
-                {"type": "text", "text": text},
+                *([{"type": "text", "text": text}] if text else []),
             ]
-        elif cache_prefix:
+        elif cache_prefix and text:  # (the service refuses an empty block: a prefix alone is fine)
             content.append({"type": "text", "text": text})
         body: dict[str, Any] = {
             "model": model,

@@ -72,6 +72,11 @@ class Settings:
     # The careful tier's last editing pass over each finished recap (#2952). On unless
     # RECAP_FINAL_READ is 0.
     recap_final_read: bool = True
+    # The writer's message front (the beats, the transcript and the blocks after it) is marked to be
+    # remembered between the writer, its retries and its revisions (#4054). A write costs 1.25 times
+    # an input token, so it is off until the server's logs show that recaps revise or retry often
+    # enough to pay for it. Off unless RECAP_CACHE.
+    recap_cache: bool = False
     # The split of a session's opening through the three-pass structured-output adapter (#2714):
     # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
     recap_structured_output_split: bool = False
@@ -638,6 +643,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
         recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
+        recap_cache=_on_off(get, "RECAP_CACHE"),
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),

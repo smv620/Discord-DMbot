@@ -1388,6 +1388,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 final_read=settings.recap_final_read,
+                cache_front=settings.recap_cache,
                 structured_split=settings.recap_structured_output_split,
                 structured_beats=settings.recap_structured_output_beats,
                 stored_split=self.recap_stored_split,
