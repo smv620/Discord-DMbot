@@ -43,6 +43,7 @@ from dmbot.memory import (
     evidence,
     gate,
     graph_review,
+    importance_rank,
     kin,
     kind_offers,
     knowers,
@@ -466,6 +467,15 @@ class UnnamedAdded:
     created: bool
     similar: tuple[str, ...] = ()
     batch: int | None = None
+
+
+@dataclasses.dataclass
+class MetAdded:
+    """What `add_met` did, as counts only (#3172 slice 5)."""
+
+    made: int = 0
+    again: int = 0  # already kept for this session (a second batch, or a restarted read)
+    named: int = 0  # the words are a name the campaign already has: not an unnamed being
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1838,6 +1848,80 @@ class MemoryStore:
             read[key] = row["id"]
         similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
         return UnnamedAdded(_entity(row), True, similar, w.batch)
+
+    async def add_met(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        met: Sequence[tuple[str, int, Sequence[str]]],
+        *,
+        session_started_at: int | None,
+    ) -> MetAdded:
+        """Keep the beings the party met in play that the story never named (#3172 slice 5), each
+        as (the DM's word for them, how many, the line numbers): one unnamed entry per encounter,
+        a person for one and a group for more, with a rank-0 assessment whose reason
+        (`met_in_play`) marks it as quiet. It is a proposal like any unnamed entry, seen only by
+        the campaign's DMs (`Entity.unseen_by_players`) and never confirmed by "Add all"; naming
+        it later is the DM's "Give them a name". Never hidden from players on top of that: once the
+        DM names it, the party met it at the table and knows it (the owner's rule).
+
+        The same words twice in one session are one entry: an entry this session already kept is
+        found again (a later batch, a restarted read), counted as `again`. Words that are a name
+        the campaign already has are no unnamed being, counted as `named`. Across sessions the same
+        words make a new entry, as for any unnamed person: two wolves a month apart are often two
+        wolves. Written as the extractor, in one write; counts only come back."""
+        out = MetAdded()
+        if not met:
+            return out
+        async with self._write(guild_id, campaign_id, "extractor") as w:
+            live = await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            named = {name_key(str(r["name"])) for r in live if not r["unnamed"]}
+            named |= {
+                str(r["key"])
+                for r in await w.select(ALIASES, " AND status IN ('proposed', 'confirmed')")
+            }
+            kept: dict[str, str] = {}  # same-person key -> this session's met entry
+            if session_started_at is not None:
+                cur = await w.conn.execute(
+                    "SELECT DISTINCT entity_id FROM memory_importance"
+                    " WHERE guild_id = %s AND campaign_id = %s AND reason = %s"
+                    " AND session_started_at = %s",
+                    (*w.ids, importance_rank.MET_IN_PLAY, session_started_at),
+                )
+                ids = {str(r["entity_id"]) for r in await cur.fetchall()}
+                for r in live:
+                    if str(r["id"]) in ids and r["unnamed"] and r["unnamed_what"]:
+                        what = unnamed_mod.without_tag(str(r["unnamed_what"]))
+                        kept[unnamed_mod.same_person_key(what, None)] = str(r["id"])
+            for word, count, lines in met:
+                what = unnamed_mod.tidy(word)
+                same = unnamed_mod.same_person_key(what, None)  # ("|" and the word, no article)
+                if not what or {name_key(what), same.removeprefix("|")} & named:
+                    out.named += 1
+                    continue
+                if same in kept:
+                    out.again += 1
+                    continue
+                group = count != 1
+                details = "" if not group else ("several" if count == 0 else f"{count} of them")
+                added = await self._add_unnamed_in(
+                    w, what, None, details, None, seen_at=session_started_at,
+                    kind="faction" if group else "character",
+                )  # fmt: skip
+                numbers = [int(n) for n in lines if str(n).isdigit()]
+                await w.conn.execute(
+                    "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
+                    " source, session_started_at, lines, recorded_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        *w.ids, added.entity.id, importance_rank.BACKGROUND,
+                        importance_rank.MET_IN_PLAY, importance_rank.SOURCE_RULE,
+                        session_started_at, numbers[: importance_rank.MAX_LINES], w.now,
+                    ),
+                )  # fmt: skip
+                kept[same] = added.entity.id
+                out.made += 1
+        return out
 
     async def unnamed(self, guild_id: int, campaign_id: str) -> list[tuple[Entity, str]]:
         """The campaign's unnamed people, each with the label to show now: built from the anchor's

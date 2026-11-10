@@ -41,7 +41,10 @@ SOURCE_PLOTBOT, SOURCE_RULE = "plotbot", "rule"
 READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
     "reading", "dm_corrected", "revealed", "demoted", "rule",
 )  # fmt: skip
-REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE)
+# A being met in play that the story never named, kept quietly at rank 0 (#3172 slice 5,
+# `MemoryStore.add_met`): the reason is what marks it as quiet.
+MET_IN_PLAY = "met_in_play"
+REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY)
 ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)
 # An old backup's `basis` code, as migration 0388 mapped the rows already stored.
 OLD_BASIS = frozenset({

@@ -9493,6 +9493,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
+                met=self.settings.met_unnamed_on,
+                met_store=self.memory,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9671,6 +9673,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
+                met=self.settings.met_unnamed_on,
+                met_store=self.memory,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
