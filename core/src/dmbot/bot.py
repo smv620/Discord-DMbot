@@ -8986,19 +8986,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # after" is true (#2564).
                     limit = asyncio.timeout(plan_reader.MAX_RUN_S)
                     try:
+                        # (a read of the DM's adventure is metered as AI credits, #4005)
                         async with limit:
-                            report = await plan_reader.run(
-                                ai,
-                                plan,
-                                guild_id=guild_id,
-                                campaign_id=campaign_id,
-                                document_id=document_id,
-                                start_chunk=start,
-                                model=lambda: ai.model,
-                                allowed=plan_allowed,
-                                progress=moved,
-                                report=report,
-                            )
+                            with credits.preparing(guild_id, campaign_id, "adventure"):
+                                report = await plan_reader.run(
+                                    ai,
+                                    plan,
+                                    guild_id=guild_id,
+                                    campaign_id=campaign_id,
+                                    document_id=document_id,
+                                    start_chunk=start,
+                                    model=lambda: ai.model,
+                                    allowed=plan_allowed,
+                                    progress=moved,
+                                    report=report,
+                                )
                     except TimeoutError:
                         if not limit.expired():
                             raise  # a store's or a call's own timeout: the generic handler

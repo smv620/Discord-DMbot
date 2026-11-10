@@ -12,6 +12,7 @@ Counts and stages only on the card.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -19,6 +20,7 @@ from typing import Any
 
 import discord
 
+from dmbot import credits
 from dmbot.dm_questions import SCRIPT, Ask
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript import rel_run
@@ -271,22 +273,30 @@ async def make_for(
         name = _plain_name(bot, guild_id, uid)
         if name is not None:
             names[uid] = name
-    outcome = await job.make_script(
-        bot.campaigns.db,
-        ask,
-        guild_id,
-        session_id,
-        agreed=agreed,
-        names=names,
-        known=await memory.table_names(guild_id, session.campaign_id),
-        still_agreed=agreed_now,
-        edit=edit,
-        link=script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number),
+    # A script for an imported session is made because the DM imported it, so it is metered as AI
+    # credits; a live session's script stays in the hours (#4005).
+    metered = (
+        credits.preparing(guild_id, session.campaign_id, "script")
+        if await bot.transcripts.is_import(guild_id, session_id)
+        else contextlib.nullcontext()
     )
-    if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
-        await read_relationships(
-            bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
+    with metered:
+        outcome = await job.make_script(
+            bot.campaigns.db,
+            ask,
+            guild_id,
+            session_id,
+            agreed=agreed,
+            names=names,
+            known=await memory.table_names(guild_id, session.campaign_id),
+            still_agreed=agreed_now,
+            edit=edit,
+            link=script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number),
         )
+        if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
+            await read_relationships(
+                bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
+            )
     return outcome
 
 

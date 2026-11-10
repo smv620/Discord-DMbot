@@ -49,6 +49,8 @@ PREPARING_JOBS: tuple[tuple[str, str], ...] = (
     ("dmbot.transcript.import_job", "ImportJob.run"),  # an imported session's cleaning
     ("dmbot.bot", "DMBot._extract_import"),  # an imported session's story read
     ("dmbot.bot", "DMBot._scan_import"),  # an imported session's name scan
+    ("dmbot.bot", "DMBot._read_plan"),  # the read of the DM's adventure
+    ("dmbot.ui.theatre_button", "make_for"),  # the script of an imported session (not a live one)
 )
 
 OwnerOf = Callable[[int, str], Awaitable[int | None]]
