@@ -9,10 +9,13 @@ import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import discord
 
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
+from dmbot.dm_screen import channel_sync
 from tests.pg import DatabaseTest
 
 GUILD = 111
@@ -26,8 +29,18 @@ class FinishTest(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.runs = wizard_finish.WizardFinishes(self.db, clock=lambda: NOW)
-        member = SimpleNamespace(id=DM)
-        self.guild = SimpleNamespace(get_member=lambda uid: member if uid == DM else None)
+
+        # The member cache is empty (no members intent): who is in the server is asked for.
+        async def fetch_member(uid: int) -> Any:
+            if uid != DM:
+                raise discord.NotFound(MagicMock(status=404, reason="x"), "gone")
+            return SimpleNamespace(id=uid)
+
+        self.guild = SimpleNamespace(
+            id=GUILD, get_member=lambda uid: None, fetch_member=AsyncMock(side_effect=fetch_member)
+        )
+        channel_sync._seen.clear()
+        self.addCleanup(channel_sync._seen.clear)
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             get_guild=lambda gid: self.guild if gid == GUILD else None,
@@ -272,6 +285,7 @@ class TheReviewedGaps(FinishTest):
         await self.draft()
         await self.queue()
         made = await self.campaigns.create(GUILD, "Frostmaiden", DM)  # (the worker then stopped)
+        await self.sql("UPDATE campaigns SET created_at = %s WHERE id = %s", NOW + 5, made.id)
         await wizard_finish.run_round(self.bot, GUILD)
         self.assertEqual([c.id for c in await self.campaigns.list_campaigns(GUILD)], [made.id])
         self.assertEqual((await self.run_row())["made_campaign"], made.id)
@@ -372,3 +386,39 @@ class TheReviewedGaps(FinishTest):
             await wizard_finish.run_round(self.bot, GUILD)
         row = await self.run_row()
         self.assertEqual((row["state"], row["error"]), ("done", ""))
+
+
+class TheMembershipAndTheCampaignSearch(FinishTest):
+    async def test_a_dm_the_member_cache_lacks_is_still_found_by_asking_discord(self) -> None:
+        # (no members intent: `get_member` is empty for everyone, yet the DM is in the server)
+        await self.draft()
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["state"], "done")
+
+    async def test_a_discord_hiccup_does_not_turn_a_dm_away(self) -> None:
+        await self.draft()
+        await self.queue()
+        hiccup = discord.HTTPException(MagicMock(status=500, reason="x"), "down")
+        self.guild.fetch_member = AsyncMock(side_effect=hiccup)
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["state"], "done")
+
+    async def test_an_older_campaign_with_the_same_name_is_never_adopted(self) -> None:
+        old = await self.campaigns.create(GUILD, "Frostmaiden", DM)  # (made well before the run)
+        await self.sql("UPDATE campaigns SET created_at = 1 WHERE id = %s", old.id)
+        await self.draft({"name": "Frostmaiden", "data_use": True})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        # the name is taken, so no campaign is made and the old one is left as it is
+        self.assertEqual([c.id for c in await self.campaigns.list_campaigns(GUILD)], [old.id])
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["made_campaign"]), ("failed", ""))
+        [shared] = await self.sql("SELECT share_improve FROM campaigns WHERE id = %s", old.id)
+        self.assertFalse(shared["share_improve"])  # (its data-use switch was never touched)
+
+    async def test_the_claimed_run_carries_the_time_the_page_queued_it(self) -> None:
+        await self.queue()
+        run = await self.runs.claim_next(GUILD)
+        assert run is not None
+        self.assertEqual(run.started_at, NOW)

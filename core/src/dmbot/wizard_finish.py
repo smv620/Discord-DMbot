@@ -24,6 +24,7 @@ from typing import Any
 
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
+from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
 
 log = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ class WizardFinishes:
             now_ms,
             str(row["made_campaign"]),
             int(row["tries"]),
+            int(row["created_at"]),
         )
 
     async def move(
@@ -307,8 +309,11 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     guild = bot.get_guild(guild_id)
     if guild is None:
         raise Retry  # the bot's server list is not ready (a start or reconnect)
-    if guild.get_member(run.user_id) is None:
-        return NOT_ALLOWED  # the sender must still be in the server
+    # Still in the server? The member cache is empty without the members intent, so a member the
+    # cache lacks is asked for (as the channel sync does): only a clear "not a member" refuses; a
+    # Discord hiccup keeps them, and every later stage is checked again anyway.
+    if run.user_id not in await channel_sync.present_only(guild, [run.user_id]):
+        return NOT_ALLOWED
     campaign_id = run.made_campaign or await runs.earlier_campaign(guild_id, run.user_id)
     campaign_id = campaign_id or await _made_before(bot, guild_id, run, answers["name"])
     if not campaign_id:
