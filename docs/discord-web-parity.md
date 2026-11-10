@@ -90,6 +90,7 @@ match. "In Discord" says where the DM finds it today.
 | Start listening (pick the campaign and the voice channel) | `/dmbot start` | Discord-only: choosing the voice channel and joining it is live at the table |
 | Stop listening | `/dmbot stop`, 🛑 on the DM screen | Discord-only: ending the live recording |
 | Open the campaign's settings | `/dmbot settings`, ⚙️ | Campaign settings (campaign home) |
+| ＋ New campaign | `＋ New campaign` offers a link to the start-up wizard first (when `DMBOT_WIZARD_LINK` is on and a website address is set); the short form stays one press away | Set up a campaign step by step (Section 1, `/new?server=<id>`). Website-first on purpose: uploads and many choices need a page |
 | Help | `/dmbot help` | Discord-only: a pointer to the commands |
 | Questions waiting for me | `/dmbot questions`, 📬 on the Manage card | The names waiting for a check (`/account/questions`, #3438) |
 | Make or remake a recap | `/dmbot recap`, 📜 Recaps | Recaps: make again |

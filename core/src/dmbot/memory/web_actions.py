@@ -812,6 +812,7 @@ async def _player_character(
     the server yet. The ID is asked again here, so a bot or an unknown ID is never linked."""
     if not a.text:
         await memory.set_entity_type(guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM)
+        await memory.party_on_assignment(guild_id, cid)  # its player "pending": a member (#3995)
         return Outcome(result_id=entity_id)
     user_id = _player_id(a.text)
     if user_id is None or not a.flag:  # nothing links without the confirmation

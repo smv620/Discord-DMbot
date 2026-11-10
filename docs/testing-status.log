@@ -9,10 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at bd8ae13a (Supervisor's owner-priority handover: migrations 0327_import_consent and 0328_speaker_removals; Import consent step on with IMPORT_CONFIRM_LIVE). 324 rows.
-  Bot connected to 2 servers, 0 errors; web-api healthy. Full entry: docs/testing-history.log.
-
-Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
+core + web-api at 62d84025 (step 13c: migrations 0402 and 0409; the wizard off; DMBOT_THEATRE_ON on; DMBOT_STORY_NPC_GUESS off; DMBOT_SITE_ASK off). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 13c exit 0 (counts on #3545). Full entry: docs/testing-history.log.
 
 ------------------------------------------------------------------------------
 READY TO DEPLOY

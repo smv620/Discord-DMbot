@@ -85,6 +85,7 @@ from dmbot.web import (
     theatre_script,
     timeline,
     tokens,
+    trait_offers,
     upload_notice,
     wizard,
     wizard_check,
@@ -963,6 +964,7 @@ def create_app(
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
         "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
         "bad_sort": (400, "bad_sort"),
+        "bad_value": (400, "bad_value"),  # a shape that is wrong (a trait answer, #3946)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -3448,6 +3450,41 @@ def create_app(
             },
         )
 
+    # The lineage and class questions waiting for the DM (#3946). DMs only.
+    @app.get("/me/campaigns/{ref}/trait-offers")
+    async def me_trait_offers(ref: str, signed: Signed) -> dict[str, Any]:
+        """What the lore said about characters the campaign already has, waiting for a yes or no."""
+        session, _token = signed
+        try:
+            return await trait_offers.waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/trait-offers/answer")
+    async def me_trait_answer(ref: str, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Queue Yes (`keep`) or No (`never`) for one question; answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await trait_offers.answer(
+                db, session, ref, body.get("entity"), body.get("kind"), body.get("key"),
+                body.get("answer"),
+            )  # fmt: skip
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/campaigns/{ref}/trait-offers/answer/{answer_id}")
+    async def me_trait_answer_state(ref: str, answer_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one answer stands: the state, the error word, the change for Undo, the wait."""
+        session, _token = signed
+        try:
+            return await trait_offers.read_answer(db, session, ref, answer_id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     # What one upload or import added, for the Lore and Import pages' notice (#3879). DMs only.
     @app.get("/me/campaigns/{ref}/upload-notice")
     async def me_upload_notice(
@@ -3557,7 +3594,8 @@ def create_app(
         body = await wizard_body(request, session)
         slot, name = str(body.get("slot", "")), str(body.get("name", ""))
         try:
-            await wizard.get(db, session, guild)  # the draft and the server first
+            if await wizard.get(db, session, guild) is None:  # the draft and the server first
+                raise RecapError("no_draft")
             if body.get("drive_id"):
                 source, checked = "drive", wizard_check.Checked("", 0, 0, "ok", "")
             elif "data" in body:
@@ -3606,7 +3644,10 @@ def create_app(
         session, _token = signed
         body = await wizard_body(request, session)
         try:
-            await wizard.get(db, session, guild)  # only a signed-in member of this server
+            # Only the DM with a draft in this server: no draft, no reading (and a server that is
+            # not in the session's list is refused by `get` itself).
+            if await wizard.get(db, session, guild) is None:
+                raise RecapError("no_draft")
         except RecapError as err:
             raise wizard_refusal(err) from None
         text = body.get("text")

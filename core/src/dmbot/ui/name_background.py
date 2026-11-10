@@ -62,6 +62,7 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DM,
     NEEDS_A_LOOK,
+    PLAYER_CHARACTER,
     PROPOSED,
     SPECIES,
     MemoryRuleError,
@@ -796,6 +797,11 @@ async def read_background(
         ai,
         progress,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        text=upload.text,
+        party_keys=(
+            await _party_keys(memory, campaign) if choice == lore_knowledge.SMART else set()
+        ),
+        player_keys=player_keys,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
     # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
@@ -815,6 +821,11 @@ async def read_background(
         read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
         offers=trait_offers,
     )  # fmt: skip
+    # A player character's backstory written into campaign lore is known to that character
+    # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
+    # guess only (see `_backstory_owners`).
+    owner_of = await _backstory_owners(memory, campaign, upload.text, speaker, choice)
+    made_ids: dict[str, str] = {}
     stored = await store(
         memory,
         campaign,
@@ -828,7 +839,11 @@ async def read_background(
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
         traits=traits,
+        made=made_ids,
     )
+    if owner_of is not None:
+        await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
+    await _record_sources(memory, campaign, stored, upload, label)
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
     short = getattr(bot, "add_short_names", None)
@@ -854,6 +869,7 @@ async def read_background(
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
+    made_unnamed: list[str] = []
     # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
     # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
     link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -888,8 +904,12 @@ async def read_background(
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
+        made_unnamed=made_unnamed,
         npc_guesses=link_guesses,
+        owner_of=owner_of,
     )
+    # (the people the read could not name, made while queueing: the same upload, #3675)
+    await _record_sources(memory, campaign, {"unnamed": made_unnamed}, upload, label)
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
     log.info(
@@ -941,6 +961,86 @@ async def read_background(
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
     return done
+
+
+async def _backstory_owners(
+    memory: MemoryStore, campaign: Campaign, text: str, speaker: str | None, choice: str
+) -> Callable[[str], str] | None:
+    """Whose backstory a quote is in, by its section's heading (`lore_knowledge.section_owner`),
+    for campaign lore with the smart guess only; None when it doesn't apply: a backstory upload
+    (its uploader's character is `known_by`), World (everyone knows all of it already), Spoilers
+    (the DM's word that none of it is known), no text, no player character. Never raises."""
+    if speaker or choice != lore_knowledge.SMART or not text:
+        return None
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("The player characters couldn't be read (%s)", type(exc).__name__)
+        return None
+    pcs = {
+        e.id
+        for e in lookup.entities.values()
+        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into
+    }
+    by_key: dict[str, set[str]] = {}
+    for e_id in pcs:
+        by_key.setdefault(name_key(lookup.entities[e_id].name), set()).add(e_id)
+    for n in lookup.names:  # (its confirmed public names too: "Okthandom" for Okthandom Korran)
+        if n.entity_id in pcs and n.confirmed and not n.secret and not n.person:
+            by_key.setdefault(n.key, set()).add(n.entity_id)
+    # (a name two player characters share is neither one's: a wrong owner is a spoiler)
+    owners = {k: next(iter(ids)) for k, ids in by_key.items() if len(ids) == 1 and k}
+    if not owners:
+        return None
+    sections = lore_knowledge.Sections(text)
+    return lambda quote: lore_knowledge.section_owner(sections.of(quote), owners)
+
+
+async def _owners_learn(
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: Sequence[bg.Found],
+    made: Mapping[str, str],
+    world: Collection[str],
+    owner_of: Callable[[str], str],
+) -> int:
+    """Each new name in a player character's backstory section is known to that character, as the
+    DM's write, all in one change (one Undo): never the character itself, never a secret spelling,
+    and never one the upload already makes known to everyone. Returns how many. Never raises: the
+    names are stored already, so a failure here must not lose the read's connections; the log gets
+    the error type and counts only."""
+    pairs: list[tuple[str, str]] = []
+    for f in found:
+        key = name_key(f.name)
+        owner, entity_id = owner_of(f.quote), made.get(key)
+        if owner and entity_id is not None and entity_id != owner and key not in world:
+            pairs.append((entity_id, owner))
+    if not pairs:
+        return 0
+    try:
+        written = await memory.learn_statements(
+            campaign.guild_id, campaign.id, "entry", pairs, source=DM
+        )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Backstory names couldn't be given to their character (%s)", type(exc).__name__)
+        return 0
+    if written.value:
+        log.info("Backstory names known to their own character: %d", written.value)
+    return written.value
+
+
+async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
+    """The keys of the party's names (the DM may have renamed it), for the code rule (#3963).
+    Never raises: none, and the rule's own words still count."""
+    try:
+        party = await memory.party(campaign.guild_id, campaign.id)
+        if party is None:
+            return set()
+        aliases = await memory.aliases(campaign.guild_id, campaign.id, entity_id=party.id)
+        return {name_key(party.name), *(name_key(a.text) for a in aliases)} - {""}
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
+        return set()
 
 
 def trait_questions_line(n: int) -> str:
@@ -1010,17 +1110,40 @@ async def _world(
     ai: Any,
     progress: Callable[[str, int, int], None] | None = None,
     until: float | None = None,
+    *,
+    text: str = "",
+    party_keys: Collection[str] = (),
+    player_keys: Collection[str] = (),
 ) -> tuple[set[str], set[tuple[str, str, str]], bool]:
     """What the upload's choice says every player character knows (#2959): the names (by key) and
     the connections (by their two names' keys and the kind), and whether it could all be sorted.
     Spoilers: nothing. World: all of it. Smart guess: the AI's call on one short line each (the
-    kind, the name with its other names and disguises, and the quote the read kept), a spoiler
-    wherever it does not say otherwise."""
+    document's section it is in, the kind, the name with its other names and disguises, and the
+    quote the read kept), a spoiler wherever it does not say otherwise. Each line says which section
+    of the document it is in, and whether its words name the party (#3963), as hints the AI weighs:
+    never the answer by themselves."""
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
+    smart = choice == lore_knowledge.SMART
+    # The sections and the party hint matter only to the AI's sort (#3963): worked out once.
+    sections = lore_knowledge.Sections(text) if smart and text else None
 
-    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
-        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
+    def where(quote: str) -> str:
+        return sections.of(quote) if sections is not None else ""
+
+    def hint(quote: str) -> bool:
+        return smart and lore_knowledge.party_by_code(quote, party_keys, player_keys)
+
+    lines = [
+        lore_knowledge.name_line(
+            f.name, f.also, f.secret, f.quote, where(f.quote), names_party=hint(f.quote)
+        )
+        for f in found
+    ] + [
+        lore_knowledge.connection_line(
+            c.a, c.how, c.b, c.quote, where(c.quote), names_party=hint(c.quote)
+        )
+        for c in links
     ]
 
     def sorting(done: int, total: int) -> None:
@@ -1257,6 +1380,29 @@ async def store(
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+async def _record_sources(
+    memory: MemoryStore,
+    campaign: Campaign,
+    stored: Mapping[str, Sequence[str]],
+    upload: Upload,
+    label: str,
+) -> None:
+    """Which upload made the names just stored (#3675 Part B), for the Names page's filter: the
+    website's upload id when there is one, else the dated label the DM sees. Only names this read
+    made (a name another entry already had is not this upload's). Never a reason to lose a name:
+    a failed write is logged by its type and the names stay."""
+    made = [i for ids in stored.values() for i in ids]
+    record = getattr(memory, "record_name_sources", None)  # (a stand-in store may not have it)
+    if not made or record is None:
+        return
+    try:
+        await record(
+            campaign.guild_id, campaign.id, made, upload_key=upload.source_id or label, label=label
+        )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Couldn't record which upload the names came from (%s)", type(exc).__name__)
 
 
 def inferred_line(reason: str) -> str:
@@ -1728,6 +1874,8 @@ async def queue_links(
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
+    owner_of: Callable[[str], str] | None = None,
+    made_unnamed: list[str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
@@ -1938,7 +2086,14 @@ async def queue_links(
                 truth and not c.inferred,  # (DMbot's inference is never pinned as 100% truth)
                 upload,
                 c.decided,
-                known_by,
+                # (in a player character's backstory section, that character knows it, #3963 b;
+                # never a secret or a disguise, which in the DM's lore is a plot secret, #3091)
+                (
+                    owner_of(c.quote)
+                    if owner_of is not None and not world and not c.secret and how != DISGUISED_AS
+                    else ""
+                )
+                or known_by,
                 world,
                 inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
                 # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
@@ -1961,6 +2116,7 @@ async def queue_links(
             dropped,
             known_by,
             world_level if world_all else 0,
+            made_unnamed,
         )
         held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
         for r in made_rows:  # (two lines about one unnamed person are one row)
@@ -1997,10 +2153,12 @@ async def _unnamed_rows(
     dropped: bg.Dropped | None,
     known_by: str = "",
     world: int = 0,
+    made: list[str] | None = None,
 ) -> list[NewLink]:
     """The relationships kept with a person the read could not name (#2790): each makes (or finds)
     the unnamed entry, hung off the named end when the story gave a relationship word. A named end
-    that is not an entry of the campaign after all is counted as not found."""
+    that is not an entry of the campaign after all is counted as not found. `made` collects the
+    unnamed entries this read made (not one it found), for which upload they came from (#3675)."""
     rows: list[NewLink] = []
     read: dict[str, str] = {}  # this read's own record: two "a hooded figure" are one person
     for u in links:
@@ -2030,6 +2188,8 @@ async def _unnamed_rows(
                 dropped["name_not_found"] += 1
             continue
         other = added.entity.id
+        if added.created and made is not None:
+            made.append(other)
         a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
         rows.append(
             NewLink(

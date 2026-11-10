@@ -163,12 +163,22 @@ class PlanChecksSetting(unittest.TestCase):
             load_settings({**BASE, "DMBOT_STORY_WHO": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_DEEDS": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_by_rank_on)  # off unless asked (#3172)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "1"}).recap_by_rank_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_BY_RANK must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):
             load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
+
+    def test_wizard_link_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).wizard_link_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_WIZARD_LINK": "on"}).wizard_link_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_WIZARD_LINK must be 1"):
+            load_settings({**BASE, "DMBOT_WIZARD_LINK": "maybe"})
 
     def test_theatre_switch_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).theatre_on)

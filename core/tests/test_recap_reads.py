@@ -127,7 +127,7 @@ class TheMaterialAfterAWait(unittest.IsolatedAsyncioTestCase):
     async def test_the_material_is_read_once_and_again_only_after_a_wait(self) -> None:
         w: Any = self.worker()
         job: Any = SimpleNamespace(beats="[]", speakers=[], session_at=100)
-        inputs: Any = SimpleNamespace(hours=None, importance=None)
+        inputs: Any = SimpleNamespace(hours=None, importance=None, ranks=None)
         given = rd.Given(who_and_what=("Mira: the party's rogue",))
         calls: list[int] = []
 
@@ -156,7 +156,7 @@ class TheMaterialAfterAWait(unittest.IsolatedAsyncioTestCase):
     async def test_no_transcript_leaves_none_to_read_after_a_wait(self) -> None:
         w: Any = self.worker()
         job: Any = SimpleNamespace(beats="[]", speakers=[], session_at=100)
-        inputs: Any = SimpleNamespace(hours=None, importance=None)
+        inputs: Any = SimpleNamespace(hours=None, importance=None, ranks=None)
 
         async def context(*_: object) -> tuple[str, rd.Given]:
             return "", rd.Given()

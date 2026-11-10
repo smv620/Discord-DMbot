@@ -130,6 +130,12 @@ def questions_link(site_url: str) -> str:
     return f"https://{host}/account/questions" if host else ""
 
 
+def wizard_link(site_url: str, guild_id: int) -> str:
+    """The start-up wizard's page for one server (#3955). "" without an https site."""
+    host = _host(site_url)
+    return f"https://{host}/new?server={guild_id}" if host else ""
+
+
 def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -> str:
     """The clarify page for one name (#3604). It has its own address shape, not `?item=`; "" when
     there is no https address or an id is not a plain id."""

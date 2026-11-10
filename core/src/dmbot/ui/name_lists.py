@@ -28,6 +28,7 @@ from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
+    PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
     MemoryRuleError,
@@ -1538,6 +1539,8 @@ class KindDiffQuestions(_Questions):
                             except MemoryRuleError:
                                 continue  # changed or removed since
                             done += 1
+                        if done and want == PLAYER_CHARACTER:  # each joins the party (#3995)
+                            await memory.party_on_assignment(campaign.guild_id, campaign.id)
                     except Exception:
                         log.exception("Changing kinds after a names list failed")
                     self.answers[i] = f"✅ Changed {done} to {KIND_SHORT.get(want, want)}." + (

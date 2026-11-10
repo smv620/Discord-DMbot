@@ -32,6 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
+from dmbot.memory.importance_rank import beat_rank
 from dmbot.memory.models import spelling_key
 from dmbot.names import not_names
 from dmbot.recaps import must_haves
@@ -784,11 +785,17 @@ def housekeeping_message(beats: Sequence[Beat], summary: str, catchup: str = "")
 
 
 def pick_beats(
-    beats: Sequence[Beat], limit: int = 10, *, importance: Mapping[str, float] | None = None
+    beats: Sequence[Beat],
+    limit: int = 10,
+    *,
+    importance: Mapping[str, float] | None = None,
+    ranks: Mapping[str, int] | None = None,
 ) -> list[Beat]:
     """At most `limit` beats for the writer, in the order they happened: the first (the opening)
     and the last (where the session stopped, which the recap must end on) always, and of the rest
-    those PlotBot marked as mattering (#2254), then those whose names matter most to the story
+    those PlotBot marked as mattering (#2254), then, with `ranks` (DMBOT_RECAP_BY_RANK, #3172
+    slice 4), those whose names rank highest in the story (`importance_rank.beat_rank`: a Major
+    entry first, player characters not counted), then those whose names matter most to the story
     (`importance`, #2411: how connected they are in The truth, so a minor-seeming mention of a
     well-connected name is kept), then those with the most characters in them and the most lines
     behind them. A long session's sheet
@@ -800,6 +807,7 @@ def pick_beats(
         beats[1:-1],
         key=lambda b: (
             b.matters,
+            beat_rank(b.who, ranks or {}),
             beat_score(b.who, importance or {}),
             len(b.who),
             len(b.lines),
