@@ -6757,6 +6757,34 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
         await w.update_rows(ENTITIES, changed)
 
 
+async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
+    """A held-back connection the table has now stated is shown to the players (#3963 c, the
+    owner's rule: what is said at the table is known to the party). Called when a session's claim
+    that the session reader extracted becomes this connection: the stricter of the two rules
+    Supervisor weighed, never two names said close together. Only a confirmed, live connection
+    that is not secret, and only when both its ends are shown already (the DM's own 👁️ Reveal has
+    the same check), in the caller's change, so one Undo takes both back. Returns whether it was
+    shown."""
+    row = await w.get(RELATIONS, relation_id)
+    if (
+        row is None
+        or not row["unrevealed"]
+        or row["secret"]
+        or row["status"] != CONFIRMED
+        or row["to_session_at"] is not None
+    ):
+        return False
+    ends = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited AND NOT unnamed",
+        [[row["subject_id"], row["object_id"]]],
+    )
+    if len(ends) < 2:
+        return False
+    await w.update(RELATIONS, relation_id, {"unrevealed": False})
+    return True
+
+
 def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: str) -> str | None:
     """Why this companion link is not allowed, or None (#3176, Supervisor's ruling). The companion
     is a character who is not a player character (a player character is who it travels *with*);

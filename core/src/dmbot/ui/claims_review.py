@@ -36,6 +36,18 @@ REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters
 )
 YES, NO, HIDE = "✅", "❌", "🤫"
+# A held-back connection the table stated, now shown to the players (#3963 c): said every time.
+SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
+
+
+def shown_line(n: int) -> str:
+    """The "All true" summary's line for the held-back connections it showed (#3963 c)."""
+    return (
+        f"👁️ {n} of them {'was' if n == 1 else 'were'} said at the table, so your players can see "
+        f"{'it' if n == 1 else 'them'} now."
+    )
+
+
 ALL_TRUE, ALL_SECRET = (
     f"{YES} All true",
     f"{HIDE} All secret",
@@ -372,6 +384,8 @@ class ClaimsReview(_Menu):
                     if secret
                     else f"{YES} Remembered: {saying}."
                 )
+                if result.shown:
+                    done += f"\n{SHOWN_NOW}"
                 await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
@@ -450,7 +464,7 @@ async def _answer_page(
 ) -> None:
     """The writing and the page that follows, for `_decide_all_on` (which holds the view's lock)."""
     claims = ClaimStore(memory)
-    kept = flagged = failed = 0
+    kept = flagged = failed = shown = 0
     made: list[tuple[str, int]] = []  # (claim, batch) of what this press remembered
     refused: dict[str, int] = {}
     for claim in targets:
@@ -480,6 +494,7 @@ async def _answer_page(
             else f"{YES} Remembered: {saying}."
         )
         kept += 1
+        shown += result.shown
         await _watch_story(interaction, campaign, result.claim.fact_id)
         flagged += bool(result.flags)
     if made:  # a press that kept nothing leaves the earlier Undo alone
@@ -490,6 +505,8 @@ async def _answer_page(
         else f"{YES} Saved {kept} as true."
     )
     lines = [saved]
+    if shown:
+        lines.append(shown_line(shown))
     for message, count in refused.items():
         lines.append(f"{count} not saved: {message}")
     if failed:

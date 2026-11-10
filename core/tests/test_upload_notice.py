@@ -36,6 +36,12 @@ class Words(NamesTest):
         self.assertIn("1 question** needs you", un.notice_text("a file", {"npc": 1}, 1))
         self.assertIn("**nothing new**", un.notice_text("a file", {}, 0))
 
+    def test_connections_said_at_the_table_are_counted_never_as_names(self) -> None:
+        """#3963 (c): an import's held-back connections the table stated are shown, and said."""
+        text = un.notice_text("a session", {"npc": 1, "shown": 2}, 0)
+        self.assertIn("**1 name** (1 NPC)", text)
+        self.assertIn("**2 connections** said at the table are now shown to your players", text)
+
 
 class Undoing(NamesTest):
     async def asyncSetUp(self) -> None:
