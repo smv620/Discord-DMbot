@@ -73,9 +73,19 @@ SQL = (
         UPDATE trait_answers a SET state = 'failed', error = 'lost'
             WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')
               AND GREATEST(a.created_at, a.claimed_at / 1000) < now_s - 1800;
+        -- the same question the listing door (0410) gives: waiting, of a confirmed character, and
+        -- not already true
         IF NOT EXISTS (SELECT 1 FROM memory_trait_offers o
+                       JOIN memory_entities e ON e.guild_id = o.guild_id
+                           AND e.campaign_id = o.campaign_id AND e.id = o.entity_id
                        WHERE o.guild_id = g AND o.campaign_id = c AND o.entity_id = ent
-                         AND o.kind = k AND o.name_key = nk AND o.state = 'waiting') THEN
+                         AND o.kind = k AND o.name_key = nk AND o.state = 'waiting'
+                         AND e.status = 'confirmed'
+                         AND NOT EXISTS (SELECT 1 FROM memory_rule_links l
+                                          WHERE l.guild_id = o.guild_id
+                                            AND l.campaign_id = o.campaign_id
+                                            AND l.entity_id = o.entity_id AND l.kind = o.kind
+                                            AND lower(l.name) = lower(o.name))) THEN
             RETURN jsonb_build_object('status', 'not_found');
         END IF;
         SELECT a.id INTO running FROM trait_answers a

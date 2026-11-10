@@ -5,6 +5,9 @@ invented names."""
 
 from __future__ import annotations
 
+import time
+from typing import Any
+
 from dmbot.memory import trait_offers as to
 from dmbot.memory.models import CLASS, DM, SPECIES, Trait
 from dmbot.web import trait_offers
@@ -103,9 +106,9 @@ class TraitAnswers(Base):
             self.web, who or self.session, self.cref, self.mira, "species", key or self.key, how
         )
 
-    async def refused(self, **kw: object) -> str:  # type: ignore[override]
+    async def refused(self, **kw: Any) -> str:
         with self.assertRaises(RecapError) as caught:
-            await self.press(**kw)  # type: ignore[arg-type]
+            await self.press(**kw)
         return caught.exception.code
 
     async def test_an_answer_is_queued_and_read_back_waiting(self) -> None:
@@ -153,3 +156,43 @@ class TraitAnswers(Base):
                 "UPDATE trait_answers SET created_at = created_at - 3600 WHERE id = %s", (first,)
             )
         self.assertNotEqual(await self.press("keep"), first)
+
+    async def test_a_press_that_is_still_moving_is_not_lost(self) -> None:
+        first = await self.press("keep")
+        old = int(time.time()) - 3600  # queued an hour ago, but the bot moved a minute ago
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE trait_answers SET state = 'working', created_at = %s, claimed_at = %s"
+                " WHERE id = %s",
+                (old, (int(time.time()) - 60) * 1000, first),
+            )
+        self.assertEqual(await self.press("keep"), first)
+
+    async def test_a_failed_press_lets_the_question_be_answered_again(self) -> None:
+        first = await self.press("keep")
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE trait_answers SET state = 'failed', error = 'failed' WHERE id = %s",
+                (first,),
+            )
+        self.assertNotEqual(await self.press("keep"), first)
+
+    async def test_a_question_already_true_or_of_an_unconfirmed_character_is_not_found(
+        self,
+    ) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (self.mira,)
+            )
+        self.assertEqual(await self.refused(), "not_found")
+
+    async def test_the_limit_is_sixty_answers_a_minute(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO trait_answers (guild_id, campaign_id, id, user_id, entity_id, kind,"
+                " name_key, action, state, created_at)"
+                " SELECT %s, %s, md5(random()::text || n::text), 1, 'x', 'species', 'k' || n,"
+                " 'keep', 'done', %s FROM generate_series(1, 60) n",
+                (self.g, self.one.id, int(time.time())),
+            )
+        self.assertEqual(await self.refused(), "too_soon")
