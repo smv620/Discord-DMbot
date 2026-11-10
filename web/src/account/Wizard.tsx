@@ -8,52 +8,13 @@ import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
 import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
 import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
+import { problemWords } from "./wizard-problems";
 import WorkProgress from "./WorkProgress";
 
+// The finish words a second try can help with; the others need something else first (a plan, a key, the pages named in the line).
+const RETRY_AFTER = ["failed", "lost", "party_failed", "lore_failed", ""];
 const STALLED_AFTER = 120; // seconds without a move before the wait says it has stalled
 const POLL_MS = 2000;
-
-/** Each refusal word a route can give (core web/app.py and web/wizard.py), as a plain line telling the person what to do. */
-const problemWords = (error: unknown): string => {
-  if (!(error instanceof WizardError)) return w.failed;
-  switch (error.kind) {
-    case "no_room":
-      return w.noRoom;
-    case "too_fast":
-    case "too_soon":
-      return w.tooFast;
-    case "expired":
-    case "no_draft":
-      return w.expired;
-    case "not_allowed":
-    case "not_found":
-      return w.notAllowed;
-    case "needs_name":
-    case "bad_name":
-      return w.needsName;
-    case "needs_rights":
-    case "rights_needed":
-      return w.docs.rightsNeeded;
-    case "too_big":
-    case "doc_too_big":
-      return w.docs.unreadable["too_big"]!;
-    case "too_many":
-    case "too_many_files":
-      return w.docs.full;
-    case "signed_out":
-      return w.signedOut;
-    case "network":
-      return w.network;
-    case "bad_document":
-      return w.docs.unreadable["not_text"]!;
-    case "bad_fallback":
-      return w.rules.same;
-    case "bad_value":
-      return error.key === "fallback" ? w.rules.same : w.badAnswer;
-    default:
-      return error.kind.startsWith("bad_") ? w.badAnswer : w.failed;
-  }
-};
 
 /** Where the campaign's page is, from the ref the finish run gives (`<server>.<campaign>`). */
 const campaignHref = (ref: string): string => `/account/campaigns#${encodeURIComponent(ref)}`;
@@ -81,7 +42,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
   useEffect(() => {
     api.get(guild).then(
       (got) => live.current && setDraft(got),
-      () => live.current && setProblem(w.failed),
+      (error) => live.current && setProblem(problemWords(error)),
     );
   }, [api, guild]);
 
@@ -220,7 +181,7 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
       onMade(next);
     } catch (error) {
       setWorking(false);
-      setProblem(error instanceof WizardError && error.kind === "rights_needed" ? w.skipRights : problemWords(error));
+      setProblem(error instanceof WizardError && (error.kind === "rights_needed" || error.kind === "needs_rights") ? w.skipRights : problemWords(error));
     }
   }
   return (
@@ -331,7 +292,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
         {!run && <p class="muted" role="status">{w.loading}</p>}
         {run && !failed && <p class="small">{t.quiet}</p>}
         {failed && run && run.campaignRef && <a class="button secondary" href={campaignHref(run.campaignRef)}>{t.open}</a>}
-        {failed && run && run.error !== "no-key" && run.error !== "docs_left" && (
+        {failed && run && RETRY_AFTER.includes(run.error) && (
           <button type="button" class="button" disabled={pressing} onClick={() => void press()}>
             {t.retry}
           </button>

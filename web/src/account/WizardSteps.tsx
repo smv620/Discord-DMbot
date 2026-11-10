@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
-import { MAX_FILE_BYTES, toBase64, WizardError, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { problemWords } from "./wizard-problems";
+import { MAX_FILE_BYTES, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -260,7 +261,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
       const next = await api.get(guild);
       if (next) onDraft(next);
     } catch (error) {
-      setProblem(error instanceof WizardError && error.kind === "too_many" ? t.full : w.failed);
+      setProblem(problemWords(error));
     } finally {
       setBusy(false);
     }
@@ -272,8 +273,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
       if (file.size > MAX_FILE_BYTES) return setProblem(t.unreadable["too_big"]!);
       const data = toBase64(new Uint8Array(await file.arrayBuffer()));
       await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", data }));
-    } catch {
-      setProblem(w.failed);
+    } catch (error) {
+      setProblem(problemWords(error));
     }
   }
   async function tick(on: boolean) {
@@ -284,8 +285,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
       await api.rights(guild, kind);
       const next = await api.get(guild);
       if (next) onDraft(next);
-    } catch {
-      setProblem(w.failed); // (the box stays as it was: the draft says whether it is ticked)
+    } catch (error) {
+      setProblem(problemWords(error)); // (the box stays as it was: the draft says whether it is ticked)
     } finally {
       setTicking(false);
     }
@@ -296,8 +297,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
       await api.docRemove(guild, id);
       const next = await api.get(guild);
       if (next) onDraft(next);
-    } catch {
-      setProblem(w.failed);
+    } catch (error) {
+      setProblem(problemWords(error));
     }
   }
   return (

@@ -38,6 +38,9 @@ export function draftFrom(wire: DraftWire): WizardDraft {
   };
 }
 
+/** The last step the server stores (its doors take 1 to 9); the finish page after it is not saved. */
+const LAST_STORED_STEP = 9;
+
 export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardApi {
   const root = base.replace(/\/+$/, "");
 
@@ -83,12 +86,14 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
       await call("POST", at(guild), { name });
       return draft(guild);
     },
+    // The server keeps steps 1 to 9; the last page (10) is the page's own: it is shown from the draft, not stored.
     async set(guild, step, patch) {
-      await call("PUT", at(guild, "/step"), { step, answers: patch });
-      return draft(guild);
+      await call("PUT", at(guild, "/step"), { step: Math.min(step, LAST_STORED_STEP), answers: patch });
+      const got = await draft(guild);
+      return step > LAST_STORED_STEP ? { ...got, step } : got;
     },
     async skip(guild, step) {
-      await call("POST", at(guild, "/skip"), { step });
+      await call("POST", at(guild, "/skip"), { step: Math.min(step, LAST_STORED_STEP) });
       return draft(guild);
     },
     // The public sheet link is not in the first release (#3953): the route is not served yet.

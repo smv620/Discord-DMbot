@@ -208,6 +208,7 @@ export const wizardWords = {
       failed: "Something went wrong. Nothing you entered is lost. Try again in a minute.",
       party_failed: "Your campaign is ready, but DMbot couldn't add the party. Open the campaign and add the characters on its Names page.",
       lore_failed: "Your campaign is ready, but DMbot couldn't read your lore. Add it again from the campaign's Lore page.",
+      drive_gone: "Your campaign is ready, but a Google Drive file couldn't be read. Add it again from the campaign's pages.",
       docs_left: "Your campaign is ready. Add your house rules and homebrew on the campaign's House rules and Homebrew pages.",
       bad_answers: "Some of your answers couldn't be used. Go back, check them, and try again.",
       no_rights: "Tick the box that says you have the right to use your files, then try again.",

@@ -55,6 +55,16 @@ describe("the routes", () => {
     expect(seen.find((s) => s.key === `POST /me/wizard/${G}/skip`)?.body).toEqual({ step: 5 });
   });
 
+  it("no request carries a step above 9: the last page is the page's own and is shown, not stored", async () => {
+    const { api, seen } = net({ [`PUT /me/wizard/${G}/step`]: { body: { status: "ok" } }, [`GET /me/wizard/${G}`]: { body: draft({ step: 9 }) }, [`POST /me/wizard/${G}/skip`]: { body: { status: "ok" } } });
+    const last = await api.set(G, 10, { name: "Frostmaiden" });
+    await api.skip(G, 10);
+    expect(last.step).toBe(10); // (shown from the page's own state)
+    const steps = seen.map((s) => (s.body as { step?: number } | undefined)?.step).filter((x): x is number => typeof x === "number");
+    expect(steps.length).toBe(2);
+    expect(Math.max(...steps)).toBe(9);
+  });
+
   it("a file goes as base64 and only its name, pages and words come back", async () => {
     const { api, seen } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d2", slot: "secrets", name: "plot.txt", pages: 0, words: 9, status: "ok", reason: "" } } });
     const doc = await api.docAdd(G, "secrets", { name: "plot.txt", source: "upload", data: toBase64(new TextEncoder().encode("hello")) });
@@ -113,7 +123,7 @@ describe("the refusals", () => {
   });
 
   it("every word the finish run can end with has a plain line, and the ones that leave a campaign link to it", () => {
-    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "docs_left", "bad_answers", "no_rights"];
+    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "docs_left", "bad_answers", "no_rights", "drive_gone"];
     for (const word of words) expect(w.finish.errors[word], word).toBeTruthy();
     expect(w.finish.errors["docs_left"]).toContain("House rules");
   });
@@ -135,6 +145,21 @@ describe("the finish card", () => {
     for (let i = 0; i < 12 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getByText(w.finish.done)).toBeTruthy();
     expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toContain(`${G}.c9`);
+  });
+
+  it("a finish that ended on the plan offers no retry (a second try cannot help)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const failed = { body: { id: "f1", state: "failed", stage: "campaign", part: 0, ofParts: 0, campaign: "", error: "plan", createdAt: 100, movedAt: 110, now: 111 } };
+    const { api } = net({
+      [`GET /me/wizard/${G}`]: { body: draft({ step: 10, answers: { name: "Frostmaiden" }, documents: [] }) },
+      [`GET /me/wizard/${G}/finish`]: [{ body: {} }, failed],
+      [`POST /me/wizard/${G}/finish`]: { body: { id: "f1" } },
+    });
+    render(<Wizard api={api} guild={G} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.finish.button }));
+    await vi.advanceTimersByTimeAsync(2100);
+    expect((await screen.findAllByText(w.finish.errors["plan"]!)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
   });
 
   it("a campaign made but its documents left shows the campaign link and no retry", async () => {
