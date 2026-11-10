@@ -87,9 +87,9 @@ class PrivateScenes:
             players = await _players(conn, guild_id, campaign_id)
             scenes: list[Scene] = []
             if lines and len(players) >= 2:
-                end = started_at + lines[-1][0] // 1000
+                end = lines[-1][0] // 1000
                 clock = await _clock(conn, guild_id, campaign_id, list(players), end)
-                scenes = find(lines, clock, players, started_at)
+                scenes = find(lines, clock, players)
             await conn.execute(
                 "DELETE FROM memory_private_scenes WHERE guild_id = %s AND campaign_id = %s"
                 " AND session_started_at = %s AND status = 'kept'",
@@ -124,9 +124,7 @@ class PrivateScenes:
                 kept += int(cur.rowcount or 0)
             return Written(kept, skipped)
 
-    async def not_private(
-        self, guild_id: int, campaign_id: str, scene_id: str, now: int
-    ) -> bool:
+    async def not_private(self, guild_id: int, campaign_id: str, scene_id: str, now: int) -> bool:
         """The DM's "Not private": the scene stays marked, so no later run finds it again. False
         when there is no such kept scene (already marked, or gone)."""
         async with self._db.guild(guild_id) as conn:

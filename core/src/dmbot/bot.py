@@ -354,6 +354,8 @@ from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
+from dmbot.memory.private_scene_store import PrivateScenes
+from dmbot.memory.private_scenes_backup import PrivateScenesSection
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
@@ -3298,6 +3300,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("deeds to record", lambda: self.offer_deeds(table)),
             # What the characters learned in the session, for the DM to keep (#2996).
             ("reveals to keep", lambda: self.offer_reveals(table)),
+            # Private scenes between two player characters (#2996 rule 5): before the importance
+            # step, which will weigh them; no AI call. Off unless its switch is on.
+            ("private scenes", lambda: self.find_private_scenes(table)),
             # How much each entry the session touched matters, and its roles (#3172): after the
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
@@ -10372,6 +10377,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Reveals: %d waiting for the DM", count)
                 await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
+    async def find_private_scenes(self, table: Table) -> None:
+        """After a session (#2996 rule 5), only with DMBOT_PRIVATE_SCENES: find the stretches when
+        the party was split and two player characters, played by two different people, were alone
+        together and both spoke, and keep them (ids and times, never words). Found by code from
+        the game clock and who spoke, never by the AI, so it costs no call. Only for a campaign
+        whose plan has story memory; the log gets counts only."""
+        if (
+            not self.settings.private_scenes_on
+            or self.memory is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            written = await PrivateScenes(self.memory._db).write_session(
+                gid, cid, table.transcript_session_id, await self.consent.consenting(gid),
+                int(time.time()),
+            )  # fmt: skip
+            log.info(
+                "Private scenes: %d kept, %d the DM said are not private",
+                written.kept,
+                written.not_private,
+            )
+
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
         connection?", when the table has kept using the same words (3 or more times) on
@@ -14982,6 +15017,7 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
+    campaigns.register_section(PrivateScenesSection())  # private scenes (#2996 rule 5)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)

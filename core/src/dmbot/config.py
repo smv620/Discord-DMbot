@@ -122,6 +122,10 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # Private scenes between two player characters (#2996 rule 5), found by code after a session
+    # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
+    # 2026-11-10).
+    private_scenes_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -467,6 +471,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    private_raw = (get("DMBOT_PRIVATE_SCENES") or "0").lower()
+    if private_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PRIVATE_SCENES must be 1 (on) or 0 (off), got "' + private_raw + '".'
+        )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -677,6 +686,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        private_scenes_on=private_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),

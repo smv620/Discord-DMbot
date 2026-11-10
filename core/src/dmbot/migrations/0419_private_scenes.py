@@ -12,7 +12,7 @@ SQL = r"""
     -- One row per private scene: a stretch of a session when the party was split and a group held
     -- exactly two player characters, played by two different people, who both spoke. **Ids and
     -- times only, never a word**: the two characters, the session's start, the first and last
-    -- line's start (ms into the session's clock, as `transcript_lines.started_ms`), how many lines
+    -- line's start (Unix ms, as `transcript_lines.started_ms`), how many lines
     -- and who spoke them (`speaker_ids`, for the consent paths). Keyed by the session's start, not
     -- its id, so a backup carries it (a restore makes the session again under a new id).
     -- `status`: 'kept' is what the finder wrote, replaced whole each time it runs on the session;
