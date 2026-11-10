@@ -59,6 +59,7 @@ from dmbot import (
     table_chat,
     trait_answer,
     trial_jobs,
+    upload_undo,
     usage,
     wizard_finish,
 )
@@ -1908,6 +1909,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._channel_sync_loop(), "channel-sync"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
+            self._watched(self._upload_undo_loop(), "upload-undos"),
             *(
                 [
                     self._watched(self._auto_script_loop(), "auto-scripts"),
@@ -13981,6 +13983,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
                 )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
+
+    async def _upload_undo_loop(self) -> None:
+        """Every few seconds: apply the website's "Undo this upload" presses (#4078;
+        `upload_undo`). An undo is a few writes and a chain of Undos, so one pass per server; a
+        server's trouble never stops the others."""
+        await asyncio.sleep(TRAIT_ANSWER_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    while await upload_undo.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("An upload undo round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
 
     async def _trait_answer_loop(self) -> None:
         """Every few seconds: apply the website's lineage and class answers (#3946;
