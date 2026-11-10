@@ -2,15 +2,11 @@
 // ending in a word change what happens: `.full` has no room for another campaign, `.expired` has no draft, `.fail` makes the
 // finish run stop with "failed", `.nokey` stops it with "no-key" (the campaign is made), `.slow` takes longer to finish.
 import { SUPPLEMENTS } from "../content/wizard-words";
-import { WizardError, type WizardAnswers, type WizardApi, type WizardDoc, type WizardDraft, type WizardFinish, type WizardFinishStage, type WizardSlot } from "./wizard-api";
+import { emptyAnswers, WizardError, type WizardApi, type WizardDoc, type WizardDraft, type WizardFinish, type WizardFinishStage, type WizardSlot } from "./wizard-api";
 
 const DAY = 86400;
 const STAGES: WizardFinishStage[] = ["campaign", "party", "rules", "house_homebrew", "data_use", "lore", "secrets", "sure", "clean"];
 const NOW = (): number => Math.floor(Date.now() / 1000);
-
-export function emptyAnswers(): WizardAnswers {
-  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
-}
 
 export function mockWizard(): WizardApi & { calls: string[] } {
   const calls: string[] = [];
@@ -93,7 +89,8 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       if (draft.documents.length >= 20) throw new WizardError("too_many");
       if (slot !== "ruleset" && slot !== "lore" && slot !== "secrets" && slot !== "house" && slot !== "homebrew") throw new WizardError("bad_value", "slot");
       seq += 1;
-      const words = (input.text ?? "").split(/\s+/).filter(Boolean).length;
+      const text = input.text ?? (input.data !== undefined ? atob(input.data) : "");
+      const words = text.split(/\s+/).filter(Boolean).length;
       const scanned = input.name.includes("scan");
       const doc: WizardDoc = {
         id: `doc${seq}`,

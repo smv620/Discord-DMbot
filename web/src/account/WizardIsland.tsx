@@ -17,13 +17,16 @@ export default function WizardIsland() {
   useEffect(() => {
     if (!WIZARD_LIVE) return; // switched off: no API is built and nothing is asked
     const id = new URLSearchParams(window.location.search).get("server") ?? "";
-    setGuild(/^[0-9]{1,20}(\.[a-z]+)?$/.test(id) ? id : "");
-    if (base !== "mock") return; // the real calls come with the wizard's doors (#3955)
-    void import("./wizard-mock").then(({ mockWizard }) => setApi(mockWizard()));
+    if (base === "mock") {
+      setGuild(/^[0-9]{1,20}(\.[a-z]+)?$/.test(id) ? id : "");
+      void import("./wizard-mock").then(({ mockWizard }) => setApi(mockWizard()));
+      return;
+    }
+    setGuild(/^[0-9]{1,20}$/.test(id) ? id : ""); // (a server's Discord id: digits only)
+    void import("./wizard-http").then(({ httpWizard }) => setApi(httpWizard(base)));
   }, []);
 
   if (!WIZARD_LIVE) return <p class="muted">{w.notYet}</p>;
-  if (base !== "mock") return <p class="muted">{w.notYet}</p>; // (the real calls come with the wizard's doors, #3955)
   if (guild === "") return <p class="muted">{w.noServer}</p>;
   if (!api || guild === null) return <p class="muted" role="status">{w.loading}</p>;
   return (

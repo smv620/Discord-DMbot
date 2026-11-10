@@ -4,9 +4,9 @@
 // Next, Skip and the finish. Nothing here shows a document's words: only file names, counts and the person's own choices.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { WIZARD_DRIVE_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
+import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
-import { WizardError, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { MAX_FILE_BYTES, toBase64, WizardError, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -22,7 +22,6 @@ export interface StepProps {
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
 /** The books whose rules are on by default (rules.optional.CATALOG), in step 6's codes. */
 const DEFAULT_BOOKS = ["xanathar", "tasha"];
-const MAX_TEXT = 262_144; // characters a document may hold (docs/WIZARD_DESIGN.md)
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
@@ -267,11 +266,12 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
     }
   }
   async function addFile(file: File) {
-    // A text or Markdown file is read here; the server's check reads PDF and Word from the bytes (wired with the real calls).
+    // The file goes as it is, as base64 in the body; the server opens it and counts its pages and words (no AI). A file over the
+    // server's limit gets the "too big" line before anything is sent.
     try {
-      const text = /\.(txt|md|markdown)$/i.test(file.name) ? await file.text() : undefined;
-      if (text !== undefined && text.length > MAX_TEXT) return setProblem(t.unreadable["too_big"]!);
-      await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", ...(text !== undefined ? { text } : {}) }));
+      if (file.size > MAX_FILE_BYTES) return setProblem(t.unreadable["too_big"]!);
+      const data = toBase64(new Uint8Array(await file.arrayBuffer()));
+      await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", data }));
     } catch {
       setProblem(w.failed);
     }
@@ -336,6 +336,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           </button>
         )}
       </div>
+      {WIZARD_LINKS_LIVE && (
       <div class="row">
         <label>
           {t.linkLabel}
@@ -345,6 +346,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           {t.addLink}
         </button>
       </div>
+      )}
       {!ticked && <p class="small">{t.rightsNeeded}</p>}
       {busy && <p role="status">{t.checking}</p>}
       {problem && <p role="alert">{problem}</p>}
