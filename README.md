@@ -1,203 +1,127 @@
 # Discord-DMbot
 
 A Discord bot that helps the Dungeon Master run D&D sessions. It listens to the table's
-voice channel, transcribes each player who has opted in, and privately advises the DM on
-rules — published and homebrew. **The bot advises; the DM decides.**
+voice channel, writes down what each person who agreed says, remembers the campaign's story,
+writes session recaps, and privately advises the DM on rules, published and homebrew.
+**The bot advises; the DM decides.**
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full plan and roadmap.
 
-## Status
+## What it does today
 
-**Phase 1 — live transcription.** The bot joins your table channel, records only players
-who opt in, and every 15 seconds posts to the DM's private channel who spoke, what they
-said, and audio health.
+DMbot is in testing on the owner's own server, with a public website at
+[getdmbot.com](https://getdmbot.com). What is built:
+
+- **Listening, only with consent.** DMbot joins the table's voice channel and writes down
+  what each person who pressed **I'm 16 or older, record me** says. Bots and anyone who
+  hasn't agreed are never recorded. Anyone can stop at any time (🗂️ **Menu**, then
+  **Stop recording me**).
+- **Transcripts** of every session, to read and download, and imports of older sessions.
+- **Recaps** of each session, checked against what was said, with an optional voice-over.
+  Nothing goes to the players until the DM approves it.
+- **Story memory** (the Story Graph on the website): the people, places, groups and things
+  of the campaign, how they connect, and who in the story knows what. It's built from
+  sessions and from lore the DM uploads. **DMbot suggests; the DM confirms.**
+- **Rules help:** looking up spells, conditions, creatures and rules in the free rules
+  (SRD 5.2.1, with 2014 as the fallback), house rules and homebrew, Xanathar's and
+  Tasha's optional rules, and short private tips for the DM with their source.
+- **The table:** a game clock with split-party groups, fight reminders, and "Hey DMbot"
+  questions, answered privately for the DM and in the table's chat for players.
+- **The website:** the signed-in area holds the campaign's settings, names, Story Graph,
+  questions waiting for the DM, transcripts, recaps, uploads and backups. Most features
+  are in both Discord and the website ([`docs/discord-web-parity.md`](docs/discord-web-parity.md)).
+- **Backups:** a complete copy of a campaign to download and restore.
+
+Some features are built but switched off until they've been tested live. The current
+picture is in [`docs/testing-status.log`](docs/testing-status.log) and
+[`docs/discord-web-parity.md`](docs/discord-web-parity.md).
 
 ## How it's built
 
 | Part | Language | Job |
 |---|---|---|
-| `ears/` | Node + TypeScript | Joins voice, captures each consenting speaker (Discord's DAVE encryption), streams audio to core |
-| `core/` | Python | Slash commands, consent, speech segmenting, and (later) transcription, rules advice, house rules |
+| `ears/` | Node + TypeScript | Joins voice and captures each consenting speaker (Discord's DAVE encryption), then streams the audio to core. No game logic. |
+| `core/` | Python | The bot: slash commands, consent, transcription, AI, story memory, recaps, rules and storage. Also the website's API (`core/src/dmbot/web/`, run as the `web-api` service). |
+| `web/` | Astro + TypeScript | The customer website: static pages plus one signed-in area. |
+| Postgres | | Every campaign's data. Each Discord server's rows are locked to that server by row-level security. |
 
-They run side by side on the same computer and talk over a local, password-protected link.
+On the server, Docker Compose runs `postgres`, `core`, `ears`, `web-api` and `cloudflared`
+(the tunnel that carries the website's API). The website is hosted on Cloudflare Pages.
+Ears and core talk over a local, password-protected link
+(`ears/src/protocol.ts` ↔ `core/src/dmbot/ears/protocol.py`).
 
-## Channel structure
+## Using it in Discord
 
-DMbot makes its own channels for each campaign. They all start with `dmb-`, so they sit
-together in your channel list and you can tell at a glance they're DMbot's. Discord shows
-channel names in lowercase, so a campaign called **Rime of the Frostmaiden** gets:
-
-```
-📋 Rime of the Frostmaiden              (category, coming later)
-├─ #dmb-dm-screen-rime-of-the-frostmaiden   DM notes and alerts       ← now
-├─ #dmb-rules-rmfthfrstmdn                  house rules and rulings   ← later
-├─ #dmb-time-rmfthfrstmdn                   game clock and effects    ← later
-├─ #dmb-npcs-rmfthfrstmdn                   NPCs you've met           ← later
-└─ #dmb-plot-rmfthfrstmdn                   story so far              ← later
-```
-
-- **Today there's only the DM screen** (compact mode: everything goes there). The other
-  channels arrive with their features, and then each campaign gets its own category.
-- **Who can see them:** game time is open to everyone. For the DM screen, rules, NPCs and
-  plot, the DM picks one of these with the buttons on the DM screen's help card:
-  🔒 **Only the DM**, 👀 **Players can peek** (default; players see a spoiler warning
-  first), or 📖 **Everyone in the server**. Players can read but never post. Server
-  owners and admins can always see every channel.
-- Sub-channels use a short name, usually the campaign name without vowels
-  (`rmfthfrstmdn`). If another campaign already has the same name or short name, the new
-  one gets a number in front of both, starting at 2: `#dmb-dm-screen-2frozens-cake`,
-  `#dmb-time-2frznsck`.
-
-Details: [`docs/PLAN.md`](docs/PLAN.md), "Channel structure".
-
-## Setup (test server)
-
-For a full, step-by-step live test (who does what, expected output, pass/fail, and how to
-report), see [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
-
-1. **Create the bot.** In the [Discord Developer Portal](https://discord.com/developers/applications):
-   New Application → **Bot** → Reset Token (copy it). Leave **Public Bot** on: Discord's
-   install link needs it. Only people with Manage Server on a server can add DMbot there.
-   Then set up one-click install, so whoever adds DMbot gives it every permission it
-   needs in one go, with nothing to switch on in Server Settings afterwards:
-   - **Installation** → *Installation Contexts*: tick **Guild Install** (untick
-     **User Install**: DMbot only works inside a server).
-   - *Install Link*: **Discord Provided Link**.
-   - *Default Install Settings* → **Guild Install**: scopes **bot** and
-     **applications.commands** (the permissions list appears once **bot** is ticked);
-     permissions **View Channels**, **Send Messages**, **Read Message History**,
-     **Connect**, **Speak**, **Manage Channels**, **Manage Roles**, and
-     **Pin Messages** (permission number `2251800085335056`).
-   - Press **Save Changes**, then open the install link and add DMbot to your private
-     test server.
-
-   DMbot also writes its install link to the log when it starts ("Install link …").
-   **Already added DMbot with fewer permissions?** Open the install link again, pick the
-   same server, then press **Continue** and **Authorize**: Discord updates DMbot's
-   permissions. (The admin can only give permissions they have themselves, and a
-   channel's own settings can still block DMbot there.) When DMbot joins a server it
-   posts a short welcome, or says which permissions it still needs.
-   *Why Pin Messages:* DMbot pins the DM screen's help card so it's easy to find (the 📌
-   icon at the top of the channel). Without it everything still works, and DMbot tells the
-   DM how to turn it on.
-   *Why Manage Channels and Manage Roles:* Discord grants these for the whole server, but
-   DMbot only uses them on its own `dmb-` channels. It creates them, hides them from
-   players unless you choose otherwise, and lets a player peek after a spoiler warning.
-   It never changes other channels or anyone's server roles.
-2. **Configure.** Copy `.env.example` to `.env` in the repo root and fill in
-   `DISCORD_TOKEN`, `DISCORD_DEV_GUILD_ID`, a long random `EARS_SHARED_SECRET`, and
-   `DATABASE_URL` (see [Database](#database)). Pulling updates never changes your
-   `.env`. When `.env.example` gains new settings, core's log names them at start-up so
-   you can copy them over.
-3. **Start Postgres** (once per PC restart; see [Database](#database)).
-4. **Start core** (PyCharm terminal, Python 3.12+):
-   ```bash
-   cd core
-   python -m venv .venv
-   .venv\Scripts\activate        # Windows  (macOS/Linux: source .venv/bin/activate)
-   pip install -e ".[dev,whisper]"   # drop ",whisper" if using cloud transcription
-   python -m dmbot
-   ```
-5. **Start ears** (second terminal, Node 22.12+):
-   ```bash
-   cd ears
-   npm ci
-   npm run dev
-   ```
-6. **In Discord:** run `/dmbot start` in any text channel. The first time, it asks you to
-   name your campaign and who can see its DM screen; after that it offers the last
-   campaign and voice channel you used. DMbot makes a `#dmb-dm-screen-<campaign>` channel for
-   your notes, with buttons there to change who can see it. Everyone in the voice channel
-   (you too) gets a private message from DMbot asking if they agree to be recorded; they
-   press **I'm 16 or older, record me**. Their answer is remembered for the server, so next time they just
-   get a reminder with a **🗂️ Menu** button (to stop: 🗂️ Menu, then **Stop recording me**,
-   then **Yes, stop recording me**). Talk for a bit and watch what you
-   say appear in the campaign's transcript channel, `#dmb-transcript-<short name>`, which
-   anyone in the server can read.
-
-## Database
-
-DMbot keeps campaigns and consent in **Postgres** (16 or newer). Each Discord server's
-rows are locked to that server by Postgres itself (row-level security), so DMbot must
-connect as an **ordinary database user, not a superuser** such as `postgres`. It refuses
-to start otherwise. The database must use UTF8. DMbot creates its tables on first start.
-
-**On your PC with conda** (one time):
-```bash
-conda activate dmbot
-conda install -c conda-forge postgresql
-initdb -D "%USERPROFILE%\dmbot-pg" -U postgres -E UTF8 --no-locale   # macOS/Linux: -D ~/dmbot-pg
-pg_ctl -D "%USERPROFILE%\dmbot-pg" -l "%USERPROFILE%\dmbot-pg\log.txt" start
-psql -U postgres -c "CREATE ROLE dmbot LOGIN PASSWORD 'dmbot'"
-createdb -U postgres -O dmbot -E UTF8 -T template0 dmbot
-```
-Then in `.env`: `DATABASE_URL=postgresql://dmbot:dmbot@localhost:5432/dmbot`.
-This database only listens on your own PC. After a restart, run the `pg_ctl … start` line
-again before starting core. Stop it with `pg_ctl -D "%USERPROFILE%\dmbot-pg" stop`.
-
-**With Docker Compose:** nothing to install. Set `POSTGRES_ADMIN_PASSWORD` and
-`DMBOT_DB_PASSWORD` in `.env`; Compose starts Postgres and creates the `dmbot` user.
-
-**The website's API** connects as its own user, `dmbot_web` (#498). It can use only the
-website's tables and read campaigns, and the database shows it a server's rows only for
-servers in the signed-in person's own Discord list. That guards against a mistake in the
-API's code, not against someone who has taken over the API itself. The API refuses to
-start as any other user. On a new database, Compose creates `dmbot_web` when
-`DMBOT_WEB_DB_PASSWORD` is set. On a database that already exists, set it in `.env`, then
-once (the script fails harmlessly if the user already exists; it doesn't change a password):
-```bash
-docker compose up -d postgres   # picks up DMBOT_WEB_DB_PASSWORD from .env
-docker compose exec postgres bash /docker-entrypoint-initdb.d/02-dmbot-web.sh
-docker compose restart core     # core gives dmbot_web its rights each time it starts
-docker compose up -d web-api    # with COMPOSE_PROFILES=web: recreated as dmbot_web
-```
-
-## Running on a server
-
-See [`docs/DEPLOY.md`](docs/DEPLOY.md): one `docker compose up -d --build` starts both
-parts on any Linux cloud server.
-
-## Transcription engines
-
-Pick one with `TRANSCRIBER` in `.env`:
-
-| Engine | Cost | Needs | Notes |
-|---|---|---|---|
-| `whisper-local` (default) | Free | `pip install -e ".[whisper]"`; a strong CPU or an NVIDIA GPU | Audio never leaves your server. Model downloads on first run. |
-| `deepgram` | Pay per minute of speech | A Deepgram account; `DEEPGRAM_API_KEY` | Deepgram Nova-3. Players' voices and names go to Deepgram (told not to use them for training). Sends the names DMbot expects as hints; in a quick test it got 23 of 24 D&D names right, against 19 for local Whisper (the full comparison is #128). Fast (well under a second per clip). Best for servers without a GPU. |
-| `cloud` | Pay per minute of speech | `CLOUD_STT_API_KEY` | Any OpenAI-compatible speech-to-text API. |
-| `none` | Free | — | No text: only the capture-check counts in the core log. |
-
-On a CPU-only server use `WHISPER_MODEL=small` (or `base` if it falls behind). With an
-NVIDIA GPU use `large-v3` or `turbo`. The default compute type (`auto`) picks the fastest
-precision for your hardware. If transcription falls behind, DMbot warns you in
-the DM screen; the **Status** button in `/dmbot help` shows the backlog.
-
-**Switch to Deepgram:** in `.env` set `TRANSCRIBER=deepgram` and `DEEPGRAM_API_KEY=<your
-key>` (leave `DEEPGRAM_MODEL` and `DEEPGRAM_LISTEN_URL` blank), then restart with
-`docker compose up -d`.
-
-When `TRANSCRIBER=deepgram` or `cloud`, players' voice clips and Discord names go to that
-company. The consent message, `/consent give` and the reminder each session say so.
-People who said yes before the switch are **asked again**: their earlier yes doesn't
-count until they agree to the new wording, and DMbot doesn't record them until then.
-
-## Commands
+Most things are buttons. The DM runs `/dmbot start`, and DMbot offers the rest from there.
 
 | Command | What it does |
 |---|---|
-| `/dmbot start` | Pick the campaign (or make a new one) and the voice channel, then start listening. DM notes go to the campaign's `#dmb-dm-screen-<campaign>` channel, which DMbot makes the first time. |
-| `/dmbot stop` | Stop listening (the campaign's DM, or a server manager). |
-| `/dmbot help` | What DMbot does and doesn't do, plus a **Status** button. |
-| `/dmbot backup` | Download a copy of a campaign you run. |
-| `/dmbot restore` | Bring a campaign back from a copy, as a new campaign or replacing one of yours. |
-| `/consent give` | Shows DMbot's recording question with the **I'm 16 or older, record me** button, for people who didn't get the private message (for example, DMs from server members turned off). |
-| `/consent revoke` | Stop recording you and discard unprocessed audio. It warns first, like **🗂️ Menu**, then **Stop recording me**, in DMbot's private message; **Yes, stop recording me** stops. |
+| `/dmbot start` · `stop` | Pick the campaign and voice channel, then start or stop listening. |
+| `/dmbot help` | What DMbot does and doesn't do, with a **Status** button. |
+| `/dmbot settings` | The campaign's settings (its DM). |
+| `/dmbot names` | Teach DMbot the campaign's names, so it spells them right. |
+| `/dmbot recap` · `recap-upload` | Make a session's recap (or make it again), or add one someone at the table wrote. |
+| `/dmbot transcript` · `fix` · `delete-my-lines` | Download a session's transcript, fix a line DMbot heard wrong, or delete what DMbot wrote down from you. |
+| `/dmbot import` | Bring in older sessions, on the website. |
+| `/dmbot rule` · `houserules` · `homebrew` · `optionalrules` | Rules: look one up, the campaign's house rules, its homebrew, and the optional rules. |
+| `/dmbot backup` · `restore` | Download a copy of a campaign, or bring one back. |
+| `/dmbot migrate` | Move your plan and campaigns to a new Discord account. |
+| `/consent give` · `revoke` | Agree to be recorded, or stop, if the private message didn't reach you. |
 
-## Development
+DMbot posts in the campaign's **DM screen** (private notes and tips for the DM) and its
+**DM Bot channel** (counts and progress the campaign's people may see). Players' questions
+are answered in the table's chat. Who can see the DM screen is the DM's choice: only the
+DM, players can peek after a spoiler warning (the default), or everyone.
 
-Rules for contributors (human or Claude) are in [`CLAUDE.md`](CLAUDE.md). CI runs
-type checks, lint, and tests for both parts on every pull request.
+## Running it
+
+- **On a server:** [`docs/DEPLOY.md`](docs/DEPLOY.md). One `docker compose up -d --build`
+  starts every part. On the test server, only the dev1 session deploys (see
+  [`CLAUDE.md`](CLAUDE.md)).
+- **API keys** (AI, speech-to-text, voice-over): [`docs/how_to_setup_api_keys.md`](docs/how_to_setup_api_keys.md).
+  Copy `.env.example` to `.env`. Pulling updates never changes your `.env`, and core's log
+  names any new settings at start-up.
+- **The database:** Postgres 16 or newer, UTF8. DMbot must connect as an ordinary user, never
+  a superuser, so row-level security applies; it refuses to start otherwise. The website's
+  API connects as its own user, `dmbot_web`. Compose creates both
+  (`DMBOT_DB_PASSWORD`, `DMBOT_WEB_DB_PASSWORD`).
+- **Speech-to-text:** `TRANSCRIBER` in `.env` picks `whisper-local`, `deepgram`, `cloud` or
+  `none`. With a speech company, players' voices go to it, and
+  the consent request says so.
+- **A live test with people at a table:** [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md) and
+  [`docs/next-test-step.md`](docs/next-test-step.md).
+
+## Developing
+
+Read [`CLAUDE.md`](CLAUDE.md) first (the team's rules), then [`docs/PLAN.md`](docs/PLAN.md)
+(the plan and every decision, with dates).
+
+```bash
+# ears (Node 22)
+cd ears && npm ci && npm run typecheck && npm test && npm run build
+# core (Python 3.12+)
+cd core && python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+ruff check . && ruff format --check . && mypy && pytest
+# web
+cd web && npm ci && npm run typecheck && npm test
+```
+
+CI runs all of these on every pull request. Core's database tests run only where
+Postgres is (CI has it).
+
+**Where to read more:**
+
+| Document | What's in it |
+|---|---|
+| [`docs/how-it-works.md`](docs/how-it-works.md) | A plain-words tour of DMbot's helpers. |
+| [`docs/PLAN.md`](docs/PLAN.md) | Scope, architecture, phases and every decision. |
+| [`docs/STORY_MEMORY.md`](docs/STORY_MEMORY.md), [`docs/STORY_GRAPH_DESIGN.md`](docs/STORY_GRAPH_DESIGN.md) | How story memory works. |
+| [`docs/RECAP_STANDARD.md`](docs/RECAP_STANDARD.md) | What a good recap is, and how recaps are scored. |
+| [`docs/WIZARD_DESIGN.md`](docs/WIZARD_DESIGN.md) | The website's start-up wizard. |
+| [`docs/discord-web-parity.md`](docs/discord-web-parity.md) | What is in Discord, what is on the website. |
+| [`docs/GO_LIVE.md`](docs/GO_LIVE.md) | What each switched-off feature needs before it goes on. |
+| [`docs/costs.md`](docs/costs.md) | What the paid services cost. |
+| [`docs/testing-status.log`](docs/testing-status.log), [`docs/testing-history.log`](docs/testing-history.log) | What is live on the test server, and every test so far. |
 
 ## License
 
