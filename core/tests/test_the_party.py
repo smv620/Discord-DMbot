@@ -74,13 +74,17 @@ class TheParty(NamesTest):
         assert filled.party_id is not None
         wren = await self.pc("Wren", None)
         ash = await self.pc("Ash", 78)
-        npc = await self.group("Grey Wolves")  # (a group is never a member)
+        await self.group("Grey Wolves")  # (a group is never a member)
         await self.memory.add_names(
             GUILD, self.campaign.id, [NewName("Old Marn", "npc", CONFIRMED)], source="dm"
         )  # (an NPC never joins)
         await self.memory.party_on_assignment(GUILD, self.campaign.id)
         self.assertEqual(await self.members(filled.party_id), {wren, ash})
-        self.assertNotIn(npc, await self.members(filled.party_id))
+        # (only characters with a player are linked as knowing each other; Wren waits for one)
+        rels = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        self.assertFalse(
+            [r for r in rels if r.predicate == "knows" and wren in (r.subject_id, r.object_id)]
+        )
         await self.memory.confirm_entity(
             GUILD, self.campaign.id, wren, "player_character", source="dm", played_by=79
         )
@@ -99,6 +103,19 @@ class TheParty(NamesTest):
         )
         await self.memory.party_on_assignment(GUILD, self.campaign.id)
         self.assertEqual(await self.members(filled.party_id), set())
+
+    async def test_the_fill_adopts_a_group_of_its_player_characters_pending_ones_too(self) -> None:
+        """#3995: the members step reads the same members, so a pending character counts."""
+        wren = await self.pc("Wren", None)
+        ash = await self.pc("Ash", 78)
+        crew = await self.group("Ash and Wren")
+        for c in (wren, ash):
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, c, "member_of", crew, source="dm", status=CONFIRMED,
+                confidence=1.0,
+            )  # fmt: skip
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        self.assertEqual((filled.step, filled.party_id), ("members", crew))
 
     async def test_the_fill_flags_the_party_the_sessions_made(self) -> None:
         linked = await self.group("The party")

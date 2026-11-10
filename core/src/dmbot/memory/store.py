@@ -4930,10 +4930,10 @@ class MemoryStore:
                 )
                 rows = await cur.fetchall()
                 players = {int(r["played_by"]) for r in rows if r["played_by"] is not None}
-            # every player character is a member, a "pending" one too (#3995); only those with a
-            # player are linked as knowing each other before the first session
+            # Every player character is a member, a "pending" one too (#3995). Before the first
+            # session those with a player know each other; after it they have not all met, so
+            # membership only (#3363), no `knows`.
             if rows:
-                # after a session they have not all met: membership only (#3363), no `knows`
                 linked = await self.link_party(
                     guild_id, campaign_id, set() if had_session else players
                 )

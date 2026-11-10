@@ -3,8 +3,9 @@
 Playing a session together is a fact DMbot already holds: who sat at the table and which character
 each person plays. So this is written by rule, never guessed by the AI, and never for an NPC. After
 an import or a live session, every player character whose player took part gets a `knows` with
-every other one (one connection a pair, either way round counts as having it) and `member_of` "The
-party", one faction the campaign keeps for them (found by its source, so the DM can rename it).
+every other one (one connection a pair, either way round counts as having it). Every confirmed
+player character, its player "pending" too (#3363, #3995), is a `member_of` "The party", the one
+entry with the `party` flag (#3954).
 
 The DM can remove any of these like any connection, and a removed one is not added again: the rule
 leaves a connection that exists in any state (a rejected one included) as it is. Everything is one
