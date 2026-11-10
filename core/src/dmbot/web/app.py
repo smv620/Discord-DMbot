@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -163,6 +163,10 @@ from dmbot.web.recaps import (
     upload_recap,
 )
 from dmbot.web.return_path import safe_return_path
+
+# Every JSON answer of this API goes through the safe class, whether a route returns data or builds
+# the response itself: no integer above 2^53 reaches a browser as a number (#4060).
+from dmbot.web.safe_json import SafeJSONResponse as JSONResponse
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 from dmbot.web.support_ai import SupportHelper
@@ -266,6 +270,7 @@ def create_app(
         docs_url=None,  # no public API browser
         redoc_url=None,
         openapi_url=None,
+        default_response_class=JSONResponse,  # (the safe one: no id above 2^53 as a number, #4060)
     )
     # The __Host- prefix makes browsers refuse a cookie unless it's Secure, set by this
     # exact host with Path=/ and no Domain: no other site or subdomain (the website shares

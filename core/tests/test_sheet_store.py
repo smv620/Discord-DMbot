@@ -390,7 +390,7 @@ class Backups(SheetTest):
             {"source": "typed"},
             {"player_id": None},
             {"player_id": 0},
-            {"player_id": "1"},
+            {"player_id": "not a number"},
         ):
             backup = await self.edited(change)
             with self.assertRaises(CampaignError):
