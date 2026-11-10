@@ -32,7 +32,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dmbot.devtools.sample_run import characters, plan, steps
+from dmbot.devtools.sample_run import characters, counts, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
@@ -395,6 +395,13 @@ async def run(
             say,
             plan.STEPS if args.accept_all else plan.STEPS_DECIDE,
         )
+        # The secret connections by source and the split-party counts (Supervisor, #3545): counts
+        # only, read after every step, for dev1's report.
+        try:
+            for line in await counts.read(db, gid, cid):
+                say(line)
+        except Exception as exc:  # (a count that can't be read never fails the run)
+            say(f"Counts: not read ({type(exc).__name__})")
     finally:
         await db.close()
         if decider:  # the run's decisions, all stages together: counts and agreement only
