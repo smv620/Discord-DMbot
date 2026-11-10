@@ -769,7 +769,7 @@ class Stored(ConfirmedMemoryTest):
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         return await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
 
-    async def relation(self, relation_id: str) -> Any:
+    async def relation(self, relation_id: str | None) -> Any:
         (rel,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
                   if r.id == relation_id]  # fmt: skip
         return rel
