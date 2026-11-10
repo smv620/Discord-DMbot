@@ -40,7 +40,12 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
-from dmbot.memory.name_documents import DocumentError, kind_of_file, max_bytes_for
+from dmbot.memory.name_documents import (
+    DocumentError,
+    kind_of_file,
+    max_bytes_for,
+    picture_note,
+)
 from dmbot.memory.story_plan import Counts, Listed, ReadState
 from dmbot.waiting import (
     SHOW_ELAPSED_AFTER_S,
@@ -625,6 +630,7 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
                     limit_s=READ_TIME_S,
                     max_reply=READ_REPLY_BYTES,
                 )
+            note = picture_note(text)  # pages with only pictures, in counts (#4000)
             await store.add(
                 fresh.guild_id, fresh.id, interaction.user.id, attachment.filename, text
             )
@@ -636,7 +642,8 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
         card, view = await _card(interaction, fresh)
-        await reply(f"Kept.\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+        kept = "Kept." + (f"\n{note}" if note else "")
+        await reply(f"{kept}\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
 
 class RemoveButton(
