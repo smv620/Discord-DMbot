@@ -177,7 +177,7 @@ class FinalRead(WorkerHarness):
             self.assertIn(tag, message)
 
 
-def test_the_final_read_uses_what_the_players_know_of_a_name() -> None:
-    # (#2967: the who-and-what sheet's line after a name and kind is the players' line)
-    assert "what the players know" in fr.FINAL_SYSTEM
-    assert "use what it says to tell who or what it is" in fr.FINAL_SYSTEM
+def test_the_final_read_is_not_told_to_describe_every_name() -> None:
+    # (#2967, #3943: "use what it says" on every sheet line cut must-haves covered from 10 to 6 on
+    # dev1's sample; the players' line reaches the draft through the away check's pointer only)
+    assert "what the players know" not in fr.FINAL_SYSTEM
