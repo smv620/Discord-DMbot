@@ -9,6 +9,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import psycopg
+
 from dmbot.upload_notices import UNDO_SECONDS, Notice, UploadNotices
 from dmbot.web import upload_notice
 from dmbot.web.recaps import RecapError
@@ -97,7 +99,7 @@ class UploadUndo(Script):
         await self.press()
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
-            with self.assertRaises(Exception):  # noqa: B017 (permission denied, whichever error)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 await conn.execute("SELECT * FROM upload_undos")
 
     async def test_a_press_that_stopped_moving_is_lost_and_can_be_pressed_again(self) -> None:
@@ -108,6 +110,17 @@ class UploadUndo(Script):
                 "UPDATE upload_undos SET created_at = created_at - 3600 WHERE id = %s", (first,)
             )
         self.assertNotEqual(await self.press(), first)
+
+    async def test_a_press_nobody_moved_reads_as_lost_without_another_press(self) -> None:
+        await self.add()
+        first = await self.press()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE upload_undos SET created_at = created_at - 3600 WHERE id = %s", (first,)
+            )
+        got = await upload_notice.read_undo(self.web, self.session, self.cref, first)
+        self.assertEqual((got["state"], got["error"]), ("failed", "lost"))
+        self.assertEqual(got["progress"]["state"], "failed")
 
     async def test_a_press_that_is_still_moving_is_not_lost(self) -> None:
         await self.add()

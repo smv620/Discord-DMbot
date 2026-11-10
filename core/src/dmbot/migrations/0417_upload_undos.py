@@ -32,7 +32,7 @@ SQL = (
         undone      INT NOT NULL DEFAULT 0 CHECK (undone >= 0),
         created_at  BIGINT NOT NULL,
         claimed_at  BIGINT NOT NULL DEFAULT 0,
-        tries       INT NOT NULL DEFAULT 0,
+        tries       INT NOT NULL DEFAULT 0,  -- how often the bot took it; the worker's to count
         PRIMARY KEY (guild_id, id),
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE
@@ -118,6 +118,14 @@ SQL = (
             WHERE u.guild_id = g AND u.campaign_id = c AND u.id = uid;
         IF NOT FOUND THEN
             RETURN NULL;
+        END IF;
+        -- a press nobody moved for 30 minutes reads as lost here too, so a page that keeps asking
+        -- (the bot is down, nobody presses again) is told, not left spinning
+        IF r.state IN ('waiting', 'working')
+           AND GREATEST(r.created_at, r.claimed_at / 1000)
+               < floor(extract(epoch FROM clock_timestamp()))::BIGINT - 1800 THEN
+            r.state := 'failed';
+            r.error := 'lost';
         END IF;
         RETURN jsonb_build_object(
             'state', r.state, 'error', r.error, 'undone', r.undone,
