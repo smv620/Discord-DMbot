@@ -477,6 +477,12 @@ Discord file (10 MB). Restore still reads older plain `.dmbot.json` files, and r
 a file that would unpack past 25 MB. DMbot never hands out a copy it couldn't restore:
 a campaign over either limit gets "too big to download as one file. Nothing was lost"
 instead (a split or streamed backup can come later if campaigns grow that big).
+**Backup format 6 and transcripts files 2** (Supervisor, 2026-11-10, #4060): a Discord id in the story
+memory and in the transcripts files is a decimal string, because a browser or `jq` reads a number above
+2^53 with its last digits changed; and the build stamp (`made_by_commit`, `made_by`) is written once for
+a session (or the whole memory section) and on a row only when it differs. An older file's numbers and
+per-row stamps restore as before; an older DMbot refuses the newer file. The website's API also writes
+any integer above 2^53 - 1 as a string.
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
