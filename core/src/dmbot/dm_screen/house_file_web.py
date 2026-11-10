@@ -37,7 +37,15 @@ KEEPALIVE_S = 30.0  # the claim is written this often while it runs, so a quiet 
 
 # What the comparison said (its words), as the word the page turns into plain ones.
 _FAILED_WORDS: tuple[tuple[tuple[str, ...], str], ...] = (
-    ((house_sync.TOO_BIG, house_sync.TOO_MANY_RULES, house_sync.TOO_MANY_RULES_LINKED), q.TOO_BIG),
+    (
+        (
+            house_sync.TOO_BIG,
+            house_sync.TOO_BIG_PDF,
+            house_sync.TOO_MANY_RULES,
+            house_sync.TOO_MANY_RULES_LINKED,
+        ),
+        q.TOO_BIG,
+    ),
     ((house_sync.NOT_READ,), q.UNREADABLE),
     ((house_sync.NO_AI_PLAN,), q.NO_AI),
     ((house_sync.BUSY,), q.BUSY),

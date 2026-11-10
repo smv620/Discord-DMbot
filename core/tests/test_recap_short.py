@@ -67,6 +67,7 @@ def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id=CID, recaps_text=True, recaps_email=True, owner_user_id=DM,
         dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
+        dm_bot_channel_id=None,
     )  # fmt: skip
 
 
@@ -107,6 +108,7 @@ def fake_bot(lines: list[Line], *, newer: int | None = None) -> Any:
     for name in (
         "recap_session", "_queue_recap", "recap_allowed", "recap_short_expired",
         "recap_write_anyway", "_expire_short_asks", "_hold_or_queue", "_say_writing",
+        "_upkeep_channel",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     live_on_screen(bot)  # (where the question goes is tested in test_dm_questions)

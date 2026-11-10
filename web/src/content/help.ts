@@ -371,7 +371,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "To give DMbot your adventure, press 📖 Give your adventure on the Shared story card, then Give a file. It takes a PDF, Word (.docx) or text (.txt, .md) file up to 10 MB. DMbot keeps the text, not the file, for this campaign only. Players can't open it. Press 🗑 Remove to make DMbot forget one.",
+    text: "To give DMbot your adventure, press 📖 Give your adventure on the Shared story card, then Give a file. It takes a PDF (up to 100 MB), Word (.docx) or text (.txt, .md) file (up to 10 MB). DMbot keeps the text, not the file, for this campaign only. Players can't open it. Press 🗑 Remove to make DMbot forget one.",
     names: [
       { name: "Give your adventure", file: "dm_screen/adventure_card.py" },
       { name: "Give a file", file: "dm_screen/adventure_card.py" },

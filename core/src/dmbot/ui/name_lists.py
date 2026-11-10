@@ -37,11 +37,12 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_documents import (
-    MAX_DOCUMENT_BYTES,
     TYPES_HELP,
     DocumentError,
     decode_text,
     kind_of_file,
+    max_bytes_for,
+    too_big_words,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
@@ -58,7 +59,7 @@ from dmbot.memory.name_list import (
 )
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic, name_unnamed
+from dmbot.ui import all_names, logic, name_unnamed, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -583,8 +584,8 @@ async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str 
     kind = kind_of_file(file.filename)
     if kind == "unknown":
         return None, TYPES_HELP
-    if file.size > MAX_DOCUMENT_BYTES:
-        return None, "That file is too big (up to 10 MB). Split it into smaller files."
+    if file.size > max_bytes_for(file.filename):
+        return None, too_big_words(file.filename)
     try:
         raw = await file.read()
     except discord.HTTPException:
@@ -1122,6 +1123,8 @@ class KindQuestions(discord.ui.View):
                 f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
                 + rest
             )
+            if split := split_words.for_many(*written.split_counts):  # (#4037)
+                self.notes.append(split)
         finally:
             self.busy = False
             if not self.children:

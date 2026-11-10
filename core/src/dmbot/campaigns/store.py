@@ -1213,6 +1213,12 @@ class CampaignStore:
             " AND NOT (speaker_id = ANY(%s))",
             (target, campaign_id, sorted(consenting)),
         )
+        # and so are the beings met in play, which hold words from their lines (#3172 slice 5)
+        await conn.execute(
+            "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s"
+            " AND NOT (speaker_ids <@ %s::bigint[])",
+            (target, campaign_id, sorted(consenting)),
+        )
         return name
 
     async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:
