@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
+import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES } from "../src/account/wizard-api";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
@@ -191,6 +192,34 @@ describe("the wizard", () => {
     fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [big] } });
     expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
     expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+  });
+
+  it("maxBytesFor gives 50 MB for a PDF in any case and 10 MB for other names", () => {
+    expect(maxBytesFor("adventure.pdf")).toBe(50 * 1024 * 1024);
+    expect(maxBytesFor("ADVENTURE.PDF")).toBe(MAX_PDF_BYTES);
+    expect(maxBytesFor("notes.docx")).toBe(MAX_FILE_BYTES);
+    expect(maxBytesFor("lore.txt")).toBe(10 * 1024 * 1024);
+    expect(maxBytesFor("pdf.docx")).toBe(MAX_FILE_BYTES);
+  });
+
+  it("a 20 MB pdf is not refused by the page and a 20 MB docx is", async () => {
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const pdf = new File(["the harbour town of Harrowgate"], "adventure.pdf", { type: "application/pdf" });
+    Object.defineProperty(pdf, "size", { value: 20 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [pdf] } });
+    expect(await screen.findByText("adventure.pdf")).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    const docx = new File(["x"], "adventure.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    Object.defineProperty(docx, "size", { value: 20 * 1024 * 1024 });
+    const before = api.calls.filter((c) => c.startsWith("docAdd:")).length;
+    fireEvent.change(input, { target: { files: [docx] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
   });
 
   it("a link is not offered in the first release", async () => {
