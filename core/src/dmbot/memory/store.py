@@ -232,6 +232,21 @@ _LIVE_ENTITY_IDS = (
 )
 
 
+async def _copy_name_session(w: Scope, from_id: str, to_ids: Sequence[str]) -> None:
+    """The parts of a split name were made in the same session as the whole (#4043): without
+    this, the split-party check would guess from the time of the split."""
+    if not to_ids:
+        return
+    await w.conn.execute(
+        "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id, session_started_at)"
+        " SELECT s.guild_id, s.campaign_id, t.id, s.session_started_at"
+        " FROM memory_name_sessions s CROSS JOIN unnest(%s::text[]) AS t(id)"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+        " ON CONFLICT DO NOTHING",
+        (list(to_ids), *w.ids, from_id),
+    )
+
+
 async def _copy_name_sources(w: Scope, from_id: str, to_ids: Sequence[str]) -> None:
     """The uploads one entry was read from, given to entries made out of it in the same change (a
     list split into its names, #3383): each part was read from the same upload (#3675). Not in the
@@ -1835,6 +1850,8 @@ class MemoryStore:
                 "unnamed_what": word,
             },
         )
+        if seen_at is not None:  # (the session that met them, for the split-party check, #4043)
+            await record_name_session(w, str(row["id"]), seen_at)
         if read is not None and anchor_id is None:
             read[key] = row["id"]
         similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
@@ -3254,6 +3271,7 @@ class MemoryStore:
             for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
                 await w.update(ALIASES, alias["id"], {"status": REJECTED})
             await _copy_name_sources(w, entity_id, new_ids)  # (each part is from the list's upload)
+            await _copy_name_session(w, entity_id, new_ids)  # (and from its session, #4043)
             return Written(SplitName(tuple(parts), tuple(made), tuple(joined)), w.batch)
 
     async def undo_split(
@@ -3465,6 +3483,7 @@ class MemoryStore:
                 member_id = str(row["id"])
                 made.append(part)
                 await _copy_name_sources(w, str(current["id"]), [member_id])  # (the list's upload)
+                await _copy_name_session(w, str(current["id"]), [member_id])  # (#4043)
                 waiting = True
             # The DM decided this by pressing the button. For a name still waiting it is held as a
             # proposal the DM is not asked about: `set_entity_status` confirms it when the name is
@@ -4256,6 +4275,17 @@ class MemoryStore:
         gone = await _entity_row(w, gone_id)
         if keep["unnamed"] and not gone["unnamed"]:
             keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
+        elif (
+            join_alias is None
+            and keep["status"] == PROPOSED
+            and gone["status"] == CONFIRMED
+            and await name_scene(w, keep) is not None
+        ):
+            # A waiting name said only in a split scene, kept over a confirmed entry (#4043, the
+            # reviewer): kept, it would become the main name everyone sees, and hiding the entry
+            # instead would take the confirmed one away from the players. The confirmed entry is
+            # kept and the waiting name joins it as a secret name, as the other way round does.
+            keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
         if (keep["type"] == PERSON) != (gone["type"] == PERSON):
             raise MemoryRuleError("A player or the DM can't be the same as a character.")
         needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
@@ -4309,8 +4339,11 @@ class MemoryStore:
         # group would learn the entry goes by them. They join as secret names instead, known to
         # the group that heard them, or to nobody when that can't be told (the DM decides). Read
         # before anything moves: the lines are matched on the waiting name's own spellings.
+        # Whatever the kept entry's status (the reviewer of #4043): its spellings arrive secret, so
+        # a later confirm of a waiting kept entry never opens them. (A waiting split name kept over
+        # a confirmed one was swapped above, so it is always the one merged away.)
         scene = None
-        if keep["status"] == CONFIRMED and join_alias is None:
+        if join_alias is None and not gone["unnamed"]:
             scene = await name_scene(w, gone)
         if scene is not None and source != DM:
             raise MemoryRuleError(AI_JOIN_REFUSED)  # (only the DM says who knows a name)
@@ -4318,7 +4351,7 @@ class MemoryStore:
         arriving = [
             str(a["id"])
             for a in await w.select(ALIASES, " AND entity_id = %s", [gone_id])
-            if a["key"] not in have
+            if a["key"] not in have and a["status"] != "rejected"  # (a turned-down one is no name)
         ]
         await _move_aliases(
             w,
@@ -4328,10 +4361,13 @@ class MemoryStore:
             join=join_alias is not None,
             secret=scene is not None,
         )
-        if scene is not None:
+        if scene is not None and arriving:
             for alias_id in arriving:
                 for character in scene:
-                    await knowers.learn(w, "alias", alias_id, character)
+                    try:
+                        await knowers.learn(w, "alias", alias_id, character)
+                    except MemoryRuleError:
+                        continue  # (as `learn_names_in_scene`: one refused is skipped)
             if split_out is not None:
                 split_out.append("group" if scene else "unknown")
         await merge_restore.move_sheets(w.conn, w.ids, keep_id, gone_id)
@@ -7741,8 +7777,8 @@ async def _moved_by_join(
 
 
 def _one_split(split: Sequence[str]) -> str:
-    """One word for a write's split names (#4043): "unknown" if any couldn't be placed, else
-    "group" if any was, else "". Pure."""
+    """One word for a write's split names (#4043): "unknown" if any couldn't be placed (the DM
+    has something to do), else "group" if any was, else "". Pure."""
     return "unknown" if "unknown" in split else ("group" if split else "")
 
 
@@ -7751,7 +7787,7 @@ def _split_counts(split: Sequence[str]) -> tuple[int, int]:
     return (split.count("group"), split.count("unknown"))
 
 
-async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
+async def _ai_join_refusal(w: Changes, keep: dict[str, Any], gone: dict[str, Any]) -> str:
     """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
     else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
     A waiting name read from a session is normally still hidden from the players, so that flag is
@@ -7774,7 +7810,7 @@ async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any])
         return AI_JOIN_REFUSED
     if keep["type"] != gone["type"] or keep["role"] != gone["role"]:
         return AI_JOIN_REFUSED
-    if isinstance(w, Changes) and await name_scene(w, gone) is not None:
+    if await name_scene(w, gone) is not None:
         return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)
     ids = [keep["id"], gone["id"]]
     if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):

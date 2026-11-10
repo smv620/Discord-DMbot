@@ -1481,7 +1481,9 @@ class ClaimStore:
         """Make the chosen name keys proposed entries, or join them to one already waiting.
         `entities` and `aliases` are the rows the caller holds; the new ones are added to them.
         `session_started_at`: the session the names were heard in, recorded with each new one so
-        the split-party check reads that session's lines (#4043), never a guess by time.
+        the split-party check reads that session's lines (#4043), never a guess by time. Only the
+        session a name was first made in is recorded: a spelling a later session joins to a name
+        still waiting is checked against that first session's lines (a known limit).
         Returns (the new entries' names, spellings joined to a waiting one)."""
         spelling: dict[str, str] = {}  # name key → the words as first said
         sides: dict[str, set[str]] = {}  # name key → the kinds the claims' relationships imply
