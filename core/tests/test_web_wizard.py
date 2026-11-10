@@ -402,7 +402,7 @@ class TheRoutes(Wizard):
         self.assertEqual((bad.status_code, bad.json()), (422, {"error": "bad_document"}))
         big = await c.post(
             f"{base}/documents",
-            content=b'{"data": "' + b"A" * 15_000_000 + b'"}',
+            content=b'{"data": "' + b"A" * 70_000_000 + b'"}',
             headers={"content-type": "application/json"},
         )
         self.assertEqual(big.status_code, 413)
