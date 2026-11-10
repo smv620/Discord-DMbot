@@ -72,6 +72,10 @@ class Settings:
     # The careful tier's last editing pass over each finished recap (#2952). On unless
     # RECAP_FINAL_READ is 0.
     recap_final_read: bool = True
+    # The disk check (#4075): a warning at this percent of the disk used, and the owner told at the
+    # alert one.
+    disk_warn_pct: int = 85
+    disk_alert_pct: int = 95
     # The split of a session's opening through the three-pass structured-output adapter (#2714):
     # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
     recap_structured_output_split: bool = False
@@ -580,6 +584,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     images_raw = (get("DMBOT_TABLE_IMAGES") or "0").lower()
     if images_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_TABLE_IMAGES must be 1 (on) or 0 (off), got "' + images_raw + '".')
+    disk_warn_pct = _percent(get, "DMBOT_DISK_WARN_PCT", 85)
+    disk_alert_pct = _percent(get, "DMBOT_DISK_ALERT_PCT", 95)
+    if disk_warn_pct >= disk_alert_pct:
+        raise ConfigError(
+            "DMBOT_DISK_WARN_PCT must be lower than DMBOT_DISK_ALERT_PCT, got "
+            f"{disk_warn_pct} and {disk_alert_pct}."
+        )
     images_day_raw = get("DMBOT_TABLE_IMAGES_PER_DAY") or "40"
     if not (images_day_raw.isascii() and images_day_raw.isdigit()) or not (
         1 <= int(images_day_raw) <= 1000
@@ -645,6 +656,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
         recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
+        disk_warn_pct=disk_warn_pct,
+        disk_alert_pct=disk_alert_pct,
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
@@ -798,6 +811,16 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def _percent(get: Callable[[str], str], name: str, default: int) -> int:
+    """A percentage setting: a whole number from 1 to 99 (empty is the default)."""
+    raw = _unquote(get(name))
+    if not raw:
+        return default
+    if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 99:
+        raise ConfigError(f'{name} in .env must be a whole number from 1 to 99, got "{raw}".')
+    return int(raw)
 
 
 def _on_off(get: Callable[[str], str], name: str) -> bool:

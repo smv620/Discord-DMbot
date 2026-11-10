@@ -1386,6 +1386,8 @@ class NearQuestions(_Questions):
             item.answer = f"couldn't join them. {exc}"
             return
         item.answer = f"🔗 now another name for **{_short(item.like)}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            item.answer = f"{item.answer} {secret}"
         if one and written.batch is not None:  # its own message, so Undo outlives this one
             view = discord.ui.View(timeout=None)
             view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))

@@ -3099,8 +3099,9 @@ class Review(NamesTest):
         bot: Any = SimpleNamespace(
             memory=self.memory,
             consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+            transcripts=None,  # (no stored session: no session start to record, #4043)
         )
-        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled", "_session_start"):
             setattr(bot, name, getattr(DMBot, name).__get__(bot))
         table = SimpleNamespace(
             spelling=SpellingWatcher(),
@@ -3110,6 +3111,7 @@ class Review(NamesTest):
             hint_parts=None,
             guild_id=GUILD,
             campaign_id=self.campaign.id,
+            transcript_session_id=None,
         )
         for who, line in (
             (1, "ask Brenoch"),
