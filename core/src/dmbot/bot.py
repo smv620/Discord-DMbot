@@ -43,6 +43,7 @@ from dmbot import (
     alerts,
     auto_script,
     campaign_cap,
+    disk_check,
     entitlements,
     features,
     fightbot,
@@ -701,6 +702,7 @@ TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied
 TRAIT_ANSWER_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
 WIZARD_FINISH_EVERY_S = 5
+DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
@@ -1907,6 +1909,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
+            self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
             *(
                 [
@@ -13995,6 +13998,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception as exc:
                     log.warning("A lineage answer round failed (%s)", type(exc).__name__)
             await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
+
+    async def _disk_check_loop(self) -> None:
+        """Every ten minutes: look at how full the disks core can see are, and say so before one is
+        full (#4075; `disk_check`). Counts only in the log; the owner is told by the usual alert."""
+        watch = disk_check.DiskWatch(
+            disk_check.places_for(self.settings.data_dir),
+            warn_pct=self.settings.disk_warn_pct,
+            alert_pct=self.settings.disk_alert_pct,
+        )
+        await asyncio.sleep(DISK_CHECK_FIRST_S)
+        while True:
+            await disk_check.look(watch)  # (never raises)
+            await asyncio.sleep(disk_check.CHECK_EVERY_S)
 
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
