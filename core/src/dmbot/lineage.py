@@ -183,6 +183,7 @@ NOT_STAMPED: dict[str, str] = {
     **dict.fromkeys(
         (
             "active_sessions",
+            "ai_credit_spend",  # counts of AI cost kept per call, not made by a commit (#4005)
             "adventure_reads",
             "dm_waiting_sent",
             "game_clock_group_log",

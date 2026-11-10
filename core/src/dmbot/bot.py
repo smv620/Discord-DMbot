@@ -43,6 +43,7 @@ from dmbot import (
     alerts,
     auto_script,
     campaign_cap,
+    credits,
     disk_check,
     entitlements,
     features,
@@ -1028,6 +1029,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What DMbot asks the AI during a lore read or an import, for the DM's live window (#3710):
         # off unless DMBOT_AI_FEED is on, and then only inside a job's `ai_feed.job(...)`.
         ai_feed.configure(recaps.db if recaps is not None else None, on=settings.ai_feed_on)
+        # What a call costs in AI credits, for the calls made because a DM added material (#4005):
+        # it needs the campaign's owner, found the first time a job charges.
+        credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
         self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # The website's House-rules file requests (#3087), one at a time per server like lore.
@@ -11859,10 +11863,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if not now:
                 self._import_left_told.pop(cid, None)
 
+    async def _owner_of_campaign(self, gid: int, campaign_id: str) -> int | None:
+        """The account that owns a campaign, or None (for the AI credits ledger, #4005)."""
+        campaign = await self.campaigns.get(gid, campaign_id)
+        return None if campaign is None else campaign.owner_user_id
+
     async def _extract_import(self, gid: int, ready: Ready) -> str:
         """`_read_import_story`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING),
+        ):
             return await DMBot._read_import_story(self, gid, ready)
 
     async def _read_import_story(self, gid: int, ready: Ready) -> str:
@@ -12333,7 +12345,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES),
+        ):
             return await DMBot._scan_import_lines(self, gid, ready)
 
     async def _scan_import_lines(self, gid: int, ready: Ready) -> list[str]:

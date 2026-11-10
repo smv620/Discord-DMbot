@@ -21,6 +21,7 @@ from typing import Any, cast
 
 import discord
 
+from dmbot import credits
 from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
@@ -709,6 +710,35 @@ class BackgroundRead:
 
 
 async def read_background(
+    bot: Any,
+    campaign: Campaign,
+    upload: Upload,
+    *,
+    truth: bool,
+    speaker: str | None,
+    known_by: str,
+    started: float,
+    progress: Callable[[str, int, int], None] | None = None,
+    choice: str = lore_knowledge.DEFAULT,
+) -> BackgroundRead:
+    """`_read_background`, its AI calls charged to the campaign's owner as AI credits (#4005): a
+    lore read is made because the DM added material, so it is the owner's to meter. Every way in
+    (the 🤖 button, the website, the queue) comes through here, so none can forget the scope."""
+    with credits.preparing(campaign.guild_id, campaign.id, "lore"):
+        return await _read_background(
+            bot,
+            campaign,
+            upload,
+            truth=truth,
+            speaker=speaker,
+            known_by=known_by,
+            started=started,
+            progress=progress,
+            choice=choice,
+        )
+
+
+async def _read_background(
     bot: Any,
     campaign: Campaign,
     upload: Upload,
