@@ -6875,6 +6875,38 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
     return {str(r["id"]): bool(r["unrevealed"]) for r in rows}
 
 
+async def split_when_said(w: Changes, session_started_at: int | None, lines: Sequence[str]) -> bool:
+    """Was the party split by the game clock (#3131) when any of these lines was spoken? Then a
+    held-back connection the claim states is not shown to the whole party: only one group was in
+    that scene (#2996, the leak found in #3963 c; slice 2a gives that group its own knower rows).
+    `lines` are the claim's line numbers in its session, in spoken order. A moment is split when
+    the clock's newest log row at or before it belongs to a group (`timebot.stamp`). When no cited
+    line is found, the session's start stands for them all. No clock, no session: not split."""
+    if session_started_at is None:
+        return False
+    numbers = sorted({int(n) for n in lines if str(n).isdigit()})
+    cur = await w.conn.execute(
+        "SELECT x.started_ms / 1000 AS at FROM ("
+        "  SELECT l.started_ms, row_number() OVER (ORDER BY l.started_ms, l.id) AS n"
+        "  FROM transcript_lines l JOIN transcript_sessions s"
+        "   ON s.id = l.session_id AND s.guild_id = l.guild_id"
+        "  WHERE s.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s) x"
+        " WHERE x.n = ANY(%s)",
+        (w.guild_id, w.campaign_id, session_started_at, numbers),
+    )
+    moments = [int(r["at"]) for r in await cur.fetchall()] or [session_started_at]
+    for at in moments:
+        cur = await w.conn.execute(
+            "SELECT position FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+            " AND at <= %s ORDER BY at DESC, seq DESC LIMIT 1",
+            (w.guild_id, w.campaign_id, at),
+        )
+        row = await cur.fetchone()
+        if row is not None and row["position"] is not None:
+            return True
+    return False
+
+
 async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
     """A held-back connection the table has now stated is shown to the players (#3963 c, the
     owner's rule: what is said at the table is known to the party). Called when a session's claim

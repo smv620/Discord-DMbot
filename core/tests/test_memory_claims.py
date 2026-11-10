@@ -674,6 +674,40 @@ class Stored(ConfirmedMemoryTest):
         await self.memory.undo(GUILD_A, self.c, done.batch)
         self.assertTrue(await self.unrevealed(rel))
 
+    async def clock_row(self, at: int, position: int | None) -> None:
+        """The game clock's log as the trigger writes it (0305): `position` is a split group's,
+        None the table's one clock."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                " VALUES (%s, %s, %s, %s, 0)",
+                (GUILD_A, self.c, position, at),
+            )
+
+    async def test_a_held_back_connection_said_while_the_party_was_split_stays_held(
+        self,
+    ) -> None:
+        """#2996, the leak in #3963 (c): only one group was in the scene, so the whole party is
+        never shown it (the session began at 500, inside the split)."""
+        await self.clock_row(100, None)
+        await self.clock_row(400, 1)  # (the party split before the session)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual((done.claim.fact_id, done.shown), (rel, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_party_together_again_is_shown_as_before(self) -> None:
+        await self.clock_row(100, 1)
+        await self.clock_row(450, None)  # (rejoined before the session)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(done.shown)
+        self.assertFalse(await self.unrevealed(rel))
+
     async def test_a_secret_claim_shows_nothing(self) -> None:
         rel = await self.held_back()
         await self.propose(said("Bram", "is in", "Veldmoor"))
