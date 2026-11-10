@@ -1078,8 +1078,9 @@ class RecapFeatures:
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
     ) -> None:
-        """Tell the DM, on the DM screen, that the recap is being written (`note`: why, when it was
-        not asked for, such as a hold that ran out)."""
+        """Tell the DM that the recap is being written (`note`: why, when it was not asked for, such
+        as a hold that ran out; fixed words only, as the DM Bot channel is read by the campaign's
+        people)."""
         # Upkeep goes to the DM Bot channel (#3874); the callers' channel is the DM screen as before
         # when there is none. Fixed words and counts only, so the campaign's people may read it.
         channel_id = self._upkeep_channel(campaign)[0] or channel_id
@@ -1128,6 +1129,9 @@ class RecapFeatures:
             else "Find them on your recap page when they're ready."
         )
         lead = f"{note} " if note else ""
+        # Upkeep, like the single line above (#3874): the DM Bot channel, else the caller's. `note`
+        # and `also` are fixed words and counts only.
+        channel_id = self._upkeep_channel(campaign)[0] or channel_id
         await self.post(
             channel_id,
             f"📜 {lead}Writing {count} {'recap' if count == 1 else 'recaps'} from your imported "
@@ -1453,9 +1457,18 @@ class RecapFeatures:
         if message is None:
             return None
         campaign = await self.campaigns.get(gid, cid)
-        channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+        channel, counts_only = (
+            self._upkeep_channel(campaign) if campaign is not None else (None, False)
+        )
         if channel is not None:
-            await self.post(channel, f"📜 Recap: {message}")
+            # The DM Bot channel is read by the campaign's people, who are not told the owner's
+            # plan or its count (#1470): a fixed line there, the full words on the DM screen.
+            shown = (
+                "your recap allowance is used up. See your recap page for when the next one is."
+                if counts_only
+                else message
+            )
+            await self.post(channel, f"📜 Recap: {shown}")
         return message
 
     async def _recap_refusal(self, gid: int, cid: str, *, audio: bool) -> str | None:
@@ -2522,18 +2535,19 @@ class RecapFeatures:
         outcome = await self.recaps.start_over(
             gid, campaign.id, session_at, user_id, replace_ok=replace_ok
         )
-        if outcome == "queued" and campaign.dm_screen_channel_id is not None:
+        upkeep = self._upkeep_channel(campaign)[0]
+        if outcome == "queued" and upkeep is not None:
             try:
                 await self._say_writing(
                     campaign,
-                    campaign.dm_screen_channel_id,
+                    upkeep,
                     session_at,
                     note="Waiting its turn: another recap of this campaign is first."
                     if waits
                     else "",
                 )
             except Exception:
-                log.exception("Recap again: couldn't say on the DM screen that it is queued")
+                log.exception("Recap again: couldn't say that it is queued")
         return outcome
 
     async def _recanted(self, gid: int, cid: str, session_at: int | None) -> Collection[str]:
