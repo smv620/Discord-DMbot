@@ -123,6 +123,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # how the work is done, not something a DM chooses (#2952)
     ),
     Feature(
+        "recap cache",
+        "Recap writer's prompt cached",
+        "",
+        lambda s: s.recap_cache,
+        ("recap_cache",),
+        for_dms=False,  # how the work is paid for, not something a DM chooses (#4054)
+    ),
+    Feature(
         "structured beats",
         "Recap beat sheet in two steps",
         "",
