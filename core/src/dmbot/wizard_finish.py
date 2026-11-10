@@ -28,6 +28,7 @@ from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
 from dmbot.memory.store import INT64_MAX
+from dmbot.rules import optional
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing 
 SOME_DOCS = (DRIVE_GONE, LORE_FAILED, PARTY_FAILED)
 
 # The stage codes the page shows, in order.
-STAGES = ("campaign", "data_use", "party", "lore", "secrets", "clean")
+STAGES = ("campaign", "data_use", "rules", "party", "lore", "secrets", "clean")
 CHOICE_OF = {"lore": "world", "secrets": "spoilers"}
 
 
@@ -341,6 +342,8 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     await runs.move(guild_id, run, stage="data_use")
     if "data_use" in answers:
         await bot.campaigns.set_share_improve(guild_id, campaign_id, bool(answers["data_use"]))
+    await runs.move(guild_id, run, stage="rules")
+    await _apply_supplements(bot, guild_id, campaign_id, answers)
     await runs.move(guild_id, run, stage="party")
     word = ""
     try:
@@ -356,6 +359,29 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     await runs.move(guild_id, run, stage="clean")
     await runs.delete_draft(guild_id, run)
     return word
+
+
+# The wizard's supplement codes and the book each one is in the rules catalog
+# (`rules.optional.CATALOG`). Only these two books have rules in it yet; a code with no rules there
+# changes nothing until its rules are added.
+BOOK_OF = {"xanathar": optional.XANATHAR, "tasha": optional.TASHA}
+
+
+async def _apply_supplements(
+    bot: Any, guild_id: int, campaign_id: str, answers: dict[str, Any]
+) -> int:
+    """The books the DM ticked in step 6 (supplements), as the campaign's optional rules: a rule of
+    a ticked book is on, a rule of a book that is in the catalog but not ticked is off. Only the
+    choice is stored, never a word of a book (the IP rule). A DM who skipped the step has no
+    `supplements` answer, and the campaign keeps its default (every optional rule on where it does
+    not clash). Returns how many rules were set (counts only)."""
+    if "supplements" not in answers:
+        return 0
+    ticked = {BOOK_OF[code] for code in answers["supplements"] if code in BOOK_OF}
+    for rule in optional.CATALOG:
+        await bot.campaigns.set_optional_rule(guild_id, campaign_id, rule.id, rule.source in ticked)
+    log.info("A wizard run set %d optional rule(s)", len(optional.CATALOG))  # counts only
+    return len(optional.CATALOG)
 
 
 async def _confirmed_players(guild: Any, wanted: set[int]) -> frozenset[int]:
