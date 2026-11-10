@@ -430,6 +430,22 @@ commands are only visible to the person who used them.
   player has another, newer one. This replaces the "newest character of each player" rule (#3363,
   Supervisor 2026-11-05). Where DMbot needs "the characters of the people who took part", it takes all
   the characters each of them plays, never one guessed per player (#3998).
+- **Pictures in uploaded documents (owner, 2026-11-10):** a PDF's tables, stat blocks, handouts and maps
+  that are pictures (no text layer) can be read by the AI from the page image, after the same
+  right-to-use confirmation as the text, with the cost shown first. The names it reads are **checked
+  against the whole document's text, before and after the picture** (an adventure often shows the map
+  or table first and explains it later):
+  1. **A name that matches the text** was read correctly: it is treated like the names from the text,
+     and the DM is not asked about the picture.
+  2. **A name that differs only by a simple misreading** (a spelling slip, an abbreviation, a cut-off
+     name) that the surrounding text plainly resolves is **corrected by DMbot** to the text's name, as
+     sure (counted in the upload's notice, with Undo, as everything DMbot adds by itself).
+  3. **A name that lines up with nothing in the text** is flagged to the DM as a name to check, with a
+     link to **the original picture** (the table, stat block, map or handout as it was on the page).
+  The page images are the DM's shared material: kept only in that campaign, shown only to its DMs
+  (players never), and deleted with the upload or the campaign. Never a guess: when DMbot can't tell
+  which text name a picture's name is, it is case 3. Pages that are pictures are first counted and
+  told to the DM (#4000).
 - **One DM screen per campaign:** a channel such as `#dmb-dm-screen-rime-of-the-frostmaiden`,
   which the bot creates (see "Channel structure"). Who else can see it depends on the campaign's **DM-screen visibility**
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
@@ -3959,6 +3975,22 @@ messages use the same ones.
 | Guild | 87 ("about 20 hours a week") | 5 | $34.99 |
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
+
+**AI credits (owner, 2026-11-10; the amounts per plan to follow).** Besides hours of table time, each
+plan gets a monthly allowance of **AI credits** for processing a campaign's material: **10 credits =
+$0.01 of DMbot's AI cost (1,000 credits = $1)**. Before a job that costs more than a few credits, the
+DM sees the estimate **and how many credits are left this month** ("About 340 credits. You have 4,200
+left this month."). Decided by Supervisor, for the owner to push back on: **hours pay for playing,
+credits for preparing.** Everything that runs for a live session (listening, transcription, cleaning,
+the DM sidebar and table questions, alerts, that session's recap and script) stays in hours, so play
+never stops for credits. Credits pay for what the DM chooses to add: lore, secret and adventure
+uploads, imports of past sessions, reading pictures in documents, the careful AI's decisions, a script
+made by press for an imported session, and other bulk reads. Credits don't roll over, like hours.
+Free access and grants have their level's allowance (no limit on the free list). Open, for the owner:
+the allowance of each plan and of Try It, whether extra credits can be bought and at what price, and
+what happens at zero (the job waits until next month or until more are bought; it never half-runs).
+The ElevenLabs "credits" in settings are the voice company's own units, not these; the words for
+DMs say "AI credits" only for DMbot's.
 
 *The hours rules, replayed offline (2026-10-11, #437):* `python -m dmbot.devtools.replay --session
 FOLDER --plan PLAN --hours-used N [--grace] [--session-minutes N] [--hours-only]` puts a made-up owner
