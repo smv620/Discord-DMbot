@@ -397,7 +397,8 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
                         if house_sync.stopped(words):
                             waiting.closing = STOPPED_READING
                         elif note:
-                            words = f"{words}\n\n{note}"
+                            # None: the offer went to the DM already, so the note stands alone
+                            words = f"{words}\n\n{note}" if words else note
         finally:
             _done(current)  # whatever went wrong, the next try is not "already comparing"
         if words:

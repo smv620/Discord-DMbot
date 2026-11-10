@@ -68,6 +68,7 @@ class HouseRules(SyncTest):
         ai = FakeAI(answer([one("Roll once.", "roll initiative once at the start of a fight")]))
         said = await self.reply_for(pdf(WITH_PICTURE), "our-rules.pdf", ai)
         self.assertIn(ANSWER_SAYS, said)
+        self.assertNotIn("None", said)  # (the offer was sent: the note stands alone)
 
     async def test_house_rules_says_nothing_for_an_all_text_pdf(self) -> None:
         ai = FakeAI(answer([one("Roll once.", "roll initiative once at the start of a fight")]))
@@ -103,9 +104,9 @@ class SharedStory(SyncTest):
 
     async def test_shared_story_says_it_when_a_page_is_pictures_only(self) -> None:
         said = await self.kept_reply(pdf(WITH_PICTURE))
-        self.assertTrue(said.startswith("Kept."))
+        self.assertTrue(said.startswith("Kept.\n**1 of 3 pages** had only pictures"))
+        self.assertTrue(said.endswith("\n\nCARD"))
         self.assertIn(ANSWER_SAYS, said)
-        self.assertIn("CARD", said)
 
     async def test_shared_story_says_nothing_for_an_all_text_pdf(self) -> None:
         said = await self.kept_reply(pdf(ALL_TEXT))
