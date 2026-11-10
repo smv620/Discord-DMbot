@@ -1005,8 +1005,13 @@ class AnthropicClient:
             stop=data["stop_reason"] if isinstance(data.get("stop_reason"), str) else "",
         )
         if self._watch is not None:
-            # `input_tokens` leaves out what the cache wrote or read. Count a write in full and
-            # a read at a tenth (what it is charged about), so the spend watch does not undercount.
-            billed = reply.input_tokens + reply.cache_write_tokens + reply.cache_read_tokens // 10
+            # `input_tokens` leaves out what the cache wrote or read. A write is charged 1.25
+            # times an input token and a read a tenth (#4054), so the spend watch does not
+            # undercount.
+            billed = (
+                reply.input_tokens
+                + reply.cache_write_tokens * 5 // 4
+                + reply.cache_read_tokens // 10
+            )
             self._watch.record(billed, reply.output_tokens, feature)
         return reply

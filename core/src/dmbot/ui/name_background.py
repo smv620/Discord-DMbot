@@ -77,7 +77,7 @@ from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import logic
+from dmbot.ui import logic, split_words
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -3064,6 +3064,7 @@ class BulkConfirm(_Menu):
             return
         done: list[tuple[str, int, list[str]]] = []
         added: dict[str, int] = {}
+        split_group = split_unknown = 0  # (said only while the party was split, #4037)
         try:
             for kind in kinds:
                 ids = self.ids.get(kind, [])
@@ -3072,6 +3073,8 @@ class BulkConfirm(_Menu):
                 )  # this reading's names only; one already answered is left alone
                 self.ids.pop(kind, None)  # (answered, or already answered: not offered again)
                 added[kind] = written.value
+                split_group += written.split_counts[0]
+                split_unknown += written.split_counts[1]
                 if written.value and written.batch is not None:
                     done.append((kind, written.batch, ids))
         except MemoryRuleError:
@@ -3096,6 +3099,8 @@ class BulkConfirm(_Menu):
         else:
             parts = ", ".join(_plural(k, n) for k, n in added.items() if n)
             text = f"✅ Added {total} names: {parts}."
+        if split := split_words.for_many(split_group, split_unknown):
+            text += f"\n{split}"
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
         if total and self.queued:  # their names may be answered now

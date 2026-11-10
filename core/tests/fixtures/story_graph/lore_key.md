@@ -242,7 +242,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Boy |  | sled dog Belleros befriended |
 | The ghost |  | Unnamed possessed ghost that emerged when Trex fell |
 | Penolopi |  | pet plant the party burned |
-| The wind spirit |  | Unnamed ancient spirit that guides and guards Okthandom |
+| The wind spirit | ancient wind spirit, wind spirit, ancient spirit | Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name. |
 | Yeti |  | evaded on the road |
 | Ice troll |  | ate the first ship's captain |
 | Mind flayer |  | petrified skull in the mine |
