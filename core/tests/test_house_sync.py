@@ -502,7 +502,6 @@ class Safeguards(SyncTest):
     async def test_a_card_that_cannot_be_put_back_says_so(self) -> None:
         _, view = await self.offer()
         it = self.interaction()
-        real_edit = it.edit_original_response
 
         async def broken(**kw: Any) -> None:
             raise discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")  # type: ignore[arg-type]
@@ -511,7 +510,30 @@ class Safeguards(SyncTest):
         with patch.object(house_file_sync, "apply", AsyncMock(side_effect=RuntimeError("x"))):
             await self.button(view, "Accept all").callback(it)
         it.followup.send.assert_awaited_with(hs.FAILED + hs.STUCK, ephemeral=True)
-        del real_edit
+
+    async def test_a_failure_after_the_result_is_shown_does_not_bring_the_old_card_back(
+        self,
+    ) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        with patch.object(
+            file_ui, "send_after_change", AsyncMock(side_effect=RuntimeError("late"))
+        ):
+            await self.button(view, "Accept all").callback(it)
+        last = it.response.edited[-1][0]
+        self.assertIn(
+            "Added house rule 9.", last
+        )  # (the result stays; the old card is not put back)
+        self.assertNotEqual(last, "offer")
+        it.followup.send.assert_awaited_with(hs.FAILED, ephemeral=True)
+
+    async def test_a_long_card_keeps_the_working_line(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        it.message.content = "x" * 1990
+        await self.button(view, "Accept all").callback(it)
+        self.assertTrue(it.response.edited[0][0].endswith(hs.WORKING))
+        self.assertLessEqual(len(it.response.edited[0][0]), 2000)
 
     async def test_a_few_changes_are_answered_in_one_step(self) -> None:
         _, view = await self.offer()

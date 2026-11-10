@@ -308,10 +308,13 @@ class HouseSyncButton(
             log.exception("A house-rules file button failed")
             put_back = await _restore(interaction)  # the card goes back to what it was, buttons on
             words = FAILED if put_back else FAILED + STUCK
-            if interaction.response.is_done():
-                await interaction.followup.send(words, ephemeral=True)
-            else:
-                await interaction.response.send_message(words, ephemeral=True)
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(words, ephemeral=True)
+                else:
+                    await interaction.response.send_message(words, ephemeral=True)
+            except discord.HTTPException:  # (the press has expired: nothing more can be said)
+                log.warning("A house-rules failure message could not be sent")
 
 
 async def _show(interaction: discord.Interaction, text: str, view: discord.ui.View | None) -> None:
@@ -319,6 +322,8 @@ async def _show(interaction: discord.Interaction, text: str, view: discord.ui.Vi
     first (a long job), through the original response."""
     if interaction.response.is_done():
         await interaction.edit_original_response(content=text, view=view)
+        # The card is replaced for good: a failure after this must not put the old one back over it.
+        interaction.extras.pop("hrs_before", None)
     else:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
@@ -347,7 +352,9 @@ async def _working(interaction: discord.Interaction) -> None:
     for child in view.children:
         if isinstance(child, discord.ui.Button):
             child.disabled = True
-    text = fit_message(f"{message.content}\n\n{WORKING}", limit=TEXT_MAX)
+    # (the card is cut to make room, so the working line is never the part that is lost)
+    card = fit_message(message.content, limit=TEXT_MAX - len(WORKING) - 2)
+    text = f"{card}\n\n{WORKING}"
     await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
 
