@@ -255,6 +255,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsNone(credits.current())
 
+    async def test_a_failed_import_check_still_makes_the_script_unmetered(self) -> None:
+        from dmbot import credits
+
+        seen: list[Any] = []
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            seen.append(credits.current())
+            return job.Outcome("Script ready", started=True, ok=True)
+
+        me = self.bot()
+        me.transcripts.is_import = AsyncMock(side_effect=OSError("down"))
+        with patch.object(job, "make_script", AsyncMock(side_effect=fake)):
+            got = await tb.run(self.card(me), GUILD, SESSION)
+        self.assertEqual(seen, [None])
+        self.assertTrue(got.ok)
+
     async def test_the_switch_and_the_plan_are_checked_again_when_it_is_confirmed(self) -> None:
         for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):
             c = self.card(me)

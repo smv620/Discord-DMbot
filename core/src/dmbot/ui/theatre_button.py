@@ -275,9 +275,14 @@ async def make_for(
             names[uid] = name
     # A script for an imported session is made because the DM imported it, so it is metered as AI
     # credits; a live session's script stays in the hours (#4005).
+    try:
+        imported = await bot.transcripts.is_import(guild_id, session_id)
+    except Exception:  # a failed read must not stop the script: it is made, just not metered
+        log.warning("Script: could not tell if the session was imported")
+        imported = False
     metered = (
         credits.preparing(guild_id, session.campaign_id, "script")
-        if await bot.transcripts.is_import(guild_id, session_id)
+        if imported
         else contextlib.nullcontext()
     )
     with metered:
@@ -293,10 +298,11 @@ async def make_for(
             edit=edit,
             link=script_link(bot.settings.site_url, guild_id, session.campaign_id, session.number),
         )
-        if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
-            await read_relationships(
-                bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
-            )
+    # (outside the scope: the relationship read is dev1's comparison, never the DM's request)
+    if outcome.ok and bot.settings.rel_read_on and bot.voyage is not None:
+        await read_relationships(
+            bot, guild_id, session_id, ai, agreed_now, names, memory, campaign, edit
+        )
     return outcome
 
 

@@ -120,9 +120,10 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   `ai_feed.job`. It is opened by `ui.name_background.read_background` (every lore read: Discord's
   button, the website, the queue), `ImportJob.run` (the cleaning of an imported session) and the bot's
   `_extract_import` and `_scan_import` (its story read and name scan). `credits.PREPARING_JOBS` lists
-  them and a test fails if one stops opening the scope. The read of the DM's adventure (`DMBot._read_plan`) and the script of an imported session
-  (`theatre_button.make_for`, never a live one) join in #4005 part 1b; the careful decisions and picture
-  reads join as their jobs are built or touched.
+  them and a test fails if one stops opening the scope. The read of the DM's adventure (`DMBot._read_plan`) and the script of an imported
+  session (`theatre_button.make_for`, never a live one; the relationship read after it is dev1's
+  comparison and is not metered) join in #4005 part 1b; the careful decisions and picture reads join as
+  their jobs are built or touched.
 - `ai.AnthropicClient.complete` calls `credits.record` after every call that answers, a cut one too. A
   call that raises has no token counts from the service, so it is not charged.
 - The owner is found once per job (`DMBot._owner_of_campaign`); a campaign nobody owns is recorded under
