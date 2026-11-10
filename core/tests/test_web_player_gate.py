@@ -325,6 +325,6 @@ class TheParty(OneCampaign):
             self.guild,
         )
         shown = await self.names()
-        # (Okra's own rows, not the group's: the Guild's entry and the vault he is told of by name)
-        self.assertIn("The Lantern Guild", shown)
+        # (Okra's own rows, not the group's: the vault he is told of by name. The group itself is
+        # now the party, which the page shows as the party and not as a named node.)
         self.assertIn("Guarded Vault", shown)
