@@ -12143,7 +12143,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             batches = self._import_batches.pop(cid, set())
             starts = self._import_starts.pop(cid, set())
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            notice_to, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
+            if campaign is None or notice_to is None:
                 continue
             if (
                 (names or starts)
@@ -12151,7 +12152,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 and await self._add_sure_import(campaign, speakers, entries, batches, starts)
             ):
                 names = []  # added what it was sure of; the notice carries what is left to answer
-            text = after_session_text(names, where="your imported sessions") if names else ""
+            # The DM Bot channel is read by the campaign's people (#3874): a count there, the names
+            # themselves in the DM's private check; the DM screen (no DM Bot channel) keeps them.
+            if not names:
+                text = ""
+            elif counts_only:
+                text = counts_after_session_text(len(names), where="your imported sessions")
+            else:
+                text = after_session_text(names, where="your imported sessions")
             if skipped:
                 one = skipped == 1
                 more = " more" if names else ""
@@ -12165,9 +12173,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 text = f"{text}\n{note}" if text else f"📝 {note}"
             if text:
-                await self.post(
-                    campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
-                )
+                await self.post(notice_to, text, view=review_view(cid) if names else None)
         for cid in list(self._import_queued.keys() | self._import_unhonoured.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import
