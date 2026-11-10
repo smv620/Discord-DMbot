@@ -118,11 +118,12 @@ class PrivateScenes:
             # (a mark follows a merge: a character merged since is the one it became, so the DM's
             # "Not private" still holds for the same two under the kept entries)
             now_as = await _merged(conn, guild_id, campaign_id) if rows else {}
-            marked = [
-                (*sorted((_root(now_as, str(r["first_id"])), _root(now_as, str(r["second_id"])))),
-                 int(r["from_ms"]), int(r["to_ms"]))
-                for r in rows
-            ]  # fmt: skip
+            marked: list[tuple[str, str, int, int]] = []
+            for r in rows:
+                a, b = sorted(
+                    (_root(now_as, str(r["first_id"])), _root(now_as, str(r["second_id"])))
+                )
+                marked.append((a, b, int(r["from_ms"]), int(r["to_ms"])))
             used: set[str] = set()
             kept = skipped = 0
             for scene in scenes:
