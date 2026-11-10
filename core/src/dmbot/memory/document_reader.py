@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.connection import Connection
 from pathlib import PurePath
 
-from dmbot.memory.name_documents import UNREADABLE, DocumentError, text_of
+from dmbot.memory.name_documents import UNREADABLE, DocumentError, ReadText, text_of
 
 READ_TIME_S = 30.0
 # Read in a process: pure-Python parsers that a hostile file can keep busy. Other types
@@ -100,7 +100,8 @@ def _limit_memory(size: int = 0) -> None:
 
 
 def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
-    """In the child process. Answers b"ok\\n\\n<text>", b"error\\n<cause>\\n<plain words>"
+    """In the child process. Answers b"ok\\n<pages>,<pictures>\\n<text>" (the two counts of a PDF,
+    #4000; 0,0 for any other file), b"error\\n<cause>\\n<plain words>"
     or b"failed\\n<error kind>\\n", as plain bytes (never a pickle). A traceback from
     the child itself (not from `parse`) goes to stderr as plain lines."""
     if hasattr(os, "nice"):  # not on Windows
@@ -110,7 +111,9 @@ def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
     _limit_memory(len(raw))
     try:
         # errors="replace": a broken PDF can give a lone surrogate; keep the rest
-        parts = (b"ok", b"", parse(filename, raw).encode(errors="replace"))
+        read = parse(filename, raw)
+        counts = f"{getattr(read, 'pages', 0)},{getattr(read, 'picture_pages', 0)}"
+        parts = (b"ok", counts.encode(), read.encode(errors="replace"))
     except DocumentError as exc:
         cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else ""
         parts = (b"error", cause.encode(), str(exc).encode())
@@ -220,6 +223,9 @@ async def read_document(
         log.exception("Couldn't read a %s file", suffix)
         raise DocumentError(UNREADABLE) from None
     if kind == "ok":
+        pages, _, pictures = cause.partition(",")
+        if pages.isdecimal() and pictures.isdecimal():
+            return ReadText(text, int(pages), int(pictures))
         return text
     if kind == "error":
         if cause:  # text_of's own "couldn't read" (the child doesn't log)
