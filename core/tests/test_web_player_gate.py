@@ -296,3 +296,31 @@ class WhoIsLooking(OneCampaign):
         self.assertEqual(plain.json(), forged.json())
         self.assertEqual(see.status_code, 403)  # (a picker is the DM's alone)
         self.assertNotIn("Council Seat", plain.text)
+
+
+class TheParty(OneCampaign):
+    """The party is never a knower (#3954, #3977): a row that sits on the party, however it got
+    there, never reaches its members on the website, as it does not in Discord's gate."""
+
+    async def names(self) -> set[str]:
+        got = await self.full_page(hops=8, center=self.mira)
+        return {n["name"] for n in got["nodes"]}
+
+    async def test_a_row_on_a_group_that_is_not_the_party_still_reaches_its_members(self) -> None:
+        self.assertIn("Old Rumour", await self.names())  # (the Guild knows it; Okra is a member)
+
+    async def test_a_row_on_the_party_does_not_reach_its_members(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET party = TRUE WHERE campaign_id = %s AND id = %s",
+            self.one.id,
+            self.guild,  # (the group whose row was written before the rule: now it is the party)
+        )
+        self.assertNotIn("Old Rumour", await self.names())
+
+    async def test_what_a_member_character_knows_by_its_own_row_is_still_shown(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET party = TRUE WHERE campaign_id = %s AND id = %s",
+            self.one.id,
+            self.guild,
+        )
+        self.assertIn("Guarded Vault", await self.names())  # (Okra's own row of 0.0)
