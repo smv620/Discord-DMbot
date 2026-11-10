@@ -910,7 +910,8 @@ async def save_name(
         hidden_from_players=hidden,
     )  # fmt: skip
     entity = written.value
-    if played_by is not None:  # a player's character: the party step for a lore-only start (#3036)
+    # a player character joins the party, its player "pending" too (#3036, #3995)
+    if played_by is not None or kind == PLAYER_CHARACTER:
         await memory.party_on_assignment(gid, cid)
     for other in others:
         await memory.add_alias(
