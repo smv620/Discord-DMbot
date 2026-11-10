@@ -357,7 +357,8 @@ class NamesHome(_Menu):
         # The reviews the after-session posts open, one button each, only while something waits
         # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
         if reviews:
-            # (the joins' button sits on row 3: row 4 already holds five with the connections)
+            # (the joins' button sits on row 3: row 4 already holds five with the connections;
+            # with 👣 Met but not named, row 3 is full at five too: a new button needs another row)
             for count, label, handler, row in (
                 (reviews.heard, "❓ Check names", self._check_heard, 4),
                 (reviews.people, "🧑 Check who is who", self._check_people, 4),

@@ -143,6 +143,7 @@ from dmbot.memory.models import (
     PARTY_SOURCE,
     PLAYER_CHARACTER,
     PLAYERS_TEXT_MAX,
+    PRONOUNCED,
     PROPOSED,
     REJECTED,
     ROLES,
@@ -2213,30 +2214,41 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def name_met(
-        self, guild_id: int, campaign_id: str, met_id: str, name: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        met_id: str,
+        name: str,
+        *,
+        opted_in: Collection[int],
     ) -> Written[Entity]:
         """The DM names a being the party met in play (#4045, "Give them a name" on the "Met but not
         named" list): in ONE write, the entry is made (confirmed, the DM's word: a person for one
         being, a group for more), it is ranked 0 with the reason `met_in_play` (the owner's
         "background", raised later by the story), and the list's row goes. If any part fails,
-        none of it happens. A name the campaign already has is refused (`MET_NAME_TAKEN`): the DM
-        joins it instead with "Same as…". Shown to the players like any name the DM adds: the party
-        met them at the table (the owner's rule)."""
+        none of it happens. A name another live entry has is refused, with the reason
+        (`met_name_owner`): one the DM can join ("Same as…"), or one still waiting in the name
+        check. `opted_in`: who is recorded now, read at the press; a row citing anyone else is
+        deleted and `MET_GONE` (its words must not become an entry's note). Shown to the players
+        like any name the DM adds: the party met them at the table (the owner's rule). An Undo of
+        the batch takes the entry (and its rank, by cascade) back; the row is not put back."""
         name = clean_text(name)
+        if not name or PRONOUNCED.search(name):  # how to say it is not how to spell it (#2332)
+            raise MemoryRuleError(MET_BAD_NAME)
+        await self._purge_met(guild_id, campaign_id, opted_in)
         async with self._write(guild_id, campaign_id, DM) as w:
-            row = await _met_row(w, met_id)
+            row = await _met_row(w, met_id, opted_in)
             group = int(row["count"]) != 1
             kind, role = ("faction", None) if group else ("character", NPC)
             check_named(kind, name)
-            taken = {
-                name_key(str(e["name"]))
-                for e in await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
-            }
-            taken |= {str(a["key"]) for a in await w.select(ALIASES, " AND status <> 'rejected'")}
-            if name_key(name) in taken:
-                raise MemoryRuleError(MET_NAME_TAKEN)
+            owner = await met_name_owner(w, name)
+            if owner is not None:
+                raise MemoryRuleError(
+                    MET_NAME_TAKEN if owner["status"] == CONFIRMED else MET_NAME_WAITING
+                )
             onto = await _load_ontology(w)
             onto.active_type(kind)
+            _check_role(onto, kind, role, None)
             entity = await w.insert(
                 ENTITIES,
                 {
@@ -2247,23 +2259,47 @@ class MemoryStore:
                     "needs_look": False, "unique_item": None,
                 },
             )  # fmt: skip
-            await w.insert(
-                ALIASES, _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
-            )
+            alias = _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
+            await w.insert(ALIASES, alias)
             await _met_done(w, row, str(entity["id"]), rank_always=True)
             return Written(_entity(entity), w.batch)
 
+    async def _purge_met(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> None:
+        """Rows citing someone not recorded now go first, in their own transaction (the write
+        that follows could roll a delete back with its refusal)."""
+        from dmbot.memory.met_store import MetStore
+
+        await MetStore(self._db).purge_stopped(guild_id, campaign_id, opted_in)
+
+    async def met_name_owners(self, guild_id: int, campaign_id: str, name: str) -> list[MetOwner]:
+        """Who already goes by `name`, for the "Met but not named" list (#4045): the same rule as
+        `name_met`'s refusal, so the list asks the right question (Same as… for a person or group
+        it can join; check it first for a waiting one; another name for anything else)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return [
+                MetOwner(str(r["id"]), str(r["name"]), r["status"] == CONFIRMED, met_joinable(r))
+                for r in await met_name_owners(scope, name)
+            ]
+
     async def join_met(
-        self, guild_id: int, campaign_id: str, met_id: str, entity_id: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        met_id: str,
+        entity_id: str,
+        *,
+        opted_in: Collection[int],
     ) -> Written[Entity]:
         """The DM says a being met in play is one the campaign already has (#4045, "Same as…"): in
-        ONE write, the list's row goes and, if the entry has no rank yet, it is ranked 0 with the
-        reason `met_in_play`. An entry that already has a rank keeps it: a join never demotes (an
-        old enemy met again is still Major). Only a live, confirmed entry of the campaign."""
+        ONE write, the list's row goes and, if the entry (with every name merged into it) has no
+        rank yet, it is ranked 0 with the reason `met_in_play`. An entry that already has a rank
+        keeps it: a join never demotes (an old enemy met again is still Major). Only a live,
+        confirmed character or group with a name (`met_joinable`). `opted_in` as in `name_met`."""
+        await self._purge_met(guild_id, campaign_id, opted_in)
         async with self._write(guild_id, campaign_id, DM) as w:
-            row = await _met_row(w, met_id)
+            row = await _met_row(w, met_id, opted_in)
             entity = await w.get(ENTITIES, entity_id)
-            if entity is None or entity["status"] != CONFIRMED or entity["type"] == PERSON:
+            if entity is None or not met_joinable(entity):
                 raise MemoryRuleError(MET_NO_ENTRY)
             await _met_done(w, row, entity_id, rank_always=False)
             return Written(_entity(entity), w.batch)
@@ -8228,21 +8264,77 @@ async def isolated_rows_in(
     ]  # fmt: skip
 
 
-MET_NAME_TAKEN = "That name is already in the campaign. If they're the same, use Same as… instead."
+MET_NAME_TAKEN = "That name is already in your campaign. If they're the same, use Same as…."
+MET_NAME_WAITING = (
+    "That name is waiting in 📝 Check new names. Check it there first, then use Same as…."
+)
+MET_BAD_NAME = "Type the name as it's spelled."
 MET_GONE = "That one isn't on the list any more."
-MET_NO_ENTRY = "That name isn't in the campaign any more. Pick another."
+MET_NO_ENTRY = "That name isn't one DMbot can match them to. Pick a person or group in your names."
+MET_JOIN_TYPES = frozenset({"character", "faction"})  # (importance is about people and groups)
 
 
-async def _met_row(w: Changes, met_id: str) -> dict[str, Any]:
+@dataclasses.dataclass(frozen=True, slots=True)
+class MetOwner:
+    """An entry that already goes by a name the DM typed for a met being (#4045)."""
+
+    id: str
+    name: str
+    confirmed: bool
+    joinable: bool  # a confirmed person or group: "Same as…" can match them to it
+
+
+def met_joinable(row: Mapping[str, Any]) -> bool:
+    """Whether a met being can be joined to this entry (#4045): a live, confirmed person or group
+    with a name. One rule for Discord's Same as…, the website and the store. Pure."""
+    return (
+        row["status"] == CONFIRMED
+        and row["merged_into"] is None
+        and row["type"] in MET_JOIN_TYPES
+        and not row.get("unnamed")
+    )
+
+
+async def met_name_owners(w: Scope, name: str) -> list[dict[str, Any]]:
+    """The live entries (waiting or confirmed, never a player or the DM) that already go by this
+    name, as their main name or another name that is not turned down (#4045): what "taken" means
+    for a met being, the one rule for the store and the list. Empty when the name is free."""
+    key = name_key(name)
+    found: dict[str, dict[str, Any]] = {}
+    for entity in await w.select(
+        ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> %s", [PERSON]
+    ):
+        if name_key(str(entity["name"])) == key:
+            found[str(entity["id"])] = dict(entity)
+    for alias in await w.select(ALIASES, " AND key = %s AND status <> 'rejected'", [key]):
+        owner = await w.get(ENTITIES, str(alias["entity_id"]), lock=False)
+        if owner is not None and owner["status"] in LIVE and owner["type"] != PERSON:
+            found.setdefault(str(owner["id"]), dict(owner))
+    return list(found.values())
+
+
+async def met_name_owner(w: Scope, name: str) -> dict[str, Any] | None:
+    """The first of `met_name_owners`, a waiting one before a confirmed one (a waiting one is what
+    the DM must deal with first), or None."""
+    owners = await met_name_owners(w, name)
+    owners.sort(key=lambda r: r["status"] == CONFIRMED)
+    return owners[0] if owners else None
+
+
+async def _met_row(w: Changes, met_id: str, opted_in: Collection[int]) -> dict[str, Any]:
     """The list's row, locked for this write (#4045); `MET_GONE` when it was named, joined or
-    removed meanwhile (a second press, or the website)."""
+    removed meanwhile (a second press, or the website), or when it cites someone who is not
+    recorded now (the consent re-check at the moment of use; `_purge_met` deleted such rows just
+    before, so this only guards the moment between the two)."""
     cur = await w.conn.execute(
-        "SELECT id, what, count, session_started_at, line_ms FROM memory_met"
+        "SELECT id, what, count, session_started_at, line_ms, speaker_ids FROM memory_met"
         " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR UPDATE",
         (*w.ids, met_id),
     )
     row = await cur.fetchone()
     if row is None:
+        raise MemoryRuleError(MET_GONE)
+    if not set(int(u) for u in row["speaker_ids"]) <= set(opted_in):
         raise MemoryRuleError(MET_GONE)
     return dict(row)
 
@@ -8258,13 +8350,18 @@ async def _met_done(
 ) -> None:
     """The rank-0 row (`met_in_play`) and the list row's delete, in the caller's write (#4045):
     one transaction with the entry, so a failure leaves the list as it was. With `rank_always`
-    False (a join), an entry that already has an assessment keeps it."""
+    False (a join), an entry that already has an assessment keeps it, read over every name merged
+    into it (ranks are read by merged group, so a twin's rank is the entry's)."""
     has_rank = False
     if not rank_always:
         cur = await w.conn.execute(
-            "SELECT 1 FROM memory_importance WHERE guild_id = %s AND campaign_id = %s"
-            " AND entity_id = %s LIMIT 1",
-            (*w.ids, entity_id),
+            "WITH RECURSIVE grp(id) AS ("
+            " SELECT %s::text"
+            " UNION SELECT e.id FROM memory_entities e JOIN grp ON e.merged_into = grp.id"
+            " WHERE e.guild_id = %s AND e.campaign_id = %s)"
+            " SELECT 1 FROM memory_importance WHERE guild_id = %s AND campaign_id = %s"
+            " AND entity_id IN (SELECT id FROM grp) LIMIT 1",
+            (entity_id, *w.ids, *w.ids),
         )
         has_rank = await cur.fetchone() is not None
     if not has_rank:

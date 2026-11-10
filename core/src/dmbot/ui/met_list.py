@@ -1,22 +1,28 @@
-"""👣 Met but not named (#4045; #3172 slice 5): the beings the party met at the table that nobody
-named (two ambushers, the sled dogs), kept apart from the names until the DM acts. DM-only. The DM
-gives one a name (a new entry), says it is one the campaign already has (Same as…), or removes it.
+"""👣 Met but not named (#4045; #3172 slice 5): the beings the party met in play that nobody named
+(two ambushers, the sled dogs), kept apart from the names until the DM acts. DM-only. The DM gives
+one a name (a new entry), says it is one the campaign already has (Same as…), or removes it.
 Nothing here guesses a name: the DM types it.
 
-Rows citing someone who is no longer recorded are left out (and deleted) before every read
-(`MetStore.listed`). Naming and joining are one write each in the store (`name_met`, `join_met`):
-the entry, its rank 0 and the row's removal happen together or not at all.
+Every press is checked again: the person must still be a DM of the campaign, and who is recorded
+is read again (a row citing someone who stopped is deleted, never named). Naming and joining are
+one write each in the store (`name_met`, `join_met`): the entry, its rank 0 and the row's removal
+happen together or not at all. What counts as a name already taken is the store's one rule
+(`met_name_owner`), so this list never sends the DM between two answers that both say no.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
+from typing import Any
 
 import discord
 
+from dmbot.campaigns.models import Campaign
 from dmbot.memory.met_store import MetRow, MetStore
-from dmbot.memory.models import CONFIRMED, MemoryRuleError
+from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -35,17 +41,23 @@ log = logging.getLogger(__name__)
 
 TITLE = "👣 Met but not named"
 INTRO = (
-    "Creatures and people your party met at the table that nobody named. Only you see this list. "
-    "Give one a name to add it to your names, or remove it."
+    "Creatures and people your party met in play that nobody named. Only you see this list. "
+    "Pick one to name it, match it to a name you have, or remove it. DMbot never names them: "
+    "you do."
 )
-EMPTY = "👣 Nobody is waiting for a name. DMbot adds here who your party meets in play."
+EMPTY = (
+    "👣 Nobody is waiting for a name. After each session, DMbot adds here anyone your party met "
+    "that nobody named."
+)
 DM_ONLY = "Only a DM of this campaign can see this list."
-NOTHING_CHANGED = "Something went wrong and nothing was changed."
+NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
 NAME_LABEL = "Their name"
 NAME_HELP = "What you call them"
+GROUP_HELP = "Their name, or the group's name"
 SAME_LABEL = "The name they already have"
-SAME_HELP = "A name in your campaign"
+SAME_HELP = "A person or group in your names"
+SHOWN_ONCE_NAMED = "Once named, they show in your names like any name you add."
 
 
 def count_text(count: int) -> str:
@@ -54,10 +66,16 @@ def count_text(count: int) -> str:
 
 
 def notice(made: int) -> str:
-    """The after-session line (counts only): how many joined the list. Pure."""
+    """The after-session line in the DM Bot channel (counts only: anyone in the campaign may read
+    that channel, and the list's button checks the DM on every press). Pure."""
+    if made == 1:
+        return (
+            "👣 1 creature or person your party met has no name yet. Name it, match it to a name "
+            "you have, or remove it."
+        )
     return (
-        f"👣 Your party met {made} {'creature or person' if made == 1 else 'creatures or people'}"
-        " nobody named. They wait in **Names → 👣 Met but not named** for you to name or remove."
+        f"👣 {made} creatures or people your party met have no name yet. Name them, match them to "
+        "a name you have, or remove them."
     )
 
 
@@ -67,11 +85,12 @@ def label(row: MetRow) -> str:
     return f"{row.what}{many}"
 
 
-def _when(row: MetRow) -> str:
+def when(row: MetRow) -> str:
+    """When they were met, as a date. Pure."""
     if row.session_started_at is None:
         return "met in play"
-    day = datetime.fromtimestamp(row.session_started_at, UTC).strftime("%-d %b %Y")
-    return f"met in the session of {day}"
+    day = datetime.fromtimestamp(row.session_started_at, UTC)
+    return f"met on {day.day} {day:%b %Y}"
 
 
 def _store(interaction: discord.Interaction) -> MetStore | None:
@@ -79,18 +98,29 @@ def _store(interaction: discord.Interaction) -> MetStore | None:
     return MetStore(memory._db) if memory is not None else None
 
 
-async def show(interaction: discord.Interaction, campaign_id: str, note: str = "") -> None:
-    """The list, newest session first, after the consent re-check."""
-    await _answer_first(interaction)
+async def _for_dm(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
+    """The campaign, when the one pressing is its DM now (checked on every press). Says why not,
+    once, otherwise."""
     campaign = await _campaign_for(interaction, campaign_id)
-    store = _store(interaction)
     if campaign is None:
-        return
+        return None  # (`_campaign_for` already said why)
+    if not sees_secrets(campaign, interaction.user.id):
+        await _tell(interaction, DM_ONLY)
+        return None
+    return campaign
+
+
+async def show(
+    interaction: discord.Interaction, campaign_id: str, note: str = "", *, in_place: bool = False
+) -> None:
+    """The list, newest session first, after the consent re-check."""
+    await _answer_first(interaction, in_place=in_place)
+    store = _store(interaction)
     if store is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    if not sees_secrets(campaign, interaction.user.id):
-        await _tell(interaction, DM_ONLY)
+    campaign = await _for_dm(interaction, campaign_id)
+    if campaign is None:
         return
     try:
         agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
@@ -101,46 +131,75 @@ async def show(interaction: discord.Interaction, campaign_id: str, note: str = "
         return
     head = f"{note}\n\n" if note else ""
     if not rows:
-        await _replace(interaction, head + EMPTY, None)
+        await _replace(interaction, head + EMPTY, BackOnly(campaign.id))
         return
     shown = rows[:SHOWN_MAX]
-    lines = [f"• **{_md(logic.shorten(label(r), 90))}** · {_when(r)}" for r in shown]
-    more = f"\n…and {len(rows) - len(shown)} more." if len(rows) > len(shown) else ""
+    lines = [f"• **{_md(logic.shorten(label(r), 90))}** · {when(r)}" for r in shown]
+    more = (
+        f"\n…and {len(rows) - len(shown)} more. Name or remove some to see the rest."
+        if len(rows) > len(shown)
+        else ""
+    )
     text = f"{head}**{TITLE}**\n{INTRO}\n\n" + "\n".join(lines) + more
     await _replace(interaction, logic.shorten(text, 1990), MetList(campaign.id, shown))
 
 
-class MetList(_Menu):
-    def __init__(self, campaign_id: str, rows: list[MetRow]) -> None:
+async def _back_to_names(interaction: discord.Interaction, campaign_id: str) -> None:
+    from dmbot.ui.names import show_home
+
+    await show_home(interaction, campaign_id)
+
+
+class BackOnly(_Menu):
+    def __init__(self, campaign_id: str) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.add_item(
+            _Button(self._back, label="↩️ Back to Names", style=discord.ButtonStyle.secondary)
+        )
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _back_to_names(interaction, self.campaign_id)
+
+
+class MetList(BackOnly):
+    def __init__(self, campaign_id: str, rows: list[MetRow]) -> None:
+        super().__init__(campaign_id)
         self.rows = {r.id: r for r in rows}
         self.pick = _Select(
             self._picked,
-            placeholder="Pick one to name or remove",
+            placeholder="Pick one to name, match or remove",
             options=[
                 discord.SelectOption(
                     label=logic.shorten(label(r), logic.OPTION_LABEL_MAX),
                     value=r.id,
-                    description=logic.shorten(_when(r), 100),
+                    description=logic.shorten(when(r), 100),
                 )
-                for r in rows
+                for r in rows[:SHOWN_MAX]
             ],
         )
         self.add_item(self.pick)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
+        self.stop()
         row = self.rows.get(str(self.pick.values[0])) if self.pick.values else None
         if row is None:
-            await show(interaction, self.campaign_id)
+            await show(interaction, self.campaign_id, in_place=True)
             return
-        self.stop()
         await _answer_first(interaction, in_place=True)
-        await _replace(
-            interaction,
-            f"**{_md(label(row))}**, {_when(row)}. What would you like to do?",
-            MetActions(self.campaign_id, row),
-        )
+        await _replace(interaction, choice_text(row), MetActions(self.campaign_id, row))
+
+
+def choice_text(row: MetRow) -> str:
+    """What the DM reads after picking one: each button said in words. Pure."""
+    return (
+        f"**{_md(label(row))}**, {when(row)}.\n"
+        "✏️ **Give them a name**: add them as a new name.\n"
+        "🔗 **Same as…**: they're someone already in your names.\n"
+        "🗑️ **Remove**: take them off this list.\n"
+        f"{SHOWN_ONCE_NAMED}"
+    )
 
 
 class MetActions(_Menu):
@@ -165,9 +224,11 @@ class MetActions(_Menu):
         self.stop()
         await _answer_first(interaction, in_place=True)
         store = _store(interaction)
-        campaign = await _campaign_for(interaction, self.campaign_id)
-        if store is None or campaign is None or not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, DM_ONLY)
+        if store is None:
+            await _tell(interaction, NOT_AVAILABLE)
+            return
+        campaign = await _for_dm(interaction, self.campaign_id)
+        if campaign is None:
             return
         try:
             gone = await store.remove(campaign.guild_id, campaign.id, self.row.id)
@@ -176,11 +237,11 @@ class MetActions(_Menu):
             await _tell(interaction, NOTHING_CHANGED)
             return
         note = f"🗑️ Removed **{_md(label(self.row))}**." if gone else "That one was already gone."
-        await show(interaction, self.campaign_id, note)
+        await show(interaction, self.campaign_id, note, in_place=True)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
-        await show(interaction, self.campaign_id)
+        await show(interaction, self.campaign_id, in_place=True)
 
 
 class NameForm(discord.ui.Modal):
@@ -196,6 +257,8 @@ class NameForm(discord.ui.Modal):
         if same:
             self.name.label = SAME_LABEL
             self.name.placeholder = SAME_HELP
+        elif row.count != 1:
+            self.name.placeholder = GROUP_HELP
         self.campaign_id = campaign_id
         self.row = row
         self.same = same
@@ -214,96 +277,122 @@ class NameForm(discord.ui.Modal):
 async def name_them(
     interaction: discord.Interaction, campaign_id: str, row: MetRow, name: str, same: bool
 ) -> None:
-    """A name the campaign has already joins them to it (asked first when typed as a new name); a
-    new name makes the entry. `same`: the DM said it is one the campaign already has."""
+    """A new name makes the entry; a name a person or group already has asks first whether they
+    are the same one; one still waiting in the name check says to check it there first. `same`:
+    the DM said it is one the campaign already has."""
     await _answer_first(interaction, in_place=True)
-    campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
-    cache = _bot(interaction).lookup
-    if campaign is None or memory is None:
+    if memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
         return
-    if not sees_secrets(campaign, interaction.user.id):
-        await _tell(interaction, DM_ONLY)
+    campaign = await _for_dm(interaction, campaign_id)
+    if campaign is None:
         return
     if not name:
         await _tell(interaction, "Type a name for them.")
         return
-    if cache is None:
-        await _tell(interaction, NOT_AVAILABLE)
+    try:
+        owners = await memory.met_name_owners(campaign.guild_id, campaign.id, name)
+    except Exception:
+        log.exception("Couldn't look the name up")
+        await _tell(interaction, NOTHING_CHANGED)
         return
-    found = await cache.get(campaign.guild_id, campaign.id)
-    known = {
-        e.entity_id: other.name
-        for e in found.exact(name)
-        if not e.person
-        and (other := found.entities.get(e.entity_id)) is not None
-        and other.status == CONFIRMED
-        and not other.unnamed
-    }
-    if len(known) > 1:
+    if any(not o.confirmed for o in owners):
+        await _tell(interaction, MET_NAME_WAITING.replace("That name", f"**{_md(name)}**"))
+        return
+    joinable = [o for o in owners if o.joinable]
+    if owners and not joinable:
         await _tell(
             interaction,
-            f"More than one name is **{_md(name)}**. Type the full name of the one they are.",
+            f"**{_md(name)}** is already the name of a place or thing in your campaign. Give them "
+            "a different name.",
         )
         return
-    if known:
-        ((entity_id, known_name),) = known.items()
+    if len(joinable) > 1:
+        await _tell(
+            interaction,
+            f"**{_md(name)}** matches more than one name in your campaign. Press 🔗 Same as… again "
+            "and type the full name of the one you mean.",
+        )
+        return
+    if joinable:
+        (owner,) = joinable
         if same:
-            await _join(interaction, campaign_id, row, entity_id, known_name)
+            await _join(interaction, campaign, row, owner.id, owner.name)
             return
         await _replace(
             interaction,
-            f"**{_md(known_name)}** is already a name in your campaign. Is **{_md(label(row))}** "
+            f"**{_md(owner.name)}** is already a name in your campaign. Is **{_md(label(row))}** "
             "the same one?",
-            JoinAsk(campaign_id, row, entity_id, known_name),
+            JoinAsk(campaign_id, row, owner.id, owner.name),
         )
         return
     if same:
         await _tell(
             interaction,
-            f"No name in your campaign is **{_md(name)}**. To add it as a new name, use "
-            "✏️ Give them a name.",
+            f"DMbot found no person or group called **{_md(name)}** in your campaign. Check the "
+            "spelling and press 🔗 Same as… again, or press ✏️ Give them a name to add it as new.",
         )
         return
     try:
-        written = await memory.name_met(campaign.guild_id, campaign.id, row.id, name)
+        agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
+        written = await memory.name_met(
+            campaign.guild_id, campaign.id, row.id, name, opted_in=agreed
+        )
     except MemoryRuleError as exc:
-        await _tell(interaction, f"Couldn't name them. {exc}")
+        await _refused(interaction, campaign_id, str(exc), "Couldn't name them.")
         return
     except Exception:
         log.exception("Naming a met-but-not-named row failed")
         await _tell(interaction, NOTHING_CHANGED)
         return
     changed(interaction, campaign)
-    await show(
-        interaction,
-        campaign_id,
-        f"✏️ **{_md(label(row))}** is now **{_md(written.value.name)}**, in your names.",
+    many = row.count != 1
+    done = (
+        f"✏️ **{_md(label(row))}** are now **{_md(written.value.name)}**, a group in your names."
+        if many
+        else f"✏️ **{_md(label(row))}** is now **{_md(written.value.name)}**, in your names."
     )
+    await show(interaction, campaign_id, done, in_place=True)
+
+
+async def _refused(interaction: discord.Interaction, campaign_id: str, why: str, lead: str) -> None:
+    """A refusal from the store: a gone row shows the list again (the buttons there are stale);
+    the name rules' words are said as they are."""
+    if why == MET_GONE:
+        await show(interaction, campaign_id, why, in_place=True)
+        return
+    if why in (MET_NAME_TAKEN, MET_NAME_WAITING):
+        await _tell(interaction, why)
+        return
+    await _tell(interaction, f"{lead} {why}")
 
 
 async def _join(
-    interaction: discord.Interaction, campaign_id: str, row: MetRow, entity_id: str, name: str
+    interaction: discord.Interaction, campaign: Campaign, row: MetRow, entity_id: str, name: str
 ) -> None:
-    campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
-    if campaign is None or memory is None:
+    if memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
         return
     try:
-        await memory.join_met(campaign.guild_id, campaign.id, row.id, entity_id)
+        agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
+        await memory.join_met(campaign.guild_id, campaign.id, row.id, entity_id, opted_in=agreed)
     except MemoryRuleError as exc:
-        await _tell(interaction, f"Couldn't join them. {exc}")
+        await _refused(interaction, campaign.id, str(exc), "Couldn't match them to that name.")
         return
     except Exception:
-        log.exception("Joining a met-but-not-named row failed")
+        log.exception("Matching a met-but-not-named row failed")
         await _tell(interaction, NOTHING_CHANGED)
         return
     changed(interaction, campaign)
-    await show(interaction, campaign_id, f"🔗 **{_md(label(row))}** is **{_md(name)}**.")
+    await show(
+        interaction, campaign.id, f"🔗 **{_md(label(row))}** is **{_md(name)}**.", in_place=True
+    )
 
 
 class JoinAsk(_Menu):
-    """The DM typed a name the campaign already has: the same one, or a different name?"""
+    """The DM typed a name a person or group already has: the same one, or someone else?"""
 
     def __init__(self, campaign_id: str, row: MetRow, entity_id: str, name: str) -> None:
         super().__init__()
@@ -314,12 +403,17 @@ class JoinAsk(_Menu):
         self.add_item(
             _Button(self._yes, label="Yes, the same one", style=discord.ButtonStyle.primary)
         )
-        self.add_item(_Button(self._no, label="No, different", style=discord.ButtonStyle.secondary))
+        self.add_item(
+            _Button(self._no, label="No, someone else", style=discord.ButtonStyle.secondary)
+        )
 
     async def _yes(self, interaction: discord.Interaction) -> None:
         self.stop()
         await _answer_first(interaction, in_place=True)
-        await _join(interaction, self.campaign_id, self.row, self.entity_id, self.name)
+        campaign = await _for_dm(interaction, self.campaign_id)  # (checked again on this press)
+        if campaign is None:
+            return
+        await _join(interaction, campaign, self.row, self.entity_id, self.name)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -329,3 +423,37 @@ class JoinAsk(_Menu):
             f"Then give **{_md(label(self.row))}** a different name, so the two aren't mixed up.",
             MetActions(self.campaign_id, self.row),
         )
+
+
+class MetListButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:met:list:(?P<campaign>[0-9a-f]{32})",
+):
+    """On the after-session notice in the DM Bot channel: opens the list privately for a DM of
+    the campaign. The channel is the campaign's people's, so it is checked on every press (as
+    `names.ReviewButton`). Works after a restart (the campaign is in the button's ID)."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="👣 Open the list",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:met:list:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> MetListButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await show(interaction, self.campaign_id)  # (the DM check is the list's own, every press)
+
+
+def notice_view(campaign_id: str) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(MetListButton(campaign_id))
+    return view

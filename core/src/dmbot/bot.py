@@ -1775,6 +1775,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
+        self.add_dynamic_items(met_list_ui.MetListButton)  # who the party met, unnamed (#4045)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
@@ -9546,7 +9547,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             if report.met_made and notice_channel is not None:  # (#4045: counts only)
                 try:
-                    await self.post(notice_channel, met_list_ui.notice(report.met_made))
+                    await self.post(
+                        notice_channel,
+                        met_list_ui.notice(report.met_made),
+                        view=met_list_ui.notice_view(cid),
+                    )
                 except Exception as exc:
                     log.warning("Met list: the note was not posted (%s)", type(exc).__name__)
             return "limit" if report.stopped or report.failed else "done"

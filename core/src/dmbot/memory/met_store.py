@@ -171,12 +171,13 @@ class MetStore:
             return [_row(r) for r in await cur.fetchall()]
 
     async def count(self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]) -> int:
-        """How many wait on the list (for the Names home's button), after the consent re-check."""
-        await self.purge_stopped(guild_id, campaign_id, opted_in)
+        """How many wait on the list (for the Names home's button): only rows whose speakers are all
+        recorded now. It changes nothing (the Names home opens often); `listed` deletes the rest."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM memory_met WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
+                "SELECT count(*) AS n FROM memory_met WHERE guild_id = %s AND campaign_id = %s"
+                " AND speaker_ids <@ %s::bigint[]",
+                (guild_id, campaign_id, sorted(set(opted_in))),
             )
             row = await cur.fetchone()
             return int(row["n"]) if row else 0
