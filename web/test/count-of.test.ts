@@ -36,3 +36,11 @@ describe("answerWaiting reads the bot's counts", () => {
     expect(await api.answerWaiting!("100.cmp1", { kind: "claim", action: "confirm", id: "c1" })).toEqual({});
   });
 });
+
+describe("answerWaiting passes the scene and split counts", () => {
+  it("passes scene and split from the counts text", async () => {
+    await import("../src/account/api-names");
+    const api = fakeApi([{ answer: "a1" }, { state: "done", counts: "scene:1 split:2" }]);
+    expect(await api.answerWaiting!("100.cmp1", { kind: "claim", action: "confirm", id: "c1" })).toEqual({ scene: 1, split: 2 });
+  });
+});
