@@ -52,6 +52,11 @@ SQL = r"""
     );
     CREATE UNIQUE INDEX memory_private_scenes_once ON memory_private_scenes
         (guild_id, campaign_id, session_started_at, first_id, second_id, from_ms);
+    -- (a deleted or renumbered entry finds its scenes by index: every memory link has one)
+    CREATE INDEX memory_private_scenes_first
+        ON memory_private_scenes (guild_id, campaign_id, first_id);
+    CREATE INDEX memory_private_scenes_second
+        ON memory_private_scenes (guild_id, campaign_id, second_id);
     CREATE TRIGGER memory_private_scenes_stamp_commit
         BEFORE INSERT OR UPDATE ON memory_private_scenes
         FOR EACH ROW EXECUTE FUNCTION dmbot_stamp_commit();
