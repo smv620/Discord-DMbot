@@ -26,6 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
+from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing 
 SOME_DOCS = (DRIVE_GONE, LORE_FAILED)
 
 # The stage codes the page shows, in order.
-STAGES = ("campaign", "data_use", "lore", "secrets", "clean")
+STAGES = ("campaign", "data_use", "party", "lore", "secrets", "clean")
 CHOICE_OF = {"lore": "world", "secrets": "spoilers"}
 
 
@@ -338,6 +339,8 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     await runs.move(guild_id, run, stage="data_use")
     if "data_use" in answers:
         await bot.campaigns.set_share_improve(guild_id, campaign_id, bool(answers["data_use"]))
+    await runs.move(guild_id, run, stage="party")
+    await _make_characters(bot, guild, guild_id, campaign_id, answers)
     word = ""
     for slot in ("lore", "secrets"):
         docs = [d for d in draft.documents if d["slot"] == slot]
@@ -345,6 +348,50 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     await runs.move(guild_id, run, stage="clean")
     await runs.delete_draft(guild_id, run)
     return word
+
+
+async def _make_characters(
+    bot: Any, guild: Any, guild_id: int, campaign_id: str, answers: dict[str, Any]
+) -> int:
+    """The player characters the DM confirmed in the wizard (step 2) and who plays them (step 3),
+    made as the DM's own confirmed entries; a character with no player yet is still a player
+    character, its player "pending", answered later. A player's number counts only if that person
+    is in the server (the page cannot be trusted with ids). Names already in the campaign are
+    skipped, so a retried run adds nothing twice. The party itself is made with every campaign
+    (#3976); this only adds the characters as members, through the same step an assignment uses.
+    Returns how many were made (the log gets counts only)."""
+    memory = bot.memory
+    characters = answers.get("characters") or []
+    if memory is None or not characters:
+        return 0
+    wanted = {int(c["player"]) for c in characters if str(c.get("player", "")).isdecimal()}
+    here = await channel_sync.present_only(guild, wanted) if wanted else frozenset()
+    known = {name_key(e.name) for e in await memory.entities(guild_id, campaign_id)}
+    made = 0
+    for c in characters:
+        name = str(c.get("full", "")).strip()
+        if not name or name_key(name) in known:
+            continue
+        player = int(c["player"]) if str(c.get("player", "")).isdecimal() else None
+        try:
+            written = await memory.add_entity(
+                guild_id, campaign_id, type="character", name=name, source=DM, status=CONFIRMED,
+                role=PLAYER_CHARACTER, played_by=player if player in here else None,
+            )  # fmt: skip
+            short = str(c.get("party_name", "")).strip()
+            if short and name_key(short) != name_key(name):
+                await memory.add_alias(
+                    guild_id, campaign_id, written.value.id, short, kind="short", source=DM,
+                    status=CONFIRMED,
+                )  # fmt: skip
+        except MemoryRuleError as exc:
+            log.info("A wizard character was refused: %s", type(exc).__name__)
+            continue
+        known.add(name_key(name))
+        made += 1
+    await memory.party_on_assignment(guild_id, campaign_id)
+    log.info("A wizard run made %d player character(s)", made)  # counts only
+    return made
 
 
 async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:
