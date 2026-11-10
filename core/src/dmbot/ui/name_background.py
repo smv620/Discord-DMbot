@@ -843,6 +843,7 @@ async def read_background(
     )
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
+    await _record_sources(memory, campaign, stored, upload, label)
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
     short = getattr(bot, "add_short_names", None)
@@ -868,6 +869,7 @@ async def read_background(
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
+    made_unnamed: list[str] = []
     # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
     # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
     link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -902,9 +904,12 @@ async def read_background(
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
+        made_unnamed=made_unnamed,
         npc_guesses=link_guesses,
         owner_of=owner_of,
     )
+    # (the people the read could not name, made while queueing: the same upload, #3675)
+    await _record_sources(memory, campaign, {"unnamed": made_unnamed}, upload, label)
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
     log.info(
@@ -1377,6 +1382,29 @@ async def store(
     return stored
 
 
+async def _record_sources(
+    memory: MemoryStore,
+    campaign: Campaign,
+    stored: Mapping[str, Sequence[str]],
+    upload: Upload,
+    label: str,
+) -> None:
+    """Which upload made the names just stored (#3675 Part B), for the Names page's filter: the
+    website's upload id when there is one, else the dated label the DM sees. Only names this read
+    made (a name another entry already had is not this upload's). Never a reason to lose a name:
+    a failed write is logged by its type and the names stay."""
+    made = [i for ids in stored.values() for i in ids]
+    record = getattr(memory, "record_name_sources", None)  # (a stand-in store may not have it)
+    if not made or record is None:
+        return
+    try:
+        await record(
+            campaign.guild_id, campaign.id, made, upload_key=upload.source_id or label, label=label
+        )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Couldn't record which upload the names came from (%s)", type(exc).__name__)
+
+
 def inferred_line(reason: str) -> str:
     """The card's line for a connection DMbot inferred (#2959 item 5), or "": the text implies it
     but doesn't say it, so it is DMbot's suggestion, never the DM's own words."""
@@ -1847,6 +1875,7 @@ async def queue_links(
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
     owner_of: Callable[[str], str] | None = None,
+    made_unnamed: list[str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
@@ -2087,6 +2116,7 @@ async def queue_links(
             dropped,
             known_by,
             world_level if world_all else 0,
+            made_unnamed,
         )
         held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
         for r in made_rows:  # (two lines about one unnamed person are one row)
@@ -2123,10 +2153,12 @@ async def _unnamed_rows(
     dropped: bg.Dropped | None,
     known_by: str = "",
     world: int = 0,
+    made: list[str] | None = None,
 ) -> list[NewLink]:
     """The relationships kept with a person the read could not name (#2790): each makes (or finds)
     the unnamed entry, hung off the named end when the story gave a relationship word. A named end
-    that is not an entry of the campaign after all is counted as not found."""
+    that is not an entry of the campaign after all is counted as not found. `made` collects the
+    unnamed entries this read made (not one it found), for which upload they came from (#3675)."""
     rows: list[NewLink] = []
     read: dict[str, str] = {}  # this read's own record: two "a hooded figure" are one person
     for u in links:
@@ -2156,6 +2188,8 @@ async def _unnamed_rows(
                 dropped["name_not_found"] += 1
             continue
         other = added.entity.id
+        if added.created and made is not None:
+            made.append(other)
         a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
         rows.append(
             NewLink(

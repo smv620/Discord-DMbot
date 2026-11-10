@@ -231,6 +231,22 @@ _LIVE_ENTITY_IDS = (
 )
 
 
+async def _copy_name_sources(w: Scope, from_id: str, to_ids: Sequence[str]) -> None:
+    """The uploads one entry was read from, given to entries made out of it in the same change (a
+    list split into its names, #3383): each part was read from the same upload (#3675). Not in the
+    change log: an Undo removes the parts, and their rows go with them (the foreign key)."""
+    if not to_ids:
+        return
+    await w.conn.execute(
+        "INSERT INTO memory_name_sources (guild_id, campaign_id, entity_id, upload_key, label,"
+        " created_at) SELECT s.guild_id, s.campaign_id, t.id, s.upload_key, s.label, s.created_at"
+        " FROM memory_name_sources s CROSS JOIN unnest(%s::text[]) AS t(id)"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
+        " ON CONFLICT DO NOTHING",
+        (list(to_ids), *w.ids, from_id),
+    )
+
+
 def _trait_rows(w: Changes, entity_id: str, traits: Sequence[Trait]) -> list[dict[str, Any]]:
     """The rules-link rows for a new character's lineage and classes (#2959 item 3), checked as
     `set_rule_link` checks one: one lineage (the first), classes without repeats, a known link
@@ -2905,6 +2921,66 @@ class MemoryStore:
                 ),
             )
 
+    async def record_name_sources(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_ids: Collection[str],
+        *,
+        upload_key: str,
+        label: str,
+    ) -> int:
+        """Remember the upload a read made these entries from (#3675 Part B), for the Names page's
+        "found in this lore document" filter. `upload_key`: the website's lore upload id when there
+        is one, else the label, so a re-read of the same upload is one row. The label is the DM's
+        own name for the upload (it can name a private backstory), cut to the column's limit, and
+        is only ever given to the DM. Ids, the label and a time only. An entry that is gone by now
+        is left out quietly. Returns how many rows are new."""
+        # (`clean_text` refuses an empty text: no label records nothing, and no key is the label)
+        label = clean_text(label)[:120] if label.strip() else ""
+        upload_key = clean_text(upload_key)[:120] if upload_key.strip() else label
+        ids = sorted(set(entity_ids))
+        if not label or not ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO memory_name_sources (guild_id, campaign_id, entity_id, upload_key,"
+                " label, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY (%s)"
+                " ON CONFLICT DO NOTHING",
+                (
+                    guild_id,
+                    campaign_id,
+                    upload_key,
+                    label,
+                    int(time.time()),
+                    guild_id,
+                    campaign_id,
+                    ids,
+                ),
+            )
+            return int(cur.rowcount)
+
+    async def name_sources(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, str]]:
+        """(upload key, label) of each upload one entry was read from, earliest first, including
+        what was read into entries merged into it (a merge leaves their rows where they were, so
+        its Undo needs nothing here). A DM-only reader: the label can name a private backstory."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "WITH RECURSIVE family(id) AS ("
+                " SELECT %s::text"
+                " UNION SELECT e.id FROM memory_entities e JOIN family f ON e.merged_into = f.id"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s)"
+                " SELECT s.upload_key, min(s.label) AS label, min(s.created_at) AS at"
+                " FROM memory_name_sources s JOIN family f ON s.entity_id = f.id"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s"
+                " GROUP BY s.upload_key ORDER BY at, s.upload_key",
+                (entity_id, guild_id, campaign_id, guild_id, campaign_id),
+            )
+            return [(str(r["upload_key"]), str(r["label"])) for r in await cur.fetchall()]
+
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
     ) -> tuple[str, str, str] | None:
@@ -3048,6 +3124,7 @@ class MemoryStore:
                 lookup_key(str(e["name"]))
                 for e in await w.select(ENTITIES, " AND status = 'rejected'")
             }
+            new_ids: list[str] = []
             for part in parts:
                 key = lookup_key(part)
                 if by_key.get(key) in live:
@@ -3075,6 +3152,7 @@ class MemoryStore:
                 await w.insert(
                     ALIASES, _new_alias(w, str(row["id"]), part, "full", PROPOSED, False, None)
                 )
+                new_ids.append(str(row["id"]))
                 by_key[key] = str(row["id"])
                 made.append(part)
             old_key = lookup_key(str(current["name"]))
@@ -3106,6 +3184,7 @@ class MemoryStore:
             await _let_go_of_anchored(w, entity_id)
             for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
                 await w.update(ALIASES, alias["id"], {"status": REJECTED})
+            await _copy_name_sources(w, entity_id, new_ids)  # (each part is from the list's upload)
             return Written(SplitName(tuple(parts), tuple(made), tuple(joined)), w.batch)
 
     async def undo_split(
@@ -3316,6 +3395,7 @@ class MemoryStore:
                 )
                 member_id = str(row["id"])
                 made.append(part)
+                await _copy_name_sources(w, str(current["id"]), [member_id])  # (the list's upload)
                 waiting = True
             # The DM decided this by pressing the button. For a name still waiting it is held as a
             # proposal the DM is not asked about: `set_entity_status` confirms it when the name is

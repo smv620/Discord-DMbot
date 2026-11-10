@@ -422,6 +422,16 @@ class TheRoutes(Wizard):
         self.assertEqual(got.json(), {"name": "Rime", "characters": ["Cerric Vale"]})
         self.assertEqual((await c.get(base)).json()["answers"], {"name": "x"})
 
+    async def test_page_text_and_documents_need_a_draft(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        page = await c.post(f"{base}/page-text", json={"text": "Rime\nCharacters\nCerric Vale\n"})
+        self.assertEqual((page.status_code, page.json()), (404, {"error": "no_draft"}))
+        doc = await c.post(f"{base}/documents", json={"slot": "lore", "name": "a", "text": "w"})
+        self.assertEqual((doc.status_code, doc.json()), (404, {"error": "no_draft"}))
+
     async def test_an_unknown_server_is_not_found(self) -> None:
         from tests.test_web_api import ALICE
 
