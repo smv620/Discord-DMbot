@@ -17,6 +17,7 @@ import re
 import shutil
 import signal
 import time
+from collections import Counter
 from collections.abc import (
     Awaitable,
     Callable,
@@ -1076,6 +1077,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
         self.importance = ImportanceCache(memory) if memory is not None else None
+        self.party_fill: asyncio.Task[Counter[str]] | None = None  # the start's party fill (#3954)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources: SourceStore | None = (
@@ -14823,6 +14825,46 @@ def register_backup_sections(
     campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 
 
+async def fill_parties(
+    campaigns: CampaignStore, make: Callable[[int, str], Awaitable[Any]]
+) -> Counter[str]:
+    """The one-time fill of the party entry (#3954), at each start: every campaign gets its party,
+    adopted from a group it already uses for it or made (`party.fill`). A campaign that has one is
+    one read. One failing campaign never stops the rest. Counts only in the log: the step each
+    campaign took, and how many knower rows a party holds (Supervisor's ruling: posted first, then
+    a follow-up turns them into the member characters' own rows)."""
+    steps: Counter[str] = Counter()
+    held = both = 0
+    try:
+        guilds = await campaigns.guilds_with_campaigns()
+    except Exception as exc:
+        log.warning("The party fill could not list the campaigns (%s)", type(exc).__name__)
+        return steps
+    for guild_id in guilds:
+        try:
+            listed = sorted(await campaigns.campaign_ids(guild_id))
+        except Exception as exc:  # (one server's list failing never stops the rest, nor the start)
+            steps["failed"] += 1
+            log.warning(
+                "The party fill could not list a server's campaigns (%s)", type(exc).__name__
+            )
+            continue
+        for campaign_id in listed:
+            try:
+                filled = await make(guild_id, campaign_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                steps["failed"] += 1
+                log.warning("The party fill failed for a campaign (%s)", type(exc).__name__)
+                continue
+            steps[filled.step] += 1
+            held += filled.knower_rows
+            both += filled.both
+    log.info(
+        "Party fill: %s; knower rows on a party: %d; both: %d", dict(steps), held, both
+    )  # (both: campaigns with a #3036 party besides the flagged one, for Supervisor)
+    return steps
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
@@ -14909,6 +14951,16 @@ async def run(settings: Settings) -> None:
             bot._picture_db = db
         if bot.image_desk is not None:  # the day's count lives in the database (#2450)
             bot.image_desk.counter = ImageUseStore(db)
+        if bot.memory is not None:
+            # The party is the first entry of every campaign (#3954): made with each new campaign,
+            # and for every campaign that has none by the fill, in the background once the bot is
+            # starting, so it never holds up the login (idempotent: one read for a campaign that
+            # has its party). The task is kept on the bot, so it is not collected half done.
+            party_of = bot.memory.make_party
+            campaigns.on_create(party_of)
+            bot.party_fill = asyncio.get_running_loop().create_task(
+                fill_parties(campaigns, party_of)
+            )
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

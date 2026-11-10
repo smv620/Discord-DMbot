@@ -50,6 +50,8 @@ READERS = {
     "memory/report_store.py": "only checks that the connections of a difference still exist",
     "memory/claims.py": "DM-side: reads only the facts made by kept described-person claims of "
     "one session, to find the person they made; shows players nothing (#3431)",
+    "memory/party.py": DM_ONLY + ": the party fill reads member_of ties to find the group the "
+    "campaign already uses for the party (#3954); shows players nothing",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
     "viewer learns, and only for connections its list says that viewer knows",

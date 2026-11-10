@@ -1368,30 +1368,56 @@ class MemoryStore:
         return _entity(rows[0]) if rows else None
 
     async def ensure_party(self, guild_id: int, campaign_id: str, *, source: str) -> Entity:
-        """The campaign's party, made the first time it is needed: a group named "The party"
-        (the DM can rename it) whose members are its confirmed player characters."""
+        """The campaign's party (#3954: the one entry with the `party` flag): the flagged one, or a
+        group the campaign already uses for the party, flagged, or a new "The party" (the DM can
+        rename it), as `party.fill` finds it. Its members are its confirmed player characters. The
+        DM's own choice here also brings back one they rejected or put aside, the flagged one or
+        else #3036's linked one."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            found = await w.select(ENTITIES, " AND party")
-            if found:
-                if found[0]["status"] != CONFIRMED:  # forgotten, then wanted again
-                    revived = await w.update(ENTITIES, found[0]["id"], {"status": CONFIRMED})
-                    return _entity(revived)
-                return _entity(found[0])
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(), "type": "faction", "name": PARTY_NAME, "description": "",
-                    "status": CONFIRMED, "merged_into": None, "source": source,
-                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
-                    "unique_item": None, "audience_limited": False, "party": True,
-                },
-            )  # fmt: skip
-            await w.insert(
-                ALIASES, _new_alias(w, row["id"], PARTY_NAME, "full", CONFIRMED, False, None)
-            )
+            found = await party_mod.flagged(w)
+            if found is not None and found["status"] != CONFIRMED:  # (the DM wants it again)
+                await w.update(ENTITIES, found["id"], {"status": CONFIRMED})
+            elif found is None:
+                gone = sorted(
+                    await w.select(
+                        ENTITIES, " AND source = %s AND type = 'faction' AND status = %s",
+                        [PARTY_SOURCE, REJECTED],
+                    ),
+                    key=lambda r: (r["created_at"], r["id"]),
+                )  # fmt: skip
+                if gone:  # (#3036's party, rejected: the DM's press brings it back, flagged)
+                    await w.update(ENTITIES, gone[0]["id"], {"status": CONFIRMED})
+            filled = await party_mod.fill(w)
+            party_id = filled.party_id or await party_mod._make(w)
+            row = await w.get(ENTITIES, party_id)
+            if row is None:
+                raise MemoryRuleError(NOT_FOUND)
             return _entity(row)
+
+    async def make_party(self, guild_id: int, campaign_id: str) -> party_mod.Filled:
+        """The party of a campaign (#3954): made with every new campaign, and once for each
+        campaign that has none (the fill at the bot's start). The DM's write, one change (one
+        Undo); nothing is written when it is there already. Counts the knower rows a party entry
+        holds (Supervisor's ruling: the count first, then a follow-up turns them into the member
+        characters' own rows)."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            filled = await party_mod.fill(w)
+            held = 0
+            if filled.party_id is not None:
+                cur = await w.conn.execute(
+                    "SELECT (SELECT count(*) FROM memory_knowers k WHERE k.guild_id = p.guild_id"
+                    "  AND k.campaign_id = p.campaign_id AND k.perspective_id = p.id)"
+                    " + (SELECT count(*) FROM memory_alias_knowers a WHERE a.guild_id = p.guild_id"
+                    "  AND a.campaign_id = p.campaign_id AND a.perspective_id = p.id) AS n"
+                    " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
+                    " AND p.entity_id = %s",
+                    (guild_id, campaign_id, filled.party_id),
+                )
+                row = await cur.fetchone()
+                held = int(row["n"]) if row else 0
+            return party_mod.Filled(filled.step, filled.party_id, held, filled.both)
 
     async def add_deed(
         self,
@@ -6765,13 +6791,12 @@ def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: 
     it travels with a player character or with the party entry and nothing else. The party is a
     point of view, so a document (the lore and backstory readers, or anything but the DM and the
     session reader) can never point at it: it can only name the player character. The party is
-    found by its source, as `party.find_or_make` does (the entity table's `party` flag is for
-    standing, not this rule)."""
+    the entry with the `party` flag, the one marker (#3954)."""
     if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
         return "Only a character who is not a player character travels with the party."
     if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
         return None
-    if target["type"] == "faction" and target["source"] == PARTY_SOURCE:
+    if target["type"] == "faction" and target["party"]:
         if source in (DM, "extractor"):
             return None
         return "Only the DM or a session can say who travels with the party."
