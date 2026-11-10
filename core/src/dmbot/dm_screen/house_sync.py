@@ -103,8 +103,8 @@ TOO_BIG_PDF = (
     f"That PDF is too big. Send just the house-rules part (up to {MAX_PDF_BYTES // _MB} MB)."
     " Nothing was changed."
 )
+WORKING = "⏳ Working on it… this can take a few seconds."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
-DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
 BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off
 LABELS = {
     "all": ("Accept all changes", "✅", discord.ButtonStyle.primary),
@@ -305,6 +305,7 @@ class HouseSyncButton(
             await press(interaction, self.guild_id, self.key, self.action, self.n)
         except Exception:
             log.exception("A house-rules file button failed")
+            await _restore(interaction)  # the card goes back to what it was, buttons on
             if interaction.response.is_done():
                 await interaction.followup.send(FAILED, ephemeral=True)
             else:
@@ -328,11 +329,36 @@ def _origin(pending: Pending) -> tuple[str, str | None]:
     return "upload", pending.file_name
 
 
-async def _answer_long_job(interaction: discord.Interaction, how_many: int) -> None:
-    """Many changes take a while (each is its own step in the database), and Discord waits
-    3 seconds: answer first."""
-    if how_many > DEFER_AT and not interaction.response.is_done():
-        await interaction.response.defer()
+async def _working(interaction: discord.Interaction) -> None:
+    """Show at once that the press was heard (every wait shows that DMbot is working, CLAUDE.md):
+    the card stays as it was with "Working on it" under it and its buttons off, so nothing is
+    pressed twice. It is also the answer Discord waits 3 seconds for, which the AI check that
+    follows could miss. The card as it was is kept, so a failure can put it back (`_restore`)."""
+    message = interaction.message
+    if interaction.response.is_done() or message is None:
+        return
+    interaction.extras["hrs_before"] = (
+        message.content,
+        discord.ui.View.from_message(message, timeout=None),
+    )
+    view = discord.ui.View.from_message(message, timeout=None)
+    for child in view.children:
+        if isinstance(child, discord.ui.Button):
+            child.disabled = True
+    text = fit_message(f"{message.content}\n\n{WORKING}", limit=TEXT_MAX)
+    await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+
+
+async def _restore(interaction: discord.Interaction) -> None:
+    """After a failure, put the card back as it was with its buttons on, so the DM can press again.
+    Best effort: the failure's own message is still sent."""
+    before = interaction.extras.pop("hrs_before", None)
+    if before is None or not interaction.response.is_done():
+        return
+    try:
+        await interaction.edit_original_response(content=before[0], view=before[1])
+    except discord.HTTPException:
+        log.warning("A house-rules card could not be put back after a failure")
 
 
 async def _finish(interaction: discord.Interaction, key: str, pending: Pending) -> None:
@@ -410,7 +436,7 @@ async def press(
             await _show(interaction, f"📄 {pending.summary}\n{note}", None)
         elif action in ("all", "rest"):
             todo = pending.items[pending.index :]
-            await _answer_long_job(interaction, len(todo))
+            await _working(interaction)
             done = await house_file_sync.apply(
                 store,
                 guild_id,
@@ -426,6 +452,7 @@ async def press(
             await _finish(interaction, key, pending)
         else:  # "accept" or "skip": the item under review
             if action == "accept":
+                await _working(interaction)
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
                     store,
