@@ -583,6 +583,19 @@ class TheEdits(Editing):
         assert rejected is not None
         self.assertEqual(rejected.status, "rejected")
 
+    async def test_a_waiting_yes_gives_the_page_the_bots_counts(self) -> None:
+        """What the bot also did with a yes ("shown:1", "held:1", #3973, #3979) reaches the page's
+        answer, and an answer with none says so with an empty text."""
+        shown, plain = await self.claim(), await self.claim("Rook", "Greywater Keep")
+        first = await self.queue(kind="claim", action="confirm", id=shown)
+        second = await self.queue(kind="claim", action="confirm", id=plain)
+        for counts in ("shown:1", ""):
+            action = await self.actions.claim_next(self.g)
+            assert action is not None
+            await self.actions.finish(self.g, action, result_other="7", result_counts=counts)
+        self.assertEqual((await self.poll(first))["counts"], "shown:1")
+        self.assertEqual((await self.poll(second))["counts"], "")
+
     async def knows_hall(self) -> list[Any]:
         found = await self.memory.relations(self.g, self.one.id, include_secret=True)
         return [r for r in found if r.predicate == "knows" and r.object_id == self.hall]
