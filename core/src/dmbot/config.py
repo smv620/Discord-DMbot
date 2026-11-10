@@ -122,6 +122,12 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # Names read from an upload's pictures (#4003): the words the picture reading gives go through
+    # the lore reader too, each name checked against the document's own. Off until the picture
+    # reading (CloudDev-lead's half) and the slice that shows the DM the names it holds back (Names
+    # to check, with the picture's link) are built, and dev1 has checked a sample: until then a
+    # held name is only counted.
+    picture_names_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -467,6 +473,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    picture_raw = (get("DMBOT_PICTURE_NAMES") or "0").lower()
+    if picture_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
+        )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -677,6 +688,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        picture_names_on=picture_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
