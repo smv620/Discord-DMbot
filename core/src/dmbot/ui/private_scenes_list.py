@@ -28,9 +28,10 @@ log = logging.getLogger(__name__)
 
 TITLE = "🤫 Private scenes"
 INTRO = (
-    "Times two player characters were alone together while the party was split. DMbot found them "
-    "from the game clock and who spoke, and keeps no words. Only you see this list. If one wasn't "
-    "really private, pick it and press Not private."
+    "Times two player characters were alone together while the party was split, found from the "
+    "game clock and who spoke. DMbot keeps when and how long, never the words, and treats each one "
+    "as mattering to the story. Only you see this list. If DMbot got one wrong (someone else was "
+    "there, or the party wasn't really apart), pick it and press Not private."
 )
 EMPTY = (
     "🤫 No private scenes yet. After each session, DMbot adds here any time two player characters "
@@ -46,19 +47,26 @@ def notice(kept: int) -> str:
     that channel; the button checks the DM on every press). Pure."""
     if kept == 1:
         return (
-            "🤫 DMbot noted 1 private scene between two player characters. Only a DM can open it."
+            "🤫 DMbot found 1 private scene: two player characters alone together while the party "
+            "was split. It kept only the time, never the words. DM: check it's right."
         )
     return (
-        f"🤫 DMbot noted {kept} private scenes between two player characters. Only a DM can open "
-        "them."
+        f"🤫 DMbot found {kept} private scenes: times two player characters were alone together "
+        "while the party was split. It kept only the times, never the words. DM: check they're "
+        "right."
     )
 
 
 def when(scene: Kept) -> str:
-    """The scene's date, how long and how many lines. Pure."""
+    """The scene's date, how far into the session it began, how long and how many lines (so two
+    scenes of the same two in one session can be told apart). Pure."""
     day = datetime.fromtimestamp(scene.session_started_at, UTC)
     minutes = max(1, round((scene.to_ms - scene.from_ms) / 60_000))
-    return f"{day.day} {day:%b %Y}, about {minutes} min, {scene.line_count} lines"
+    into = max(0, (scene.from_ms // 1000 - scene.session_started_at) // 60)
+    hours, mins = divmod(into, 60)
+    began = f"{hours}h {mins:02d}m in" if hours else f"{mins} min in"
+    lines = "1 line" if scene.line_count == 1 else f"{scene.line_count} lines"
+    return f"{day.day} {day:%b %Y} · {began} · about {minutes} min, {lines} spoken"
 
 
 async def _for_dm(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -88,9 +96,9 @@ async def _names(
     return out
 
 
-def pair(names: dict[str, str], scene: Kept) -> str:
-    """ "Wren and Ash", in a steady order. Pure."""
-    return " and ".join(sorted((names[scene.first_id], names[scene.second_id])))
+def pair(names: dict[str, str], scene: Kept, joiner: str = " and ") -> str:
+    """The two names in a steady order ("Ash and Wren"; `joiner` " & " for a menu). Pure."""
+    return joiner.join(sorted((names[scene.first_id], names[scene.second_id])))
 
 
 async def show(
@@ -119,7 +127,11 @@ async def show(
         return
     shown = scenes[:SHOWN_MAX]
     lines = [f"• **{_md(logic.shorten(pair(names, s), 90))}** · {when(s)}" for s in shown]
-    more = f"\n…and {len(scenes) - len(shown)} older ones." if len(scenes) > len(shown) else ""
+    more = (
+        f"\n…and {len(scenes) - len(shown)} older ones. Only the newest {SHOWN_MAX} show."
+        if len(scenes) > len(shown)
+        else ""
+    )
     text = f"{head}**{TITLE}**\n{INTRO}\n\n" + "\n".join(lines) + more
     await _replace(interaction, logic.shorten(text, 1990), SceneList(campaign.id, shown, names))
 
@@ -132,10 +144,10 @@ class SceneList(_Menu):
         self.names = names
         self.pick = _Select(
             self._picked,
-            placeholder="Pick a scene that wasn't private",
+            placeholder="Pick one that wasn't private",
             options=[
                 discord.SelectOption(
-                    label=logic.shorten(pair(names, s), logic.OPTION_LABEL_MAX),
+                    label=logic.shorten(pair(names, s, " & "), logic.OPTION_LABEL_MAX),
                     value=s.id,
                     description=logic.shorten(when(s), 100),
                 )
@@ -162,9 +174,9 @@ def choice_text(who: str, scene: Kept) -> str:
     """What the DM reads after picking one: each button in words. Pure."""
     return (
         f"**{_md(who)}**, {when(scene)}.\n"
-        "🙅 **Not private**: it wasn't a private scene. DMbot won't count it again, even if it "
-        "reads the session again.\n"
-        "↩️ **Back**: keep it."
+        "✖️ **Not private**: someone else was there, or they weren't really apart. DMbot takes it "
+        "off the list and won't add it back, even if it reads the session again.\n"
+        "↩️ **Back**: leave it on the list."
     )
 
 
@@ -173,7 +185,7 @@ class SceneActions(_Menu):
         super().__init__()
         self.campaign_id, self.scene, self.who = campaign_id, scene, who
         self.add_item(
-            _Button(self._not_private, label="🙅 Not private", style=discord.ButtonStyle.danger)
+            _Button(self._not_private, label="✖️ Not private", style=discord.ButtonStyle.danger)
         )
         self.add_item(_Button(self._back, label="↩️ Back", style=discord.ButtonStyle.secondary))
 
@@ -196,7 +208,7 @@ class SceneActions(_Menu):
             await _tell(interaction, NOTHING_CHANGED)
             return
         note = (
-            f"🙅 **{_md(self.who)}**: not private. DMbot won't count it again."
+            f"✖️ **{_md(self.who)}**, {when(self.scene)}: marked not private. It won't come back."
             if done
             else "That one was already gone."
         )

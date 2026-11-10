@@ -21,17 +21,19 @@ NAMES = {WREN: "Wren", ASH: "Ash"}
 
 class Words(unittest.TestCase):
     def test_the_words(self) -> None:
-        self.assertEqual(psl.when(SCENE), "14 Nov 2023, about 12 min, 9 lines")
+        self.assertEqual(psl.when(SCENE), "14 Nov 2023 · 10 min in · about 12 min, 9 lines spoken")
         self.assertEqual(psl.pair(NAMES, SCENE), "Ash and Wren")
-        self.assertIn("1 private scene ", psl.notice(1))
+        self.assertIn("1 private scene:", psl.notice(1))
         self.assertIn("3 private scenes", psl.notice(3))
         text = psl.choice_text("Ash and Wren", SCENE)
         self.assertIn("Not private", text)
-        self.assertIn("won't count it again", text)
+        self.assertIn("won't add it back", text)
+        self.assertEqual(psl.pair(NAMES, SCENE, " & "), "Ash & Wren")
 
     def test_the_notice_names_nobody(self) -> None:
         for n in (1, 2):
             self.assertNotIn("Wren", psl.notice(n))
+            self.assertIn("never the words", psl.notice(n))
 
     def test_the_menu_keeps_to_discords_limits(self) -> None:
         async def build() -> psl.SceneList:
@@ -80,7 +82,7 @@ class Presses(unittest.IsolatedAsyncioTestCase):
         store, said = await self.press_not_private(True)
         store.not_private.assert_awaited_once()
         self.assertEqual(store.not_private.await_args.args[:3], (1, CID, SCENE.id))
-        self.assertTrue(any("not private" in s and "Ash and Wren" in s for s in said))
+        self.assertTrue(any("marked not private" in s and "Ash and Wren" in s for s in said))
 
     async def test_someone_no_longer_a_dm_changes_nothing(self) -> None:
         store, said = await self.press_not_private(False)
