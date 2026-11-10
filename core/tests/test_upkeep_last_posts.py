@@ -128,6 +128,8 @@ class TheUploadedNotice(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         me, _ = uploaded_stand_in(dm_bot=BOT)
+        # (The stand-in text names no secret, so the real note would be "": the patch makes the
+        # 🤫 assertion below mean something.)
         with (
             patch.object(uploaded, "unknown_names", return_value=[]),
             patch.object(uploaded, "secret_note", return_value="The text names Sire."),
