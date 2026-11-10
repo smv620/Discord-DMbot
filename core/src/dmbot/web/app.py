@@ -85,6 +85,7 @@ from dmbot.web import (
     theatre_script,
     timeline,
     tokens,
+    trait_offers,
     upload_notice,
     wizard,
     wizard_check,
@@ -3447,6 +3448,17 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    # The lineage and class questions waiting for the DM (#3946). DMs only.
+    @app.get("/me/campaigns/{ref}/trait-offers")
+    async def me_trait_offers(ref: str, signed: Signed) -> dict[str, Any]:
+        """What the lore said about characters the campaign already has, waiting for a yes or no."""
+        session, _token = signed
+        try:
+            return await trait_offers.waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     # What one upload or import added, for the Lore and Import pages' notice (#3879). DMs only.
     @app.get("/me/campaigns/{ref}/upload-notice")
