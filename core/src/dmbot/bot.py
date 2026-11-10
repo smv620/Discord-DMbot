@@ -264,6 +264,7 @@ from dmbot.dm_screen.transcript_keep import (
     KeepYesButton,
     TranscriptsButton,
 )
+from dmbot.dm_screen.upkeep_pointers import names_fixed_pointer, secrets_pointer
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -8973,13 +8974,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
-        """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
-        left pressing Refresh. Never raises: a missing channel or a failed post is only logged."""
+        """One line in the DM Bot channel when a read ends, done or stopped (#1723, #3874): the DM
+        is not left pressing Refresh. Never raises: a missing channel or a failed post is only
+        logged."""
         try:
             if self.plan is None or self.adventure is None:
                 return
             campaign = await self.campaigns.get(guild_id, campaign_id)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            channel, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
+            if channel is None:
                 return
             state = (await self.plan.states(guild_id, campaign_id)).get(document_id)
             docs = await self.adventure.documents(guild_id, campaign_id)
@@ -8988,7 +8991,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             counts = (await self.plan.counts(guild_id, campaign_id)).get(document_id)
             await self.post(
-                campaign.dm_screen_channel_id, finished_text(doc.file_name, state, counts)
+                channel, finished_text(doc.file_name, state, counts, named=not counts_only)
             )
         except Exception as exc:
             log.warning(
@@ -9327,12 +9330,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
-            if report.joined and campaign.dm_screen_channel_id is not None:
+            joins_to = self._upkeep_channel(campaign)[0] if report.joined else None
+            if joins_to is not None:
                 from dmbot.ui.joined_review import summary_line  # (the ui imports this module)
 
-                try:  # a count on the DM screen: players never see it, and a failure only logs
+                try:  # a count in the DM Bot channel (#3874); a failure only logs
                     await self.post(
-                        campaign.dm_screen_channel_id,
+                        joins_to,
                         f"{summary_line(report.joined)} Press **Check guesses** in "
                         "**/dmbot names**.",
                     )
@@ -10154,6 +10158,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if closed and described:  # nobody could be told: their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
+            if campaign.dm_bot_channel_id:  # numbers only: the details stay with the DM (#3874)
+                try:
+                    await self.post(
+                        campaign.dm_bot_channel_id,
+                        secrets_pointer(
+                            len(described), len(table.new_names), int(table.claims_waiting)
+                        ),
+                    )
+                except Exception as exc:
+                    log.warning("Secrets pointer: couldn't post it (%s)", type(exc).__name__)
             if on_screen or reached >= len(campaign.dm_accounts):
                 # Told: the screen has it, or every DM got it. A co-DM whose private messages are
                 # closed has not heard, so then the "new names" step still posts them.
@@ -11739,13 +11753,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _tell_imports_left(self, gid: int, store: ImportStore, left: dict[str, int]) -> None:
         """Say, once for each change, how many imported sessions the story read has not reached
         (its call limits ran out): they are read on a later round, so nothing is lost. Only when
-        the import's scans are over, on the DM screen; counts only."""
+        the import's scans are over, in the DM Bot channel (#3874); counts only."""
         for cid in list(self._import_left_told.keys() | left.keys()):
             now = left.get(cid, 0)
             if now == self._import_left_told.get(cid, 0) or await store.pending_scans(gid, cid):
                 continue
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if channel is None:
                 self._import_left_told.pop(cid, None)
                 continue
             if now:
@@ -11755,7 +11770,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"📖 The story read has not finished {what} yet. It tries again later on its "
                     "own; nothing is lost."
                 )
-                await self.post(campaign.dm_screen_channel_id, text)
+                await self.post(channel, text)
             self._import_left_told[cid] = now
             if not now:
                 self._import_left_told.pop(cid, None)
@@ -12089,13 +12104,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
                     await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
+                if campaign.dm_bot_channel_id:  # numbers only; the names stay on the DM screen
+                    await self.post(
+                        campaign.dm_bot_channel_id,
+                        names_fixed_pointer(
+                            sum(len(r.fixed) for r in reports),
+                            sum(len(r.unsure) for r in reports),
+                            sum(len(r.new) for r in reports),
+                        ),
+                    )
         for cid in list(self._import_party):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import
             characters = self._import_party.pop(cid)
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is not None and campaign.dm_screen_channel_id is not None:
-                await self.post(campaign.dm_screen_channel_id, party_notice(characters))
+            party_to = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if party_to is not None:
+                await self.post(party_to, party_notice(characters))  # a count: fine for everyone
         over = self._import_names.keys() | self._import_unchecked.keys()
         for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
             if await store.pending_scans(gid, cid):
