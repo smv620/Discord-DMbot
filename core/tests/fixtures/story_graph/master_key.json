@@ -453,11 +453,16 @@
   {
    "name": "The wind spirit",
    "kind": "creature",
-   "aliases": [],
-   "note": "Unnamed ancient spirit that guides and guards Okthandom",
+   "aliases": [
+    "ancient wind spirit",
+    "wind spirit",
+    "ancient spirit"
+   ],
+   "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
    "docs": [
     "lore"
-   ]
+   ],
+   "unnamed": true
   },
   {
    "name": "Yeti",

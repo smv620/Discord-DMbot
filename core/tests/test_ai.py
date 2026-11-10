@@ -197,7 +197,9 @@ class Client(unittest.IsolatedAsyncioTestCase):
         )
         reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST, cache_system=True)
         self.assertEqual((reply.cache_write_tokens, reply.cache_read_tokens), (1000, 500))
-        self.assertEqual(seen, [(200 + 1000 + 50, 10)])  # a write in full, a read at a tenth
+        self.assertEqual(
+            seen, [(200 + 1250 + 50, 10)]
+        )  # a write at 1.25, a read at a tenth (#4054)
 
     async def test_odd_usage_counts_as_none(self) -> None:
         ai, _ = self.client(200, {"content": [], "usage": {"input_tokens": "lots"}})
