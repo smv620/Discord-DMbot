@@ -2420,11 +2420,11 @@ def private_after_session_text(names: list[str], where: str = "your last session
     )
 
 
-def counts_after_session_text(count: int) -> str:
+def counts_after_session_text(count: int, where: str = "your last session") -> str:
     """The same question where the campaign's people can read it (the DM Bot channel, when no DM
     can be reached privately, #3874): a count and nothing else, never a name."""
     return (
-        f"📝 **{_plural(count, 'new name')} to check** from your last session.\n"
+        f"📝 **{_plural(count, 'new name')} to check** from {where}.\n"
         "Press the button to say which are in your game. The check opens privately for the DM."
     )
 

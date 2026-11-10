@@ -503,6 +503,23 @@ class TheCrashAndTheNews(WithImports):
         await one._tell_import_news(GUILD, self.store)
         self.assertIn("1 recap you asked for", one.post.await_args.args[1])
 
+    async def test_new_names_go_to_the_dm_bot_channel_as_a_count_and_to_the_screen_by_name(
+        self,
+    ) -> None:
+        # (#3874) the DM Bot channel is read by the campaign's people: a count there, the names in
+        # the DM's private check; with no DM Bot channel the DM screen keeps the names as before
+        for bot_channel, expect_channel, names_shown in ((88, 88, False), (None, 66, True)):
+            bot, campaign = fake_bot(self.store)
+            campaign.id = self.campaign.id
+            campaign.dm_bot_channel_id = bot_channel
+            bot._import_names[self.campaign.id] = ["Bryn Shander", "Kazeth"]
+            await bot._tell_import_news(GUILD, self.store)
+            channel, text = bot.post.await_args.args[:2]
+            self.assertEqual(channel, expect_channel)
+            self.assertIn("2 new names to check", text)
+            self.assertIn("your imported sessions", text)
+            self.assertEqual("Bryn Shander" in text, names_shown)
+
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
         bot, campaign = fake_bot(self.store)
