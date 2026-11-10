@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
 import { problemWords } from "./wizard-problems";
-import { MAX_FILE_BYTES, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -273,7 +273,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
     // The file goes as it is, as base64 in the body; the server opens it and counts its pages and words (no AI). A file over the
     // server's limit gets the "too big" line before anything is sent.
     try {
-      if (file.size > MAX_FILE_BYTES) return setProblem(t.unreadable["too_big"]!);
+      if (file.size > maxBytesFor(file.name)) return setProblem(t.unreadable["too_big"]!);
       const data = toBase64(new Uint8Array(await file.arrayBuffer()));
       await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", data }));
     } catch (error) {
