@@ -37,7 +37,7 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, NodeSummary, UploadNotice } from "./api";
+import type { AccountApi, ApiHelpers, NodeSummary, TraitOffer, UploadNotice } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -411,6 +411,17 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         ...(shown !== undefined ? { shown } : {}),
         ...(held !== undefined ? { held } : {}),
       };
+    },
+    // The lineage and class questions (#3946): the list, then one queued answer that is polled like every other edit.
+    traitOffers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/trait-offers`)) as { offers: TraitOffer[] }).offers,
+    answerTrait: async (ref, offer, how, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/trait-offers/answer`;
+      const queued = (await call("POST", base, { entity: offer.entity, kind: offer.kind, key: offer.key, answer: how })) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/${encodeURIComponent(queued.id)}`, (look) => onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }));
+      const batch = (got as { batch?: unknown }).batch;
+      return typeof batch === "number" ? { batch } : {};
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
