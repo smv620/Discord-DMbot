@@ -12,6 +12,7 @@ from dmbot.memory import trait_offers as to
 from dmbot.memory.models import CLASS, DM, SPECIES, Trait
 from dmbot.web import trait_offers
 from dmbot.web.recaps import RecapError
+from dmbot.web.sessions import Session
 from tests.test_web_relationships import Web
 
 DWARF = Trait(SPECIES, "Dwarf", "SRD 5.2.1", "2024", True)
@@ -101,12 +102,14 @@ class TraitAnswers(Base):
         await self.leave(to.Offer(self.mira, DWARF, "Mira is a dwarf", "Notes"))
         self.key = to.Offer(self.mira, DWARF).key
 
-    async def press(self, how: str = "keep", who: object = None, key: object = None) -> str:
+    async def press(
+        self, how: str = "keep", who: Session | None = None, key: str | None = None
+    ) -> str:
         return await trait_offers.answer(
             self.web, who or self.session, self.cref, self.mira, "species", key or self.key, how
         )
 
-    async def refused(self, **kw: Any) -> str:
+    async def refusal(self, **kw: Any) -> str:
         with self.assertRaises(RecapError) as caught:
             await self.press(**kw)
         return caught.exception.code
@@ -122,13 +125,13 @@ class TraitAnswers(Base):
         self.assertEqual(await self.press("never"), first)  # (one answer at a time)
 
     async def test_a_question_that_is_not_waiting_is_not_found(self) -> None:
-        self.assertEqual(await self.refused(key="elf"), "not_found")
+        self.assertEqual(await self.refusal(key="elf"), "not_found")
         offer = to.Offer(self.mira, DWARF)
         await self.offers.never(self.g, self.one.id, offer)  # (answered meanwhile)
-        self.assertEqual(await self.refused(), "not_found")
+        self.assertEqual(await self.refusal(), "not_found")
 
     async def test_a_wrong_shape_is_refused_before_the_door(self) -> None:
-        self.assertEqual(await self.refused(how="maybe"), "bad_value")
+        self.assertEqual(await self.refusal(how="maybe"), "bad_value")
         with self.assertRaises(RecapError) as caught:
             await trait_offers.answer(
                 self.web, self.session, self.cref, "nope", "species", self.key, "keep"
@@ -136,7 +139,7 @@ class TraitAnswers(Base):
         self.assertEqual(caught.exception.code, "bad_value")
 
     async def test_a_player_cannot_answer_or_read_an_answer(self) -> None:
-        self.assertEqual(await self.refused(who=self.player), "not_found")
+        self.assertEqual(await self.refusal(who=self.player), "not_found")
         made = await self.press("never")
         with self.assertRaises(RecapError) as caught:
             await trait_offers.read_answer(self.web, self.player, self.cref, made)
@@ -184,7 +187,7 @@ class TraitAnswers(Base):
             await conn.execute(
                 "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (self.mira,)
             )
-        self.assertEqual(await self.refused(), "not_found")
+        self.assertEqual(await self.refusal(), "not_found")
 
     async def test_the_limit_is_sixty_answers_a_minute(self) -> None:
         async with self.db.guild(self.g) as conn:
@@ -195,4 +198,4 @@ class TraitAnswers(Base):
                 " 'keep', 'done', %s FROM generate_series(1, 60) n",
                 (self.g, self.one.id, int(time.time())),
             )
-        self.assertEqual(await self.refused(), "too_soon")
+        self.assertEqual(await self.refusal(), "too_soon")
