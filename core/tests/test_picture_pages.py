@@ -44,6 +44,16 @@ class TheCount(unittest.TestCase):
         text = text_of("map.pdf", pdf([[WORDS], [short], [enough]]))
         self.assertEqual((text.pages, text.picture_pages), (3, 1))  # type: ignore[attr-defined]
 
+    def test_a_pdf_whose_every_page_is_nearly_empty_is_refused_as_scanned(self) -> None:
+        with self.assertRaises(DocumentError) as caught:
+            text_of("caption.pdf", pdf([["Map"], ["Fig 2"]]))
+        self.assertIn("pictures of pages", str(caught.exception))
+
+    def test_spaces_and_line_breaks_do_not_count_as_text(self) -> None:
+        padded = [" " * 100, "\n" * 50, "abcde"]  # 5 letters among 150 blanks: a picture page
+        text = text_of("scan.pdf", pdf([[WORDS], padded]))
+        self.assertEqual((text.pages, text.picture_pages), (2, 1))  # type: ignore[attr-defined]
+
     def test_other_files_have_no_page_counts(self) -> None:
         self.assertEqual(picture_note(text_of("notes.txt", b"The gate is open.")), "")
         self.assertEqual(picture_note("plain text"), "")
@@ -66,6 +76,20 @@ class AcrossTheChildProcess(unittest.IsolatedAsyncioTestCase):
         text = await read_document("handout.pdf", pdf([[WORDS], [], [WORDS]]))
         self.assertEqual((text.pages, text.picture_pages), (3, 1))  # type: ignore[attr-defined]
         self.assertIn("**1 of 3 pages**", picture_note(text))
+
+    async def test_an_all_picture_pdf_is_refused_through_the_reading_process_too(self) -> None:
+        with self.assertRaises(DocumentError) as caught:
+            await read_document("scan.pdf", pdf([[], []]))
+        self.assertIn("pictures of pages", str(caught.exception))
+
+    async def test_counts_that_do_not_parse_leave_a_plain_string(self) -> None:
+        from unittest.mock import patch
+
+        for cause in ("x,y", "", "3", "1,"):
+            with patch("dmbot.memory.document_reader._run", return_value=("ok", cause, "words")):
+                text = await read_document("a.pdf", b"%PDF")
+            self.assertEqual(text, "words")
+            self.assertEqual(picture_note(text), "")
 
     async def test_a_file_read_in_a_thread_has_no_counts_and_still_reads(self) -> None:
         text = await read_document("notes.txt", b"The gate is open.")

@@ -172,8 +172,11 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
         if size > max_chars:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
-    if not text.strip():
-        raise DocumentError(SCANNED_PDF)  # every page is pictures: refused, not counted
+    # Every page is pictures (or nearly nothing): refused as scanned, not counted. Only when the
+    # loop saw every page: it stops early on a text that is too long anyway, and then the counts
+    # below are partial (`text_of` refuses that text as too long).
+    if not text.strip() or pictures == len(reader.pages):
+        raise DocumentError(SCANNED_PDF)
     return ReadText(text, len(reader.pages), pictures)
 
 
