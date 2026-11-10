@@ -105,6 +105,9 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
+    "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
+    "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "

@@ -20,7 +20,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from dmbot import ai_feed
+from dmbot import ai_feed, credits
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript.cleaner import clean
@@ -515,7 +515,11 @@ class ImportJob:
         try:
             # Every AI call of this cleaning belongs to this session's import, for the DM's live
             # window on the import page (#3710); the import page knows its sessions by this id.
-            with ai_feed.job(guild_id, campaign_id, "import", session_id, step=TIDYING):
+            # (the cleaning is made because the DM imported a session, so it is metered, #4005)
+            with (
+                credits.preparing(guild_id, campaign_id, "import"),
+                ai_feed.job(guild_id, campaign_id, "import", session_id, step=TIDYING),
+            ):
                 await self._run(guild_id, campaign_id, session_id)
         except asyncio.CancelledError:
             await asyncio.shield(self.store.back_to_waiting(guild_id, session_id))
