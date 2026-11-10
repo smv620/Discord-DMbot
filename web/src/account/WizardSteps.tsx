@@ -4,6 +4,7 @@
 // Next, Skip and the finish. Nothing here shows a document's words: only file names, counts and the person's own choices.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { WIZARD_DRIVE_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
@@ -19,6 +20,8 @@ export interface StepProps {
 }
 
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
+/** The books whose rules are on by default (rules.optional.CATALOG), in step 6's codes. */
+const DEFAULT_BOOKS = ["xanathar", "tasha"];
 const MAX_TEXT = 262_144; // characters a document may hold (docs/WIZARD_DESIGN.md)
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
@@ -89,7 +92,7 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
     }
   }
 
-  const choices: [WizardAnswers["source"], string][] = [["dndbeyond", t.dndbeyond], ["file", t.file], ["drive", t.drive]];
+  const choices: [WizardAnswers["source"], string][] = [["dndbeyond", t.dndbeyond], ["file", t.file], ...(WIZARD_DRIVE_LIVE ? ([["drive", t.drive]] as [WizardAnswers["source"], string][]) : [])];
   return (
     <section>
       <h2>{t.heading}</h2>
@@ -112,6 +115,8 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
           </label>
           <p class="small">{t.inviteHint}</p>
           {inviteBad && <p role="alert">{t.inviteBad}</p>}
+          {WIZARD_SHEETS_LIVE && (
+            <>
           <label>
             {t.sheetLabel}
             <input type="url" value={sheet} onInput={(e) => setSheet((e.target as HTMLInputElement).value)} />
@@ -121,6 +126,8 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
             {t.sheetAdd}
           </button>
           {sheetNote && <p role="status">{sheetNote}</p>}
+            </>
+          )}
           <label>
             {t.pasteLabel}
             <textarea rows={4} value={paste} onInput={(e) => setPaste((e.target as HTMLTextAreaElement).value)} />
@@ -323,7 +330,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
         <button type="button" class="button secondary" disabled={busy || !ticked} onClick={() => input.current?.click()}>
           {t.add}
         </button>
-        {draft.answers.source === "drive" && (
+        {WIZARD_DRIVE_LIVE && draft.answers.source === "drive" && (
           <button type="button" class="button secondary" disabled={busy || !ticked} onClick={() => void refresh(api.docAdd(guild, slot, { name: "Google Drive file", source: "drive" }))}>
             {t.addDrive}
           </button>
@@ -350,6 +357,9 @@ export function RulesStep(props: StepProps) {
   const { draft, onPatch } = props;
   const a = draft.answers;
   const t = w.rules;
+  // Until the person changes a box, nothing is sent and the campaign keeps its default: the books whose rules are on by default
+  // show ticked, so a change to one box never turns another off unseen (#4014).
+  const shown = a.supplements ?? DEFAULT_BOOKS;
   const set = (target: "2024" | "2014") => void onPatch({ target, fallback: target === "2024" ? "2014" : "2024" });
   return (
     <>
@@ -370,8 +380,8 @@ export function RulesStep(props: StepProps) {
             <label key={s.code} class="row">
               <input
                 type="checkbox"
-                checked={a.supplements.includes(s.code)}
-                onChange={(e) => void onPatch({ supplements: (e.target as HTMLInputElement).checked ? [...a.supplements, s.code] : a.supplements.filter((c) => c !== s.code) })}
+                checked={shown.includes(s.code)}
+                onChange={(e) => void onPatch({ supplements: (e.target as HTMLInputElement).checked ? [...shown, s.code] : shown.filter((c) => c !== s.code) })}
               />{" "}
               {s.title}
             </label>
@@ -379,7 +389,7 @@ export function RulesStep(props: StepProps) {
         </fieldset>
         <p class="small">{t.supplementsNote}</p>
       </section>
-      <DocsStep {...props} slot="ruleset" heading={t.ownLabel} lead={t.ownLead} />
+      {WIZARD_OWN_RULESET_LIVE && <DocsStep {...props} slot="ruleset" heading={t.ownLabel} lead={t.ownLead} />}
     </>
   );
 }
@@ -396,6 +406,16 @@ export function DataStep({ draft, onPatch }: StepProps) {
         <label class="row"><input type="radio" name="wizard-data" checked={!draft.answers.dataUse} onChange={() => void onPatch({ dataUse: false })} /> {t.no}</label>
       </div>
       <p class="small">{t.note}</p>
+    </section>
+  );
+}
+
+/** Steps 7 and 8 in the first release: nothing to add yet, only where to add it after Finish (#3953). */
+export function LaterStep({ heading, later }: { heading: string; later: string }) {
+  return (
+    <section>
+      <h2>{heading}</h2>
+      <p>{later}</p>
     </section>
   );
 }

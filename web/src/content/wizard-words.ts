@@ -153,10 +153,12 @@ export const wizardWords = {
 
   // Steps 7 and 8.
   house: {
+    later: "You can add your house rules after you finish, on your campaign's House rules page.",
     heading: "House rules",
     lead: "Rules your table has changed. Add files, links, or one document that lists many links.",
   },
   homebrew: {
+    later: "You can add your homebrew after you finish, on your campaign's Homebrew page. You can add links there too.",
     heading: "Homebrew",
     lead: "Your own items, spells, monsters, lineages, classes and more. Add files, links, or one document that lists many links.",
   },
