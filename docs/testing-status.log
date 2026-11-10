@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-03 UTC by dev1
+Last updated: 2026-11-10 UTC by dev1
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -17,6 +17,9 @@ Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all 
 ------------------------------------------------------------------------------
 OWNER CHECKS (not done yet)
 ------------------------------------------------------------------------------
+Deploy 15 (03e9527c, live 15:44 UTC 2026-11-10), owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF
+  upload in the names menu, dev1 checks the counts). Then: recap notices in the DM Bot channel with no title or writer name;
+  a player with two characters sees both names on transcript lines.
 Part A (eleventh deploy, b1fb7f8d): on a test campaign, "Lia is the mother of Mira" and "Tam is the brother of Mira" give
   "Lia is the mother of Tam?" with Yes, No, Not now; No is final; a player sees nothing of the suggestion.
   Earlier, still open: Story Graph clicks; the three-way upload choice; "Who knows this?"; start-up sweep at 0 waiting.
@@ -29,3 +32,4 @@ BLOCKERS
 ------------------------------------------------------------------------------
 - Party backfill (#3036): dry run of link_party on the test server, counts only, not yet run.
 - Supervisor's checks on the Story Graph and lore work need the owner at the table.
+- Sample run cost: the lore read and session import print no tokens or dollars (#4087, for CloudDev). The deploy 15 total is about $0.41 for the steps that are priced.

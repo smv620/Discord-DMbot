@@ -33,6 +33,7 @@ from dmbot.memory import (
     lore_knowledge,
     lore_pc_names,
     lore_read,
+    picture_read,
     pronouns,
     traits_read,
     who_ask,
@@ -113,6 +114,11 @@ STALL_AFTER_S = 240.0
 # The who-is-it lookups stop this long before the read's own time limit, so the summary can still
 # be shown inside Discord's 15 minutes (#2790).
 WHO_SUMMARY_MARGIN_S = 60.0
+# The pictures' read (#4003) shares the upload's one time limit: it must end by this long after
+# the wait began, leaving the steps after it (the knowledge sorting, who is who: 4 minutes) their
+# time, and is skipped with less than `PICTURES_MIN_S` left.
+PICTURES_UNTIL_S = lore_read.LORE_TIME_LIMIT_S - 240.0
+PICTURES_MIN_S = 60.0
 
 
 NOT_A_BOOK = "your own notes or background, not a published book"
@@ -598,6 +604,10 @@ class BackgroundOffer(_Menu):
                             done,
                             total,
                         )
+                    elif stage == "pictures":  # (#4003)
+                        waiting.step(
+                            f"Step 2 of {steps}: reading the words in its pictures", done, total
+                        )
                     elif stage == "sorting":
                         waiting.step("Sorting what the players know", done, total)
                     elif stage == "who":
@@ -693,6 +703,9 @@ class BackgroundRead:
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
     # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
     trait_questions: int = 0
+    # Names read from its pictures that its text did not plainly resolve (#4003): held for the DM's
+    # Names to check, which is the next slice. Counts only.
+    picture_held: int = 0
 
 
 async def read_background(
@@ -741,6 +754,14 @@ async def read_background(
         if progress is not None:
             progress("who", done, total)
 
+    counted = [0, 0]  # the read's words and AI calls so far: a later step only adds to them
+
+    def on_read(stage: str, done: int, total: int) -> None:
+        if stage == "counts":
+            counted[:] = [done, total]
+        if progress is not None:
+            progress(stage, done, total)
+
     read = await lore_read.read_lore(
         read_ai,
         ai,
@@ -750,12 +771,16 @@ async def read_background(
         # (the players' line is asked for only where it can be stored, #2967 slice a)
         players_line=not speaker and lore_knowledge.normalize(choice) == lore_knowledge.WORLD,
         skip_name=lambda name: name_key(name) in known,
-        progress=progress,
+        progress=on_read if progress is not None else None,
         aliases=aliases,
         hold_open=who_ai is not None,
         known_keys=known,
         players=player_keys,
     )
+    pictures = await _read_pictures(
+        bot, upload, read, (read_ai, ai), own, known, aliases, player_keys,
+        _picture_progress(progress, counted), until=started + PICTURES_UNTIL_S,
+    )  # fmt: skip
     found = bg.merge(
         [read.names],
         known,
@@ -943,6 +968,7 @@ async def read_background(
     done = BackgroundRead(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
+        picture_held=len(pictures.held) if pictures is not None else 0,
     )  # fmt: skip
     if not campaign.ask_before_adding and not read.cut:
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
@@ -962,6 +988,88 @@ async def read_background(
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
     return done
+
+
+def _picture_progress(
+    progress: Callable[[str, int, int], None] | None, counted: list[int]
+) -> Callable[[str, int, int], None] | None:
+    """The pictures' read told as one more step, "pictures", never as the text's steps again, so
+    the wait never goes back (CLAUDE.md, "Every wait"): its shaping parts are the step's parts, and
+    its words and calls are added to the text read's, so the page's counts only go up."""
+    if progress is None:
+        return None
+    base = tuple(counted)
+
+    def told(stage: str, done: int, total: int) -> None:
+        if stage == "counts":
+            progress("counts", base[0] + done, base[1] + total)
+        elif stage == "shaping":
+            progress("pictures", done, total)
+        else:
+            progress("pictures", 0, 0)  # (reading or looking: movement, with no parts yet)
+
+    return told
+
+
+async def _read_pictures(
+    bot: Any,
+    upload: Upload,
+    read: lore_read.LoreRead,
+    models: tuple[Any, Any],
+    own: Mapping[str, str],
+    known: Collection[str],
+    aliases: Mapping[str, Sequence[str]],
+    player_keys: Collection[str],
+    progress: Callable[[str, int, int], None] | None,
+    *,
+    until: float,
+) -> picture_read.Sorted | None:
+    """The words of the upload's pictures (#4003), only with DMBOT_PICTURE_NAMES on and pictures
+    given: read through the same lore reader (`models`: the reader's and the shaper's) as an extra
+    page, and each name checked against the document's own names (`picture_read.sort`). A matched
+    name joins `read.names` under the document's spelling; a corrected one is the document's name
+    already; one the document does not plainly resolve is held for the DM (Names to check, with the
+    picture's link, is the next slice) and never added as it reads. Names only: a connection read
+    from a picture waits for that slice too.
+
+    One time limit for the whole upload: this read gets only what is left before `until` (a
+    monotonic time that leaves the steps after it their share), is skipped when too little is left,
+    and when it runs out the text's read stands as it is. Counts only in the log, never a word of a
+    picture."""
+    if not upload.pictures or not getattr(bot.settings, "picture_names_on", False):
+        return None
+    words = picture_read.as_pages(upload.pictures)
+    left = until - time.monotonic()
+    if not words or left < PICTURES_MIN_S:
+        if words:
+            log.info("Picture names: not read, %d s left of the upload's time", int(left))
+        return None
+    read_ai, ai = models
+    try:
+        async with asyncio.timeout(left):
+            seen = await lore_read.read_lore(
+                read_ai,
+                ai,
+                words,
+                own,
+                AI_AT_ONCE,
+                skip_name=lambda name: name_key(name) in known,
+                progress=progress,
+                aliases=aliases,
+                known_keys=known,
+                players=player_keys,
+            )
+    except TimeoutError:
+        log.info("Picture names: out of time, %d pictures not read", len(upload.pictures))
+        return None
+    sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
+    read.names.extend(sorted_names.kept)
+    log.info(
+        "Picture names: %d pictures, %d names kept, %d corrected, %d held for the DM%s",
+        len(upload.pictures), len(sorted_names.kept), sum(sorted_names.corrected.values()),
+        len(sorted_names.held), " (cut short)" if seen.cut else "",
+    )  # fmt: skip
+    return sorted_names
 
 
 async def _backstory_owners(

@@ -99,6 +99,7 @@ from dmbot.memory.checks import (
     waiting_guess,
 )
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
+from dmbot.memory.importance_rank import MET_IN_PLAY
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookalikes import Name as LookAlikeName
 from dmbot.memory.lookalikes import find as find_look_alikes
@@ -142,6 +143,7 @@ from dmbot.memory.models import (
     PARTY_SOURCE,
     PLAYER_CHARACTER,
     PLAYERS_TEXT_MAX,
+    PRONOUNCED,
     PROPOSED,
     REJECTED,
     ROLES,
@@ -2231,6 +2233,114 @@ class MemoryStore:
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
             return Written(_entity(row), w.batch)
+
+    async def name_met(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        met_id: str,
+        name: str,
+        *,
+        opted_in: Collection[int],
+    ) -> Written[Entity]:
+        """The DM names a being the party met in play (#4045, "Give them a name" on the "Met but not
+        named" list): in ONE write, the entry is made (confirmed, the DM's word: a person for one
+        being, a group for more), it is ranked 0 with the reason `met_in_play` (the owner's
+        "background", raised later by the story), and the list's row goes. If any part fails,
+        none of it happens. Met while the party was split, it is hidden from the players and only
+        the group that was there learns it (#4086, the #4037 rule; `Written.split` says so, for the
+        DM). A name another live entry has is refused, with the reason
+        (`met_name_owner`): one the DM can join ("Same as…"), or one still waiting in the name
+        check. `opted_in`: who is recorded now, read at the press; a row citing anyone else is
+        deleted and `MET_GONE` (its words must not become an entry's note). Shown to the players
+        like any name the DM adds when the party was together: they met them at the table (the
+        owner's rule). Met only while split, in the DM's lines alone, it usually can't be placed
+        (the DM plays no character), so it is hidden and the DM is told so. An Undo of the batch
+        takes the entry (and its rank and knowers, by cascade) back; the row is not put back."""
+        name = clean_text(name)
+        if not name or PRONOUNCED.search(name):  # how to say it is not how to spell it (#2332)
+            raise MemoryRuleError(MET_BAD_NAME)
+        await self._purge_met(guild_id, campaign_id, opted_in)
+        async with self._write(guild_id, campaign_id, DM) as w:
+            row = await _met_row(w, met_id, opted_in)
+            group = int(row["count"]) != 1
+            kind, role = ("faction", None) if group else ("character", NPC)
+            check_named(kind, name)
+            owner = await met_name_owner(w, name)
+            if owner is not None:
+                raise MemoryRuleError(
+                    MET_NAME_TAKEN if owner["status"] == CONFIRMED else MET_NAME_WAITING
+                )
+            onto = await _load_ontology(w)
+            onto.active_type(kind)
+            _check_role(onto, kind, role, None)
+            # Met while the party was split (#4086, the #4037 rule): only the group that was there
+            # met them, so the entry is hidden from the players (written so, never shown first) and
+            # that group's characters learn it in this same write; nobody when it can't be told.
+            scene = await split_scene_at_ms(
+                w,
+                row["session_started_at"],
+                [int(ms) for ms in row["line_ms"]],
+                [int(u) for u in row["speaker_ids"]],
+            )
+            entity = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": kind, "name": name,
+                    "description": _met_description(str(row["what"]), int(row["count"])),
+                    "status": CONFIRMED, "merged_into": None, "source": DM,
+                    "created_at": w.now, "played_by": None, "role": role,
+                    "needs_look": False, "unique_item": None,
+                    "hidden_from_players": scene is not None,
+                },
+            )  # fmt: skip
+            alias = _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
+            await w.insert(ALIASES, alias)
+            learned = await learn_names_in_scene(w, str(entity["id"]), scene) if scene else 0
+            await _met_done(w, row, str(entity["id"]), rank_always=True)
+            # (told by who learned it, as `confirm_entity` does: a refused character learns nothing)
+            split = "" if scene is None else ("group" if learned else "unknown")
+            return Written(_entity(entity), w.batch, split=split)
+
+    async def _purge_met(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> None:
+        """Rows citing someone not recorded now go first, in their own transaction (the write
+        that follows could roll a delete back with its refusal)."""
+        from dmbot.memory.met_store import MetStore
+
+        await MetStore(self._db).purge_stopped(guild_id, campaign_id, opted_in)
+
+    async def met_name_owners(self, guild_id: int, campaign_id: str, name: str) -> list[MetOwner]:
+        """Who already goes by `name`, for the "Met but not named" list (#4045): the same rule as
+        `name_met`'s refusal, so the list asks the right question (Same as… for a person or group
+        it can join; check it first for a waiting one; another name for anything else)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return [
+                MetOwner(str(r["id"]), str(r["name"]), r["status"] == CONFIRMED, met_joinable(r))
+                for r in await met_name_owners(scope, name)
+            ]
+
+    async def join_met(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        met_id: str,
+        entity_id: str,
+        *,
+        opted_in: Collection[int],
+    ) -> Written[Entity]:
+        """The DM says a being met in play is one the campaign already has (#4045, "Same as…"): in
+        ONE write, the list's row goes and, if the entry (with every name merged into it) has no
+        rank yet, it is ranked 0 with the reason `met_in_play`. An entry that already has a rank
+        keeps it: a join never demotes (an old enemy met again is still Major). Only a live,
+        confirmed character or group with a name (`met_joinable`). `opted_in` as in `name_met`."""
+        await self._purge_met(guild_id, campaign_id, opted_in)
+        async with self._write(guild_id, campaign_id, DM) as w:
+            row = await _met_row(w, met_id, opted_in)
+            entity = await w.get(ENTITIES, entity_id)
+            if entity is None or not met_joinable(entity):
+                raise MemoryRuleError(MET_NO_ENTRY)
+            await _met_done(w, row, entity_id, rank_always=False)
+            return Written(_entity(entity), w.batch)
 
     async def add_names(
         self,
@@ -7036,12 +7146,7 @@ async def split_scene(
     costs one 👁️ press, a wrong show leaks). No clock: together."""
     if session_started_at is None:
         return None
-    cur = await w.conn.execute(
-        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
-        " AND position IS NOT NULL LIMIT 1",
-        (w.guild_id, w.campaign_id),
-    )
-    if await cur.fetchone() is None:
+    if not await _ever_split(w):
         return None  # (the party was never split: the common case, one read)
     numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
     rows = []
@@ -7058,7 +7163,48 @@ async def split_scene(
         rows = await cur.fetchall()
     if not rows:
         return () if await _split_during_session(w, session_started_at) else None
-    moments = sorted({int(r["at"]) for r in rows})
+    return await _scene_at(w, sorted({int(r["at"]) for r in rows}), speaker_ids)
+
+
+async def split_scene_at_ms(
+    w: Changes,
+    session_started_at: int | None,
+    line_ms: Sequence[int],
+    speaker_ids: Sequence[int] = (),
+) -> tuple[str, ...] | None:
+    """Where the party was when it met a being (`memory_met.line_ms`, #4086), by #4037's rule for
+    a new name: None (shown) when any of its lines was said while the party was together (the
+    whole party met them then); the one group's player characters when every line was in that
+    group's scene; an empty tuple (hidden, nobody knows) when it can't be told. `line_ms` are the
+    lines' starts in Unix ms, as `transcript_lines.started_ms`. No line kept: fails closed, hidden
+    when the clock was split during the session, or at all when the session's start is unknown."""
+    if not await _ever_split(w):
+        return None  # (the party was never split: the common case, one read)
+    moments = sorted({int(ms) // 1000 for ms in line_ms})
+    if not moments:
+        if session_started_at is None:
+            return ()  # (no line and no session start: can't tell, so nobody knows)
+        return () if await _split_during_session(w, session_started_at) else None
+    for at in moments:
+        if not await _split_at(w, at):
+            return None  # (met once while together: the whole party met them)
+    return await _scene_at(w, moments, speaker_ids)
+
+
+async def _ever_split(w: Changes) -> bool:
+    """Whether the campaign's clock was ever split (one read; the common answer is no)."""
+    cur = await w.conn.execute(
+        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND position IS NOT NULL LIMIT 1",
+        (w.guild_id, w.campaign_id),
+    )
+    return await cur.fetchone() is not None
+
+
+async def _scene_at(
+    w: Changes, moments: Sequence[int], speaker_ids: Sequence[int]
+) -> tuple[str, ...] | None:
+    """`split_scene`'s answer for these moments (Unix seconds), the clock read at each."""
     split = [await _split_at(w, at) for at in moments]
     if not any(split):
         return None
@@ -7147,12 +7293,7 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
         or row.get("role") == PLAYER_CHARACTER
     ):
         return None
-    cur = await w.conn.execute(
-        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
-        " AND position IS NOT NULL LIMIT 1",
-        (w.guild_id, w.campaign_id),
-    )
-    if await cur.fetchone() is None:
+    if not await _ever_split(w):
         return None  # (the party was never split: the common case, one read)
     # The session it came from: the one the story reader recorded when it made the name (#4043),
     # else, for a name made before that record existed, the newest session that began at or before
@@ -8280,3 +8421,116 @@ async def isolated_rows_in(
         )
         for r in links
     ]  # fmt: skip
+
+
+MET_NAME_TAKEN = "That name is already in your campaign. If they're the same, use Same as…."
+MET_NAME_WAITING = (
+    "That name is waiting in 📝 Check new names. Check it there first, then use Same as…."
+)
+MET_BAD_NAME = "Type the name as it's spelled."
+MET_GONE = "That one isn't on the list any more."
+MET_NO_ENTRY = "That name isn't one DMbot can match them to. Pick a person or group in your names."
+MET_JOIN_TYPES = frozenset({"character", "faction"})  # (importance is about people and groups)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MetOwner:
+    """An entry that already goes by a name the DM typed for a met being (#4045)."""
+
+    id: str
+    name: str
+    confirmed: bool
+    joinable: bool  # a confirmed person or group: "Same as…" can match them to it
+
+
+def met_joinable(row: Mapping[str, Any]) -> bool:
+    """Whether a met being can be joined to this entry (#4045): a live, confirmed person or group
+    with a name. One rule for Discord's Same as…, the website and the store. Pure."""
+    return (
+        row["status"] == CONFIRMED
+        and row["merged_into"] is None
+        and row["type"] in MET_JOIN_TYPES
+        and not row.get("unnamed")
+    )
+
+
+async def met_name_owners(w: Scope, name: str) -> list[dict[str, Any]]:
+    """The live entries (waiting or confirmed, never a player or the DM) that already go by this
+    name, as their main name or another name that is not turned down (#4045): what "taken" means
+    for a met being, the one rule for the store and the list. Empty when the name is free."""
+    key = name_key(name)
+    found: dict[str, dict[str, Any]] = {}
+    for entity in await w.select(
+        ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> %s", [PERSON]
+    ):
+        if name_key(str(entity["name"])) == key:
+            found[str(entity["id"])] = dict(entity)
+    for alias in await w.select(ALIASES, " AND key = %s AND status <> 'rejected'", [key]):
+        owner = await w.get(ENTITIES, str(alias["entity_id"]), lock=False)
+        if owner is not None and owner["status"] in LIVE and owner["type"] != PERSON:
+            found.setdefault(str(owner["id"]), dict(owner))
+    return list(found.values())
+
+
+async def met_name_owner(w: Scope, name: str) -> dict[str, Any] | None:
+    """The first of `met_name_owners`, a waiting one before a confirmed one (a waiting one is what
+    the DM must deal with first), or None."""
+    owners = await met_name_owners(w, name)
+    owners.sort(key=lambda r: r["status"] == CONFIRMED)
+    return owners[0] if owners else None
+
+
+async def _met_row(w: Changes, met_id: str, opted_in: Collection[int]) -> dict[str, Any]:
+    """The list's row, locked for this write (#4045); `MET_GONE` when it was named, joined or
+    removed meanwhile (a second press, or the website), or when it cites someone who is not
+    recorded now (the consent re-check at the moment of use; `_purge_met` deleted such rows just
+    before, so this only guards the moment between the two)."""
+    cur = await w.conn.execute(
+        "SELECT id, what, count, session_started_at, line_ms, speaker_ids FROM memory_met"
+        " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR UPDATE",
+        (*w.ids, met_id),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise MemoryRuleError(MET_GONE)
+    if not set(int(u) for u in row["speaker_ids"]) <= set(opted_in):
+        raise MemoryRuleError(MET_GONE)
+    return dict(row)
+
+
+def _met_description(what: str, count: int) -> str:
+    """The new entry's note: what the DM called them when met, and how many. Pure."""
+    many = "" if count == 1 else (" (several)" if count == 0 else f" ({count})")
+    return f"Met in play: {what}{many}"[:DESCRIPTION_MAX]
+
+
+async def _met_done(
+    w: Changes, row: Mapping[str, Any], entity_id: str, *, rank_always: bool
+) -> None:
+    """The rank-0 row (`met_in_play`) and the list row's delete, in the caller's write (#4045):
+    one transaction with the entry, so a failure leaves the list as it was. With `rank_always`
+    False (a join), an entry that already has an assessment keeps it, read over every name merged
+    into it (ranks are read by merged group, so a twin's rank is the entry's)."""
+    has_rank = False
+    if not rank_always:
+        cur = await w.conn.execute(
+            "WITH RECURSIVE grp(id) AS ("
+            " SELECT %s::text"
+            " UNION SELECT e.id FROM memory_entities e JOIN grp ON e.merged_into = grp.id"
+            " WHERE e.guild_id = %s AND e.campaign_id = %s)"
+            " SELECT 1 FROM memory_importance WHERE guild_id = %s AND campaign_id = %s"
+            " AND entity_id IN (SELECT id FROM grp) LIMIT 1",
+            (entity_id, *w.ids, *w.ids),
+        )
+        has_rank = await cur.fetchone() is not None
+    if not has_rank:
+        await w.conn.execute(
+            "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason, source,"
+            " session_started_at, lines, recorded_at) VALUES (%s, %s, %s, 0, %s, 'rule', %s,"
+            " '{}', %s)",
+            (*w.ids, entity_id, MET_IN_PLAY, row["session_started_at"], w.now),
+        )
+    await w.conn.execute(
+        "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+        (*w.ids, row["id"]),
+    )
