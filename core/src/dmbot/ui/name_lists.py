@@ -37,11 +37,12 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_documents import (
-    MAX_DOCUMENT_BYTES,
     TYPES_HELP,
     DocumentError,
     decode_text,
     kind_of_file,
+    max_bytes_for,
+    too_big_words,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
@@ -583,8 +584,8 @@ async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str 
     kind = kind_of_file(file.filename)
     if kind == "unknown":
         return None, TYPES_HELP
-    if file.size > MAX_DOCUMENT_BYTES:
-        return None, "That file is too big (up to 10 MB). Split it into smaller files."
+    if file.size > max_bytes_for(file.filename):
+        return None, too_big_words(file.filename)
     try:
         raw = await file.read()
     except discord.HTTPException:

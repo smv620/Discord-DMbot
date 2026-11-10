@@ -15,6 +15,7 @@ import calendar
 import io
 import json
 import logging
+import time
 import wave
 from types import SimpleNamespace
 from typing import Any
@@ -264,7 +265,10 @@ class Hearing(Base):
         self.assertTrue(await store.finish(THURSDAY.id, item, bot.Outcome(audio=b"clip")))
         seen = await read_hear(self.web, self.session, self.cref, press)
         self.assertEqual(base64.b64decode(seen["audio"]), b"clip")
-        stale = bot.HearStore(self.db, clock=lambda: NOW + bot.KEEP_FOR_S + 1000)
+        later = (
+            int(time.time()) + bot.KEEP_FOR_S + 1000
+        )  # (the clip row has the real time of this test, not NOW's)
+        stale = bot.HearStore(self.db, clock=lambda: later)
         self.assertEqual(await stale.sweep(THURSDAY.id), 1)
 
     async def test_a_made_clip_adds_its_credits_once_and_a_cache_hit_adds_nothing(self) -> None:

@@ -731,6 +731,8 @@ function pretendWaiting(ref = ""): Waiting {
     ? [
         { id: "c3-shown", statement: "Tavin is Mira's cousin", canSecret: false },
         { id: "c4-held", statement: "Mira Voss grew up in Far Hall", canSecret: false },
+        { id: "c5-scene", statement: "The Ferryman sold Mira the map", canSecret: false },
+        { id: "c6-split", statement: "Roan heard the bell in the tower", canSecret: false },
       ]
     : [];
   return {
@@ -2252,6 +2254,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const batch = 100 + Number(answer.id.replace(/\D/g, ""));
         if (answer.id.endsWith("-shown")) return { shown: 1, batch };
         if (answer.id.endsWith("-held")) return { held: 1, batch };
+        if (answer.id.endsWith("-scene")) return { scene: 1, batch };
+        if (answer.id.endsWith("-split")) return { split: 1, batch };
         return { batch };
       }
       return answer.action === "keep_all" ? { kept: ids.length } : {};

@@ -3504,19 +3504,22 @@ def create_app(
     # campaign is made by the bot's finish run. Files travel in the JSON body as base64.
     wizard_limit = RateLimit(60, count=60)  # saving answers and adding documents, per account
 
-    async def wizard_body(request: Request, session: Session) -> dict[str, Any]:
+    async def wizard_body(
+        request: Request, session: Session, limit: int = wizard_check.MAX_SMALL_BODY_BYTES
+    ) -> dict[str, Any]:
         """The JSON body, read with a running size cap (a declared length is not trusted) and
-        parsed away from the event loop. Counted per account before anything is read."""
+        parsed away from the event loop. Counted per account before anything is read. Only the
+        request that adds a file takes the big cap (#4001)."""
         if wizard_limit.take(f"wizard:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         length = request.headers.get("content-length", "")
-        if length.isdecimal() and int(length) > wizard_check.MAX_BODY_BYTES:
+        if length.isdecimal() and int(length) > limit:
             raise HTTPException(status_code=413, detail="too_big")
         chunks: list[bytes] = []
         size = 0
         async for chunk in request.stream():
             size += len(chunk)
-            if size > wizard_check.MAX_BODY_BYTES:
+            if size > limit:
                 raise HTTPException(status_code=413, detail="too_big")
             chunks.append(chunk)
         try:
@@ -3591,7 +3594,7 @@ def create_app(
         """Check one document (an upload as base64, pasted text, or a Drive file's id) and keep it
         in its slot. Answers its name, pages, words and status; the text is never given back."""
         session, _token = signed
-        body = await wizard_body(request, session)
+        body = await wizard_body(request, session, wizard_check.MAX_BODY_BYTES)
         slot, name = str(body.get("slot", "")), str(body.get("name", ""))
         try:
             if await wizard.get(db, session, guild) is None:  # the draft and the server first
@@ -3599,10 +3602,14 @@ def create_app(
             if body.get("drive_id"):
                 source, checked = "drive", wizard_check.Checked("", 0, 0, "ok", "")
             elif "data" in body:
-                raw = wizard_check.decode(body.get("data"))
-                if raw is None:
-                    raise RecapError("bad_document")
-                source, checked = "upload", await wizard_check.check_file(name, raw)
+                data = body.get("data")
+                if isinstance(data, str) and len(data) > wizard_check.base64_limit(name):
+                    source, checked = "upload", wizard_check.too_big_file()  # (not decoded)
+                else:
+                    raw = wizard_check.decode(data)
+                    if raw is None:
+                        raise RecapError("bad_document")
+                    source, checked = "upload", await wizard_check.check_file(name, raw)
             else:
                 source, checked = "upload", wizard_check.check_text(str(body.get("text", "")))
             made = await wizard.add_document(
@@ -3616,6 +3623,7 @@ def create_app(
         return {
             "id": made, "name": name, "slot": slot, "pages": checked.pages,
             "words": checked.words, "status": checked.status, "reason": checked.reason,
+            "picturePages": checked.picture_pages,
         }  # fmt: skip
 
     @app.delete("/me/wizard/{guild}/documents/{doc}")
