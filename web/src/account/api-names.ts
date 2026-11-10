@@ -405,11 +405,16 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const counts = (got as { counts?: unknown }).counts;
       const shown = countOf(counts, "shown");
       const held = countOf(counts, "held");
+      // Whether the bot kept it for the characters who were there, or hid it because the party was split (#4035).
+      const scene = countOf(counts, "scene");
+      const split = countOf(counts, "split");
       return {
         ...(typeof kept === "number" ? { kept } : {}),
         ...(typeof batch === "number" ? { batch } : {}),
         ...(shown !== undefined ? { shown } : {}),
         ...(held !== undefined ? { held } : {}),
+        ...(scene !== undefined ? { scene } : {}),
+        ...(split !== undefined ? { split } : {}),
       };
     },
     // The lineage and class questions (#3946): the list, then one queued answer that is polled like every other edit.
