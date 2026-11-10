@@ -746,7 +746,7 @@ class WhenKept(NamesTest):
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn("Connection 1 of 3", text)
         self.assertIn("Keep all keeps the 2 from", text)
-        self.assertIn("The other 1 stay for you to decide one by one.", text)
+        self.assertIn("The other one stays for you to decide one by one.", text)
 
     async def test_the_counts_for_the_check_are_read_only(self) -> None:
         await self.read()

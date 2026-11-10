@@ -2695,9 +2695,8 @@ class ConnectionOffer(_Menu):
         rest = len(self.shown) - len(mine)
         if rest <= 0:
             return f"\n✅ Keep all keeps the {keeps}."
-        return (
-            f"\n✅ Keep all keeps the {keeps}. The other {rest} stay for you to decide one by one."
-        )
+        others = "The other one stays" if rest == 1 else f"The other {rest} stay"
+        return f"\n✅ Keep all keeps the {keeps}. {others} for you to decide one by one."
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
