@@ -2905,3 +2905,7 @@ SAMPLE RUN 13c (dev1, 2026-11-10, live build 62d84025; counts on #3545). One run
 OPEN for 13c: the smart-guess before and after for #3963 (smart_guess_score, #2959) is not run yet. It is read-only and needs the owner's no-live-session timing only; it is the last dev1 check for 13c.
 
 Session: dev1
+
+SMART GUESS, 13c (dev1, 2026-11-10; the last dev1 check for 13c; counts on #2959). Invented fixtures, three documents, one run each, claude-haiku-5-5. Before #3963 (commit 27bb93c1b): agrees 18 of 21 (85%); spoilers called world knowledge 1; world knowledge called a spoiler 2. After (live build 62d84025): agrees 19 of 21 (90%); spoilers called world knowledge 0; world knowledge called a spoiler 2. 13c's dev1 checks are complete.
+
+Session: dev1
