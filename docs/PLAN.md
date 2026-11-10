@@ -420,6 +420,11 @@ commands are only visible to the person who used them.
   10. **Finish:** the campaign is made, the lore everyone knows is read, then the secrets (as spoilers),
       and DMbot adds what it is sure of and goes on to the names to check by itself (#3878), with the
       usual progress, notice and Undo. Nothing more to press.
+  **The first release (Supervisor, 2026-11-10, #3953):** the campaign, rules and books, the characters
+  and who plays them, lore, secrets and the data choice, with Skip. The pages don't offer what isn't
+  built yet: steps 7 and 8 point to the campaign's House rules and Homebrew pages after Finish; step 6
+  has no ruleset upload; step 1 has no Google Drive choice and no sheet links. Those follow, in that
+  order of need (sheet links, house rules and homebrew, the DM's ruleset, Drive), after dev1's live run.
   **The party is the first entry of every campaign:** a group "the party" made with the campaign, its
   player characters members of it, so the story graph starts from it. It is never a knower (STORY_MEMORY
   9b): what the player characters know stays their own rows.
