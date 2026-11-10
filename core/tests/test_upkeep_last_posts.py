@@ -6,8 +6,9 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
+from dmbot.recaps import uploaded
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.ui import recap_audio
 
@@ -108,6 +109,77 @@ class TheNotices(unittest.IsolatedAsyncioTestCase):
         await RecapFeatures.recap_audio_started(me, campaign, 100)
         self.assertEqual(me.post_message.await_args.args[0], BOT)
         self.assertEqual(me.post_message.await_args.args[1], recap_audio.MAKING)
+
+
+def uploaded_stand_in(*, dm_bot: int | None) -> Any:
+    """The stand-in for the uploaded-recap check: a recap a DM wrote, with no check yet."""
+    me, campaign = fake(dm_bot=dm_bot)
+    job = SimpleNamespace(title=TITLE, summary="text", written_by="Mira Vale", checked_at=None)
+    me.recaps = SimpleNamespace(
+        get=AsyncMock(return_value=job), set_upload_check=AsyncMock(return_value=True)
+    )
+    me.recap_secret_names = AsyncMock(return_value=["Sire"])
+    me.recap_allowed_names = AsyncMock(return_value=set())
+    return me, campaign
+
+
+class TheUploadedNotice(unittest.IsolatedAsyncioTestCase):
+    async def test_the_added_recap_notice_in_the_dm_bot_channel_has_no_writer_and_no_secret_note(
+        self,
+    ) -> None:
+        me, _ = uploaded_stand_in(dm_bot=BOT)
+        with (
+            patch.object(uploaded, "unknown_names", return_value=[]),
+            patch.object(uploaded, "secret_note", return_value="The text names Sire."),
+        ):
+            self.assertTrue(await RecapFeatures.check_uploaded_recap(me, 5, "c" * 32, 100))
+        kwargs = me.post.await_args.kwargs
+        channel, text = me.post.await_args.args[:2]
+        self.assertEqual(channel, BOT)
+        self.assertIsNotNone(kwargs.get("view"))
+        self.assertNotIn("Mira Vale", text)
+        self.assertNotIn("🤫", text)
+        self.assertIn("A recap was added for this session", text)
+        self.assertIn("Nothing goes to the table until you say so.", text)
+
+    async def test_the_added_recap_notice_on_the_dm_screen_keeps_the_writer_and_the_note(
+        self,
+    ) -> None:
+        me, _ = uploaded_stand_in(dm_bot=None)
+        with (
+            patch.object(uploaded, "unknown_names", return_value=[]),
+            patch.object(uploaded, "secret_note", return_value="The text names Sire."),
+        ):
+            await RecapFeatures.check_uploaded_recap(me, 5, "c" * 32, 100)
+        channel, text = me.post.await_args.args[:2]
+        self.assertEqual(channel, SCREEN)
+        self.assertIn("**Mira Vale**", text)
+        self.assertIn("🤫", text)
+
+
+class OneChannelOnly(unittest.IsolatedAsyncioTestCase):
+    async def test_only_the_dm_bot_channel_set_still_gets_every_notice(self) -> None:
+        me, campaign = fake(dm_bot=BOT)
+        campaign.dm_screen_channel_id = None
+        campaign.recaps_email = False
+        me.recaps.waiting_for_script = AsyncMock(return_value=False)
+        await RecapFeatures.recap_audio_told(me, 5, "c" * 32, 100, "ready")
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [BOT])
+        await RecapFeatures._say_writing(me, campaign, 999, 100)
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [BOT, BOT])
+        await RecapFeatures._recap_allowance(me, 5, "c" * 32, audio=False)
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [BOT, BOT, BOT])
+
+    async def test_only_the_dm_screen_set_gets_every_notice_as_before(self) -> None:
+        me, campaign = fake(dm_bot=None)
+        campaign.recaps_email = False
+        me.recaps.waiting_for_script = AsyncMock(return_value=False)
+        await RecapFeatures.recap_audio_told(me, 5, "c" * 32, 100, "ready")
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [SCREEN])
+        await RecapFeatures._say_writing(me, campaign, SCREEN, 100)
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [SCREEN, SCREEN])
+        await RecapFeatures._recap_allowance(me, 5, "c" * 32, audio=False)
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [SCREEN, SCREEN, SCREEN])
 
 
 class _Waits:
