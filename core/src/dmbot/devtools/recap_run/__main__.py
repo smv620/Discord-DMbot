@@ -664,6 +664,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "call that the estimate does not include. Counts only, so it can be posted; run on the "
         "fixed set before and after a writer change (#3328)",
     )  # fmt: skip
+    parser.add_argument(
+        "--by-rank", action="store_true",
+        help="with --session: pick the beats by the names' importance rank first, as the bot does "
+        "with DMBOT_RECAP_BY_RANK on (#3172). For the before-and-after, score the fixed set once "
+        "without it and once with it",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -715,6 +721,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         args.score and (args.compare or args.review or args.golden)
     ):
         parser.error("--score goes with --session or --transcript only")
+    if args.by_rank and not args.session:
+        parser.error("--by-rank goes with --session only (a file has no story memory to rank)")
     if args.out and not (args.transcript or args.compare or args.session):
         parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -957,11 +965,13 @@ def _golden_inputs(session: object) -> pl.Inputs:
     )  # fmt: skip
 
 
-async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
+async def inputs_for(db: Any, gid: int, cid: str, at: int, *, by_rank: bool = False) -> pl.Inputs:
     """The recap inputs of one stored session, read the way the bot reads them (every store on
-    this one database, each read scoped to the server by `Database.guild`). Raises `NotLoaded` with
-    the reason (#2680)."""
+    this one database, each read scoped to the server by `Database.guild`), the names' connection
+    scores included (#2411). `by_rank`: also each name's importance rank, as the bot does with
+    DMBOT_RECAP_BY_RANK on (#3172 slice 4). Raises `NotLoaded` with the reason (#2680)."""
     from dmbot.campaigns.store import CampaignStore
+    from dmbot.memory.importance import ImportanceCache
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.recaps.inputs import load_inputs_or_why
@@ -970,9 +980,10 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.store import TranscriptStore
 
+    memory = MemoryStore(db)
     return await load_inputs_or_why(
         campaigns=CampaignStore(db),
-        lookup=LookupCache(MemoryStore(db)),
+        lookup=LookupCache(memory),
         transcripts=TranscriptStore(db),
         recaps=RecapStore(db),
         clocks=ClockStore(db),
@@ -981,6 +992,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
         session_at=at,
         styles=StyleStore(db),
         musts=MustStore(db),
+        importance=ImportanceCache(memory, ranks_on=by_rank),
     )
 
 
@@ -1031,7 +1043,7 @@ async def _session(
         recaps = RecapStore(db)
         campaigns = CampaignStore(db)
         try:
-            inputs = await inputs_for(db, gid, cid, at)
+            inputs = await inputs_for(db, gid, cid, at, by_rank=args.by_rank)
         except NotLoaded as why:
             print(f"recap_run: {not_loaded_line(why, gid, cid, at)}", file=sys.stderr)
             return 2

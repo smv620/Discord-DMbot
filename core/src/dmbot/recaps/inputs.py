@@ -360,6 +360,8 @@ async def load_inputs_or_why(
     stored = await clocks.get(guild_id, campaign_id) if clocks is not None else None
     # How connected each name is in The truth (#2411): ranks the beats, gives the writer nothing.
     scores = await importance.get(guild_id, campaign_id) if importance is not None else {}
+    # Each name's rank (#3172 slice 4): empty unless DMBOT_RECAP_BY_RANK is on. Same rule.
+    ranks = await importance.ranks(guild_id, campaign_id) if importance is not None else {}
     said = said_in(lines)
     allowed_now, secret_now = recap_name_sets(names, said, recanted)
     aliases, pcs, party = recap_people(names, allowed_now)
@@ -377,6 +379,7 @@ async def load_inputs_or_why(
         campaign_name=campaign.name,
         earlier=earlier,
         importance=dict(scores),
+        ranks=dict(ranks),
         aliases=aliases,
         pcs=pcs,
         party=party,

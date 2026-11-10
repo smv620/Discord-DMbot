@@ -28,6 +28,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
+from dmbot.memory.models import name_key
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -334,15 +335,73 @@ class ImportanceStore:
         group is the current one (by `seq`, so a correction after a merge still lowers the
         rank)."""
         async with self._db.guild(guild_id) as conn:
-            entities, ended, group = await self._state(conn, guild_id, campaign_id)
+            ranked, _ended = await self._ranks_in(conn, guild_id, campaign_id)
+        return ranked
+
+    async def _ranks_in(
+        self, conn: Conn, guild_id: int, campaign_id: str
+    ) -> tuple[dict[str, int], dict[str, str | None]]:
+        entities, ended, group = await self._state(conn, guild_id, campaign_id)
+        cur = await conn.execute(
+            "SELECT entity_id, array_agg(DISTINCT session_started_at) AS sessions"
+            " FROM memory_heard WHERE guild_id = %s AND campaign_id = %s GROUP BY entity_id",
+            (guild_id, campaign_id),
+        )
+        heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
+        links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
+        return ranks_from(entities, ended, group, heard, links, companions), ended
+
+    async def by_name(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        """name key -> rank, for the name and every confirmed other name of each confirmed entry,
+        so a recap can rank the names a beat lists (slice 4). Confirmed only, as the connection
+        score reads names (`importance.by_name`), so a misheard name the DM never confirmed picks
+        no beat. An other name of a merged entry counts for the one it ended up in. One snapshot,
+        so a merge between the reads cannot pair a name with the wrong rank."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            ranked, ended = await self._ranks_in(conn, guild_id, campaign_id)
+            if not ranked:
+                return {}
             cur = await conn.execute(
-                "SELECT entity_id, array_agg(DISTINCT session_started_at) AS sessions"
-                " FROM memory_heard WHERE guild_id = %s AND campaign_id = %s GROUP BY entity_id",
-                (guild_id, campaign_id),
+                "SELECT id AS entry, name AS text FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'confirmed'"
+                " UNION ALL SELECT entity_id AS entry, text FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'confirmed'",
+                (guild_id, campaign_id, guild_id, campaign_id),
             )
-            heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
-            links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
-        return ranks_from(entities, ended, group, heard, links, companions)
+            rows = await cur.fetchall()
+        return names_ranked(
+            ((ended.get(str(r["entry"])) or str(r["entry"]), str(r["text"])) for r in rows),
+            ranked,
+        )
+
+
+def names_ranked(names: Iterable[tuple[str, str]], ranks: Mapping[str, int]) -> dict[str, int]:
+    """name key -> rank from (entry id, name) pairs and the entries' ranks; a name of an entry
+    with no rank is left out, and a name two entries share takes the higher. Pure."""
+    out: dict[str, int] = {}
+    for entry, text in names:
+        rank = ranks.get(entry)
+        key = name_key(text)
+        if rank is None or not key:
+            continue
+        out[key] = max(out.get(key, BACKGROUND), rank)
+    return out
+
+
+def beat_rank(who: Iterable[str], ranks: Mapping[str, int]) -> tuple[int, ...]:
+    """How much a beat's names matter, for sorting beats (slice 4): the ranks of its names,
+    highest first, so a beat with a Major entry outranks one whose best is Significant, and between
+    two whose best is equal the one with more that matter wins. Player characters are left out:
+    they are in nearly every beat, so they would make every beat equal. Background names (0) are
+    left out too: every known name is at least Background, so counting them would let a beat with
+    more names outrank the connection score, which breaks ties (Supervisor's ruling). A name with no
+    rank adds nothing. Empty with no table."""
+    if not ranks:
+        return ()
+    found = (ranks.get(name_key(w)) for w in dict.fromkeys(who))
+    return tuple(
+        sorted((r for r in found if r is not None and BACKGROUND < r < PLAYER), reverse=True)
+    )
 
 
 def counts(ranks: Mapping[str, int]) -> list[int]:
