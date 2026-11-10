@@ -6,7 +6,8 @@ export type Feeling = (typeof FEELINGS)[number];
 
 /** The feeling in a "knows (feeling)" connection's words, or null for any other connection. */
 export function feelingOf(words: string): Feeling | null {
-  const m = /^knows \((.+)\)$/.exec(words.trim());
+  // "has met" and "has heard of" are a `knows` that says how the two know each other (#3882): the feeling is read the same.
+  const m = /^(?:knows|has met|has heard of) \((.+)\)$/.exec(words.trim());
   const word = m?.[1]?.trim().toLowerCase();
   return FEELINGS.find((f) => f === word) ?? null;
 }

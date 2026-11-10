@@ -26,7 +26,15 @@ from dataclasses import dataclass, field
 
 from dmbot.memory import backstory_keep
 from dmbot.memory.backstory_links import BackstoryLinks
-from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, Entity, MemoryRuleError
+from dmbot.memory.claims import ClaimStore
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    HOW_DM,
+    PLAYER_CHARACTER,
+    Entity,
+    MemoryRuleError,
+)
 from dmbot.memory.ontology import rules_word_for
 from dmbot.memory.store import MemoryStore
 from dmbot.names.not_names import CREATURE_KINDS
@@ -58,6 +66,8 @@ class Tally:
     refused: Counter[str] = field(default_factory=Counter)  # a rule said no (it stays waiting)
     batches: list[int] = field(default_factory=list)  # the changes made, to undo them together
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
+    shown: int = 0  # held-back connections the table stated, shown to the players (#3963 c)
+    held: int = 0  # kept hidden beside a connection the story hides (#3975, #3979)
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
@@ -155,7 +165,8 @@ async def accept_connections(
         for w in await links.waiting(guild, campaign, symmetric=symmetric)
         if upload is None or w.upload == upload
     ]
-    ready = [w for w in every if w.ready]
+    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5)
+    ready = [w for w in every if w.ready and not w.inferred]
     tally.waiting[CONNECTIONS] += len(every) - len(ready)
     if dry_run:
         tally.accepted[CONNECTIONS] += len(ready)
@@ -170,3 +181,50 @@ async def accept_connections(
     tally.refused[CONNECTIONS] += done.refused
     for _link, batch in done.kept:
         tally.add_batch(batch)
+
+
+async def accept_dm_claims(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    tally: Tally,
+    *,
+    dm_ids: Collection[int],
+    opted_in: Collection[int],
+    sessions: Collection[int],
+    dry_run: bool = False,
+) -> None:
+    """Keep the connections an import's sessions state in the DM's own lines (#3897), through the
+    claims review's own yes (`ClaimStore.confirm`: every rule, the speakers' consent read again,
+    the DM's own batch for Undo). A claim is sure only when all hold: it is stated, not a reading;
+    it is `dm_said`; every cited line was spoken by one of the campaign's DMs (checked here, never
+    trusting the AI's label); it is still waiting with both its names answered (what `waiting`
+    returns); and it came from `sessions`, the starts of this import's sessions. Players' claims,
+    plans, readings and lore's worked-out ties stay questions. Secrecy is decided as a plain ✅
+    in the review decides it (`secret=False`, with the store's own rules for names the DM hid);
+    this adds no "secret" choice, which only the DM makes."""
+    dms = set(dm_ids)
+    starts = set(sessions)
+    claims = ClaimStore(memory)
+    for claim in await claims.waiting(guild, campaign, opted_in=opted_in):
+        if claim.session_started_at not in starts:
+            continue  # (another session's: not this import's to answer)
+        if (
+            claim.reading is not None
+            or claim.how != HOW_DM
+            or not claim.speaker_ids
+            or not set(claim.speaker_ids) <= dms
+        ):
+            tally.waiting[CONNECTIONS] += 1
+            continue
+        if dry_run:
+            tally.accepted[CONNECTIONS] += 1
+            continue
+        try:
+            done = await claims.confirm(guild, campaign, claim.id, opted_in=opted_in, secret=False)
+            tally.accepted[CONNECTIONS] += 1
+            tally.shown += done.shown
+            tally.held += done.held
+            tally.add_batch(done.batch)
+        except Exception as exc:  # a rule, or anything else: counted, the run goes on
+            refused(tally, CONNECTIONS, exc)

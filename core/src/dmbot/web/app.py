@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
@@ -85,6 +85,10 @@ from dmbot.web import (
     theatre_script,
     timeline,
     tokens,
+    upload_notice,
+    wizard,
+    wizard_check,
+    wizard_page,
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
@@ -911,6 +915,14 @@ def create_app(
         "bad_choice": (422, "bad_choice"),
         "unavailable": (409, "unavailable"),  # the picture asked for is not there now (#3621)
         "too_big": (413, "too_big"),
+        # The start-up wizard (#3955): the page words each of these
+        "no_draft": (404, "no_draft"),
+        "needs_name": (409, "needs_name"),
+        "no_room": (402, "no_room"),  # the plan has no room for one more campaign
+        "bad_document": (422, "bad_document"),
+        "bad_patch": (422, "bad_patch"),
+        "bad_key": (422, "bad_key"),
+        "too_many": (413, "too_many"),
         # Importing older sessions (#2105)
         "not_a_dm": (403, "not_a_dm"),
         "not_on_a_paid_plan": (402, "not_on_a_paid_plan"),
@@ -3435,6 +3447,202 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    # What one upload or import added, for the Lore and Import pages' notice (#3879). DMs only.
+    @app.get("/me/campaigns/{ref}/upload-notice")
+    async def me_upload_notice(
+        ref: str, kind: str, signed: Signed, source: str = Query(alias="id")
+    ) -> dict[str, Any]:
+        """The notice for one upload (`kind` lore or import, and its `id`): counts and times."""
+        session, _token = signed
+        try:
+            return await upload_notice.read(db, session, ref, kind, source)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The campaign start-up wizard (#3955, docs/WIZARD_DESIGN.md): a draft the steps fill in, kept
+    # until Finish. Only the DM who started it (the doors check, in the server it was started in).
+    # The website calls no AI: a document is only opened and counted (`wizard_check`), and the
+    # campaign is made by the bot's finish run. Files travel in the JSON body as base64.
+    wizard_limit = RateLimit(60, count=60)  # saving answers and adding documents, per account
+
+    async def wizard_body(request: Request, session: Session) -> dict[str, Any]:
+        """The JSON body, read with a running size cap (a declared length is not trusted) and
+        parsed away from the event loop. Counted per account before anything is read."""
+        if wizard_limit.take(f"wizard:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > wizard_check.MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="too_big")
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > wizard_check.MAX_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="too_big")
+            chunks.append(chunk)
+        try:
+            body = await asyncio.to_thread(json.loads, b"".join(chunks) or b"{}")
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad_patch") from None
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="bad_patch")
+        return body
+
+    def wizard_refusal(err: RecapError) -> HTTPException:
+        status, detail = recap_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    @app.get("/me/wizard/{guild}")
+    async def me_wizard_get(guild: int, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            found = await wizard.get(db, session, guild)
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {**found, "answers": wizard.to_page(found["answers"])} if found else {}
+
+    @app.post("/me/wizard/{guild}")
+    async def me_wizard_start(guild: int, signed: Signed, request: Request) -> dict[str, str]:
+        session, _token = signed
+        body = await wizard_body(request, session)
+        try:
+            if not await wizard.has_room(
+                db, session, now=int(clock()), enforce_plans=settings.enforce_plans
+            ):
+                raise RecapError("no_room")
+            await wizard.start(db, session, guild, str(body.get("name", "")))
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
+
+    @app.put("/me/wizard/{guild}/step")
+    async def me_wizard_step(guild: int, signed: Signed, request: Request) -> dict[str, str]:
+        session, _token = signed
+        body = await wizard_body(request, session)
+        answers = body.get("answers")
+        try:
+            if not isinstance(answers, dict):
+                raise RecapError("bad_patch")
+            step = body.get("step")
+            await wizard.update(
+                db,
+                session,
+                guild,
+                step,  # type: ignore[arg-type]
+                wizard.from_page(answers),
+            )
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
+
+    @app.post("/me/wizard/{guild}/skip")
+    async def me_wizard_skip(guild: int, signed: Signed, request: Request) -> dict[str, str]:
+        session, _token = signed
+        body = await wizard_body(request, session)
+        try:
+            await wizard.skip(db, session, guild, body.get("step"))  # type: ignore[arg-type]
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
+
+    @app.post("/me/wizard/{guild}/documents")
+    async def me_wizard_document_add(
+        guild: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """Check one document (an upload as base64, pasted text, or a Drive file's id) and keep it
+        in its slot. Answers its name, pages, words and status; the text is never given back."""
+        session, _token = signed
+        body = await wizard_body(request, session)
+        slot, name = str(body.get("slot", "")), str(body.get("name", ""))
+        try:
+            await wizard.get(db, session, guild)  # the draft and the server first
+            if body.get("drive_id"):
+                source, checked = "drive", wizard_check.Checked("", 0, 0, "ok", "")
+            elif "data" in body:
+                raw = wizard_check.decode(body.get("data"))
+                if raw is None:
+                    raise RecapError("bad_document")
+                source, checked = "upload", await wizard_check.check_file(name, raw)
+            else:
+                source, checked = "upload", wizard_check.check_text(str(body.get("text", "")))
+            made = await wizard.add_document(
+                db, session, guild, slot=slot, name=name, source=source,
+                text=checked.text, drive_id=str(body.get("drive_id", "")),
+                pages=checked.pages, words=checked.words, status=checked.status,
+                reason=checked.reason,
+            )  # fmt: skip
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {
+            "id": made, "name": name, "slot": slot, "pages": checked.pages,
+            "words": checked.words, "status": checked.status, "reason": checked.reason,
+        }  # fmt: skip
+
+    @app.delete("/me/wizard/{guild}/documents/{doc}")
+    async def me_wizard_document_remove(guild: int, doc: str, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        try:
+            await wizard.remove_document(db, session, guild, doc)
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
+
+    @app.post("/me/wizard/{guild}/rights")
+    async def me_wizard_rights(guild: int, signed: Signed, request: Request) -> dict[str, str]:
+        session, _token = signed
+        body = await wizard_body(request, session)
+        try:
+            await wizard.confirm_rights(db, session, guild, str(body.get("kind", "")))
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
+
+    @app.post("/me/wizard/{guild}/page-text")
+    async def me_wizard_page_text(guild: int, signed: Signed, request: Request) -> dict[str, Any]:
+        """The pasted campaign page, read for the name and characters it holds. Nothing is
+        stored; an unrecognised page answers empty and the page says so."""
+        session, _token = signed
+        body = await wizard_body(request, session)
+        try:
+            await wizard.get(db, session, guild)  # only a signed-in member of this server
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        text = body.get("text")
+        if not isinstance(text, str) or len(text) > wizard_page.MAX_TEXT:
+            raise HTTPException(status_code=422, detail="bad_document")
+        found = wizard_page.read(text)
+        return {"name": found.name, "characters": list(found.characters)}
+
+    @app.post("/me/wizard/{guild}/finish")
+    async def me_wizard_finish(guild: int, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        try:
+            if not await wizard.has_room(
+                db, session, now=int(clock()), enforce_plans=settings.enforce_plans
+            ):
+                raise RecapError("no_room")
+            return {"id": await wizard.finish(db, session, guild)}
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+
+    @app.get("/me/wizard/{guild}/finish")
+    async def me_wizard_finish_state(guild: int, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await wizard.finish_state(db, session, guild) or {}
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+
+    @app.delete("/me/wizard/{guild}")
+    async def me_wizard_discard(guild: int, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        try:
+            await wizard.discard(db, session, guild)
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+        return {"status": "ok"}
 
     # Make a session's script from the website (#3899): the offer, one press, the wait. DMs only.
     @app.get("/me/campaigns/{ref}/transcripts/{number}/script-offer")

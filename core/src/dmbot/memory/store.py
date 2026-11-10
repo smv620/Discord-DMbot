@@ -110,6 +110,7 @@ from dmbot.memory.models import (
     BACKGROUND_SOURCE,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
+    CLASS,
     CONFIRMED,
     CREATURE_TYPE,
     DEED,
@@ -170,6 +171,7 @@ from dmbot.memory.models import (
     SplitName,
     State,
     TooLateToUndo,
+    Trait,
     WaitingJoin,
     Written,
     check_status_change,
@@ -227,6 +229,35 @@ _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
 )
+
+
+def _trait_rows(w: Changes, entity_id: str, traits: Sequence[Trait]) -> list[dict[str, Any]]:
+    """The rules-link rows for a new character's lineage and classes (#2959 item 3), checked as
+    `set_rule_link` checks one: one lineage (the first), classes without repeats, a known link
+    only with its source. A trait that fails a check is left out; the name is kept."""
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for t in traits:
+        name = clean_text(t.name, LINK_NAME_MAX)
+        source = t.rules_source if t.known else ""
+        if (
+            t.kind not in (SPECIES, CLASS)
+            or not name
+            or (t.known and not 0 < len(source) <= LINK_SOURCE_MAX)
+            or (t.edition is not None and t.edition not in LINK_EDITIONS)
+        ):
+            continue
+        key = (t.kind, source, name_key(name))
+        if key in seen or (t.kind == SPECIES and any(k[0] == SPECIES for k in seen)):
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "id": new_id(), "entity_id": entity_id, "kind": t.kind, "rules_source": source,
+                "name": name, "edition": t.edition, "known": t.known, "created_at": w.now,
+            }
+        )  # fmt: skip
+    return rows
 
 
 async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[str]:
@@ -1337,30 +1368,56 @@ class MemoryStore:
         return _entity(rows[0]) if rows else None
 
     async def ensure_party(self, guild_id: int, campaign_id: str, *, source: str) -> Entity:
-        """The campaign's party, made the first time it is needed: a group named "The party"
-        (the DM can rename it) whose members are its confirmed player characters."""
+        """The campaign's party (#3954: the one entry with the `party` flag): the flagged one, or a
+        group the campaign already uses for the party, flagged, or a new "The party" (the DM can
+        rename it), as `party.fill` finds it. Its members are its confirmed player characters. The
+        DM's own choice here also brings back one they rejected or put aside, the flagged one or
+        else #3036's linked one."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            found = await w.select(ENTITIES, " AND party")
-            if found:
-                if found[0]["status"] != CONFIRMED:  # forgotten, then wanted again
-                    revived = await w.update(ENTITIES, found[0]["id"], {"status": CONFIRMED})
-                    return _entity(revived)
-                return _entity(found[0])
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(), "type": "faction", "name": PARTY_NAME, "description": "",
-                    "status": CONFIRMED, "merged_into": None, "source": source,
-                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
-                    "unique_item": None, "audience_limited": False, "party": True,
-                },
-            )  # fmt: skip
-            await w.insert(
-                ALIASES, _new_alias(w, row["id"], PARTY_NAME, "full", CONFIRMED, False, None)
-            )
+            found = await party_mod.flagged(w)
+            if found is not None and found["status"] != CONFIRMED:  # (the DM wants it again)
+                await w.update(ENTITIES, found["id"], {"status": CONFIRMED})
+            elif found is None:
+                gone = sorted(
+                    await w.select(
+                        ENTITIES, " AND source = %s AND type = 'faction' AND status = %s",
+                        [PARTY_SOURCE, REJECTED],
+                    ),
+                    key=lambda r: (r["created_at"], r["id"]),
+                )  # fmt: skip
+                if gone:  # (#3036's party, rejected: the DM's press brings it back, flagged)
+                    await w.update(ENTITIES, gone[0]["id"], {"status": CONFIRMED})
+            filled = await party_mod.fill(w)
+            party_id = filled.party_id or await party_mod._make(w)
+            row = await w.get(ENTITIES, party_id)
+            if row is None:
+                raise MemoryRuleError(NOT_FOUND)
             return _entity(row)
+
+    async def make_party(self, guild_id: int, campaign_id: str) -> party_mod.Filled:
+        """The party of a campaign (#3954): made with every new campaign, and once for each
+        campaign that has none (the fill at the bot's start). The DM's write, one change (one
+        Undo); nothing is written when it is there already. Counts the knower rows a party entry
+        holds (Supervisor's ruling: the count first, then a follow-up turns them into the member
+        characters' own rows)."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            filled = await party_mod.fill(w)
+            held = 0
+            if filled.party_id is not None:
+                cur = await w.conn.execute(
+                    "SELECT (SELECT count(*) FROM memory_knowers k WHERE k.guild_id = p.guild_id"
+                    "  AND k.campaign_id = p.campaign_id AND k.perspective_id = p.id)"
+                    " + (SELECT count(*) FROM memory_alias_knowers a WHERE a.guild_id = p.guild_id"
+                    "  AND a.campaign_id = p.campaign_id AND a.perspective_id = p.id) AS n"
+                    " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
+                    " AND p.entity_id = %s",
+                    (guild_id, campaign_id, filled.party_id),
+                )
+                row = await cur.fetchone()
+                held = int(row["n"]) if row else 0
+            return party_mod.Filled(filled.step, filled.party_id, held, filled.both)
 
     async def add_deed(
         self,
@@ -2236,10 +2293,12 @@ class MemoryStore:
                 folded.append(m.entity_id if added else None)
             ids: list[str | None] = []
             entities: list[dict[str, Any]] = []
+            links: list[dict[str, Any]] = []
             for n in names:
                 check_named(n.type, n.name)
                 kind, role = resolve_kind(n.type, n.role)
                 onto.active_type(kind)
+                is_character = onto.is_a(kind, "character")  # (`kind` is reused for aliases below)
                 _check_role(onto, kind, role, None)
                 # A waiting suggestion may be read as a player character (#3553: the text says so);
                 # it is confirmed only once the DM says who plays it. Anything else needs a player.
@@ -2283,10 +2342,14 @@ class MemoryStore:
                     )
                 used |= seen
                 ids.append(entity_id)
+                if n.traits and is_character:
+                    links.extend(_trait_rows(w, entity_id, n.traits))
             # Two statements however long the list (#253): the entries, then all their
             # names, so the campaign's write lock is held for a moment, not seconds.
             await w.insert_many(ENTITIES, entities)
             await w.insert_many(ALIASES, aliases)
+            if links:  # (a new character's lineage and classes, in the same change: #2959)
+                await w.insert_many(RULE_LINKS, links)
             return Written(ids + folded, w.batch)
 
     async def undo_names(self, guild_id: int, campaign_id: str, batch: int) -> Written[None]:
@@ -2302,7 +2365,10 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT bool_and(op = 'insert' AND source = 'dm' AND table_name IN"
-                " ('memory_entities', 'memory_aliases')) AS names_only, count(*) AS n"
+                " ('memory_entities', 'memory_aliases', 'memory_rule_links'))"
+                # (a name or another name must be in it: a batch of rules links alone is no list)
+                " AND bool_or(table_name IN ('memory_entities', 'memory_aliases')) AS names_only,"
+                " count(*) AS n"
                 " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
                 (*w.ids, batch),
             )
@@ -2796,13 +2862,20 @@ class MemoryStore:
             return {(str(r["entity_id"]), name_key(str(r["text"]))) for r in await cur.fetchall()}
 
     async def record_link_source(
-        self, guild_id: int, campaign_id: str, relation_id: str, label: str, quote: str = ""
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        label: str,
+        quote: str = "",
+        inferred: str = "",
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
         a connection that has one keeps the first. `quote`: the reader's own quote for the line
-        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone. Nothing
-        else about the upload is stored."""
+        (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone.
+        `inferred`: why DMbot inferred it (#2959 item 5), "" for a stated one, so the "Why?" never
+        reads an inference as the DM's own text. Nothing else about the upload is stored."""
         label = clean_text(label)[:120]
         # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
         quote = " ".join(
@@ -2816,8 +2889,8 @@ class MemoryStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " quote, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_relations"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " quote, created_at, inferred_reason) SELECT %s, %s, id, %s, %s, %s, %s"
+                " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
@@ -2825,6 +2898,7 @@ class MemoryStore:
                     label,
                     quote,
                     int(time.time()),
+                    " ".join(inferred.split())[:80],
                     guild_id,
                     campaign_id,
                     relation_id,
@@ -2833,18 +2907,66 @@ class MemoryStore:
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
-    ) -> tuple[str, str] | None:
-        """(the upload's label, the reader's quote) a connection was kept from (#2946, #3606), or
-        None. A DM-only reader, as the website's link-sources door is: the quote is the DM's own
-        text. Read by Discord's connection page for its "Why?"."""
+    ) -> tuple[str, str, str] | None:
+        """(the upload's label, the reader's quote, why DMbot inferred it or "") a connection was
+        kept from (#2946, #3606, #2959 item 5), or None. A DM-only reader, as the website's
+        link-sources door is: the quote is the DM's own text. Read by Discord's connection page
+        for its "Why?"."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
-                "SELECT label, quote FROM memory_link_sources"
+                "SELECT label, quote, inferred_reason FROM memory_link_sources"
                 " WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s",
                 (*scope.ids, relation_id),
             )
             row = await cur.fetchone()
-        return None if row is None else (str(row["label"]), str(row["quote"] or ""))
+        if row is None:
+            return None
+        return str(row["label"]), str(row["quote"] or ""), str(row["inferred_reason"] or "")
+
+    async def add_npc_guesses(
+        self, guild_id: int, campaign_id: str, guesses: Sequence[tuple[str, str, float]]
+    ) -> int:
+        """DMbot's guesses that an NPC or a group knows a lore name, (entry, knower, certainty),
+        kept waiting until the DM confirms the name (#2959; `knowers.apply_waiting_guesses`).
+        Ids and a number only. A pair whose entry or knower is gone, or that waits already, is
+        left out. Returns how many are new."""
+        rows = [(e, k, round(c, 2)) for e, k, c in guesses if e != k and 0.0 < c < 1.0]
+        if not rows:
+            return 0
+        added = 0
+        now = int(time.time())
+        async with self._db.guild(guild_id) as conn:
+            for entity_id, knower_id, sure in rows:
+                cur = await conn.execute(
+                    "INSERT INTO memory_npc_guesses (guild_id, campaign_id, entity_id, knower_id,"
+                    " confidence, created_at) SELECT %s, %s, e.id, k.id, %s, %s"
+                    " FROM memory_entities e JOIN memory_entities k"
+                    " ON k.guild_id = e.guild_id AND k.campaign_id = e.campaign_id AND k.id = %s"
+                    " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                    " ON CONFLICT DO NOTHING",
+                    (guild_id, campaign_id, sure, now, knower_id, guild_id, campaign_id,
+                     entity_id),
+                )  # fmt: skip
+                added += cur.rowcount
+        return int(added)
+
+    async def add_guessed_knowers(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_id: str,
+        guesses: Mapping[str, float],
+        *,
+        source: str,
+    ) -> Written[int]:
+        """DMbot's guesses of which NPCs and groups know a statement the DM just kept (a lore
+        connection, #2959): `knowers.add_guessed`, in a change of its own (its Undo takes them
+        back). Only on the DM's own press."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM's press keeps DMbot's guesses.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await knowers.add_guessed(w, kind, statement_id, guesses), w.batch)
 
     async def _confirm_group_memberships(self, w: Changes, entity_id: str) -> None:
         """A name the DM just confirmed takes the memberships the group button decided for it
@@ -2873,6 +2995,8 @@ class MemoryStore:
             )
             if status == CONFIRMED and source == DM:
                 await self._confirm_group_memberships(w, entity_id)
+                # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
+                await knowers.apply_waiting_guesses(w, entity_id)
             await _forget_quotes(
                 w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
             )
@@ -6633,19 +6757,62 @@ async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str
         await w.update_rows(ENTITIES, changed)
 
 
+async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
+    """The live, confirmed connections between these two entries, either way round, each with
+    whether the story holds it back (#2404). For #3975: a session claim the reader could only file
+    under the catch-all, beside a held-back one, may be that same connection in other words, so it
+    is written held back too; a second, shown row would show it whatever its ends. DMbot never
+    guesses which held-back one it means (a "brother" claim is not the "father" row); the DM shows
+    it when the players should see it."""
+    rows = await w.select(
+        RELATIONS,
+        " AND status = %s AND to_session_at IS NULL"
+        " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))",
+        [CONFIRMED, a, b, b, a],
+    )
+    return {str(r["id"]): bool(r["unrevealed"]) for r in rows}
+
+
+async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
+    """A held-back connection the table has now stated is shown to the players (#3963 c, the
+    owner's rule: what is said at the table is known to the party). Called when a session's claim
+    that the session reader extracted becomes this connection: the stricter of the two rules
+    Supervisor weighed, never two names said close together. Only a confirmed, live connection
+    that is not secret, and only when both its ends are shown already (the DM's own 👁️ Reveal has
+    the same check), in the caller's change, so one Undo takes both back. Returns whether it was
+    shown."""
+    row = await w.get(RELATIONS, relation_id)
+    if (
+        row is None
+        or not row["unrevealed"]
+        or row["secret"]
+        or row["status"] != CONFIRMED
+        or row["to_session_at"] is not None
+    ):
+        return False
+    ends = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited AND NOT unnamed",
+        [[row["subject_id"], row["object_id"]]],
+    )
+    if len(ends) < 2:
+        return False
+    await w.update(RELATIONS, relation_id, {"unrevealed": False})
+    return True
+
+
 def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: str) -> str | None:
     """Why this companion link is not allowed, or None (#3176, Supervisor's ruling). The companion
     is a character who is not a player character (a player character is who it travels *with*);
     it travels with a player character or with the party entry and nothing else. The party is a
     point of view, so a document (the lore and backstory readers, or anything but the DM and the
     session reader) can never point at it: it can only name the player character. The party is
-    found by its source, as `party.find_or_make` does (the entity table's `party` flag is for
-    standing, not this rule)."""
+    the entry with the `party` flag, the one marker (#3954)."""
     if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
         return "Only a character who is not a player character travels with the party."
     if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
         return None
-    if target["type"] == "faction" and target["source"] == PARTY_SOURCE:
+    if target["type"] == "faction" and target["party"]:
         if source in (DM, "extractor"):
             return None
         return "Only the DM or a session can say who travels with the party."

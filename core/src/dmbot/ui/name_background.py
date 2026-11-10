@@ -34,11 +34,13 @@ from dmbot.memory import (
     lore_pc_names,
     lore_read,
     pronouns,
+    traits_read,
     who_ask,
     who_resolve,
 )
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import spellings as place_spellings_mod
+from dmbot.memory import trait_offers as trait_offers_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
@@ -55,15 +57,18 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
+    CLASS,
     CONFIRMED,
     DESCRIPTION_MAX,
     DM,
     NEEDS_A_LOOK,
     PROPOSED,
+    SPECIES,
     MemoryRuleError,
     MoreNames,
     NewName,
     Relation,
+    Trait,
     name_key,
 )
 from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
@@ -628,7 +633,9 @@ class BackgroundOffer(_Menu):
                     questions=done.questions,
                     changes=done.changes,
                     suggested=done.suggested,
-                    knowledge_note=done.knowledge_note,
+                    # (the lineage questions' count rides on the note: count only, as the
+                    # question itself opens privately from ❓ Questions for you, #3926)
+                    knowledge_note=done.knowledge_note + trait_questions_line(done.trait_questions),
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
             # (#3314). When the summary above was posted in the DM Bot channel, its names and
@@ -681,6 +688,9 @@ class BackgroundRead:
     # kept; the DM then has today's Add all summary.
     notice: Any = None
     questions_left: int = 0
+    # A lineage or class the lore gives a character the campaign has already (#3926): how many new
+    # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
+    trait_questions: int = 0
 
 
 async def read_background(
@@ -797,6 +807,14 @@ async def read_background(
         found = [
             replace(f, also=tuple(dict.fromkeys((*f.also, *f.secret))), secret=()) for f in found
         ]
+    # A new character's lineage and classes the text states (#2959 item 3), stored with its name.
+    # The campaign's homebrew lineages come before the rules (#3926): one read, only with traits.
+    homebrew = await _homebrew_lineages(bot, campaign) if read.trait_lines else {}
+    trait_offers: list[traits_read.Found] = []  # (for names the campaign has: questions, #3926)
+    traits = _traits_of(
+        read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
+        offers=trait_offers,
+    )  # fmt: skip
     stored = await store(
         memory,
         campaign,
@@ -809,6 +827,7 @@ async def read_background(
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
         source=upload.label,
+        traits=traits,
     )
     # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
     # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
@@ -835,6 +854,14 @@ async def read_background(
     )
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
+    # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
+    # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
+    link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
+    if getattr(getattr(bot, "settings", None), "story_npc_guess_on", False):
+        link_guesses = await _npc_guesses(
+            memory, campaign, found, read.links, upload.text, player_keys, ai,
+            until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        )  # fmt: skip
     queued = await queue_links(
         bot,
         memory,
@@ -861,6 +888,7 @@ async def read_background(
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
         world_level=lore_knowledge.level_of(choice),
+        npc_guesses=link_guesses,
     )
     ready = await count_ready(bot, campaign, keys)
     changes = await count_changes(bot, memory, campaign, keys)
@@ -908,7 +936,67 @@ async def read_background(
         )
         if added is not None:
             done.notice, done.questions_left = added
+    if trait_offers:
+        notice_id = done.notice.id if done.notice is not None else None
+        done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
+        done.questions_left += done.trait_questions
     return done
+
+
+def trait_questions_line(n: int) -> str:
+    """The count line for an upload whose lineage questions wait (#3926); "" for none."""
+    if not n:
+        return ""
+    return (
+        f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
+        " in ❓ Questions for you."
+    )
+
+
+async def ask_traits(
+    memory: MemoryStore,
+    campaign: Campaign,
+    offers: Sequence[traits_read.Found],
+    upload: str,
+    notice_id: str | None,
+) -> int:
+    """The lineages and classes the lore gives characters the campaign has already (#3926,
+    Supervisor's ruling): one that would change something (another lineage, or their first; a class
+    they don't have) waits as a question for the DM, never written silently. Only a confirmed
+    character is asked about, and a name two entries share is not (DMbot can't tell whose). Returns
+    how many new questions wait. Never raises: the read is done; the log gets the error type."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        whose: dict[str, set[str]] = {}
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if who is not None and who.status == CONFIRMED and who.role is not None:
+                whose.setdefault(name_key(entry.text), set()).add(who.id)
+        ids = {o.name: next(iter(whose[name_key(o.name)])) for o in offers
+               if len(whose.get(name_key(o.name), ())) == 1}  # fmt: skip
+        if not ids:
+            return 0
+        links = await memory.rule_links(campaign.guild_id, campaign.id, set(ids.values()))
+        lineage = {link.entity_id: link.name for link in links if link.kind == SPECIES}
+        classes: dict[str, list[str]] = {}
+        for link in links:
+            if link.kind == CLASS:
+                classes.setdefault(link.entity_id, []).append(link.name)
+        wanted = [
+            trait_offers_mod.Offer(ids[o.name], o.trait, o.quote, upload)
+            for o in offers
+            if o.name in ids
+            and trait_offers_mod.changes_something(
+                o.trait, lineage.get(ids[o.name]), classes.get(ids[o.name], ())
+            )
+        ]
+        if not wanted:
+            return 0
+        store = trait_offers_mod.TraitOfferStore(memory._db)
+        return await store.offer(campaign.guild_id, campaign.id, wanted, notice_id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Lineage questions couldn't be kept (%s)", type(exc).__name__)
+        return 0
 
 
 def _link_key(a: str, how: str, b: str) -> tuple[str, str, str]:
@@ -931,14 +1019,8 @@ async def _world(
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
 
-    def named(f: bg.Found) -> str:
-        parts = [f"also called {', '.join(f.also)}" if f.also else ""]
-        parts.append(f"hidden identity {', '.join(f.secret)}" if f.secret else "")
-        extra = "; ".join(p for p in parts if p)
-        return f.name + (f" ({extra})" if extra else "")
-
-    lines = [lore_knowledge.line("name", named(f), f.quote) for f in found] + [
-        lore_knowledge.line("connection", f"{c.a} — {c.how} — {c.b}", c.quote) for c in links
+    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
+        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
     ]
 
     def sorting(done: int, total: int) -> None:
@@ -1097,6 +1179,8 @@ async def store(
     world: Collection[str] = (),
     fold_secret: bool = False,
     source: str = "",
+    traits: Mapping[str, Sequence[Trait]] | None = None,
+    made: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -1107,7 +1191,8 @@ async def store(
     not held back from them, with its other names, so the old flags show it once the DM confirms
     it and the who-knows list follows the flags (nothing is written to that list here).
     `fold_secret`: only when the DM chose "everyone knows it", a disguise the text gives is just
-    another public name.
+    another public name. `traits` (#2959 item 3): a new character's lineage and classes, by its
+    name's key, written in the same change as the name.
     `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
     known by that character, as a kept connection does; with none, it is the DM's alone. That is
     set after the names, in changes of its own: Undo of the names removes the name and, with it,
@@ -1143,6 +1228,7 @@ async def store(
                 # the players' line (#2967 slice a): only when the DM said the players know all of
                 # it; a spoilers upload, a smart guess and a backstory never fill it
                 players_text=item.about if known and fold_secret else "",
+                traits=tuple((traits or {}).get(name_key(item.name), ())),
             )
         )
         items.append(item)
@@ -1159,6 +1245,8 @@ async def store(
     for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
+            if made is not None:  # (each new name's key to its entry, for the NPC guesses)
+                made[name_key(item.name)] = entity_id
             if held is not None and text:
                 held.put(
                     campaign.guild_id,
@@ -1169,6 +1257,122 @@ async def store(
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
     return stored
+
+
+def inferred_line(reason: str) -> str:
+    """The card's line for a connection DMbot inferred (#2959 item 5), or "": the text implies it
+    but doesn't say it, so it is DMbot's suggestion, never the DM's own words."""
+    if not reason:
+        return ""
+    return f"🤔 **DMbot's guess:** {_md(reason)} (your lore doesn't say so)\n"
+
+
+async def _npc_guesses(
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: Sequence[bg.Found],
+    links: Sequence[bg.Connection],
+    text: str,
+    players: Collection[str],
+    ai: Any,
+    *,
+    until: float | None = None,
+) -> dict[tuple[str, str, str], dict[str, float]]:
+    """DMbot's guess of which of the read's own NPCs and groups know each name and connection
+    (`lore_knowledge.guess_npcs`, #2959 slice 3), after the names are stored. A name's guesses wait
+    for the DM's yes (`MemoryStore.add_npc_guesses`); the connections' are returned, by their ends'
+    keys and kind, to ride on their waiting rows. Never a player character, never someone outside
+    the read, and never a reason to stop the read: a failure is logged by its type."""
+    people = [f for f in found if f.kind in ("npc", "faction") and name_key(f.name) not in players]
+    if not people or ai is None:
+        return {}
+    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
+        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
+    ]
+    try:
+        got = await lore_knowledge.guess_npcs(ai, text, lines, [p.name for p in people], until)
+        if not got:
+            return {}
+        ids = {
+            name_key(e.name): e.id
+            for e in await memory.entities(
+                campaign.guild_id, campaign.id, statuses=("proposed", "confirmed")
+            )
+        }
+        knower = [ids.get(name_key(p.name)) for p in people]
+        waiting: list[tuple[str, str, float]] = []
+        out: dict[tuple[str, str, str], dict[str, float]] = {}
+        for i, who in got.items():
+            mine: dict[str, float] = {}
+            for j, sure in who.items():
+                k = knower[j] if j < len(knower) else None
+                if k is not None:
+                    mine[k] = sure
+            if not mine:
+                continue
+            if i < len(found):
+                entry = ids.get(name_key(found[i].name))
+                if entry is not None:
+                    waiting.extend((entry, k, c) for k, c in mine.items() if k != entry)
+            elif i - len(found) < len(links):
+                c = links[i - len(found)]
+                out[(name_key(c.a), c.how, name_key(c.b))] = mine
+        if waiting:
+            await memory.add_npc_guesses(campaign.guild_id, campaign.id, waiting)
+        log.info("NPC guesses: %d for names, %d for connections", len(waiting), len(out))
+        return out
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("NPC guesses stopped (%s)", type(exc).__name__)
+        return {}
+
+
+def _traits_of(
+    lines: Sequence[str],
+    text: str,
+    found: Sequence[bg.Found],
+    known: Collection[str],
+    campaign: Campaign,
+    dropped: Counter[str],
+    homebrew: Mapping[str, str] | None = None,
+    *,
+    offers: list[traits_read.Found] | None = None,
+) -> dict[str, list[Trait]]:
+    """The checked traits of this read's new names, by name key (`traits_read`). A lineage is found
+    in the campaign's homebrew first (`homebrew`, #3926), then in the rules newest first, in the
+    campaign's target then fallback ruleset; a 2014-only entry keeps its edition, so it shows
+    `[Legacy 2014]`. A trait for a name the campaign has already goes into `offers` (#3926), to
+    be asked about. Counts only, in the read's dropped counts."""
+    if not lines:
+        return {}
+    resolve = traits_read.rules_resolver(
+        campaign.target_ruleset, campaign.fallback_ruleset, homebrew
+    )
+    names = [n for f in found for n in (f.name, *f.also)]
+    out: dict[str, list[Trait]] = {}
+    for got in traits_read.read_traits(
+        lines, text, names, resolve, dropped, existing=known, offers=offers
+    ):
+        out.setdefault(name_key(got.name), []).append(got.trait)
+    # (a trait given under another name of the same entry belongs to that entry's main name)
+    for f in found:
+        for other in f.also:
+            if name_key(other) in out and name_key(other) != name_key(f.name):
+                out.setdefault(name_key(f.name), []).extend(out.pop(name_key(other)))
+    return out
+
+
+async def _homebrew_lineages(bot: Any, campaign: Campaign) -> dict[str, str]:
+    """The lineages this campaign's homebrew names (#3926), for the trait lookup: its own usable
+    entries, then the packs and shared sets it follows (`HomebrewReader`, one read per upload).
+    Never another campaign's. A failed read gives none, so the rules are looked in as before."""
+    reader = getattr(bot, "homebrew_reader", None)
+    if reader is None:
+        return {}
+    try:
+        return traits_read.homebrew_lineages(await reader.list(campaign.guild_id, campaign.id))
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Homebrew lineages couldn't be read (%s)", type(exc).__name__)
+        return {}
 
 
 async def _secret_names_known_by(
@@ -1410,6 +1614,10 @@ async def announce(
             from dmbot.dm_screen import links_ready  # (it imports this module's neighbours)
 
             asks.append(partial(links_ready.ReadyButton, campaign.id))
+    if done.trait_questions:  # (the question itself opens privately, for a DM: #3926)
+        from dmbot.ui.trait_questions import TraitQuestionsButton
+
+        asks.append(partial(TraitQuestionsButton, campaign.id))
     posted: discord.Message | None = await bot.post_upload_notice(
         campaign, notice, done.questions_left, asks
     )
@@ -1520,6 +1728,7 @@ async def queue_links(
     world_links: Collection[tuple[str, str, str]] = (),
     world_all: bool = False,
     world_level: int = lore_knowledge.SURE,
+    npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -1726,11 +1935,16 @@ async def queue_links(
                 c.quote,
                 c.secret or how == DISGUISED_AS,
                 c.words,
-                truth,
+                truth and not c.inferred,  # (DMbot's inference is never pinned as 100% truth)
                 upload,
                 c.decided,
                 known_by,
                 world,
+                inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
+                # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
+                npc_guesses=dict(
+                    (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})
+                ),
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
@@ -2218,8 +2432,11 @@ class ConnectionOffer(_Menu):
     def _this_upload(ready: list[Waiting]) -> list[Waiting]:
         """What Keep all keeps (#2650): the ready connections from the same upload as the first
         card, an old one (queued before uploads had names, upload "") counting as an upload of
-        its own, so a labelled backstory is never kept unseen and neither is an old one."""
-        return [w for w in ready if w.upload == ready[0].upload] if ready else []
+        its own, so a labelled backstory is never kept unseen and neither is an old one. One DMbot
+        inferred is never among them (#2959 item 5): it waits for its own ✅ Keep."""
+        if not ready:
+            return []
+        return [w for w in ready if w.upload == ready[0].upload and not w.inferred]
 
     def _set(self, ready: list[Waiting]) -> None:
         mine = self._this_upload(ready)
@@ -2291,6 +2508,7 @@ class ConnectionOffer(_Menu):
                 + self._change_line(c, how)
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
+                + inferred_line(c.inferred)
                 + f"{note}"
                 + self._scope(c)
             )
@@ -2299,13 +2517,16 @@ class ConnectionOffer(_Menu):
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
+            + inferred_line(c.inferred)
             + f"{note}"
             + self._scope(c)
         )
 
     def _scope(self, c: Waiting) -> str:
         """Which connections ✅ Keep all keeps, when the card is from a named upload (#2650)."""
-        mine = [w for w in self.shown if w.upload == c.upload] if c.upload else []
+        mine = (
+            [w for w in self.shown if w.upload == c.upload and not w.inferred] if c.upload else []
+        )
         if len(mine) < 2:
             return ""
         keeps = f"{len(mine)} from {_md(c.upload)}"
@@ -2402,12 +2623,25 @@ class ConnectionOffer(_Menu):
                 )
                 return
             made = kept.value[0]
+            # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred
+            # this"): only a connection made just now, and never a reason to lose it.
+            if c.upload and made.created_at >= now:
+                try:
+                    await memory.record_link_source(
+                        campaign.guild_id, campaign.id, made.id, c.upload, c.quote,
+                        inferred=c.inferred,
+                    )  # fmt: skip
+                except Exception as exc:
+                    log.warning(
+                        "A kept connection's source could not be stored (%s)", type(exc).__name__
+                    )
+            await keep.keep_guesses(memory, campaign.guild_id, campaign.id, c, made, now)
             # (only a connection made just now: an older twin's rows are the DM's, not a guess's)
             if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
                 await keep.mark_guess(
                     memory, campaign.guild_id, campaign.id, "connection", [made.id]
                 )
-            if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
+            if c.truth and not c.inferred:  # the DM called this upload 100% truth (#2447)
                 try:
                     await memory.pin(
                         campaign.guild_id, campaign.id, kept.value[0].id, True, source=DM
@@ -2450,6 +2684,7 @@ class ConnectionOffer(_Menu):
             if self.current is None:
                 return
             todo = [w for w in todo if w.upload == self.current.upload]  # (this backstory only)
+            guessed = sum(1 for w in todo if w.inferred)  # (left waiting: Keep all never keeps one)
             self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
             changed(interaction, campaign)
             self.kept += len(self.all_done.kept)
@@ -2462,6 +2697,12 @@ class ConnectionOffer(_Menu):
                 if self.all_done.refused
                 else ""
             )
+            if guessed:
+                refused += (
+                    f" {guessed} of DMbot's guess{'' if guessed == 1 else 'es'} still "
+                    f"{'needs' if guessed == 1 else 'need'} your yes: press 📜 Check the "
+                    "connections."
+                )
             waiting = self.all_done.worked_out  # (every one waiting now, not only the new ones)
             worked_out = (
                 f" {waiting} worked-out family link{'' if waiting == 1 else 's'} now "

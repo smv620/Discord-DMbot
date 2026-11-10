@@ -14,9 +14,11 @@ dropped.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import reputation_words
@@ -29,6 +31,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
+INFERRED_MAX = (
+    80  # why DMbot inferred a connection (#2959 item 5): a short reason, the column's limit
+)
 DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the column's limit)
 DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
 DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
@@ -65,6 +70,12 @@ class NewLink:
     known_by: str = ""
     # Every player character knows it once kept (#2959): the upload's choice, or the AI's call.
     world: int = 0  # lore_knowledge.NOT_KNOWN/SURE/GUESS
+    # DMbot inferred it, with why (#2959 item 5): "" for a connection the text states. Never kept
+    # without the DM's press (the sure step and Keep all leave it out).
+    inferred: str = ""
+    # DMbot's guess of which NPCs and groups know it (#2959 slice 3): entry id to certainty, below
+    # 1.0, written as knowers only once it is kept. Empty when DMBOT_STORY_NPC_GUESS is off.
+    npc_guesses: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +140,32 @@ class Waiting:
     decided: str = ""  # how a pronoun was settled (#2790), else ""
     known_by: str = ""  # the character who knows it once kept (#2935), else ""
     world: int = 0  # how the players know it once kept: lore_knowledge.NOT_KNOWN/SURE/GUESS (#2959)
+    inferred: str = ""  # why DMbot inferred it (#2959 item 5), else "": only ever kept by a press
+    # DMbot's guess of which NPCs and groups know it, entry id to certainty (#2959 slice 3)
+    npc_guesses: Mapping[str, float] = field(default_factory=dict)
+
+
+MAX_GUESSES = 3  # NPCs and groups guessed to know one connection (#2959 slice 3)
+
+
+def _guesses(raw: object) -> dict[str, float]:
+    """A connection's NPC guesses as stored (entry id to certainty, below 1.0), whatever came in:
+    a few ids of 32 hex characters and a number each; anything else is left out."""
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in raw.items():
+        if (
+            isinstance(key, str)
+            and len(key) == 32
+            and isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and 0.0 < value < 1.0
+        ):
+            out[key] = round(float(value), 2)
+        if len(out) >= MAX_GUESSES:
+            break
+    return out
 
 
 class BackstoryLinks:
@@ -161,19 +198,30 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
-                    " known_by, world) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s) ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
+                    " known_by, world, inferred_reason, npc_guesses) VALUES (%s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
-                     int(link.world)),
+                     int(link.world), link.inferred[:INFERRED_MAX],
+                     Jsonb(_guesses(link.npc_guesses))),
                 )  # fmt: skip
                 added += cur.rowcount
-                if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
+                if cur.rowcount == 0 and link.truth and not link.inferred:
+                    # already waiting: the new word is 100% truth (never for DMbot's inference)
                     await conn.execute(
                         "UPDATE backstory_links SET truth = true WHERE guild_id = %s"
                         " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
-                        " AND object_id = %s",
+                        " AND object_id = %s AND inferred_reason = ''",
+                        (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
+                    )
+                if cur.rowcount == 0 and not link.inferred:
+                    # already waiting as DMbot's inference: a text that states it makes it stated
+                    await conn.execute(
+                        "UPDATE backstory_links SET inferred_reason = '' WHERE guild_id = %s"
+                        " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
+                        " AND object_id = %s AND inferred_reason <> ''",
                         (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
                     )
         return added
@@ -378,7 +426,7 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told, decided, known_by, world"
+                " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -432,7 +480,8 @@ class BackstoryLinks:
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
-                        str(r["known_by"]), int(r["world"]),
+                        str(r["known_by"]), int(r["world"]), str(r["inferred_reason"]),
+                        _guesses(r["npc_guesses"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -442,12 +491,14 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told, decided, known_by, world)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " told, decided, known_by, world, inferred_reason, npc_guesses)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s)"
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
-                     r["decided"], r["known_by"], int(r["world"])),
+                     r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"],
+                     Jsonb(_guesses(r["npc_guesses"]))),
                 )  # fmt: skip
         return out
 
@@ -477,9 +528,9 @@ class BackstoryLinks:
     async def take_ready_notices(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
     ) -> Taken:
-        """The connections that became ready since the DM screen last said so (#2650), as a count
+        """The connections that became ready since they were last announced (#2650), as a count
         for each upload ("" for an old one), marked told as they are taken: said once, even if two
-        rounds overlap. Counts only: the DM screen never shows the connections themselves."""
+        rounds overlap. Counts only: the announcement never shows the connections themselves."""
         waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
         fresh = [w for w in waiting if w.ready and not w.told and w.id]
         if not fresh:
@@ -497,6 +548,18 @@ class BackstoryLinks:
                 ids.append(str(row["id"]))
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
         return Taken(counts, ids)
+
+    async def ready_counts(
+        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+    ) -> dict[str, int]:
+        """How many connections are ready to check now, for each upload ("" for an old one), told
+        or not: the live message in the DM Bot channel shows the whole count (#3874). Read-only;
+        counts only."""
+        counts: dict[str, int] = {}
+        for link in await self.waiting(guild_id, campaign_id, symmetric=symmetric):
+            if link.ready:
+                counts[link.upload] = counts.get(link.upload, 0) + 1
+        return counts
 
     async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
         """These connections were just announced some other way (an upload's own summary)."""

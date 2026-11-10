@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
+import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
@@ -75,6 +76,15 @@ export function saidFromHash(hash: string): string {
   return raw.length > 0 && raw.length <= 80 ? raw : "";
 }
 
+/** The upload or import the notice's "Names added by this upload" link was for, from `#from=<the source's id>` (#3879): the page
+ * opens on the Partial campaign filter with that one source ticked. An id is letters, digits and dashes; anything else shows the
+ * whole campaign. Like `#said=` it is a fragment, so it never reaches the site's logs. */
+export function fromHash(hash: string): string {
+  if (!hash.startsWith("#")) return "";
+  const raw = new URLSearchParams(hash.replace(/^#/, "")).get("from")?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : "";
+}
+
 export default function Names({ api, path, hash = "" }: { api: AccountApi; path: string; hash?: string }) {
   const ref = namesRefFromPath(path);
   const sentFor = useRef(saidFromHash(hash)); // the name the link was for, until it has been opened
@@ -84,7 +94,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const [q, setQ] = useState(() => saidFromHash(hash));
   // Once read, the name leaves the address bar, so it is not left in the history or shared by a screenshot.
   useEffect(() => {
-    if (saidFromHash(hash) !== "" && typeof window !== "undefined" && window.location.hash !== "") {
+    if ((saidFromHash(hash) !== "" || fromHash(hash) !== "") && typeof window !== "undefined" && window.location.hash !== "") {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,10 +106,18 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
   // Partial campaign (#3675): the sessions and lore ticked; none is the full campaign.
-  const [sources, setSources] = useState<string[]>([]);
+  const [sources, setSources] = useState<string[]>(() => (AUTO_ADD_LIVE && NAME_SOURCES_LIVE && fromHash(hash) !== "" ? [fromHash(hash)] : []));
   const sourceKey = sources.join(",");
   // Another campaign never inherits the ticks of this one.
-  useEffect(() => setSources([]), [ref]);
+  const firstRef = useRef(true);
+  useEffect(() => {
+    // A different campaign clears the filter (the link's own source is only for the campaign it was made for).
+    if (firstRef.current) {
+      firstRef.current = false;
+      return;
+    }
+    setSources([]);
+  }, [ref]);
   // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
   // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
   // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).

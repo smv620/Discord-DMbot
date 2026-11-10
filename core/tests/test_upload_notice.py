@@ -36,6 +36,22 @@ class Words(NamesTest):
         self.assertIn("1 question** needs you", un.notice_text("a file", {"npc": 1}, 1))
         self.assertIn("**nothing new**", un.notice_text("a file", {}, 0))
 
+    def test_connections_said_at_the_table_are_counted_never_as_names(self) -> None:
+        """#3963 (c): an import's held-back connections the table stated are shown, and said."""
+        text = un.notice_text("a session", {"npc": 1, "shown": 2}, 0)
+        self.assertIn("**1 name** (1 NPC)", text)
+        self.assertIn("**2 connections** said at the table are now shown to your players", text)
+
+    def test_a_connection_kept_hidden_beside_a_hidden_one_is_said(self) -> None:
+        """#3979: an import's claims kept hidden beside a connection the story hides, never
+        counted as names."""
+        text = un.notice_text("a session", {"held": 1}, 0)
+        self.assertIn("**1 connection** is kept hidden from your players", text)
+        self.assertIn("To show it: open either name, ✏️ Edit a connection…", text)
+        self.assertIn("👁️ Everyone at the table.", text)
+        self.assertIn("**1 name**", un.notice_text("a session", {"npc": 1, "held": 2}, 0))
+        self.assertNotIn("held", text)
+
 
 class Undoing(NamesTest):
     async def asyncSetUp(self) -> None:
@@ -218,9 +234,16 @@ class ImportAdds(NamesTest):
         self.bot.upload_notices = self.notices
         self.bot.lookup = None
         self.bot.post_upload_notice = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={self.MIRA}))  # type: ignore[assignment]
+        self.set_recorded({self.MIRA})
         self.place = await self.scanned("Karsk", "place")
         self.idea = await self.scanned("Wondering", "concept")
+
+    def set_recorded(self, who: set[int]) -> None:
+        """Who counts as recorded in this campaign's imported sessions (`recorded_in`)."""
+        self.bot.consent = SimpleNamespace(  # type: ignore[assignment]
+            recorded_in=AsyncMock(return_value=frozenset(who)),
+            consenting=AsyncMock(return_value=frozenset()),  # (an import must not use this)
+        )
 
     async def scanned(self, name: str, kind: str) -> str:
         made = await self.memory.add_entity(
@@ -318,3 +341,44 @@ class ImportAdds(NamesTest):
         assert found is not None
         self.assertIsNone(found.source_kind)
         self.assertIsNone(found.source_id)
+
+    async def test_a_connection_the_dms_line_states_is_added_with_the_names(self) -> None:
+        from dmbot.bot import DMBot
+        from dmbot.memory.claims import ClaimStore, Extracted
+
+        orrin = await self.scanned("Orrin", "place")
+        self.set_recorded({self.MIRA, DM})
+        await ClaimStore(self.memory).propose(
+            GUILD, self.campaign.id,
+            [Extracted("Karsk", "is in", "Orrin", "", ("1",), "dm_said")],
+            {"1": DM}, opted_in={DM}, prompt_version="p", model="m", session_started_at=5,
+        )  # fmt: skip
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA}, {self.place, orrin}, {"imp1"}, {5}
+        )
+        self.assertTrue(done)
+        notice = self.bot.post_upload_notice.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertEqual(notice.counts.get("connections"), 1)
+        self.assertGreaterEqual(len(notice.changes), 2)  # (the names and the connection: one Undo)
+
+    async def test_a_confirmed_speaker_with_no_discord_account_does_not_stop_the_import(
+        self,
+    ) -> None:
+        from dmbot.bot import DMBot
+
+        self.set_recorded({self.MIRA, -5})  # (-5: confirmed by the uploader, no account)
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA, -5}, {self.place}, {"imp1"}
+        )
+        self.assertTrue(done)
+        self.assertEqual(await self.status(self.place), "confirmed")
+
+    async def test_a_speaker_with_a_no_on_record_adds_nothing(self) -> None:
+        from dmbot.bot import DMBot
+
+        self.set_recorded({self.MIRA})  # (-5 has a "no": recorded_in leaves them out)
+        done = await DMBot._add_sure_import(
+            self.bot, self.campaign, {self.MIRA, -5}, {self.place}, {"imp1"}
+        )
+        self.assertFalse(done)
+        self.assertEqual(await self.status(self.place), "proposed")
