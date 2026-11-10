@@ -310,6 +310,7 @@ class TheParty(OneCampaign):
         self.assertIn("Old Rumour", await self.names())  # (the Guild knows it; Okra is a member)
 
     async def test_a_row_on_the_party_does_not_reach_its_members(self) -> None:
+        self.assertIn("Old Rumour", await self.names())  # (before: through the group)
         await self.sql(
             "UPDATE memory_entities SET party = TRUE WHERE campaign_id = %s AND id = %s",
             self.one.id,
@@ -317,10 +318,13 @@ class TheParty(OneCampaign):
         )
         self.assertNotIn("Old Rumour", await self.names())
 
-    async def test_what_a_member_character_knows_by_its_own_row_is_still_shown(self) -> None:
+    async def test_what_a_member_character_is_told_directly_is_still_shown(self) -> None:
         await self.sql(
             "UPDATE memory_entities SET party = TRUE WHERE campaign_id = %s AND id = %s",
             self.one.id,
             self.guild,
         )
-        self.assertIn("Guarded Vault", await self.names())  # (Okra's own row of 0.0)
+        shown = await self.names()
+        # (Okra's own rows, not the group's: the Guild's entry and the vault he is told of by name)
+        self.assertIn("The Lantern Guild", shown)
+        self.assertIn("Guarded Vault", shown)
