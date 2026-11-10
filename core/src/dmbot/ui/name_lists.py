@@ -42,6 +42,7 @@ from dmbot.memory.name_documents import (
     decode_text,
     kind_of_file,
     max_bytes_for,
+    picture_note,
     too_big_words,
 )
 from dmbot.memory.name_list import (
@@ -564,6 +565,7 @@ class Upload:
     label: str  # "report.pdf", "your list", "the linked page or file"
     document: bool = False  # not meant as a names list: straight to the AI
     source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
+    note: str = ""  # pages that held only pictures, in counts (#4000); "" when none
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)
@@ -572,7 +574,8 @@ _PARSING = READING  # the one limit on documents read at once, shared (document_
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
     async with _PARSING:
         try:
-            return Upload(await read_document(filename, raw), label, True), None
+            text = await read_document(filename, raw)
+            return Upload(text, label, True, note=picture_note(text)), None
         except DocumentError as exc:
             return None, str(exc)
 
