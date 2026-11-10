@@ -83,8 +83,9 @@ class Item:
     player: bool = False
     dm_rank: bool = False  # the DM corrected its rank last: a reading never overwrites that
     group: tuple[str, ...] = ()  # the names merged into it (their stored roles are its own)
-    # The two player characters of a private scene it was said in (#2996 rule 5): "always matters,
-    # always", so it ranks at least Recurring (`parse` holds that floor in code too).
+    # Each private scene it was said in (#2996 rule 5), as its two player characters ("Ash and
+    # Wren"): "always matters, always", so it ranks at least Recurring (`parse` holds that floor
+    # in code, whatever the answer says or leaves out).
     private_with: tuple[str, ...] = ()
 
 
@@ -111,7 +112,7 @@ class Answer:
     verdicts: list[Verdict] = field(default_factory=list)
     new_codes: list[NewCode] = field(default_factory=list)
     lost: Counter[str] = field(default_factory=Counter)
-    raised: int = 0  # ranks the private-scene floor raised to Recurring (#2996 rule 5)
+    raised: int = 0  # verdicts the private-scene floor set to Recurring (#2996 rule 5)
 
 
 def _tag(text: str) -> str:
@@ -179,8 +180,8 @@ def message(items: Sequence[Item]) -> str:
             f"connections: {i.connections}",
         ]
         lines += [f"this session: {_tag(link)}" for link in i.links[:LINKS_MAX]]
-        if i.private_with:  # (names only: what was said there is in the quotes, as for any line)
-            lines.append(f"private scene: {_tag(' and '.join(i.private_with))}")
+        # (names only: what was said there is in the quotes, as for any line)
+        lines += [f"private scene: {_tag(pair)}" for pair in i.private_with[:LINKS_MAX]]
         if i.notes:
             lines.append(f"notes (the DM's side): {_tag(i.notes[:NOTES_CHARS])}")
         lines += [f"said: {_tag(q[:QUOTE_CHARS])}" for q in i.quotes[:QUOTES_MAX]]
@@ -276,6 +277,19 @@ def parse(
         out.lost["role_kept_by_dm"] += sum(c in item.dm_roles for c in ended)
         out.verdicts.append(Verdict(item.entity_id, rank, str(reason), good, stop))
     out.lost["entry_left_out"] += len(by_number) - len(seen)
+    # The floor for an entry said in a private scene whatever the answer did with it: left out, or
+    # refused for a bad rank, reason or roles (the owner's "always", #2996 rule 5).
+    given = {v.entity_id for v in out.verdicts}
+    for item in items:
+        if (
+            item.private_with
+            and item.entity_id not in given
+            and not item.player
+            and not item.dm_rank
+            and item.rank < RECURRING
+        ):
+            out.verdicts.append(Verdict(item.entity_id, RECURRING, PRIVATE_SCENE))
+            out.raised += 1
     return out
 
 

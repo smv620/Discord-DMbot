@@ -66,7 +66,7 @@ class Report:
     codes_matched: int = 0  # new roles that meant one the campaign has: that one was used
     match_failed: int = 0  # the match couldn't be asked: the new roles were added as before
     dropped_for_consent: int = 0
-    private_raised: int = 0  # ranks the private-scene floor raised to Recurring (#2996 rule 5)
+    private_raised: int = 0  # verdicts the private-scene floor set at Recurring (#2996 rule 5)
     unsent: int = 0  # entries not read this time: the call limit, or the run stopped
     stopped: str = ""
     lost: Counter[str] = field(default_factory=Counter)
@@ -79,7 +79,11 @@ class Report:
             f"{self.codes_matched} matched to one held, {self.match_failed} match(es) failed, "
             f"{self.calls} call(s), {self.failed} failed, {self.split} split, "
             f"{self.dropped_for_consent} dropped for consent, {self.unsent} not read"
-            + (f", {self.private_raised} raised for a private scene" if self.private_raised else "")
+            + (
+                f", private-scene floor applied {self.private_raised}"
+                if self.private_raised
+                else ""
+            )
             + (f", stopped: {self.stopped}" if self.stopped else "")
             + (f"; refused: {lost}" if lost else "")
         )
@@ -143,18 +147,19 @@ async def gather(
             (guild_id, campaign_id),
         )
         newest = await cur.fetchall()
-        scenes: list[tuple[int, int, str, str]] = []
+        scenes: list[tuple[int, int, str, str, frozenset[int]]] = []
         if private:
             cur = await conn.execute(
-                "SELECT from_ms, to_ms, first_id, second_id FROM memory_private_scenes"
+                "SELECT from_ms, to_ms, first_id, second_id, speaker_ids FROM memory_private_scenes"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = %s"
                 " AND status = 'kept' AND speaker_ids <@ %s::bigint[]",
                 (guild_id, campaign_id, session_started_at, sorted(set(agreed))),
             )
             scenes = [
-                (int(r["from_ms"]), int(r["to_ms"]), str(r["first_id"]), str(r["second_id"]))
+                (int(r["from_ms"]), int(r["to_ms"]), str(r["first_id"]), str(r["second_id"]),
+                 frozenset(int(u) for u in r["speaker_ids"]))
                 for r in await cur.fetchall()
-            ]
+            ]  # fmt: skip
     if not codes:
         codes = {c: "seeded" for c in roles.STORED_SEEDED}  # (seeded before its first role)
     ended = roots(entities)
@@ -200,12 +205,20 @@ async def gather(
         speakers: set[int] = set()
         private_with: set[str] = set()
         for ref, at in await mentions(eid):
+            if len(quotes) >= ir.QUOTES_MAX and not scenes:
+                break
             pointer = parse_ref(ref)
             if at != session_started_at or pointer is None or pointer[0] != session_id:
                 continue
-            for from_ms, to_ms, a, b in scenes:  # (said inside a private scene: its two)
-                if from_ms <= pointer[1] <= to_ms:
-                    private_with.update(_name(entities, ended, x) for x in (a, b))
+            # Said inside a private scene, by one of its two (a line of another group, or the
+            # DM's, spoken in the same minutes is in no scene: `private_scenes.find`). Their ids
+            # are this item's speakers too, so it is re-checked against consent after the call.
+            for from_ms, to_ms, a, b, said_by in scenes:
+                if from_ms <= pointer[1] <= to_ms and pointer[2] in said_by:
+                    private_with.add(
+                        " and ".join(sorted(_name(entities, ended, x) for x in (a, b)))
+                    )
+                    speakers.update(said_by)
             if len(quotes) >= ir.QUOTES_MAX:
                 continue
             around = await transcripts.around(guild_id, session_id, pointer[1], pointer[2], agreed)
@@ -231,8 +244,8 @@ async def gather(
 def _name(entities: Mapping[str, Any], ended: Mapping[str, str | None], entity_id: str) -> str:
     """A scene's character by the name it ended up as (a merge follows); "a player character"
     when it is gone."""
-    root = ended.get(entity_id) or entity_id
-    row = entities.get(root)
+    root = ended.get(entity_id)
+    row = entities.get(root) if root is not None else None
     return str(row["name"]) if row is not None else "a player character"
 
 

@@ -1173,8 +1173,10 @@ later sessions.
   transcript and with anyone who spoke in it; a backup carries both scenes and marks. The DM's list (🤫 Private scenes, under Names → More lists) has "Not private" (#4105). PlotBot
   is told when an entry was spoken of inside one ("private scene:" with the two names) and ranks it
   at least 2 (Recurring), reason `private_scene`; the floor is held in code, never left to the AI,
-  and never overrides a rank the DM set. Next: the recap cites each scene without saying what
-  (#2997).
+  and never overrides a rank the DM set. Only a line said inside the scene by one of its two
+  counts. Today the raised rank is stored like any reading, so a later "Not private" or a speaker
+  who stops being recorded does not lower it again (a floor worked out on read would; asked on
+  #2996). Next: the recap cites each scene without saying what (#2997).
 
 **8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
 - the Story Graph and its doors;
