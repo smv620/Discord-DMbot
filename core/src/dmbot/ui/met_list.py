@@ -20,7 +20,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import Campaign
-from dmbot.discord_limits import fit_message
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.met_store import MetRow, MetStore
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
@@ -53,7 +53,7 @@ EMPTY = (
 DM_ONLY = "Only a DM of this campaign can see this list."
 NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
-MESSAGE_LIMIT = 1990  # Discord's 2,000, with room to spare
+MESSAGE_LIMIT = MESSAGE_MAX  # (the one message limit, #1835)
 NAME_LABEL = "Their name"
 NAME_HELP = "What you call them"
 GROUP_HELP = "Their name, or the group's name"
