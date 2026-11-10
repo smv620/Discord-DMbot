@@ -57,6 +57,7 @@ from dmbot import (
     script_make,
     sheet_reread,
     table_chat,
+    trait_answer,
     trial_jobs,
     usage,
     wizard_finish,
@@ -695,6 +696,8 @@ AUTO_SCRIPT_FIRST_S = 150  # the first look for sessions due a script (#3901)
 AUTO_SCRIPT_EVERY_S = 60
 SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered (#3899)
 SCRIPT_MAKE_EVERY_S = 5
+TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied (#3946)
+TRAIT_ANSWER_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
 WIZARD_FINISH_EVERY_S = 5
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
@@ -1887,6 +1890,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
+            self._watched(self._trait_answer_loop(), "trait-answers"),
             *(
                 [
                     self._watched(self._auto_script_loop(), "auto-scripts"),
@@ -13941,6 +13945,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
                 )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
+
+    async def _trait_answer_loop(self) -> None:
+        """Every few seconds: apply the website's lineage and class answers (#3946;
+        `trait_answer`). Quick work (no AI), so one pass per server; a server's trouble never
+        stops the others."""
+        await asyncio.sleep(TRAIT_ANSWER_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    await trait_answer.run_round(self, guild.id)
+                except Exception as exc:
+                    log.warning("A lineage answer round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
 
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
