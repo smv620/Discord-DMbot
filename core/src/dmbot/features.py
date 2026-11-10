@@ -262,6 +262,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the smart-guess measure (#2959)
     ),
     Feature(
+        "recap by rank",
+        "Recaps pick the scenes with the characters that matter most",
+        "",
+        lambda s: s.recap_by_rank_on,
+        ("recap_by_rank_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
