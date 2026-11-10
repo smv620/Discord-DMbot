@@ -118,6 +118,7 @@ class TheDMsListTest(unittest.TestCase):
             plot_check_on=True,
             said_as_voice=True,
             said_as_model="/models/phonemes",
+            wizard_link_on=True,
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)

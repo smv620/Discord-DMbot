@@ -16,6 +16,7 @@ import discord
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import channel_sync
+from dmbot.memory.store import MemoryStore
 from tests.pg import DatabaseTest
 
 GUILD = 111
@@ -43,6 +44,7 @@ class FinishTest(DatabaseTest):
         self.addCleanup(channel_sync._seen.clear)
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
+            memory=MemoryStore(self.db),
             get_guild=lambda gid: self.guild if gid == GUILD else None,
             create_refusal=AsyncMock(return_value=None),
         )
@@ -422,3 +424,176 @@ class TheMembershipAndTheCampaignSearch(FinishTest):
         run = await self.runs.claim_next(GUILD)
         assert run is not None
         self.assertEqual(run.started_at, NOW)
+
+
+class TheCharacters(FinishTest):
+    async def made(self) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        found = await self.bot.memory.entities(GUILD, campaign.id)
+        return [e for e in found if e.role == "player_character"]
+
+    async def test_the_confirmed_characters_are_made_as_player_characters_with_their_players(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Cerric Vale", "party_name": "Cerric", "sheet_url": "", "player": str(DM)},
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        by_name = {e.name: e for e in await self.made()}
+        self.assertEqual(set(by_name), {"Cerric Vale", "Mira Dawn"})
+        for entity in by_name.values():
+            self.assertEqual((entity.role, entity.status), ("player_character", "confirmed"))
+        self.assertEqual(by_name["Cerric Vale"].played_by, DM)
+        self.assertIsNone(by_name["Mira Dawn"].played_by)  # (pending: answered later)
+        self.assertEqual((await self.run_row())["state"], "done")
+
+    async def test_a_player_number_who_is_not_in_the_server_is_not_kept(self) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "9999"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [entity] = await self.made()
+        self.assertIsNone(entity.played_by)  # (the page cannot be trusted with ids)
+
+    async def test_a_retried_run_adds_no_character_twice(self) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        again = await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        self.assertEqual(again, 0)
+        self.assertEqual(len(await self.made()), 1)
+
+    async def test_a_player_id_out_of_range_or_not_confirmed_is_never_bound(self) -> None:
+        chars = [
+            {"full": "Zero", "party_name": "", "sheet_url": "", "player": "0"},
+            {"full": "Huge", "party_name": "", "sheet_url": "", "player": "9" * 30},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual([e.played_by for e in await self.made()], [None, None])
+
+    async def test_a_discord_error_does_not_bind_a_player_it_could_not_confirm(self) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": str(DM)}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        hiccup = discord.HTTPException(MagicMock(status=500, reason="x"), "down")
+        calls = {"n": 0}
+
+        async def flaky(uid: int) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return SimpleNamespace(id=uid)  # (the sender is found)
+            raise hiccup
+
+        self.guild.fetch_member = AsyncMock(side_effect=flaky)
+        await wizard_finish.run_round(self.bot, GUILD)
+        [entity] = await self.made()
+        self.assertIsNone(entity.played_by)  # (unconfirmed: left pending, not guessed)
+
+    async def test_a_bot_is_never_bound_as_a_player(self) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": str(DM)}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        self.guild.fetch_member = AsyncMock(return_value=SimpleNamespace(id=DM, bot=True))
+        await wizard_finish.run_round(self.bot, GUILD)
+        [entity] = await self.made()
+        self.assertIsNone(entity.played_by)
+
+    async def test_a_retry_adds_the_short_name_a_half_made_character_lacks(self) -> None:
+        chars = [
+            {"full": "Cerric Vale", "party_name": "Cerric", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        [entity] = await self.made()
+        await self.sql(
+            "DELETE FROM memory_aliases WHERE entity_id = %s AND kind = 'short'", entity.id
+        )
+        again = await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        self.assertEqual(again, 0)  # (no second character)
+        aliases = await self.sql(
+            "SELECT text FROM memory_aliases WHERE entity_id = %s AND kind = 'short'", entity.id
+        )
+        self.assertEqual([a["text"] for a in aliases], ["Cerric"])  # (and its short name is back)
+
+    async def test_a_same_name_npc_does_not_stop_the_player_character_being_made(self) -> None:
+        made = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        await self.bot.memory.add_entity(
+            GUILD, made.id, type="character", name="Cerric Vale", source="dm", status="confirmed",
+            role="npc",
+        )  # fmt: skip
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "pending"}]
+        count = await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, made.id, {"characters": chars}
+        )
+        self.assertEqual(count, 1)  # (only a player character of that name counts as already there)
+        everyone = await self.bot.memory.entities(GUILD, made.id)
+        found = sorted(e.role for e in everyone if e.name == "Cerric Vale")
+        self.assertEqual(found, ["npc", "player_character"])  # (the NPC is left as it was)
+
+    async def test_a_short_name_equal_to_the_full_name_is_not_added_twice(self) -> None:
+        chars = [{"full": "Cerric", "party_name": "cerric", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [entity] = await self.made()
+        shorts = await self.sql(
+            "SELECT 1 FROM memory_aliases WHERE entity_id = %s AND kind = 'short'", entity.id
+        )
+        self.assertEqual(shorts, [])
+
+    async def test_nothing_to_make_is_nothing_made(self) -> None:
+        made = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        none = await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, made.id, {"characters": []}
+        )
+        self.assertEqual(none, 0)
+        self.bot.memory = None
+        gone = await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, made.id, {"characters": [{"full": "A"}]}
+        )
+        self.assertEqual(gone, 0)
+
+    async def test_a_party_stage_that_breaks_leaves_the_campaign_and_ends_with_its_own_word(
+        self,
+    ) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars}, docs=(("lore", "l", "W."),))
+        await self.queue()
+        self.reader()
+        self.bot.memory.entities = AsyncMock(side_effect=OSError("down"))
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "party_failed"))
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+        self.assertEqual([c for c, _ in self.seen], ["world"])  # (the lore was still read)
+
+    async def test_the_run_is_at_the_party_stage_while_the_characters_are_made(self) -> None:
+        chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        seen: list[str] = []
+        real = wizard_finish._make_characters
+
+        async def look(*args: Any) -> int:
+            seen.append((await self.run_row())["stage"])
+            return await real(*args)
+
+        with patch.object(wizard_finish, "_make_characters", look):
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(seen, ["party"])
