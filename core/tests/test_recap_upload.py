@@ -208,6 +208,7 @@ class Uploading(Base):
             post=posted,
             settings=SimpleNamespace(site_url=""),
         )
+        stub._upkeep_channel = DMBot._upkeep_channel.__get__(stub)
         self.assertTrue(await DMBot.check_uploaded_recap(stub, 1, self.one.id, 700))  # type: ignore[arg-type]
         job = await self.store.get(1, self.one.id, 700)
         assert job is not None

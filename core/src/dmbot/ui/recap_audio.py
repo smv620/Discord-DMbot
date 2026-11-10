@@ -38,6 +38,11 @@ FAILED = (
     "⚠️ The audio for **{title}** could not be made. The text is fine and nothing went to the "
     "players. You can try the audio again, or post the text as it is."
 )
+READY_UNNAMED = "🎧 The audio for this session's recap is ready. Nothing has gone to the players."
+FAILED_UNNAMED = (
+    "⚠️ The audio for this session's recap could not be made. The text is fine and nothing went "
+    "to the players. You can try the audio again, or post the text as it is."
+)
 NO_FILES = "The audio files aren't here any more or are out of date. Open your recap page."
 TOO_BIG = "The audio is too big to send here. Listen to it on your recap page."
 KEPT_LINE = "Kept, not posted."
@@ -202,10 +207,16 @@ class MakeAudioAgainButton(
 
 
 def ready_text(title: str) -> str:
+    """The notice with the recap's title in bold. With no title (the DM Bot channel is read by the
+    campaign's people, so a notice there names nothing, #3874) it says "this session's recap"."""
+    if not title:
+        return READY_UNNAMED
     return READY.format(title=discord.utils.escape_markdown(title))
 
 
 def failed_text(title: str) -> str:
+    if not title:
+        return FAILED_UNNAMED
     return FAILED.format(title=discord.utils.escape_markdown(title))
 
 
