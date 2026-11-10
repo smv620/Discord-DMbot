@@ -53,8 +53,9 @@ def party_notice(characters: int) -> str:
 
 
 async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
-    """The confirmed player characters these players play (their newest each), by entry id: the
-    ones who took part. A merged entry or an unconfirmed one is not one."""
+    """The confirmed player characters these players play, all of them (the owner, 2026-11-10: a
+    player may play several at once, #3998), by entry id: the ones who took part. A merged entry or
+    an unconfirmed one is not one."""
     if not user_ids:
         return []
     rows = await w.select(
@@ -62,53 +63,49 @@ async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
         " AND role = %s AND status = %s AND played_by = ANY(%s) AND merged_into IS NULL",
         [PLAYER_CHARACTER, CONFIRMED, sorted(user_ids)],
     )
-    newest: dict[int, dict[str, Any]] = {}
-    for row in rows:
-        best = newest.get(int(row["played_by"]))
-        if best is None or (row["created_at"], row["id"]) > (best["created_at"], best["id"]):
-            newest[int(row["played_by"])] = row
-    return sorted(str(r["id"]) for r in newest.values())
+    return sorted(str(r["id"]) for r in rows)
 
 
 async def members_of(w: Changes) -> list[str]:
-    """The party's members (#3363, Supervisor 2026-11-05; #3995, 2026-11-10): every confirmed
-    player character of the campaign, with or without a player (a character whose player is still
-    "pending", as the wizard's optional step 3 leaves it, is a player character all the same), and
-    of a player's characters only the newest, whether or not that player spoke in a given session.
-    So lore first, a session first or an assignment later all give the same members. A merged or
-    unconfirmed entry is not one. A replaced character (the player's older one) is no longer the
-    newest: it leaves as history, not deleted."""
+    """The party's members: every confirmed, live player character of the campaign, whoever plays
+    it, its player "pending" too (#3363, #3995). A player may play several at once (the owner,
+    2026-11-10, #3998), so none leaves for being older: a character leaves the party only when the
+    DM removes its membership, and that removal sticks (`MemoryStore.link_party`)."""
     rows = await w.select(
         ENTITIES,
         " AND role = %s AND status = %s AND merged_into IS NULL",
         [PLAYER_CHARACTER, CONFIRMED],
     )
-    newest: dict[int, dict[str, Any]] = {}
-    pending: list[str] = []
-    for row in rows:
-        if row["played_by"] is None:
-            pending.append(str(row["id"]))
-            continue
-        best = newest.get(int(row["played_by"]))
-        if best is None or (row["created_at"], row["id"]) > (best["created_at"], best["id"]):
-            newest[int(row["played_by"])] = row
-    return sorted([str(r["id"]) for r in newest.values()] + pending)
+    return sorted(str(r["id"]) for r in rows)
 
 
-async def is_replaced(w: Changes, entity_id: str, current: Collection[str]) -> bool:
-    """Is this player character no longer its player's newest one (another entry of the same
-    player is a current member)? Then its party tie is history. A character with no player, or a
-    merged one, is never judged here: its tie is the DM's to keep or remove."""
-    row = await w.get(ENTITIES, entity_id)
-    if row is None or row["role"] != PLAYER_CHARACTER or row["played_by"] is None:
-        return False
-    if row["merged_into"] is not None:
-        return False
-    mine = await w.select(
-        ENTITIES, " AND played_by = %s AND role = %s AND id = ANY(%s)",
-        [row["played_by"], PLAYER_CHARACTER, sorted(current)],
-    )  # fmt: skip
-    return bool(mine)
+async def closed_beside_another(w: Changes, party_id: str) -> int:
+    """How many live player characters' party memberships were ended (not removed) while their
+    player has another player character: what the old "only the newest" rule closed (#3998), and
+    any the DM ended by hand, which the store can't tell apart. Counted for Supervisor; never
+    reopened by DMbot."""
+    ended = await w.select(
+        RELATIONS,
+        " AND predicate = %s AND object_id = %s AND status = %s AND to_session_at IS NOT NULL",
+        [MEMBER_OF, party_id, CONFIRMED],
+    )
+    if not ended:
+        return 0
+    chars = {
+        str(r["id"]): r["played_by"]
+        for r in await w.select(
+            ENTITIES,
+            " AND role = %s AND status = %s AND merged_into IS NULL",
+            [PLAYER_CHARACTER, CONFIRMED],
+        )
+    }
+    players = [p for p in chars.values() if p is not None]
+    return sum(
+        1
+        for r in ended
+        if chars.get(str(r["subject_id"])) is not None
+        and players.count(chars[str(r["subject_id"])]) > 1
+    )
 
 
 # The names a group the DM made for the party goes by, for the one-time fill (#3954, Supervisor's
@@ -128,6 +125,10 @@ class Filled:
     # A live #3036 party besides the flagged one (two "party" entries, from before #3954): the
     # flagged one wins for every reader; counted for Supervisor, never merged by DMbot.
     both: bool = False
+    # Memberships ended (not removed) while the character's player has another (#3998): what the
+    # old "only the newest of each player" rule closed, or the DM ended by hand. Counted, never
+    # reopened (the two can't be told apart).
+    ended: int = 0
 
 
 async def flagged(w: Changes) -> dict[str, Any] | None:

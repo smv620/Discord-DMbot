@@ -1433,7 +1433,10 @@ class MemoryStore:
                 )
                 row = await cur.fetchone()
                 held = int(row["n"]) if row else 0
-            return party_mod.Filled(filled.step, filled.party_id, held, filled.both)
+                ended = await party_mod.closed_beside_another(w, filled.party_id)
+            else:
+                ended = 0
+            return party_mod.Filled(filled.step, filled.party_id, held, filled.both, ended)
 
     async def add_deed(
         self,
@@ -4948,14 +4951,14 @@ class MemoryStore:
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
     ) -> party_mod.PartyLinked:
         """The party (#3036, and #3363 for who is in it). The player characters whose players took
-        part in a session (`user_ids`) know each other; **every** confirmed player character is a
-        member of "The party" (`party_mod.members_of`: the newest of each player, and every one
-        whose player is still pending, #3995), whether or not its player spoke in this session, so
-        lore first, a session first or an assignment later give the same members. A player's older
-        character, replaced by a newer one, leaves the party as history (its tie ends, nothing is
-        deleted). By rule, as the DM's standing choice, never by the AI: see `memory.party`. One
-        change (one Undo), idempotent, and a connection that exists in any state, a removed one
-        included, is left as it is."""
+        part in a session (`user_ids`, every character each of them plays: a player may play
+        several at once, the owner 2026-11-10, #3998) know each other; **every** confirmed player
+        character is a member of "The party" (`party_mod.members_of`, its player "pending" too,
+        #3995), whether or not its player spoke in this session, so lore first, a session first or
+        an assignment later give the same members. A character leaves the party only when the DM
+        removes it. By rule, as the DM's standing choice, never by the AI: see `memory.party`. One
+        change (one Undo), idempotent, and a connection that exists in any state, a removed or
+        ended one included, is left as it is."""
         async with self._write(guild_id, campaign_id, DM) as w:
             chars = await party_mod.characters_of(w, user_ids)
             member_ids = await party_mod.members_of(w)
@@ -4986,22 +4989,6 @@ class MemoryStore:
                         confidence=1.0, status=CONFIRMED, leave=True,
                     )  # fmt: skip
                     members += 1
-                # a player's replaced character leaves the party as history (the newest entry of
-                # a player is the one in; an older one the DM re-assigns later is not reopened)
-                current = set(member_ids)
-                for r in held:
-                    if (
-                        r["predicate"] == party_mod.MEMBER_OF
-                        and r["status"] == CONFIRMED
-                        and r["to_session_at"] is None
-                        and r["subject_id"] not in current
-                        and await party_mod.is_replaced(w, str(r["subject_id"]), current)
-                    ):
-                        await w.update(
-                            RELATIONS,
-                            r["id"],
-                            {"to_session_at": max(w.now, int(r["from_session_at"] or 0) + 1)},
-                        )  # fmt: skip  (a span is never empty)
             return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(

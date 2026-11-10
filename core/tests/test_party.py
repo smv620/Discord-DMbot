@@ -68,25 +68,71 @@ class TheParty(NamesTest):
         await self.link(*PLAYERS.values())
         self.assertNotIn(self.ids["Rook"], {s for s, _, _ in await self.edges("member_of")})
 
-    async def test_a_player_with_two_characters_has_only_the_newest_in(self) -> None:
-        await self.link(*PLAYERS.values())
-        # (a later second, so "newest" is not decided by the random id of two same-second entries)
-        self.memory._clock = lambda: time.time() + 60
-        newer = await self.memory.add_entity(
-            GUILD, self.campaign.id, name="Mara the Second", type="character",
+    async def second_for_mara(self, name: str = "Mara the Second") -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name=name, type="character",
             role="player_character", played_by=101, status=CONFIRMED, source="dm",
         )  # fmt: skip
-        done = await self.link(101)
-        self.assertEqual(done.members, 1)
+        return made.value.id
+
+    async def test_a_player_with_two_characters_has_both_in_and_both_took_part(self) -> None:
+        """#3998, the owner (2026-11-10): a player may play several characters at once. Both are
+        members, both took part and know the others, and none leaves for being older."""
+        await self.link(*PLAYERS.values())
+        self.memory._clock = lambda: time.time() + 60  # (a later second: "newer" would matter)
+        second = await self.second_for_mara()
+        done = await self.link(*PLAYERS.values())
+        self.assertEqual((done.characters, done.members), (5, 1))  # (Mara's two took part)
         members = {s for s, _, _ in await self.edges("member_of")}
-        self.assertIn(newer.value.id, members)
+        self.assertTrue({self.ids["Mara"], second} <= members)
+        knows = await self.edges("knows")
+        for other in ("Tavin", "Brann", "Ilse"):
+            pair = {second, self.ids[other]}
+            self.assertTrue(any({a, b} == pair for a, _, b in knows))
         out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
-        old = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
-        self.assertEqual(len(old), 1)
-        self.assertIsNotNone(old[0].to_session_at)  # (history, not deleted)
-        self.assertGreater(old[0].to_session_at or 0, old[0].from_session_at or 0)
-        again = await self.link(101)  # (a second run changes nothing)
-        self.assertEqual(again.members, 0)
+        ties = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
+        self.assertEqual([r.to_session_at for r in ties], [None])  # (still in, not history)
+        third = await self.second_for_mara("Mara the Third")
+        await self.link(101)
+        members = {s for s, _, _ in await self.edges("member_of")}
+        self.assertTrue({self.ids["Mara"], second, third} <= members)
+
+    async def test_the_dm_taking_one_of_a_players_characters_out_sticks(self) -> None:
+        """#3998: a character leaves only when the DM says so, across a new session and a start
+        fill; the player's other character stays in."""
+        await self.link(*PLAYERS.values())
+        second = await self.second_for_mara()
+        await self.link(101)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        tie = next(r for r in out if r.predicate == "member_of" and r.subject_id == second)
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", status=REJECTED
+        )
+        await self.link(*PLAYERS.values())
+        await self.memory.make_party(GUILD, self.campaign.id)
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        members = {s for s, _, _ in await self.edges("member_of")}
+        self.assertNotIn(second, members)
+        self.assertIn(self.ids["Mara"], members)
+
+    async def test_the_fill_counts_memberships_ended_beside_another_character(self) -> None:
+        """#3998: what the old "only the newest" rule closed is counted, never reopened."""
+        await self.link(*PLAYERS.values())
+        await self.second_for_mara()
+        await self.link(101)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        tie = next(
+            r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", to_session_at=int(time.time()) + 5
+        )
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        self.assertEqual(filled.ended, 1)
+        await self.link(101)  # (an ended membership is "had": never re-added by the rule)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        mine = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
+        self.assertEqual(len(mine), 1)
 
     async def test_a_member_the_dm_removed_who_did_not_speak_stays_removed(self) -> None:
         await self.link()
