@@ -55,7 +55,11 @@ def _plural(kind: str, count: int) -> str:
 def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     """ "📜 Added **62 names** (30 NPCs, 24 places) and **48 connections** from <label>." and, when
     something is left, "**3 questions** need you." Counts only."""
-    kinds = {k: v for k, v in counts.items() if k not in ("connections", "other_names") and v}
+    kinds = {
+        k: v
+        for k, v in counts.items()
+        if k not in ("connections", "other_names", "shown", "held") and v
+    }
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
     connections = counts.get("connections", 0)
@@ -70,6 +74,22 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     what = " and ".join(added) if added else "**nothing new**"
     source = f" from {discord.utils.escape_markdown(label)}" if label else ""
     text = f"📜 Added {what}{source}."
+    shown = counts.get("shown", 0)
+    if shown:  # (an import's: held-back connections the table stated, #3963 c)
+        text += (
+            f"\n👁️ **{shown} connection{'' if shown == 1 else 's'}** said at the table "
+            f"{'is' if shown == 1 else 'are'} now shown to your players."
+        )
+    held = counts.get("held", 0)
+    if held:  # (an import's: kept hidden beside a connection the story hides, #3979)
+        one = held == 1
+        text += (
+            f"\n🙈 **{held} connection{'' if one else 's'}** {'is' if one else 'are'} kept hidden "
+            f"from your players, so {'it' if one else 'they'} can't give away another hidden "
+            f"connection between the same two names. To show {'it' if one else 'them'}: open "
+            f"either name, ✏️ Edit a connection…, 👁️ Who knows this?, then 👁️ Everyone at the "
+            f"table."
+        )
     if questions:
         text += (
             f"\n❓ **{questions} question{'' if questions == 1 else 's'}** "
@@ -263,6 +283,10 @@ async def add_sure(
             counts["connections"] = tally.accepted[auto.CONNECTIONS]
         if tally.accepted[auto.OTHER_NAMES]:
             counts["other_names"] = tally.accepted[auto.OTHER_NAMES]
+        if tally.shown:
+            counts["shown"] = tally.shown
+        if tally.held:
+            counts["held"] = tally.held
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]
