@@ -381,8 +381,12 @@ async def load(scope: Scope) -> Statements:
             " AND predicate = 'member_of' AND status = 'confirmed' AND object_id = ANY(%s)",
             [sorted(listed)],
         )
+        # The party is never a knower (STORY_MEMORY 9b, #3954): a row on it, however it got there,
+        # never reaches its members. The writers refuse it too (`knowers._known_characters`).
+        party = {r["id"] for r in await scope.select(ENTITIES, " AND party")}
         for r in members:
-            groups.setdefault(r["subject_id"], set()).add(r["object_id"])
+            if r["object_id"] not in party:
+                groups.setdefault(r["subject_id"], set()).add(r["object_id"])
     kept = {
         key: value
         for key, value in knowers.items()

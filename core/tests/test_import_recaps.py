@@ -134,7 +134,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
         dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
-        ask_before_adding=True,
+        dm_bot_channel_id=None, ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True),
@@ -142,7 +142,9 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         **{"memory": SimpleNamespace(entities=AsyncMock(return_value=[])), **kw},
         consent=SimpleNamespace(
-            consenting=AsyncMock(return_value={MIRA}), agreed=AsyncMock(return_value={MIRA})
+            consenting=AsyncMock(return_value={MIRA}),
+            agreed=AsyncMock(return_value={MIRA}),
+            recorded_in=AsyncMock(return_value={MIRA}),
         ),
         recaps=SimpleNamespace(
             enqueue=AsyncMock(return_value=True),
@@ -178,6 +180,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_start_import_recap",
         "_apply_import_plays",
         "_tell_import_news",
+        "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
     ):
@@ -693,9 +696,19 @@ class TheFollowUp(WithImports):
     async def test_the_scan_asks_only_about_lines_of_people_who_still_agree(self) -> None:
         await self.imported(1)
         bot, _ = await self.bot()
-        bot.consent.consenting = AsyncMock(return_value=set())  # Mira stopped being recorded
+        bot.consent.recorded_in = AsyncMock(return_value=set())  # Mira stopped being recorded
         await rounds(bot, 1)
         bot._propose_new_names.assert_not_awaited()
+
+    async def test_an_imported_speaker_confirmed_for_the_campaign_is_scanned(self) -> None:
+        """#3962: a speaker the uploader confirmed counts (`recorded_in`), though they never
+        agreed in Discord (`consenting` is empty): their lines are scanned and can show names."""
+        await self.imported(1)
+        bot, _ = await self.bot()
+        bot.consent.consenting = AsyncMock(return_value=set())
+        bot.consent.recorded_in = AsyncMock(return_value={MIRA})
+        await rounds(bot, 1)
+        bot._propose_new_names.assert_awaited()
 
     async def test_who_agrees_is_asked_after_the_lines_are_read(self) -> None:
         await self.imported(1)
@@ -712,7 +725,7 @@ class TheFollowUp(WithImports):
             return {MIRA}
 
         self.store.scan_lines = lines  # type: ignore[assignment]
-        bot.consent.consenting = agreed
+        bot.consent.recorded_in = agreed
         await rounds(bot, 1)
         self.assertEqual(order, ["lines", "consent"])  # a stop during the read is not missed
 

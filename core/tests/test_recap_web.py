@@ -2132,7 +2132,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
     campaign = SimpleNamespace(
-        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66,
+        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66, dm_bot_channel_id=None,
         recaps_text=True, recaps_audio=True, recaps_email=True,
     )  # fmt: skip
     bot = SimpleNamespace(
@@ -2149,6 +2149,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         ),
     )
     bot.recap_audio_files = SimpleNamespace(present=lambda g, c, s: present or {})
+    bot._upkeep_channel = lambda camp: DMBot._upkeep_channel(cast(Any, bot), camp)
     bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(cast(Any, bot), g, c, a)
     bot._recap_audio_files = lambda g, camp, j, ch: DMBot._recap_audio_files(
         cast(Any, bot), g, camp, j, ch

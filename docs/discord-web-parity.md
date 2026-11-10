@@ -43,6 +43,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | After-session report, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `PRESENT_PER_SCENE_LIVE` |
 | Session notes and the script, read on a session's Transcripts page (Script and Session notes tabs, game masters only) and saved | `/account/transcripts` | live (#3898) | `SESSION_NOTES_LIVE`, `THEATRE_DOWNLOAD_LIVE` |
 | Make a session's script from the website (Discord offers it after a live session; imported sessions get the offer too, CloudDev's half of #3899) | `/account/transcripts` Script tab | page built, switched off; the door is next | `SCRIPT_MAKE_LIVE` (#3899) |
+| Set up a campaign step by step (uploads, many choices and a Back button need a page; Discord's `＋ New campaign` offers it first and keeps its short form). **Website-first on purpose.** | `/new?server=<id>` | pages built, switched off; the doors and the finish run are CloudDev-lead's (#3955) | `WIZARD_LIVE` (#3956) |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
@@ -56,6 +57,8 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
+| DMbot adds what it is sure of after a lore upload or an import: the counts notice, Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
+| How two people know each other on a `knows` connection: "has met", "has heard of", or plain "knows", and the DM's change (#3882; Discord's card and edit menu are #3889) | `/account/web` | page built, switched off; the website's door is next | `KNOWS_HOW_LIVE` |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
 | Node summary on the graph | `/account/web` | built, switched off | `NODE_SUMMARY_LIVE` |
 | Transcripts: read, download (text, theatre), put back or leave out a stretch | `/account/transcripts` | live | `THEATRE_DOWNLOAD_LIVE` |
@@ -144,7 +147,7 @@ match. "In Discord" says where the DM finds it today.
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
 | Check the connections; Keep, Keep as secret, No, Keep all; Undo | Check the connections | Story Graph: waiting connections (live) |
-| Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645) |
+| Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645); both pages say whether the bot showed a yes to the players or kept it hidden (#3974, #3986) |
 | Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
 | Change a connection; its feeling; why (the lore quote, DM only) | connection edit | Story Graph: change a connection; feeling picker and "Why?" (#3607) |
 | Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
@@ -153,6 +156,7 @@ match. "In Discord" says where the DM finds it today.
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
+| A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | #3946 |
 | Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |

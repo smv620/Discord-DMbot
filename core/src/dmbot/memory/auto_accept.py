@@ -66,6 +66,8 @@ class Tally:
     refused: Counter[str] = field(default_factory=Counter)  # a rule said no (it stays waiting)
     batches: list[int] = field(default_factory=list)  # the changes made, to undo them together
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
+    shown: int = 0  # held-back connections the table stated, shown to the players (#3963 c)
+    held: int = 0  # kept hidden beside a connection the story hides (#3975, #3979)
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
@@ -221,6 +223,8 @@ async def accept_dm_claims(
         try:
             done = await claims.confirm(guild, campaign, claim.id, opted_in=opted_in, secret=False)
             tally.accepted[CONNECTIONS] += 1
+            tally.shown += done.shown
+            tally.held += done.held
             tally.add_batch(done.batch)
         except Exception as exc:  # a rule, or anything else: counted, the run goes on
             refused(tally, CONNECTIONS, exc)
