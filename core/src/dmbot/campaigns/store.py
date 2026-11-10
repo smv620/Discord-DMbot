@@ -80,7 +80,7 @@ from dmbot.campaigns.parts import (
 from dmbot.campaigns.snowflakes import read_sections, unsafe_keys, write_sections
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
-from dmbot.memory import graph_review
+from dmbot.memory import graph_review, private_scene_store
 
 log = logging.getLogger(__name__)
 
@@ -1223,6 +1223,8 @@ class CampaignStore:
             " AND NOT (speaker_ids <@ %s::bigint[])",
             (target, campaign_id, sorted(consenting)),
         )
+        # and the private scenes, which cite who spoke in them (#2996 rule 5)
+        await private_scene_store.keep_recorded(conn, target, campaign_id, consenting)
         return name
 
     async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:

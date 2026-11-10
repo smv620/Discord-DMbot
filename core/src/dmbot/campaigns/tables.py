@@ -43,6 +43,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
     "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
     "memory_reveal_proposals": ("memory_reveal_proposals",),  # who learned what (#2996)
+    "memory_private_scenes": ("memory_private_scenes",),  # private scenes (#2996 rule 5)
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),

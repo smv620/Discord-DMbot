@@ -245,9 +245,11 @@ class TheNotes(WithNpcs):
     async def test_a_note_goes_with_the_campaign_and_is_not_in_a_backup(self) -> None:
         aldric = await self.npc()
         await self.listed(aldric)
-        await web.save_note(self.web, self.carol, f"{GUILD}.{self.one.id}", aldric.id, "private")
+        # (words no backup holds otherwise: "private" is in a section's name, #2996 rule 5)
+        note = "Aldric hides a lockpick"
+        await web.save_note(self.web, self.carol, f"{GUILD}.{self.one.id}", aldric.id, note)
         exported = repr(await self.export_with_every_section())
-        self.assertNotIn("private", exported)
+        self.assertNotIn("lockpick", exported)
         self.assertNotIn("npc_notes", exported)
         self.assertNotIn("npc_roster", exported)
         await self.campaigns.delete(GUILD, self.one.id)
