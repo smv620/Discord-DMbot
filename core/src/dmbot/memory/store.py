@@ -6875,6 +6875,65 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
     return {str(r["id"]): bool(r["unrevealed"]) for r in rows}
 
 
+async def split_when_said(w: Changes, session_started_at: int | None, lines: Sequence[str]) -> bool:
+    """Was the party split by the game clock (#3131) when any of these lines was spoken? Then a
+    held-back connection the claim states is not shown to the whole party: only one group was in
+    that scene (#2996, the leak found in #3963 c; slice 2a gives that group its own knower rows).
+    `lines` are the claim's line numbers, 1-based as `extractor.readable` numbers the session's
+    lines (by `started_ms`, then id). A moment is split when the clock's newest log row at or
+    before it belongs to a group (the rule of `timebot.stamp`).
+
+    When no cited line is found (a person's lines were taken back since), it fails closed: split
+    when the clock was split at the session's start or at any time during it. An imported session's
+    lines carry the dates the DM chose (the extractor reads no clock for them), so the answer for
+    one is whatever the log holds at those dates: a hold is the safe side. No clock: not split."""
+    if session_started_at is None:
+        return False
+    numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
+    rows = []
+    if numbers:
+        cur = await w.conn.execute(
+            "SELECT x.started_ms / 1000 AS at FROM ("
+            "  SELECT l.started_ms, row_number() OVER (ORDER BY l.started_ms, l.id) AS n"
+            "  FROM transcript_lines l JOIN transcript_sessions s"
+            "   ON s.id = l.session_id AND s.guild_id = l.guild_id"
+            "  WHERE s.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s) x"
+            " WHERE x.n = ANY(%s)",
+            (w.guild_id, w.campaign_id, session_started_at, numbers),
+        )
+        rows = await cur.fetchall()
+    if not rows:
+        return await _split_during_session(w, session_started_at)
+    for at in {int(r["at"]) for r in rows}:
+        if await _split_at(w, at):
+            return True
+    return False
+
+
+async def _split_at(w: Changes, at: int) -> bool:
+    cur = await w.conn.execute(
+        "SELECT position FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND at <= %s ORDER BY at DESC, seq DESC LIMIT 1",
+        (w.guild_id, w.campaign_id, at),
+    )
+    row = await cur.fetchone()
+    return row is not None and row["position"] is not None
+
+
+async def _split_during_session(w: Changes, started_at: int) -> bool:
+    """Split at the session's start, or a group's clock row during it (to its end, or now)."""
+    if await _split_at(w, started_at):
+        return True
+    cur = await w.conn.execute(
+        "SELECT 1 FROM game_clock_log g WHERE g.guild_id = %s AND g.campaign_id = %s"
+        " AND g.position IS NOT NULL AND g.at >= %s AND g.at <= COALESCE(("
+        "  SELECT s.ended_at FROM transcript_sessions s WHERE s.guild_id = %s"
+        "  AND s.campaign_id = %s AND s.started_at = %s), %s) LIMIT 1",
+        (w.guild_id, w.campaign_id, started_at, w.guild_id, w.campaign_id, started_at, w.now),
+    )
+    return await cur.fetchone() is not None
+
+
 async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
     """A held-back connection the table has now stated is shown to the players (#3963 c, the
     owner's rule: what is said at the table is known to the party). Called when a session's claim

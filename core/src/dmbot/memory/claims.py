@@ -85,6 +85,7 @@ from dmbot.memory.store import (
     _new_alias,
     live_between,
     reveal_stated_in,
+    split_when_said,
 )
 from dmbot.memory.voice import (
     EFFECT,
@@ -2174,7 +2175,13 @@ class ClaimStore:
                 if relation.id in live:
                     # (the table said a connection the story already has: held back, it is the
                     # party's now, #3963 c; one already shown stays as it is)
-                    shown = not secret and await reveal_stated_in(w, relation.id)
+                    # (never while the game clock had the party split: only one group was there)
+                    shown = (
+                        live[relation.id]  # (held back: one already shown needs no check)
+                        and not secret
+                        and not await split_when_said(w, claim.session_started_at, claim.lines)
+                        and await reveal_stated_in(w, relation.id)
+                    )
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
