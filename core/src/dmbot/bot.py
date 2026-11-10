@@ -552,6 +552,7 @@ from dmbot.ui import (
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import met_list as met_list_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -9543,6 +9544,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(
                     notice_channel, held_back_text(report.new_names), view=review_view(cid)
                 )
+            if report.met_made and notice_channel is not None:  # (#4045: counts only)
+                try:
+                    await self.post(notice_channel, met_list_ui.notice(report.met_made))
+                except Exception as exc:
+                    log.warning("Met list: the note was not posted (%s)", type(exc).__name__)
             return "limit" if report.stopped or report.failed else "done"
 
     async def read_put_back_lines(self, guild_id: int) -> None:

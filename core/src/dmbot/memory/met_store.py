@@ -5,9 +5,10 @@ names, so nothing that lists names can show them (quiet by construction).
 A row is one encounter in one session: the DM's word for them, how many, when each line it came
 from began, and who spoke those lines. Rows are transcript-derived, so they go with their session
 (the foreign key), with its transcript (`forget_session`) and with anyone they cite
-(`forget_speaker`, on every path that forgets a person's words). Nothing in the bot reads them yet
-but the tests: the DM's list is #4045, and naming or joining one there writes the entry at rank 0
-(`importance_rank.MET_IN_PLAY`) and deletes the row in one transaction. Counts only leave this
+(`forget_speaker`, on every path that forgets a person's words). The DM's list reads them
+(`listed`, #4045, after the consent re-check); naming or joining one there writes the entry at
+rank 0 (`importance_rank.MET_IN_PLAY`) and deletes the row in one transaction
+(`MemoryStore.name_met`, `join_met`). Counts only leave this
 module; its words are never logged.
 """
 
@@ -23,6 +24,7 @@ from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.models import name_key, new_id
 
 MAX_PER_SESSION = 10  # Supervisor, 2026-11-10: the sample session met 4 (11 if counted one by one)
+LIST_MAX = 250  # the DM's list reads at most this many (10 a session, so 25 sessions' worth)
 _ENDINGS = (("ies", "y"), ("ves", "f"), ("s", ""))  # (only enough for a key: never shown)
 
 
@@ -139,9 +141,68 @@ class MetStore:
                 out.made += 1
         return out
 
+    async def purge_stopped(
+        self, guild_id: int, campaign_id: str, opted_in: Collection[int]
+    ) -> int:
+        """Delete the rows citing someone who is not recorded in this server now: the consent
+        re-check on the read path, as for the deed and reveal proposals (#4045). It closes the race
+        between the extractor's last consent check and its insert."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s"
+                " AND NOT (speaker_ids <@ %s::bigint[])",
+                (guild_id, campaign_id, sorted(set(opted_in))),
+            )
+            return int(cur.rowcount or 0)
+
+    async def listed(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
+    ) -> list[MetRow]:
+        """The DM's "Met but not named" list (#4045): every row of the campaign after the consent
+        re-check, the newest session first, then as met. DM-only: the caller checks."""
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, session_id, session_started_at, what, count, line_ms, speaker_ids"
+                " FROM memory_met WHERE guild_id = %s AND campaign_id = %s"
+                " ORDER BY session_started_at DESC NULLS LAST, created_at, id LIMIT %s",
+                (guild_id, campaign_id, LIST_MAX),
+            )
+            return [_row(r) for r in await cur.fetchall()]
+
+    async def count(self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]) -> int:
+        """How many wait on the list (for the Names home's button), after the consent re-check."""
+        await self.purge_stopped(guild_id, campaign_id, opted_in)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_met WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+            return int(row["n"]) if row else 0
+
+    async def get(self, guild_id: int, campaign_id: str, met_id: str) -> MetRow | None:
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, session_id, session_started_at, what, count, line_ms, speaker_ids"
+                " FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, met_id),
+            )
+            row = await cur.fetchone()
+            return _row(row) if row else None
+
+    async def remove(self, guild_id: int, campaign_id: str, met_id: str) -> bool:
+        """The DM's Remove: the row goes, and nothing else changes. False when it was gone."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, met_id),
+            )
+            return bool(cur.rowcount)
+
     async def of_session(self, guild_id: int, campaign_id: str, session_id: str) -> list[MetRow]:
-        """This session's rows, oldest first (for the tests now; #4045's list must also leave out
-        rows citing someone no longer recorded, as the deed and reveal readers do)."""
+        """This session's rows, oldest first, as stored (no consent re-check: for tests and
+        tools; the DM's list is `listed`)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT id, session_id, session_started_at, what, count, line_ms, speaker_ids"

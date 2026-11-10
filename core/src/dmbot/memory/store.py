@@ -99,6 +99,7 @@ from dmbot.memory.checks import (
     waiting_guess,
 )
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
+from dmbot.memory.importance_rank import MET_IN_PLAY
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookalikes import Name as LookAlikeName
 from dmbot.memory.lookalikes import find as find_look_alikes
@@ -2210,6 +2211,62 @@ class MemoryStore:
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
             return Written(_entity(row), w.batch)
+
+    async def name_met(
+        self, guild_id: int, campaign_id: str, met_id: str, name: str
+    ) -> Written[Entity]:
+        """The DM names a being the party met in play (#4045, "Give them a name" on the "Met but not
+        named" list): in ONE write, the entry is made (confirmed, the DM's word: a person for one
+        being, a group for more), it is ranked 0 with the reason `met_in_play` (the owner's
+        "background", raised later by the story), and the list's row goes. If any part fails,
+        none of it happens. A name the campaign already has is refused (`MET_NAME_TAKEN`): the DM
+        joins it instead with "Same as…". Shown to the players like any name the DM adds: the party
+        met them at the table (the owner's rule)."""
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, DM) as w:
+            row = await _met_row(w, met_id)
+            group = int(row["count"]) != 1
+            kind, role = ("faction", None) if group else ("character", NPC)
+            check_named(kind, name)
+            taken = {
+                name_key(str(e["name"]))
+                for e in await w.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            }
+            taken |= {str(a["key"]) for a in await w.select(ALIASES, " AND status <> 'rejected'")}
+            if name_key(name) in taken:
+                raise MemoryRuleError(MET_NAME_TAKEN)
+            onto = await _load_ontology(w)
+            onto.active_type(kind)
+            entity = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": kind, "name": name,
+                    "description": _met_description(str(row["what"]), int(row["count"])),
+                    "status": CONFIRMED, "merged_into": None, "source": DM,
+                    "created_at": w.now, "played_by": None, "role": role,
+                    "needs_look": False, "unique_item": None,
+                },
+            )  # fmt: skip
+            await w.insert(
+                ALIASES, _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
+            )
+            await _met_done(w, row, str(entity["id"]), rank_always=True)
+            return Written(_entity(entity), w.batch)
+
+    async def join_met(
+        self, guild_id: int, campaign_id: str, met_id: str, entity_id: str
+    ) -> Written[Entity]:
+        """The DM says a being met in play is one the campaign already has (#4045, "Same as…"): in
+        ONE write, the list's row goes and, if the entry has no rank yet, it is ranked 0 with the
+        reason `met_in_play`. An entry that already has a rank keeps it: a join never demotes (an
+        old enemy met again is still Major). Only a live, confirmed entry of the campaign."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            row = await _met_row(w, met_id)
+            entity = await w.get(ENTITIES, entity_id)
+            if entity is None or entity["status"] != CONFIRMED or entity["type"] == PERSON:
+                raise MemoryRuleError(MET_NO_ENTRY)
+            await _met_done(w, row, entity_id, rank_always=False)
+            return Written(_entity(entity), w.batch)
 
     async def add_names(
         self,
@@ -8169,3 +8226,55 @@ async def isolated_rows_in(
         )
         for r in links
     ]  # fmt: skip
+
+
+MET_NAME_TAKEN = "That name is already in the campaign. If they're the same, use Same as… instead."
+MET_GONE = "That one isn't on the list any more."
+MET_NO_ENTRY = "That name isn't in the campaign any more. Pick another."
+
+
+async def _met_row(w: Changes, met_id: str) -> dict[str, Any]:
+    """The list's row, locked for this write (#4045); `MET_GONE` when it was named, joined or
+    removed meanwhile (a second press, or the website)."""
+    cur = await w.conn.execute(
+        "SELECT id, what, count, session_started_at, line_ms FROM memory_met"
+        " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR UPDATE",
+        (*w.ids, met_id),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        raise MemoryRuleError(MET_GONE)
+    return dict(row)
+
+
+def _met_description(what: str, count: int) -> str:
+    """The new entry's note: what the DM called them when met, and how many. Pure."""
+    many = "" if count == 1 else (" (several)" if count == 0 else f" ({count})")
+    return f"Met in play: {what}{many}"[:DESCRIPTION_MAX]
+
+
+async def _met_done(
+    w: Changes, row: Mapping[str, Any], entity_id: str, *, rank_always: bool
+) -> None:
+    """The rank-0 row (`met_in_play`) and the list row's delete, in the caller's write (#4045):
+    one transaction with the entry, so a failure leaves the list as it was. With `rank_always`
+    False (a join), an entry that already has an assessment keeps it."""
+    has_rank = False
+    if not rank_always:
+        cur = await w.conn.execute(
+            "SELECT 1 FROM memory_importance WHERE guild_id = %s AND campaign_id = %s"
+            " AND entity_id = %s LIMIT 1",
+            (*w.ids, entity_id),
+        )
+        has_rank = await cur.fetchone() is not None
+    if not has_rank:
+        await w.conn.execute(
+            "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason, source,"
+            " session_started_at, lines, recorded_at) VALUES (%s, %s, %s, 0, %s, 'rule', %s,"
+            " '{}', %s)",
+            (*w.ids, entity_id, MET_IN_PLAY, row["session_started_at"], w.now),
+        )
+    await w.conn.execute(
+        "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+        (*w.ids, row["id"]),
+    )
