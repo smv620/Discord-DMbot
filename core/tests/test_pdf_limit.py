@@ -32,10 +32,14 @@ class TheLimit(unittest.TestCase):
         self.assertEqual((MAX_DOCUMENT_BYTES // MB, MAX_PDF_BYTES // MB), (10, 100))
 
     def test_a_csv_over_the_limit_says_the_limit_in_force(self) -> None:
-        with self.assertRaises(DocumentError) as caught:
+        # (the limit is patched to 3 MB, so a hand-written "10 MB" would not pass)
+        with (
+            patch("dmbot.memory.name_documents.max_bytes_for", return_value=3 * MB),
+            self.assertRaises(DocumentError) as caught,
+        ):
             house_reader.house_text_of("rules.csv", b"x" * (MAX_DOCUMENT_BYTES + 1))
         self.assertEqual(str(caught.exception), too_big_words("rules.csv"))
-        self.assertIn("up to 10 MB", str(caught.exception))
+        self.assertIn("up to 3 MB", str(caught.exception))
 
     def test_the_words_name_the_limit_that_applies(self) -> None:
         self.assertIn("up to 100 MB", too_big_words("book.pdf"))
