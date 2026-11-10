@@ -30,6 +30,9 @@ MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
 CHUNK_CHARS = 40_000  # one AI request
 MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
 MAX_PDF_PAGES = 500
+# A PDF page with fewer non-space characters than this is taken as pictures only (a scan, a map, a
+# table pasted as an image), so DMbot can say how many pages it could not read (#4000).
+PICTURE_PAGE_CHARS = 20
 TEXT_TYPES = (".txt", ".md", ".csv", ".text", "")  # also .doc, refused with its own words
 DOCUMENT_TYPES = (".pdf", ".docx", ".xlsx", ".html", ".htm")
 log = logging.getLogger(__name__)
@@ -37,6 +40,37 @@ log = logging.getLogger(__name__)
 
 class DocumentError(ValueError):
     """Plain words for the DM: what's wrong with the file and what to do."""
+
+
+class ReadText(str):
+    """A document's text, which is also how many pages a PDF had and how many of them had only
+    pictures (#4000). It is a plain `str` to every caller that does not ask: only a PDF sets the
+    counts, and both are 0 for any other file. The counts cross the reader's child process as
+    plain numbers (`memory.document_reader`), never a pickle."""
+
+    pages: int
+    picture_pages: int
+
+    def __new__(cls, text: str, pages: int = 0, picture_pages: int = 0) -> ReadText:
+        made = super().__new__(cls, text)
+        made.pages = pages
+        made.picture_pages = picture_pages
+        return made
+
+
+def picture_note(text: str) -> str:
+    """What to tell the DM about pages DMbot could not read, in counts only: "" when there were
+    none (or the text is not from a PDF). The page numbers and the file's name are never part of
+    it."""
+    pictures = getattr(text, "picture_pages", 0)
+    pages = getattr(text, "pages", 0)
+    if not pictures or not pages:
+        return ""
+    return (
+        f"**{pictures} of {pages} pages** had only pictures, so DMbot couldn't read them. If they "
+        "hold text that matters (tables, handouts, map names), type it into a text file and add "
+        "that too."
+    )
 
 
 def kind_of_file(filename: str) -> str:
@@ -69,6 +103,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
     if len(raw) > MAX_DOCUMENT_BYTES:
         raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
     suffix = PurePath(filename).suffix.casefold()
+    text: str
     try:
         if suffix == ".pdf":
             text = _pdf_text(raw, max_chars)
@@ -92,6 +127,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
     except Exception as exc:  # damaged, unusual or hostile files
         log.warning("Couldn't read a %s file: %s", suffix or "text", type(exc).__name__)
         raise DocumentError(UNREADABLE) from exc
+    pages, pictures = getattr(text, "pages", 0), getattr(text, "picture_pages", 0)
     text = text.replace("\x00", "")
     if not text.strip():
         raise DocumentError(NO_TEXT)
@@ -100,7 +136,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
             f"That document is too long for one go (about {max_chars // 2000} pages at most). "
             "Split it into parts and add them one at a time."
         )
-    return text
+    return ReadText(text, pages, pictures)
 
 
 def decode_text(raw: bytes) -> str:
@@ -111,7 +147,7 @@ def decode_text(raw: bytes) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
-def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
+def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw))
@@ -126,16 +162,19 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
         )
     parts: list[str] = []
     size = 0
+    pictures = 0
     for page in reader.pages:
         text = page.extract_text() or ""
         parts.append(text)
         size += len(text)
+        if len("".join(text.split())) < PICTURE_PAGE_CHARS:
+            pictures += 1
         if size > max_chars:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
     if not text.strip():
-        raise DocumentError(SCANNED_PDF)
-    return text
+        raise DocumentError(SCANNED_PDF)  # every page is pictures: refused, not counted
+    return ReadText(text, len(reader.pages), pictures)
 
 
 # Text runs and paragraph ends in a Word file. `[^<]*` can't run past a tag, so one pass
