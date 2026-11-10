@@ -21,7 +21,7 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.name_documents import DocumentError, max_bytes_for
+from dmbot.memory.name_documents import DocumentError, max_bytes_for, picture_note
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_ai, house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
@@ -384,6 +384,7 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
                         waiting.closing = STOPPED_READING
                         words = str(exc)
                     else:
+                        note = picture_note(text)  # pages with only pictures (#4000)
                         words = await house_sync.compare_text(
                             _bot(interaction),
                             current,
@@ -395,6 +396,8 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
                         )
                         if house_sync.stopped(words):
                             waiting.closing = STOPPED_READING
+                        elif note:
+                            words = f"{words}\n\n{note}"
         finally:
             _done(current)  # whatever went wrong, the next try is not "already comparing"
         if words:

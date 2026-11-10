@@ -344,6 +344,7 @@ def offer_text(
         )
         + (whose_text(speaker) if ask else "")
         + f"{rights_text()}"
+        + (f"\n\n{upload.note}" if upload.note else "")
     )
 
 
