@@ -59,6 +59,7 @@ from dmbot import (
     table_chat,
     trial_jobs,
     usage,
+    wizard_finish,
 )
 from dmbot import consent as consent_terms
 from dmbot.account_move import AccountMoves
@@ -694,6 +695,9 @@ AUTO_SCRIPT_FIRST_S = 150  # the first look for sessions due a script (#3901)
 AUTO_SCRIPT_EVERY_S = 60
 SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered (#3899)
 SCRIPT_MAKE_EVERY_S = 5
+WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
+WIZARD_FINISH_EVERY_S = 5
+WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
@@ -1882,6 +1886,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
+            self._watched(self._wizard_finish_loop(), "wizard-finish"),
             *(
                 [
                     self._watched(self._auto_script_loop(), "auto-scripts"),
@@ -13930,6 +13935,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
                 )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
+
+    async def _wizard_round(self, guild_id: int) -> int:
+        """One server's finish round; a failure is logged (the class only) and never escapes."""
+        try:
+            return await wizard_finish.run_round(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
+            return 0
+
+    async def _wizard_finish_loop(self) -> None:
+        """Every few seconds: answer the website's start-up wizard finish runs (#3955;
+        `wizard_finish`), and once an hour remove the drafts nobody came back to. A server's trouble
+        never stops the others; a run takes minutes, so each server's runs in its own task."""
+        await asyncio.sleep(WIZARD_FINISH_FIRST_S)
+        running: dict[int, asyncio.Task[int]] = {}
+        swept = float("-inf")
+        while True:
+            now = time.monotonic()
+            sweep = now - swept >= WIZARD_SWEEP_EVERY_S
+            if sweep:
+                swept = now
+            for guild in list(self.guilds):
+                if sweep:
+                    try:
+                        await wizard_finish.WizardFinishes(self.campaigns.db).sweep(guild.id)
+                    except Exception:
+                        log.exception("Wizard drafts: a server's sweep failed")
+                task = running.get(guild.id)
+                if task is not None and not task.done():
+                    continue
+                running[guild.id] = asyncio.create_task(
+                    self._wizard_round(guild.id), name=f"wizard-finish-{guild.id}"
+                )
+            await asyncio.sleep(WIZARD_FINISH_EVERY_S)
 
     async def _auto_script_loop(self) -> None:
         """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A

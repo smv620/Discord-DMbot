@@ -1072,6 +1072,9 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             and got["state"] == "done"
             and str(got["resultOther"] or "").isdigit()
             else None,
+            # what the bot also did with it, for the page to say: "shown:1" (the players can see
+            # it now, #3973) or "held:1" (kept hidden beside another hidden one, #3979); "" if none
+            "counts": str(got.get("counts") or ""),
             "waits": _reading_answer(got)["waits"],
             "progress": {"done": int(got.get("progressDone") or 0), "total": total}
             if keeping and total > 0

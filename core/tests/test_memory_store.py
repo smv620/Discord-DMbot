@@ -271,6 +271,8 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and which upload a name was read from (#3675): an id and a label only
+        await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only
         await self.memory.add_npc_guesses(GUILD_A, self.c, [(a, b, 0.6)])
         # and a lore upload's lineage for a confirmed character, waiting for the DM (#3926)

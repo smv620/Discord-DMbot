@@ -3557,7 +3557,8 @@ def create_app(
         body = await wizard_body(request, session)
         slot, name = str(body.get("slot", "")), str(body.get("name", ""))
         try:
-            await wizard.get(db, session, guild)  # the draft and the server first
+            if await wizard.get(db, session, guild) is None:  # the draft and the server first
+                raise RecapError("no_draft")
             if body.get("drive_id"):
                 source, checked = "drive", wizard_check.Checked("", 0, 0, "ok", "")
             elif "data" in body:
@@ -3606,7 +3607,10 @@ def create_app(
         session, _token = signed
         body = await wizard_body(request, session)
         try:
-            await wizard.get(db, session, guild)  # only a signed-in member of this server
+            # Only the DM with a draft in this server: no draft, no reading (and a server that is
+            # not in the session's list is refused by `get` itself).
+            if await wizard.get(db, session, guild) is None:
+                raise RecapError("no_draft")
         except RecapError as err:
             raise wizard_refusal(err) from None
         text = body.get("text")
