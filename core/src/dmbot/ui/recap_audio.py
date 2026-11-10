@@ -201,12 +201,22 @@ class MakeAudioAgainButton(
             await bot.recap_audio_started(campaign, self.session_at)
 
 
+def _named(text: str, title: str) -> str:
+    """The notice with the recap's title in bold, or, with no title (the DM Bot channel is read by
+    the campaign's people, so a notice there names nothing, #3874), as "this session's recap"."""
+    if not title:
+        return text.format(title="this session's recap").replace(
+            "**this session's recap**", "this session's recap"
+        )
+    return text.format(title=discord.utils.escape_markdown(title))
+
+
 def ready_text(title: str) -> str:
-    return READY.format(title=discord.utils.escape_markdown(title))
+    return _named(READY, title)
 
 
 def failed_text(title: str) -> str:
-    return FAILED.format(title=discord.utils.escape_markdown(title))
+    return _named(FAILED, title)
 
 
 def audio_view(
