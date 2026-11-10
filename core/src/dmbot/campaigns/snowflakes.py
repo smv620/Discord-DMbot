@@ -39,6 +39,30 @@ ID_KEY = re.compile(
 )
 
 
+# The sections of the campaign file whose rows are the database's columns as they are, so an id in
+# them is a number that this module turns into a string and back. Every other section already writes
+# its ids as strings and checks them as strings (the `dms`, `confirmations`, `recap_rights`
+# sections and so on): converting those would break them. The transcript parts are such rows too.
+NUMERIC_SECTIONS = frozenset({"memory"})
+
+
+def write_sections(sections: dict[str, Any]) -> dict[str, Any]:
+    """The campaign file's sections with the ids of the numeric ones written as strings."""
+    return {k: write_ids(v) if k in NUMERIC_SECTIONS else v for k, v in sections.items()}
+
+
+def read_sections(data: Any) -> Any:
+    """A campaign file with the ids of its numeric sections put back to numbers. Anything that is
+    not a file's shape is returned as it came, for the file's own checks to refuse."""
+    if not isinstance(data, dict) or not isinstance(data.get("sections"), dict):
+        return data
+    sections = data["sections"]
+    return {
+        **data,
+        "sections": {k: read_ids(v) if k in NUMERIC_SECTIONS else v for k, v in sections.items()},
+    }
+
+
 def write_ids(value: Any, *, under: bool = False) -> Any:
     """The value with every integer above JS_SAFE (or below its negative) written as a string,
     where a key names an id (a list under such a key too): exactly where `read_ids` puts it back,

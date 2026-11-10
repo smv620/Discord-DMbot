@@ -291,7 +291,8 @@ class MemorySection:
             # One table at a time, so only one table's raw rows are held at once (#393).
             out += await asyncio.to_thread(_dump_rows, [(tag, table, raws)])
             del raws
-        return out
+        # (once for the whole section, not for each table: one default row, #4060)
+        return await asyncio.to_thread(_with_default_stamp, out)
 
     def check(self, rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         """Every value checked and sound codes worked out: pure CPU, which the store
@@ -388,7 +389,7 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
                 # (it keeps the kind and the session). A backup is read by the whole server.
                 row["target_id"] = None
             out.append({"table": tag, **row})
-    return _with_default_stamp(out)
+    return out
 
 
 # The row that carries the build stamp most rows share (#4060): written first, once, so a row holds
