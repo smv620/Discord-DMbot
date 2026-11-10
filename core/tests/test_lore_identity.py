@@ -579,6 +579,15 @@ class TheWordsByKind(NamesTest):
         self.assertEqual(names, {"Neverwinter"})
         self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
 
+    async def test_a_failed_read_gives_the_person_words(self) -> None:
+        from unittest.mock import patch
+
+        view = await self.ask("Neverwinter", "place", "City of Skilled Hands")
+        self.assertEqual(self.labels(view)[0], "✅ Yes, the same place")
+        with patch.object(self.memory, "resolve", AsyncMock(side_effect=RuntimeError("x"))):
+            await view._mark_spelling(self.it(DM))
+        self.assertEqual(self.labels(view), ["✅ Yes, the same person", "❌ No, someone else"])
+
     async def test_an_item_is_asked_in_thing_words(self) -> None:
         view = await self.ask("The Amulet", "item", "Amulet of Vell")
         self.assertEqual(self.labels(view), ["✅ Yes, the same thing", "❌ No, a different thing"])

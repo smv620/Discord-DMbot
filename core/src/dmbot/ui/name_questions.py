@@ -48,7 +48,8 @@ EPITHET_PLACE_YES, EPITHET_PLACE_NO = "✅ Yes, the same place", "❌ No, somewh
 OTHER_YES, OTHER_NO = "✅ Yes, the same one", "❌ No, a different one"
 # An item (an object the party has): "thing" words (#4097).
 ITEM_YES, ITEM_NO = "✅ Yes, the same thing", "❌ No, a different thing"
-PERSON_KINDS = ("player_character", "npc", "deity")
+# The kinds a person is asked about, as `Entity.kind_key` names them (a character with no role too).
+PERSON_KINDS = ("player_character", "npc", "character")
 
 
 class NameQuestions(_Menu):
@@ -94,6 +95,8 @@ class NameQuestions(_Menu):
         place. Read for the one card on show; anything unclear keeps the person words."""
         memory = memory_of(interaction) if interaction is not None else None
         if self.current is None or memory is None:
+            # (no card to ask about: the person words, never a stale card's)
+            self.yes_button.label, self.no_button.label = PERSON_YES, PERSON_NO
             return
         alias, entry = self.current
         try:
@@ -111,9 +114,9 @@ class NameQuestions(_Menu):
             yes, no = PLACE_YES, PLACE_NO
         elif entity is not None and entity.type == place_spellings.PLACE:
             yes, no = EPITHET_PLACE_YES, EPITHET_PLACE_NO
-        elif entity is None or entity.type in PERSON_KINDS:
+        elif entity is None or entity.kind_key in PERSON_KINDS:
             yes, no = PERSON_YES, PERSON_NO
-        elif entity.type == "item":
+        elif entity.kind_key == "item":
             yes, no = ITEM_YES, ITEM_NO
         else:
             yes, no = OTHER_YES, OTHER_NO
