@@ -1,6 +1,6 @@
 # AI credits: the ledger and the estimate (design note, #4005)
 
-Status: a design note, not built. The allowances per plan, whether credits can be bought and what
+Status: step 1 of section 6 (ledger and charging, no limit) is built (`core/src/dmbot/credits.py`, migration 0418); the rest is a design note, not built. The allowances per plan, whether credits can be bought and what
 happens at zero are the owner's (#4005, "Owner, what this needs from you"); this note makes
 everything else decided, so building waits only for those numbers. Written by CloudDev-lead,
 2026-11-10, for Supervisor's review. PLAN, "AI credits", is the rule; this is how.
@@ -114,3 +114,24 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   `NOT_IN_BACKUP`), and a campaign move keeps its rows (`ON UPDATE CASCADE`); `owner_credits` is the
   person's, never moves with a campaign (as `owner_hours`).
 - **Privacy:** counts only: no text, no names, no file names in the ledger or the log.
+
+## 8. What step 1 does (built)
+- `credits.preparing(guild, campaign, job_kind)` is a plain `with` block (not `async with`), like
+  `ai_feed.job`. It is opened by `ui.name_background.read_background` (every lore read: Discord's
+  button, the website, the queue), `ImportJob.run` (the cleaning of an imported session) and the bot's
+  `_extract_import` and `_scan_import` (its story read and name scan). `credits.PREPARING_JOBS` lists
+  them and a test fails if one stops opening the scope. Adventure reading, the careful decisions, the
+  scripts of imported sessions and picture reads join as their jobs are built or touched.
+- `ai.AnthropicClient.complete` calls `credits.record` after every call that answers, a cut one too. A
+  call that raises has no token counts from the service, so it is not charged.
+- The owner is found once per job (`DMBot._owner_of_campaign`); a campaign nobody owns is recorded under
+  owner 0 and never added to a month.
+- A failed write is one counts-only warning; the AI work goes on.
+- **Rounding:** each call is rounded up to a whole credit, so a very small call costs 1 credit (about
+  $0.001) and a read made of many tiny calls reads a little high. Accepted for step 1, which measures;
+  the estimate's unit table is tuned from these numbers, so it errs high as the design wants.
+- **A slow database never holds up an answer:** the write is shielded and ends after 5 seconds with one
+  warning (the count for that call is lost, never the answer).
+- **Owed before the limit (step 4):** an account move must carry `owner_credits` (as `owner_hours` is
+  merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
+

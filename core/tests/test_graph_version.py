@@ -151,6 +151,8 @@ FILES: dict[str, str] = {
     "memory/reveal_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/trait_offers.py": NOT_DRAWN + " (a lineage or class waiting for the DM, #3926)",
     "memory/met_store.py": NOT_DRAWN + " (beings met in play, waiting for the DM, #3172)",
+    "memory/private_scene_store.py": NOT_DRAWN + " (private scenes, ids and times, #2996)",
+    "memory/private_scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",

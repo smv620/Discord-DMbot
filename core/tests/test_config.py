@@ -202,6 +202,18 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
             load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
 
+    def test_private_scenes_are_off_by_default(self) -> None:  # (#2996 rule 5)
+        self.assertFalse(load_settings(BASE).private_scenes_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_PRIVATE_SCENES": "1"}).private_scenes_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_PRIVATE_SCENES must be 1"):
+            load_settings({**BASE, "DMBOT_PRIVATE_SCENES": "maybe"})
+
+    def test_picture_names_are_off_by_default(self) -> None:  # (#4003)
+        self.assertFalse(load_settings(BASE).picture_names_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_PICTURE_NAMES": "1"}).picture_names_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_PICTURE_NAMES must be 1"):
+            load_settings({**BASE, "DMBOT_PICTURE_NAMES": "maybe"})
+
     def test_who_learned_what_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).story_reveals_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_REVEALS": "1"}).story_reveals_on)

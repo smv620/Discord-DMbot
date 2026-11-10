@@ -172,6 +172,8 @@ FEATURES: tuple[Feature, ...] = (
             "story_reveals_on",
             "story_reveals_precheck",
             "met_unnamed_on",
+            "private_scenes_on",
+            "picture_names_on",
             "story_who_on",
             "story_who_apply_on",
             "story_family_only",
