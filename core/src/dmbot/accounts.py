@@ -173,6 +173,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The account's history of earlier Discord accounts goes with it (#1230).
         await conn.execute("SELECT dmbot_forget_account_history()")
         await conn.execute("SELECT dmbot_forget_email_records()")
+        # A start-up wizard draft is the person's own answers and documents: it goes in every
+        # server (#3955).
+        await conn.execute("SELECT dmbot_forget_wizard()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

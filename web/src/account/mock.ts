@@ -22,6 +22,8 @@ import type {
   NameRow,
   NamesPage,
   NameSource,
+  UploadNotice,
+  UploadUndo,
   ScriptOffer,
   MatchRow,
   NamesQuery,
@@ -714,12 +716,20 @@ function pretendReadings(): Reading[] {
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
-/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
-function pretendWaiting(): Waiting {
+/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. A campaign ref ending
+ * `.shown-held` also has two claims: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
+function pretendWaiting(ref = ""): Waiting {
+  const shownHeld: WaitingClaim[] = ref.endsWith(".shown-held")
+    ? [
+        { id: "c3-shown", statement: "Tavin is Mira's cousin", canSecret: false },
+        { id: "c4-held", statement: "Mira Voss grew up in Far Hall", canSecret: false },
+      ]
+    : [];
   return {
     claims: [
       { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
       { id: "c2", statement: "Roan is dead", canSecret: false },
+      ...shownHeld,
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
@@ -1216,6 +1226,9 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
   sharingState.set(ref, now);
   return note;
 }
+// The pretend uploads' notices (#3879): how many times each was looked at, and which were undone.
+const autoLooks = new Map<string, number>();
+const undoneUploads = new Map<string, UploadUndo>();
 // Scripts made from the pretend website (#3899), by campaign and session.
 const madeScripts = new Set<string>();
 const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
@@ -1458,6 +1471,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
       }
       // Sharing the story (#3741): `.ss-failed` is a refusal, with nothing changed; every other campaign says done at once.
+      if (asked.setting === "ask_before_adding") return { ...base, state: "done" };
       if (asked.setting === "share_improve") {
         if (/\.ss-failed$/.test(ref)) return { ...base, state: "failed", error: "refused" };
         return { ...base, state: "done" };
@@ -2162,7 +2176,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       return structuredClone({
         ...waiting,
         counts: {
@@ -2181,7 +2195,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       // Family ties (#3463): a pick settles one name of a kept claim (the claim becomes an ordinary waiting one
       // once none is left), and Undo puts it back; "None of these" is the ordinary reject below.
@@ -2223,7 +2237,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
-      if (answer.kind === "claim" && answer.action === "confirm") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
+      if (answer.kind === "claim" && answer.action === "confirm") {
+        // A yes the bot showed to the players, or kept hidden beside another hidden connection (#3974, #3986).
+        // (each also gives a batch, so Undo takes it back, as for an ordinary yes)
+        const batch = 100 + Number(answer.id.replace(/\D/g, ""));
+        if (answer.id.endsWith("-shown")) return { shown: 1, batch };
+        if (answer.id.endsWith("-held")) return { held: 1, batch };
+        return { batch };
+      }
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
@@ -2609,7 +2630,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
               // What the bot has switched on (#3693): a DM's page only, like the settings.
               features: {
                 writtenAt: 1_790_000_000,
@@ -2637,6 +2658,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
       // The server's door: sharing the story is "on" or "off" (#3741).
       if (choice.setting === "share_improve" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
+      if (choice.setting === "ask_before_adding" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
       if (choice.setting === "dndbeyond_invite" && choice.value !== "" && !/^https:\/\/(www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}$/.test(choice.value)) throw new ApiError("bad-value");
@@ -2811,6 +2833,35 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const n = npcNotes.size;
       npcNotes.clear();
       return n;
+    },
+    // What DMbot added by itself after an upload (#3879, core #3887). `.autoadd-applying`: two looks while it is applying, then done;
+    // `.autoadd-none`: nothing was added by itself; `.autoadd-old`: done and past the undo; `.autoadd-fail`: the read fails.
+    async uploadNotice(ref, source): Promise<UploadNotice> {
+      calls.push(`uploadNotice:${ref}:${source.kind}:${source.id}`);
+      await reachable();
+      signedIn();
+      if (/\.autoadd-fail$/.test(ref)) throw new ApiError("server");
+      const now = 1790000000;
+      const looks = (autoLooks.get(source.id) ?? 0) + 1;
+      autoLooks.set(source.id, looks);
+      const base = { label: "Lore, 24 Oct", serverNow: now, questionsLeft: 3, undone: undoneUploads.get(source.id) ?? null };
+      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48 };
+      if (/\.autoadd-none$/.test(ref)) return { ...base, state: "none", counts: { names: 0, byKind: {}, connections: 0 }, undoUntil: null };
+      if (/\.autoadd-applying$/.test(ref) && looks <= 2) {
+        return { ...base, state: "applying", counts, undoUntil: null, progress: { stage: "adding", done: looks * 20, total: 110, unit: "names", startedAt: now - 30, updatedAt: now - 2, serverNow: now, state: "running" } };
+      }
+      return { ...base, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
+    },
+    async undoUpload(ref, source, onLook): Promise<UploadUndo> {
+      calls.push(`undoUpload:${ref}:${source.kind}:${source.id}`);
+      await reachable();
+      signedIn();
+      onLook?.(null);
+      if (/\.autoadd-old$/.test(ref)) throw new ApiError("undo-late");
+      if (undoneUploads.has(source.id)) throw new ApiError("undo-done");
+      const got = { took: 60, of: 62 + 48 };
+      undoneUploads.set(source.id, got);
+      return got;
     },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);

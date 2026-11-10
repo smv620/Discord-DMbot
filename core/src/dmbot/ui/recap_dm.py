@@ -114,15 +114,14 @@ MAX_SHOWN = 8  # cue problems listed in one message
 
 
 def ready_text(title: str, link: str, audio_why: str = "") -> str:
-    """The DM-screen line that goes with the buttons: what it is, that nothing has gone to the
+    """The line that goes with the buttons: what it is, that nothing has gone to the
     players yet, and where to change the words. `audio_why` (#2420): why the audio button is off,
-    in the page's words, when it is."""
+    in the page's words, when it is. An empty `title` leaves it out: the DM Bot channel is read by
+    the campaign's people, and a draft recap's title can give the story away (#3874)."""
     where = f"\nRead, edit and post it on your recap page: {link}" if link else ""
     off = f"\n{audio_why}" if audio_why else ""
-    return (
-        f"📜 Recap ready: **{discord.utils.escape_markdown(title)}**\n"
-        f"Nothing goes to the players until you post it.{where}{off}"
-    )
+    shown = f": **{discord.utils.escape_markdown(title)}**" if title else ""
+    return f"📜 Recap ready{shown}\nNothing goes to the players until you post it.{where}{off}"
 
 
 def reading_text(job: Any, link: str) -> str:
