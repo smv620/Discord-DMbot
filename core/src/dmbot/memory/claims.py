@@ -27,6 +27,7 @@ from dmbot.memory import (
     forget_readings,
     graph_review,
     kin,
+    knowers,
     knows_how,
     link,
     one_off,
@@ -85,7 +86,7 @@ from dmbot.memory.store import (
     _new_alias,
     live_between,
     reveal_stated_in,
-    split_when_said,
+    split_scene,
 )
 from dmbot.memory.voice import (
     EFFECT,
@@ -294,6 +295,11 @@ class Confirmed:
     # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
     # players on the website) when the players should see it.
     held: bool = False
+    # Said while the game clock had the party split (#2996 rule 1, slice 2a): kept from the whole
+    # party. `scene` is how many characters of the group that was there now know it (0: which group
+    # can't be told, so nobody does, and the DM decides).
+    split: bool = False
+    scene: int = 0
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -997,6 +1003,20 @@ def which_choices(
         options.sort(key=lambda o: (o.name.casefold(), o.kind, o.id))
         out.append(WhichOne(str(row[side]), side, tuple(options)))
     return out
+
+
+async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
+    """Each character of the group that was in the scene learns the connection (#2996 slice 2a),
+    in the claim's own change, so one Undo takes it back. A character the store refuses (gone
+    meanwhile) is skipped. Returns how many now know it."""
+    learned = 0
+    for character_id in characters:
+        try:
+            await knowers.learn(w, "connection", relation_id, character_id)
+            learned += 1
+        except MemoryRuleError:
+            continue
+    return learned
 
 
 class ClaimStore:
@@ -2139,7 +2159,8 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = held = False
+            shown = held = split = False
+            scene = 0
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2172,19 +2193,31 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
+                # Who was in the scene, when the game clock had the party split (#2996 rule 1):
+                # read only for what the whole party would otherwise be shown.
+                # (a held-back connection the claim states, or a new one that would be shown)
+                asks = not secret and live.get(relation.id, not hold and not relation.unrevealed)
+                in_scene = (
+                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    if asks
+                    else None
+                )
                 if relation.id in live:
                     # (the table said a connection the story already has: held back, it is the
                     # party's now, #3963 c; one already shown stays as it is)
-                    # (never while the game clock had the party split: only one group was there)
-                    shown = (
-                        live[relation.id]  # (held back: one already shown needs no check)
-                        and not secret
-                        and not await split_when_said(w, claim.session_started_at, claim.lines)
-                        and await reveal_stated_in(w, relation.id)
-                    )
+                    if live[relation.id] and not secret and in_scene is None:
+                        shown = await reveal_stated_in(w, relation.id)
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                elif in_scene is not None and not relation.unrevealed:
+                    # a new connection said in one group's scene is not the whole party's
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                if in_scene is not None:
+                    # only that group heard it: its characters learn it, nobody else (an unknown
+                    # group: nobody, and the DM decides with 👁️ Who knows this?)
+                    split = True
+                    scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
                 held = hold and not secret and relation.id not in live
             row = await w.update(
@@ -2193,4 +2226,4 @@ class ClaimStore:
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch, shown, held)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held, split, scene)

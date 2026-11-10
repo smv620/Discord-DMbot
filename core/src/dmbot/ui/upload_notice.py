@@ -58,7 +58,7 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     kinds = {
         k: v
         for k, v in counts.items()
-        if k not in ("connections", "other_names", "shown", "held") and v
+        if k not in ("connections", "other_names", "shown", "held", "split") and v
     }
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
@@ -89,6 +89,14 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
             f"connection between the same two names. To show {'it' if one else 'them'}: open "
             f"either name, ✏️ Edit a connection…, 👁️ Who knows this?, then 👁️ Everyone at the "
             f"table."
+        )
+    split = counts.get("split", 0)
+    if split:  # (an import's: said while the game clock had the party split, #2996)
+        one = split == 1
+        text += (
+            f"\n👁️ **{split} connection{'' if one else 's'}** {'was' if one else 'were'} said "
+            f"while the party was split, so only the characters who were there know "
+            f"{'it' if one else 'them'}. Check {'it' if one else 'them'} with 👁️ Who knows this?"
         )
     if questions:
         text += (
@@ -287,6 +295,8 @@ async def add_sure(
             counts["shown"] = tally.shown
         if tally.held:
             counts["held"] = tally.held
+        if tally.split:
+            counts["split"] = tally.split
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]

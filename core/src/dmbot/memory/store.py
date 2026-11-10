@@ -206,6 +206,7 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
 from dmbot.names import not_names
+from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
 
@@ -6876,19 +6877,33 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
 
 
 async def split_when_said(w: Changes, session_started_at: int | None, lines: Sequence[str]) -> bool:
-    """Was the party split by the game clock (#3131) when any of these lines was spoken? Then a
-    held-back connection the claim states is not shown to the whole party: only one group was in
-    that scene (#2996, the leak found in #3963 c; slice 2a gives that group its own knower rows).
-    `lines` are the claim's line numbers, 1-based as `extractor.readable` numbers the session's
-    lines (by `started_ms`, then id). A moment is split when the clock's newest log row at or
-    before it belongs to a group (the rule of `timebot.stamp`).
+    """Was the party split by the game clock (#3131) when any of these lines was spoken? (#2996,
+    the leak found in #3963 c.) `split_scene` says which group was there."""
+    return await split_scene(w, session_started_at, lines) is not None
 
-    When no cited line is found (a person's lines were taken back since), it fails closed: split
-    when the clock was split at the session's start or at any time during it. An imported session's
-    lines carry the dates the DM chose (the extractor reads no clock for them), so the answer for
-    one is whatever the log holds at those dates: a hold is the safe side. No clock: not split."""
+
+async def split_scene(
+    w: Changes,
+    session_started_at: int | None,
+    lines: Sequence[str],
+    speaker_ids: Sequence[int] = (),
+) -> tuple[str, ...] | None:
+    """Who was in the scene of these lines, when the game clock had the party split (#2996 rule 1,
+    slice 2a): None when the party was together at every cited line (the whole party was there);
+    otherwise the player characters of the one group the lines' speakers were in, the same group
+    at every line (`timebot.stamp.group_of_speakers`, and `group_at` for its members); an empty
+    tuple when that can't be told (two groups, nobody placed, only the DM spoke, a line together
+    and another split). DMbot never guesses whose scene it was.
+
+    `lines` are the claim's line numbers, 1-based as `extractor.readable` numbers the session's
+    lines (by `started_ms`, then id). A moment is split when the clock's newest log row at or before
+    it belongs to a group (the rule of `timebot.stamp`). When no cited line is found (a person's
+    lines were taken back since), it fails closed: split, group unknown, when the clock was split
+    at the session's start or at any time during it. An imported session's lines carry the dates
+    the DM chose; the clock is read at those dates all the same (Supervisor, #4034: a wrong hold
+    costs one 👁️ press, a wrong show leaks). No clock: together."""
     if session_started_at is None:
-        return False
+        return None
     numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
     rows = []
     if numbers:
@@ -6903,11 +6918,32 @@ async def split_when_said(w: Changes, session_started_at: int | None, lines: Seq
         )
         rows = await cur.fetchall()
     if not rows:
-        return await _split_during_session(w, session_started_at)
-    for at in {int(r["at"]) for r in rows}:
-        if await _split_at(w, at):
-            return True
-    return False
+        return () if await _split_during_session(w, session_started_at) else None
+    moments = sorted({int(r["at"]) for r in rows})
+    split = [await _split_at(w, at) for at in moments]
+    if not any(split):
+        return None
+    if not all(split):
+        return ()  # (part together, part split: not one scene)
+    groups = {
+        await group_of_speakers(w.conn, w.guild_id, w.campaign_id, speaker_ids, at)
+        for at in moments
+    }
+    if len(groups) != 1 or None in groups:
+        return ()
+    (group,) = groups
+    members: set[str] | None = None
+    for at in moments:
+        here = set()
+        for row in await w.select(
+            ENTITIES,
+            " AND type = 'character' AND role = %s AND status = %s AND merged_into IS NULL",
+            [PLAYER_CHARACTER, CONFIRMED],
+        ):
+            if await group_at(w.conn, w.guild_id, w.campaign_id, str(row["id"]), at) == group:
+                here.add(str(row["id"]))
+        members = here if members is None else members & here
+    return tuple(sorted(members or ()))
 
 
 async def _split_at(w: Changes, at: int) -> bool:

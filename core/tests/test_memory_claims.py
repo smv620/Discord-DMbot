@@ -763,6 +763,74 @@ class Stored(ConfirmedMemoryTest):
         self.assertFalse(done.shown)
         self.assertTrue(await self.unrevealed(rel))
 
+    async def split_into_groups(self) -> tuple[str, str]:
+        """Wren (played by 7, who speaks lines 1 and 3) in group 1 and Ash (played by 8) in group
+        2, from 600 on; together before."""
+        made = []
+        for name, player in (("Wren", 7), ("Ash", 8)):
+            pc = await self.memory.add_entity(
+                GUILD_A, self.c, name=name, type="character", role="player_character",
+                played_by=player, status="confirmed", source="dm",
+            )  # fmt: skip
+            made.append(pc.value.id)
+        await self.clock_row(100, None)
+        await self.clock_row(600, 1)
+        async with self.db.guild(GUILD_A) as conn:
+            for character, group in zip(made, (1, 2), strict=True):
+                await conn.execute(
+                    "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                    " position, at) VALUES (%s, %s, %s, %s, 600)",
+                    (GUILD_A, self.c, character, group),
+                )
+        return made[0], made[1]
+
+    async def test_the_group_in_the_scene_learns_it_and_nobody_else(self) -> None:
+        """#2996 rule 1, slice 2a: Wren's group was there, Ash's wasn't; the whole party is not
+        shown it, and one Undo takes the learning back."""
+        await self.session_lines()
+        wren, ash = await self.split_into_groups()
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 1))
+        self.assertTrue(await self.unrevealed(rel))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertIn(wren, knows.get(rel, []))
+        self.assertNotIn(ash, knows.get(rel, []))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertNotIn(wren, knows.get(rel, []))
+
+    async def test_a_new_connection_said_in_one_groups_scene_is_held_for_that_group(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.split_into_groups()
+        done = await self.confirm_in_veldmoor("3")
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.unrevealed, done.split, done.scene), (True, True, 1))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [new.id])
+        self.assertEqual(knows.get(new.id), [wren])
+
+    async def test_when_the_group_cant_be_told_nobody_learns_it(self) -> None:
+        """Only the DM (no player character) spoke: never a guess."""
+        await self.session_lines()
+        await self.split_into_groups()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = NULL WHERE guild_id = %s"
+                " AND campaign_id = %s AND played_by = 7",
+                (GUILD_A, self.c),
+            )
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 0))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_new_connection_said_together_is_shown_as_before(self) -> None:
+        await self.session_lines()
+        done = await self.confirm_in_veldmoor("3")
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.unrevealed, done.split), (False, False))
+
     async def test_a_party_together_again_is_shown_as_before(self) -> None:
         await self.clock_row(100, 1)
         await self.clock_row(450, None)  # (rejoined before the session)
@@ -808,6 +876,10 @@ class Stored(ConfirmedMemoryTest):
         self.assertIn("3 of them were said at the table", claims_review.shown_line(3))
         self.assertIn("1 of them is kept hidden from your players", claims_review.held_line(1))
         self.assertIn("To show them: open either name", claims_review.held_line(2))
+        both = claims_review.split_line(1, 2)  # (#2996: said while the party was split)
+        self.assertIn("1 of them was said while the party was split", both)
+        self.assertIn("2 are kept hidden", both)
+        self.assertNotIn("kept hidden", claims_review.split_line(3, 0))
 
     async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
         await self.propose(said("Bram", "is in", "Veldmoor"))

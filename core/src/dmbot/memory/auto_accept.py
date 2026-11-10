@@ -68,6 +68,7 @@ class Tally:
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
     shown: int = 0  # held-back connections the table stated, shown to the players (#3963 c)
     held: int = 0  # kept hidden beside a connection the story hides (#3975, #3979)
+    split: int = 0  # said while the party was split: not shown to the whole party (#2996)
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
@@ -225,6 +226,7 @@ async def accept_dm_claims(
             tally.accepted[CONNECTIONS] += 1
             tally.shown += done.shown
             tally.held += done.held
+            tally.split += done.split
             tally.add_batch(done.batch)
         except Exception as exc:  # a rule, or anything else: counted, the run goes on
             refused(tally, CONNECTIONS, exc)
