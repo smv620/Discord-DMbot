@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
@@ -60,7 +60,7 @@ class TheMovedNotices(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
             post=AsyncMock(),
         )
-        me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)
+        me._upkeep_channel = lambda c: DMBot._upkeep_channel(cast(Any, me), c)
         return me
 
     async def test_the_finish_line_goes_to_the_dm_bot_channel_without_the_file_name(self) -> None:

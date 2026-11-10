@@ -9,7 +9,7 @@ import unittest
 import unittest.mock
 from functools import partial
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
@@ -54,7 +54,7 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             plan_allows=AsyncMock(return_value=True),
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({8}))),
         )
-        me._upkeep_channel = partial(DMBot._upkeep_channel, me)
+        me._upkeep_channel = partial(DMBot._upkeep_channel, cast(Any, me))
         return me
 
     def table(self) -> Any:
