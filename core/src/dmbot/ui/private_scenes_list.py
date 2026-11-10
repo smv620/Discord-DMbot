@@ -19,6 +19,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import Campaign
+from dmbot.discord_limits import fit_message
 from dmbot.memory.private_scene_store import Kept, PrivateScenes
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _Select, _tell
@@ -30,7 +31,7 @@ TITLE = "🤫 Private scenes"
 INTRO = (
     "Times two player characters were alone together while the party was split, found from the "
     "game clock and who spoke. DMbot keeps when and how long, never the words, and treats each one "
-    "as mattering to the story. Only you see this list. If DMbot got one wrong (someone else was "
+    "as mattering to the story. Only DMs see this list. If DMbot got one wrong (someone else was "
     "there, or the party wasn't really apart), pick it and press Not private."
 )
 EMPTY = (
@@ -40,6 +41,7 @@ EMPTY = (
 DM_ONLY = "Only a DM of this campaign can see this list."
 NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
+MESSAGE_LIMIT = 1990  # Discord's 2,000, with room to spare
 
 
 def notice(kept: int) -> str:
@@ -83,15 +85,16 @@ async def _for_dm(interaction: discord.Interaction, campaign_id: str) -> Campaig
 async def _names(
     interaction: discord.Interaction, campaign: Campaign, scenes: list[Kept]
 ) -> dict[str, str]:
-    """Each character's name, by id (a merged one under the name it became)."""
+    """Each character's name, by id: a merged one under the name it became (the store follows the
+    whole chain of merges), "a character" when it is gone."""
     memory = _memory(interaction)
+    ids = sorted({i for s in scenes for i in (s.first_id, s.second_id)})
+    if memory is None or not ids:
+        return dict.fromkeys(ids, "a character")
+    roots = await PrivateScenes(memory._db).roots(campaign.guild_id, campaign.id, ids)
     out: dict[str, str] = {}
-    for entity_id in {i for s in scenes for i in (s.first_id, s.second_id)}:
-        entity = await memory.entity(campaign.guild_id, campaign.id, entity_id) if memory else None
-        for _ in range(5):  # (a merge chain is short: follow it to the name it became)
-            if memory is None or entity is None or not entity.merged_into:
-                break
-            entity = await memory.entity(campaign.guild_id, campaign.id, entity.merged_into)
+    for entity_id in ids:
+        entity = await memory.entity(campaign.guild_id, campaign.id, roots[entity_id])
         out[entity_id] = entity.name if entity is not None else "a character"
     return out
 
@@ -126,14 +129,27 @@ async def show(
         await _replace(interaction, head + EMPTY, None)
         return
     shown = scenes[:SHOWN_MAX]
+    await _replace(interaction, list_text(head, shown, names, len(scenes)), SceneList(
+        campaign.id, shown, names))  # fmt: skip
+
+
+def list_text(head: str, shown: list[Kept], names: dict[str, str], total: int) -> str:
+    """The list's message, its lines kept (one scene a line) and inside Discord's limit: when every
+    line does not fit, the newest that do are written and the rest are counted (the menu below
+    still offers them all). Pure."""
     lines = [f"• **{_md(logic.shorten(pair(names, s), 90))}** · {when(s)}" for s in shown]
-    more = (
-        f"\n…and {len(scenes) - len(shown)} older ones. Only the newest {SHOWN_MAX} show."
-        if len(scenes) > len(shown)
-        else ""
-    )
-    text = f"{head}**{TITLE}**\n{INTRO}\n\n" + "\n".join(lines) + more
-    await _replace(interaction, logic.shorten(text, 1990), SceneList(campaign.id, shown, names))
+    top = f"{head}**{TITLE}**\n{INTRO}\n\n"
+    for written in range(len(lines), -1, -1):
+        rest = total - written
+        more = ""
+        if rest and written < len(shown):
+            more = f"\n…and {rest} more: pick them in the menu below."
+        elif rest:
+            more = f"\n…and {rest} older ones. Only the newest {SHOWN_MAX} show."
+        text = top + "\n".join(lines[:written]) + more
+        if len(text) <= MESSAGE_LIMIT:
+            return text
+    return fit_message(top, limit=MESSAGE_LIMIT)
 
 
 class SceneList(_Menu):
@@ -163,6 +179,8 @@ class SceneList(_Menu):
             await show(interaction, self.campaign_id, in_place=True)
             return
         await _answer_first(interaction, in_place=True)
+        if await _for_dm(interaction, self.campaign_id) is None:  # (every press)
+            return
         await _replace(
             interaction,
             choice_text(pair(self.names, scene), scene),

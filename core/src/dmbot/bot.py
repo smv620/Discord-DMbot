@@ -10427,11 +10427,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 written.kept,
                 written.not_private,
             )
-            if written.kept and table.screen_channel_id is not None:  # (counts only)
+            # (counts only; a re-read finds the same scenes again and says nothing new)
+            if written.new and table.screen_channel_id is not None:
                 try:
                     await self.post(
                         table.screen_channel_id,
-                        private_scenes_ui.notice(written.kept),
+                        private_scenes_ui.notice(written.new),
                         view=private_scenes_ui.notice_view(cid),
                     )
                 except Exception as exc:
