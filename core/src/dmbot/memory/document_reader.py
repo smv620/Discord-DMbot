@@ -37,6 +37,7 @@ IN_A_PROCESS = (".pdf", ".docx", ".xlsx")
 # page holding a huge vector drawing (about 20 bytes per unpacked byte) can pass this
 # and is refused as unreadable: rare in a names list.
 MEMORY_BYTES = 256 * 1024 * 1024
+MEMORY_BASE_FILE_BYTES = 10 * 1024 * 1024  # the file size MEMORY_BYTES was measured for
 # The longest answer read back: text_of stops at 200,000 characters (up to 4 bytes each).
 MAX_REPLY_BYTES = 1024 * 1024
 RESTARTING = "DMbot is restarting. Try that file again in a minute."
@@ -74,11 +75,19 @@ def shutdown() -> None:
     _WAITERS.shutdown(wait=False, cancel_futures=True)
 
 
-def _limit_memory() -> None:
+def memory_for(size: int) -> int:
+    """A child's memory for a file of `size` bytes: the base, plus four times what the file has
+    over the usual 10 MB. A big PDF is held whole in the parent, sent to the child and held again
+    there, and the reader works on it; the extra is what that needs, and no more (#4001)."""
+    return MEMORY_BYTES + 4 * max(0, size - MEMORY_BASE_FILE_BYTES)
+
+
+def _limit_memory(size: int = 0) -> None:
     try:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_AS, (MEMORY_BYTES, MEMORY_BYTES))
+        limit = memory_for(size)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ImportError, ValueError, OSError):  # not Linux, or not allowed: no limit
         pass
 
@@ -91,7 +100,7 @@ def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
         os.nice(10)  # behind the bot's voice and replies on a small server
     os.environ.clear()  # the bot's keys and tokens: nothing here needs them
     logging.getLogger().addHandler(logging.NullHandler())  # the bot logs, not the child
-    _limit_memory()
+    _limit_memory(len(raw))
     try:
         # errors="replace": a broken PDF can give a lone surrogate; keep the rest
         parts = (b"ok", b"", parse(filename, raw).encode(errors="replace"))

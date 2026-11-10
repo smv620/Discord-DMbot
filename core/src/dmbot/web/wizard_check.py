@@ -15,14 +15,31 @@ import base64
 import binascii
 from dataclasses import dataclass
 
-from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, NO_TEXT, DocumentError
+from dmbot.memory.name_documents import (
+    MAX_DOCUMENT_BYTES,
+    NO_TEXT,
+    DocumentError,
+)
 from dmbot.rules import house_reader
 
 # About how many words a page holds, for the page count of a format that has no pages of its own
 # here (the page shows "about"). One number, so the count is the same every time.
 WORDS_PER_PAGE = 500
+# The website takes a PDF up to this size, less than Discord's 100 MB (#4001): the file travels as
+# base64 (a third bigger) in one request through the tunnel, whose own request limit is 100 MB on
+# the usual plans, and is held whole in the API container while it is read. A bigger PDF is added
+# in Discord, or from Google Drive. Every other type keeps 10 MB.
+MAX_WEB_PDF_BYTES = 50 * 1024 * 1024
+MAX_WEB_BYTES = MAX_WEB_PDF_BYTES  # the largest file of any type that this door takes
 # The base64 text of the largest file: 4 characters for each 3 bytes, a little over.
-MAX_BASE64_CHARS = MAX_DOCUMENT_BYTES * 4 // 3 + 8
+MAX_BASE64_CHARS = MAX_WEB_BYTES * 4 // 3 + 8
+
+
+def web_limit(filename: str) -> int:
+    """The most bytes the website takes for a file of this name."""
+    return MAX_WEB_PDF_BYTES if filename.casefold().endswith(".pdf") else MAX_DOCUMENT_BYTES
+
+
 # The whole JSON request: one file as base64 plus a little for the other fields.
 MAX_BODY_BYTES = MAX_BASE64_CHARS + 4_096
 
@@ -77,7 +94,7 @@ def decode(data: object) -> bytes | None:
 
 async def check_file(filename: str, raw: bytes) -> Checked:
     """Open one uploaded file and count it. Never raises for a bad file."""
-    if len(raw) > MAX_DOCUMENT_BYTES:
+    if len(raw) > web_limit(filename):
         return _unreadable("too_big")
     try:
         text = await house_reader.read_file(filename, raw)

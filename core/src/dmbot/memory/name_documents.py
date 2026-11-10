@@ -26,6 +26,22 @@ from dmbot.memory.models import name_key
 from dmbot.memory.name_list import MAX_PER_LINE, join_cell, lines_for, split_cell
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+# A PDF may be much bigger than any other file: illustrated adventures are 30 to 200 MB of art that
+# DMbot never reads, while the text and page limits below are what bound the work (#4001).
+MAX_PDF_BYTES = 100 * 1024 * 1024
+
+
+def max_bytes_for(filename: str) -> int:
+    """The biggest file of this kind that is read: a PDF's own limit, 10 MB for anything else."""
+    return MAX_PDF_BYTES if PurePath(filename).suffix.casefold() == ".pdf" else MAX_DOCUMENT_BYTES
+
+
+def too_big_words(filename: str) -> str:
+    """The plain words for a file over its limit; the same everywhere a file is taken."""
+    limit = max_bytes_for(filename) // (1024 * 1024)
+    return f"That file is too big (up to {limit} MB). Split it into smaller files."
+
+
 MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
 CHUNK_CHARS = 40_000  # one AI request
 MAX_XML_BYTES = 5 * 1024 * 1024  # a Word file's text, unpacked
@@ -66,8 +82,8 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
     any problem at all (a damaged or hostile file must never escape as another error).
     `max_chars`: the longest text taken (the names screen's 200,000; an adventure's is more,
     #1698)."""
-    if len(raw) > MAX_DOCUMENT_BYTES:
-        raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
+    if len(raw) > max_bytes_for(filename):
+        raise DocumentError(too_big_words(filename))
     suffix = PurePath(filename).suffix.casefold()
     try:
         if suffix == ".pdf":
