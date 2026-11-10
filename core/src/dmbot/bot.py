@@ -10041,7 +10041,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # Asked last, right before the names are matched: a person can stop at any moment
                 agreed = await self.consent.consenting(gid)
                 recorded = {line.user_id for line in lines} & set(agreed)
-                return table_lines(lines, recorded=recorded)
+                # A line said while the game clock had the party split was heard by one group,
+                # never the whole table: it shows nobody anything (#4037)
+                assert self.memory is not None
+                split = await self.memory.split_moments(
+                    gid, cid, [line.started_ms // 1000 for line in lines]
+                )
+                together = [line for line in lines if line.started_ms // 1000 not in split]
+                return table_lines(together, recorded=recorded)
 
             await self._reveal_said(gid, cid, spoken, f"Session {number}")
 
@@ -12342,11 +12349,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             rows = await self.import_job.store.scan_lines(gid, ready.session_id)
             lines = [(uid, text) for uid, text in rows if uid in agreed] or lines
         # What an imported session says is what was said at the table: held-back names it says
-        # are shown, as after a live session (#2404).
+        # are shown, as after a live session (#2404). Not when the party was split during it: the
+        # lines here carry no moments, so it holds, and the DM shows (#4037, fails closed).
         try:
-            await self._reveal_said(
-                gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
-            )
+            if not await self.memory.session_ever_split(gid, ready.campaign_id, ready.started_at):
+                await self._reveal_said(
+                    gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
+                )
         except Exception:
             log.exception(
                 "Import: showing the names the session said failed"
