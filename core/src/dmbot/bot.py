@@ -337,6 +337,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
     FIX,
@@ -9509,6 +9510,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
+                met=self.settings.met_unnamed_on,
+                met_store=MetStore(self.memory._db)
+                if self.settings.met_unnamed_on and self.memory is not None
+                else None,
+                session_id=sid,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=count_call,
@@ -9687,6 +9693,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
+                met=self.settings.met_unnamed_on,
+                met_store=MetStore(self.memory._db)
+                if self.settings.met_unnamed_on and self.memory is not None
+                else None,
+                session_id=sid,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(

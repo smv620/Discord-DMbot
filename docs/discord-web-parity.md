@@ -43,6 +43,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | After-session report, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `PRESENT_PER_SCENE_LIVE` |
 | Session notes and the script, read on a session's Transcripts page (Script and Session notes tabs, game masters only) and saved | `/account/transcripts` | live (#3898) | `SESSION_NOTES_LIVE`, `THEATRE_DOWNLOAD_LIVE` |
 | Make a session's script from the website (Discord offers it after a live session; imported sessions get the offer too, CloudDev's half of #3899) | `/account/transcripts` Script tab | page built, switched off; the door is next | `SCRIPT_MAKE_LIVE` (#3899) |
+| Biggest file a DM can add: a PDF up to 100 MB in Discord, 50 MB on the website (its request goes through the tunnel as base64); every other type 10 MB. **Level but for the PDF number, on purpose** | Discord uploads, `/new` wizard | core built (#4001); the wizard page's limit is the web half | |
 | Set up a campaign step by step (uploads, many choices and a Back button need a page; Discord's `＋ New campaign` offers it first and keeps its short form). **Website-first on purpose.** | `/new?server=<id>` | pages built, switched off; the doors and the finish run are CloudDev-lead's (#3955) | `WIZARD_LIVE` (#3956) |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |

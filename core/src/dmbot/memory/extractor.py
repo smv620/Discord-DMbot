@@ -21,7 +21,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
@@ -48,6 +48,10 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
+from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
+from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
+from dmbot.memory.met_store import speakers_of
+from dmbot.memory.models import name_key
 from dmbot.memory.ontology import Tally
 from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
 from dmbot.memory.reveal_proposals import RevealProposals
@@ -59,6 +63,9 @@ from dmbot.memory.reveal_reading import (
 )
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
+
+if TYPE_CHECKING:
+    from dmbot.memory.met_store import MetStore
 
 log = logging.getLogger(__name__)
 
@@ -318,6 +325,16 @@ class Report:
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
     recap_lines: int = 0  # lines left out because they retell earlier sessions (#3298): a count
+    # Unnamed beings met in play (#3172 slice 5, DMBOT_MET_UNNAMED): counts only
+    met: int = 0  # items read (before the same words were joined and the cap)
+    met_refused: int = 0  # items the rules turned down (a player's line among them: `met_not_dm`)
+    met_not_dm: int = 0  # said only by a player, or not in the DM's words
+    met_past_cap: int = 0  # past the cap of a session, never made
+    met_cut: int = 0  # claims answers cut short with the switch on: their "met" items are lost
+    met_made: int = 0  # quiet entries made
+    met_again: int = 0  # already kept for this session
+    met_named: int = 0  # the words are a name the campaign has
+    met_proposals: list[Met] = field(default_factory=list, repr=False)  # (words: never logged)
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -362,6 +379,13 @@ class Report:
                 or self.reveals_failed
                 or self.reveals_cut
                 or self.reveals_skipped
+                else ""
+            )
+            + (
+                f", met: {self.met} found, {self.met_refused} refused ({self.met_not_dm} not the"
+                f" DM's), {self.met_past_cap} past the cap, {self.met_made} kept,"
+                f" {self.met_again} again, {self.met_named} named, {self.met_cut} cut short"
+                if self.met or self.met_refused or self.met_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -535,6 +559,9 @@ async def run(
     imported: bool = False,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     recap_lines: Collection[int] = (),
+    met: bool = False,
+    met_store: MetStore | None = None,
+    session_id: str | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -578,16 +605,26 @@ async def run(
 
     `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
     claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
-    rest are counted as `not family` and never stored. No readings are asked in this mode."""
+    rest are counted as `not family` and never stored. No readings are asked in this mode.
+
+    `met` (#3172 slice 5, DMBOT_MET_UNNAMED): the claims call is also asked who and what the party
+    met that is never named (`met_reading.MET_ADDENDUM`), in the same call, so it costs no call.
+    Only the DM's own lines count; the session's items are joined by their words, capped, and kept
+    by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
+    claims. Never in `family_only`."""
     report = Report()
     readings = readings and not family_only
     deeds = deeds and not family_only
     reveals = reveals and not family_only
+    met = met and not family_only
+    system = SYSTEM + MET_ADDENDUM if met else SYSTEM
+    prompt_version = PROMPT_VERSION + MET_SUFFIX if met else PROMPT_VERSION
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    when: dict[str, int] = {}  # with `met`: a line's number to when it began (its lasting key)
     heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
     left_out = set(recap_lines)
@@ -634,7 +671,7 @@ async def run(
                 log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
         try:
             reply = await asyncio.wait_for(
-                client.complete(SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
+                client.complete(system, transcript_of(rows), max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
             )
         except AIOutOfFunds:
             report.failed += 1
@@ -660,6 +697,18 @@ async def run(
             report.dropped["not family"] += len(found) - len(family)
             found = family
         collected.extend(found)
+        if met:
+            got = parse_met(
+                reply.text,
+                {number: text for number, _who, text in rows},
+                dm_lines={number for number, who, _text in rows if who == "DM"},
+            )
+            report.met += len(got.met)
+            report.met_refused += got.refused
+            report.met_not_dm += got.not_dm
+            report.met_proposals.extend(got.met)
+            report.met_cut += int(reply.cut)  # (never "none met": counted as cut short)
+            when.update((str(s.number), s.started_ms) for s in batch)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -801,7 +850,7 @@ async def run(
                 everyone,
                 said=heard,
                 opted_in=agreed,
-                prompt_version=PROMPT_VERSION,
+                prompt_version=prompt_version,
                 model=answered_by or model(),
                 session_started_at=session_started_at,
                 malformed=0,
@@ -857,5 +906,57 @@ async def run(
             report.deferred += stored.deferred
             for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
+    if met and met_store is not None and session_id is not None and report.met_proposals:
+        await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone, when,
+                        consenting, session_started_at, skip)  # fmt: skip
     report.through_ms = reached
     return report
+
+
+async def _keep_met(
+    report: Report,
+    met_store: MetStore,
+    guild_id: int,
+    campaign_id: str,
+    session_id: str,
+    everyone: Mapping[str, int | None],
+    when: Mapping[str, int],
+    consenting: Consenting,
+    session_started_at: int | None,
+    skip: Collection[str],
+) -> None:
+    """Keep the session's unnamed beings (#3172 slice 5): an item whose lines include someone who
+    stopped being recorded is dropped (asked again here, after the last answer), then the same
+    words are joined, this read's cap applied, and the rest kept (the store holds the cap across
+    every read of the session). Each line is kept by when it began, which a deletion of other
+    lines never shifts. Never fatal: the claims stand."""
+    try:
+        still = await consenting()
+        heard = [
+            m
+            for m in report.met_proposals
+            if all(everyone.get(n) in still for n in m.lines) and name_key(m.what) not in skip
+        ]
+        report.met_refused += len(report.met_proposals) - len(heard)
+        items, report.met_past_cap = gathered(heard)
+        if not items:
+            return
+        added = await met_store.add(
+            guild_id,
+            campaign_id,
+            session_id,
+            [
+                (m.what, m.count, [when[n] for n in m.lines if n in when],
+                 speakers_of(m.lines, everyone))
+                for m in items
+            ],
+            session_started_at=session_started_at,
+        )  # fmt: skip
+    except Exception as exc:  # only the type: the row holds the words
+        log.warning("Story extractor: keeping the unnamed beings failed (%s)", type(exc).__name__)
+        report.failed += 1
+        return
+    report.met_made += added.made
+    report.met_again += added.again
+    report.met_named += added.named
+    report.met_past_cap += added.past_cap

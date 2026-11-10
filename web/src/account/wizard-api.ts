@@ -24,6 +24,8 @@ export interface WizardDoc {
   status: "ok" | "unreadable";
   /** Why a file could not be read: empty, scanned, locked, too_big or not_text. */
   reason: string;
+  /** Pages that hold only pictures, from this upload's own answer (#4030). The server does not keep it: a re-read draft has none. */
+  picturePages?: number;
 }
 
 export interface WizardAnswers {
