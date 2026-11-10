@@ -25,7 +25,7 @@ import discord
 from dmbot.memory import background as bg
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import dm_links
+from dmbot.ui import dm_links, split_words
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.upload_notices import Notice
 
@@ -53,7 +53,10 @@ def _plural(kind: str, count: int) -> str:
 
 
 # Counts that ride beside the kinds of names, never one of them (#3963 c, #3979, #2996).
-_NOT_NAMES = ("connections", "other_names", "shown", "held", "split_group", "split_unknown")
+_NOT_NAMES = (
+    "connections", "other_names", "shown", "held", "split_group", "split_unknown",
+    "names_split_group", "names_split_unknown",
+)  # fmt: skip
 
 
 def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
@@ -107,6 +110,10 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
             f"heard {'it' if one else 'them'}. To choose who knows: open either name, ✏️ Edit a "
             f"connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some characters."
         )
+    if names_split := split_words.for_many(
+        counts.get("names_split_group", 0), counts.get("names_split_unknown", 0)
+    ):  # (an import's new names said only while the party was split, #4037)
+        text += f"\n{names_split}"
     if questions:
         text += (
             f"\n❓ **{questions} question{'' if questions == 1 else 's'}** "
@@ -308,6 +315,10 @@ async def add_sure(
             counts["split_group"] = tally.split_group
         if tally.split_unknown:
             counts["split_unknown"] = tally.split_unknown
+        if tally.names_split_group:
+            counts["names_split_group"] = tally.names_split_group
+        if tally.names_split_unknown:
+            counts["names_split_unknown"] = tally.names_split_unknown
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]

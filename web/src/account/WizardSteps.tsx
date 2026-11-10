@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
 import { problemWords } from "./wizard-problems";
-import { MAX_FILE_BYTES, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -249,6 +249,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const [ticking, setTicking] = useState(false);
+  // The pictures-only count of each file, from the upload's own answer: a re-read draft does not carry it (#4030).
+  const [pictures, setPictures] = useState<Record<string, number>>({});
   const input = useRef<HTMLInputElement>(null);
   const kind = slot === "ruleset" ? "ruleset" : "shared";
   const ticked = draft.rights[kind];
@@ -257,7 +259,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
     setBusy(true);
     setProblem("");
     try {
-      await add;
+      const added = await add;
+      if ((added.picturePages ?? 0) > 0) setPictures((was) => ({ ...was, [added.id]: added.picturePages ?? 0 }));
       const next = await api.get(guild);
       if (next) onDraft(next);
     } catch (error) {
@@ -270,7 +273,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
     // The file goes as it is, as base64 in the body; the server opens it and counts its pages and words (no AI). A file over the
     // server's limit gets the "too big" line before anything is sent.
     try {
-      if (file.size > MAX_FILE_BYTES) return setProblem(t.unreadable["too_big"]!);
+      if (file.size > maxBytesFor(file.name)) return setProblem(t.unreadable["too_big"]!);
       const data = toBase64(new Uint8Array(await file.arrayBuffer()));
       await refresh(api.docAdd(guild, slot, { name: file.name, source: "upload", data }));
     } catch (error) {
@@ -319,6 +322,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
             <li key={d.id}>
               {d.name}{" "}
               {d.status === "ok" ? <span class="small">{d.source === "upload" ? t.counts(d.pages, d.words) : ""}</span> : <span role="alert">{t.unreadable[d.reason] ?? w.failed}</span>}{" "}
+              {d.status === "ok" && (pictures[d.id] ?? 0) > 0 ? <span class="small">{t.picturePages(pictures[d.id] ?? 0)}</span> : null}{" "}
               <button type="button" class="link" onClick={() => void remove(d.id)}>
                 {t.remove}
               </button>

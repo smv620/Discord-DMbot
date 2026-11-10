@@ -94,6 +94,9 @@ TOO_MANY_READS = (
     "again tomorrow, or use a file in DMbot's numbered list, which has no limit."
 )
 TOO_BIG = "That file is too big. Send just the house-rules part (up to 10 MB). Nothing was changed."
+TOO_BIG_PDF = (
+    "That PDF is too big. Send just the house-rules part (up to 100 MB). Nothing was changed."
+)
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
 DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
 BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off

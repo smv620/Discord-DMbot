@@ -262,7 +262,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | Boy |  | lore+session | sled dog Belleros befriended The lead sled dog. |
 | The ghost |  | lore | Unnamed possessed ghost that emerged when Trex fell |
 | Penolopi |  | lore | pet plant the party burned |
-| The wind spirit |  | lore | Unnamed ancient spirit that guides and guards Okthandom |
+| The wind spirit | ancient wind spirit, wind spirit, ancient spirit | lore | Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name. |
 | Yeti |  | lore+session | evaded on the road Named as a danger and as near the shelter at the end. |
 | Ice troll |  | lore | ate the first ship's captain |
 | Mind flayer |  | lore | petrified skull in the mine |

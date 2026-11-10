@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
+import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES } from "../src/account/wizard-api";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
@@ -141,6 +142,46 @@ describe("the wizard", () => {
     expect(api.calls.some((c) => c.startsWith("docAdd:") && c.endsWith(":lore"))).toBe(true);
   });
 
+  it("a file with pictures-only pages says how many, singular and plural, and an ordinary file says nothing", async () => {
+    await start();
+    await next(2);
+    await next(3);
+    await next(4);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const pictures = new File(["the harbour town of Harrowgate and its bells"], "lore-pictures.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pictures] } });
+    expect(await screen.findByText(w.docs.picturePages(3))).toBeTruthy();
+    const one = new File(["the harbour town of Harrowgate and its bells"], "lore-onepicture.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [one] } });
+    expect(await screen.findByText(w.docs.picturePages(1))).toBeTruthy();
+    const plain = new File(["the harbour town of Harrowgate and its bells"], "lore-plain.txt", { type: "text/plain" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [plain] } });
+    expect(await screen.findByText("lore-plain.txt")).toBeTruthy();
+    expect(screen.getAllByText(/pictures only/)).toHaveLength(2);
+  });
+
+  it("the pretend server keeps the count off the stored draft, but answers it once", async () => {
+    const api = await start();
+    const doc = await api.docAdd(G, "lore", { name: "lore-pictures.pdf", source: "upload", text: "the harbour town and its bells" });
+    expect(doc.picturePages).toBe(3);
+    const again = await api.get(G);
+    expect(again?.documents.find((d) => d.id === doc.id)?.picturePages).toBeUndefined();
+  });
+
+  it("a file that cannot be read shows no pictures-only note", async () => {
+    await start();
+    await next(2);
+    await next(3);
+    await next(4);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const scanned = new File(["   "], "scan-pictures.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [scanned] } });
+    expect(await screen.findByText("scan-pictures.pdf")).toBeTruthy();
+    expect(screen.queryByText(/pictures only/)).toBeNull();
+  });
+
   it("a file over the server's limit is refused with the way out before anything is sent", async () => {
     const api = await start();
     for (let to = 2; to <= 4; to++) await next(to);
@@ -151,6 +192,39 @@ describe("the wizard", () => {
     fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [big] } });
     expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
     expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+  });
+
+  it("maxBytesFor gives 50 MB for a PDF in any case and 10 MB for other names", () => {
+    expect(maxBytesFor("adventure.pdf")).toBe(50 * 1024 * 1024);
+    expect(maxBytesFor("ADVENTURE.PDF")).toBe(MAX_PDF_BYTES);
+    expect(maxBytesFor("notes.docx")).toBe(MAX_FILE_BYTES);
+    expect(maxBytesFor("lore.txt")).toBe(10 * 1024 * 1024);
+    expect(maxBytesFor("pdf.docx")).toBe(MAX_FILE_BYTES);
+  });
+
+  it("a 20 MB pdf is not refused by the page and a 20 MB docx is", async () => {
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const pdf = new File(["the harbour town of Harrowgate"], "adventure.pdf", { type: "application/pdf" });
+    Object.defineProperty(pdf, "size", { value: 20 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [pdf] } });
+    expect(await screen.findByText("adventure.pdf")).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(true);
+    expect(screen.queryByRole("alert")).toBeNull();
+    const docx = new File(["x"], "adventure.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    Object.defineProperty(docx, "size", { value: 20 * 1024 * 1024 });
+    const before = api.calls.filter((c) => c.startsWith("docAdd:")).length;
+    fireEvent.change(input, { target: { files: [docx] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
+    const huge = new File(["x"], "bigger.pdf", { type: "application/pdf" });
+    Object.defineProperty(huge, "size", { value: 51 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [huge] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
   });
 
   it("a link is not offered in the first release", async () => {
