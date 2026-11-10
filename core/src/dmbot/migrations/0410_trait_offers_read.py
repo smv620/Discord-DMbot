@@ -48,8 +48,7 @@ SQL = r"""
                                    WHERE l.guild_id = o.guild_id AND l.campaign_id = o.campaign_id
                                      AND l.entity_id = o.entity_id AND l.kind = o.kind
                                      AND lower(l.name) = lower(o.name))
-                ORDER BY o.created_at, o.entity_id, o.kind, o.name_key
-                LIMIT 100) q), '[]'::JSONB);
+                ORDER BY o.created_at, o.entity_id, o.kind, o.name_key) q), '[]'::JSONB);
     END
     $fn$;
     DO $do$
