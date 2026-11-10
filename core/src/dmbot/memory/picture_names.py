@@ -112,7 +112,7 @@ def check(
         if spelling_key(known.name) == spelling_key(name):
             return Matched(known.name)
     if text:
-        written = _written_in(name, text)
+        written = written_in(name, text)
         if written is not None:
             return Matched(written)  # (the text's own spelling, not an all-capitals label's)
     fits = _one_each(k for k in document if _same_kind(kind, k.kind))
@@ -144,7 +144,7 @@ def _same_kind(a: str | None, b: str | None) -> bool:
     return a is None or b is None or a == b
 
 
-def _written_in(name: str, text: str) -> str | None:
+def written_in(name: str, text: str) -> str | None:
     """The name as the document's text writes it, when it is there word for word (case and spacing
     aside). Lower-case prose counts too ("a blue clam shell"): the name is in the document."""
     words = name.split()
