@@ -2790,8 +2790,7 @@ class MemoryStore:
                     **({"hidden_from_players": True} if scene is not None else {}),
                 },
             )
-            if scene is not None:
-                await learn_names_in_scene(w, entity_id, scene[1])
+            learned = await learn_names_in_scene(w, entity_id, scene) if scene is not None else 0
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
@@ -2802,7 +2801,8 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
-            return Written(_entity(row), w.batch)
+            said = "" if scene is None else "group" if learned else "unknown"
+            return Written(_entity(row), w.batch, split=said)
 
     async def confirm_kinds(
         self,
@@ -2852,7 +2852,7 @@ class MemoryStore:
             for r in await w.select(ENTITIES, " AND status = 'proposed' AND id = ANY(%s)", [plain]):
                 found = await name_scene(w, r)
                 if found is not None:
-                    scenes[str(r["id"])] = found[1]
+                    scenes[str(r["id"])] = found
             fields = {"type": type, "role": role, "status": CONFIRMED, "needs_look": False}
             confirmed = []
             for group, extra in (
@@ -2867,9 +2867,13 @@ class MemoryStore:
                     " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
                     [group],
                 )
+            group = unknown = 0
             for row in confirmed:
                 if str(row["id"]) in scenes:
-                    await learn_names_in_scene(w, str(row["id"]), scenes[str(row["id"])])
+                    if await learn_names_in_scene(w, str(row["id"]), scenes[str(row["id"])]):
+                        group += 1
+                    else:
+                        unknown += 1
             ids = [row["id"] for row in confirmed]
             await states.settle_kind(w, onto, ids, type)
             await _forget_quotes(w, [r["id"] for r in confirmed if r["id"] in quoted_set])
@@ -2880,7 +2884,7 @@ class MemoryStore:
                     " AND status = 'proposed' AND entity_id = ANY(%s)",
                     [ids],
                 )
-            return Written(len(ids), w.batch)
+            return Written(len(ids), w.batch, split_counts=(group, unknown))
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
@@ -7004,17 +7008,20 @@ async def _split_during_session(w: Changes, started_at: int) -> bool:
 _SESSION_SOURCES = ("extractor", "scan")
 
 
-async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, ...]] | None:
+async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
     """Who heard a session's new name, when the game clock had the party split (#4037, the
-    names half of #2996 slice 2a). Read before the entry is confirmed for the first time, for a
-    name a session made (`_SESSION_SOURCES`). None: unchanged, the party heard it (said at least
-    once while together, no split clock, a name not from a session, or no line found). Otherwise
-    (hide it from the players, the characters who heard it): every group a line was said in learns
-    it; a line whose group can't be told (only the DM spoke) adds nobody, never a guess.
+    names half of #2996 slice 2a; Supervisor's ruling on the issue). Read before the entry is
+    confirmed for the first time, for a name a session made (`_SESSION_SOURCES`). None: unchanged,
+    the party heard it (said at least once while together, no split clock, a name not from a
+    session). Otherwise the name is hidden from the players, and the answer is who knows it: the
+    player characters of the one group every line was said in, or nobody (an empty tuple) when
+    that can't be told (lines in two groups, a line whose group can't be told, or no line found
+    while the session was split). DMbot never guesses.
 
     A name has no line record (`memory_mentions` is never written, #1740), so its lines are found
     as the name scan finds them: the lines of the session it was first heard in (`memory_heard`)
-    where one of its spellings is written, as whole words. A player character is never hidden."""
+    where its name or one of its confirmed other names is written, as whole words. A player
+    character is never hidden."""
     if (
         row.get("status") == CONFIRMED
         or row.get("source") not in _SESSION_SOURCES
@@ -7027,7 +7034,7 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, 
         (w.guild_id, w.campaign_id),
     )
     if await cur.fetchone() is None:
-        return None
+        return None  # (the party was never split: the common case, one read)
     cur = await w.conn.execute(
         "SELECT min(session_started_at) AS at FROM memory_heard"
         " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
@@ -7035,11 +7042,12 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, 
     )
     first = await cur.fetchone()
     if first is None or first["at"] is None:
-        return None
+        return None  # (not heard in a session at all: no scene to place it in)
+    session_at = int(first["at"])
     spellings = {str(row["name"])} | {
         str(a["text"])
         for a in await w.select(
-            ALIASES, " AND entity_id = %s AND status <> %s", [row["id"], REJECTED]
+            ALIASES, " AND entity_id = %s AND status = %s", [row["id"], CONFIRMED]
         )
     }
     patterns = [
@@ -7052,7 +7060,7 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, 
         " FROM transcript_lines l JOIN transcript_sessions s"
         "  ON s.id = l.session_id AND s.guild_id = l.guild_id"
         " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s",
-        (w.guild_id, w.campaign_id, int(first["at"])),
+        (w.guild_id, w.campaign_id, session_at),
     )
     said = [
         (int(r["at"]), int(r["user_id"]))
@@ -7060,7 +7068,17 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, 
         if any(p.search(str(r["words"] or "")) for p in patterns)
     ]
     if not said:
-        return None
+        # (no line: can't tell, so nobody knows it, but only if the session was ever split)
+        return () if await _split_during_session(w, session_at) else None
+    groups: set[int | None] = set()
+    for at, user_id in said:
+        if not await _split_at(w, at):
+            return None  # (said once while together: the whole party heard it)
+        groups.add(await group_of_speakers(w.conn, w.guild_id, w.campaign_id, [user_id], at))
+    if len(groups) != 1 or None in groups:
+        return ()  # (two groups, or a line whose group can't be told)
+    (group,) = groups
+    members: set[str] | None = None
     pcs = [
         str(r["id"])
         for r in await w.select(
@@ -7069,17 +7087,12 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[bool, tuple[str, 
             [PLAYER_CHARACTER, CONFIRMED],
         )
     ]
-    heard: set[str] = set()
-    for at, user_id in said:
-        if not await _split_at(w, at):
-            return None  # (said once while together: the whole party heard it)
-        group = await group_of_speakers(w.conn, w.guild_id, w.campaign_id, [user_id], at)
-        if group is None:
-            continue  # (can't tell whose scene: nobody added)
-        heard |= {
+    for at in sorted({at for at, _ in said}):
+        here = {
             pc for pc in pcs if await group_at(w.conn, w.guild_id, w.campaign_id, pc, at) == group
         }
-    return True, tuple(sorted(heard))
+        members = here if members is None else members & here
+    return tuple(sorted(members or ()))
 
 
 async def learn_names_in_scene(w: Changes, entity_id: str, characters: Sequence[str]) -> int:

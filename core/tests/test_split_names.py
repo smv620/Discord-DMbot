@@ -84,6 +84,7 @@ class SplitNames(NamesTest):
         done = await self.memory.confirm_entity(
             GUILD, self.campaign.id, grimsby, "place", source="dm"
         )
+        self.assertEqual(done.split, "group")  # (the caller tells the DM: never a silent hide)
         self.assertTrue(await self.hidden(grimsby))
         self.assertEqual(await self.who_knows(grimsby), [self.wren])
         assert done.batch is not None
@@ -98,13 +99,19 @@ class SplitNames(NamesTest):
 
     async def test_when_the_group_cant_be_told_nobody_knows_it_and_it_stays_hidden(self) -> None:
         grimsby = await self.scene(split_at=600, speaker=99, said_at_ms=650_000)  # (the DM)
-        await self.memory.confirm_entity(GUILD, self.campaign.id, grimsby, "place", source="dm")
+        done = await self.memory.confirm_entity(
+            GUILD, self.campaign.id, grimsby, "place", source="dm"
+        )
+        self.assertEqual(done.split, "unknown")
         self.assertTrue(await self.hidden(grimsby))
         self.assertEqual(await self.who_knows(grimsby), [])
 
     async def test_the_bulk_confirm_follows_the_same_rule(self) -> None:
         grimsby = await self.scene(split_at=600, speaker=8, said_at_ms=650_000)
-        await self.memory.confirm_kinds(GUILD, self.campaign.id, [grimsby], "place", source="dm")
+        done = await self.memory.confirm_kinds(
+            GUILD, self.campaign.id, [grimsby], "place", source="dm"
+        )
+        self.assertEqual(done.split_counts, (1, 0))
         self.assertTrue(await self.hidden(grimsby))
         self.assertEqual(await self.who_knows(grimsby), [self.ash])
 
@@ -118,3 +125,39 @@ class SplitNames(NamesTest):
             GUILD, self.campaign.id, made.value.id, "place", source="dm"
         )
         self.assertFalse(await self.hidden(made.value.id))
+
+    async def test_said_in_two_groups_scenes_nobody_knows_it(self) -> None:
+        """Supervisor's ruling on #4037: mixed groups can't be told, and nobody learns it."""
+        grimsby = await self.scene(split_at=600, speaker=7, said_at_ms=650_000)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard)"
+                " VALUES (%s, 's500', 700000, 8, 'Grimsby again.')",
+                (GUILD,),
+            )
+        done = await self.memory.confirm_entity(
+            GUILD, self.campaign.id, grimsby, "place", source="dm"
+        )
+        self.assertEqual(done.split, "unknown")
+        self.assertTrue(await self.hidden(grimsby))
+        self.assertEqual(await self.who_knows(grimsby), [])
+
+    async def test_no_line_found_in_a_split_session_is_hidden_and_nobody_knows_it(self) -> None:
+        grimsby = await self.scene(split_at=600, speaker=7, said_at_ms=650_000)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE transcript_lines SET heard = 'Somewhere else.' WHERE guild_id = %s",
+                (GUILD,),
+            )
+        done = await self.memory.confirm_entity(
+            GUILD, self.campaign.id, grimsby, "place", source="dm"
+        )
+        self.assertEqual((done.split, await self.hidden(grimsby)), ("unknown", True))
+
+    def test_the_dm_is_told_in_plain_words(self) -> None:
+        from dmbot.ui import split_words
+
+        self.assertIn("only the characters who were there", split_words.for_many(2, 0))
+        self.assertIn("1 name is kept hidden", split_words.for_many(0, 1))
+        self.assertEqual(split_words.for_one(""), "")
+        self.assertIn("Who knows this?", split_words.for_one("unknown"))
