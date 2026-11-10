@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
-import { ConfirmStep, DataStep, DocsStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
+import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
+import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
 import WorkProgress from "./WorkProgress";
 
@@ -126,8 +127,10 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
       {id === "lore" && <DocsStep {...props} slot="lore" heading={w.lore.heading} lead={w.lore.lead} />}
       {id === "secrets" && <DocsStep {...props} slot="secrets" heading={w.secrets.heading} lead={w.secrets.lead} />}
       {id === "rules" && <RulesStep {...props} />}
-      {id === "house" && <DocsStep {...props} slot="house" heading={w.house.heading} lead={w.house.lead} />}
-      {id === "homebrew" && <DocsStep {...props} slot="homebrew" heading={w.homebrew.heading} lead={w.homebrew.lead} />}
+      {id === "house" &&
+        (WIZARD_HOUSE_FILES_LIVE ? <DocsStep {...props} slot="house" heading={w.house.heading} lead={w.house.lead} /> : <LaterStep heading={w.house.heading} later={w.house.later} />)}
+      {id === "homebrew" &&
+        (WIZARD_HOUSE_FILES_LIVE ? <DocsStep {...props} slot="homebrew" heading={w.homebrew.heading} lead={w.homebrew.lead} /> : <LaterStep heading={w.homebrew.heading} later={w.homebrew.later} />)}
       {id === "data" && <DataStep {...props} />}
       {id === "finish" && <FinishStep {...props} />}
       {problem && <p role="alert">{problem}</p>}

@@ -35,7 +35,8 @@ export interface WizardAnswers {
   /** The rules to play with and the fallback: "2024" or "2014". */
   target: "2024" | "2014";
   fallback: "2024" | "2014";
-  supplements: string[];
+  /** The books the person ticked; null until they change a box, so an untouched step keeps the defaults (Xanathar's and Tasha's rules are on). */
+  supplements: string[] | null;
   dataUse: boolean;
   skipped: number[];
 }

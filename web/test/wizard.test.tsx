@@ -10,7 +10,26 @@ import Wizard from "../src/account/Wizard";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
+// The first release leaves four things out behind small flags (#3953); each test turns on what it needs.
+const flags = vi.hoisted(() => ({ sheets: false, house: false, own: false, drive: false }));
+vi.mock("../src/content/wizard-switch", () => ({
+  WIZARD_LIVE: true,
+  get WIZARD_SHEETS_LIVE() {
+    return flags.sheets;
+  },
+  get WIZARD_HOUSE_FILES_LIVE() {
+    return flags.house;
+  },
+  get WIZARD_OWN_RULESET_LIVE() {
+    return flags.own;
+  },
+  get WIZARD_DRIVE_LIVE() {
+    return flags.drive;
+  },
+}));
+
 afterEach(() => {
+  flags.sheets = flags.house = flags.own = flags.drive = false;
   cleanup();
   vi.useRealTimers();
 });
@@ -70,6 +89,7 @@ describe("the wizard", () => {
   });
 
   it("a public sheet link adds the character; a private one says to make it public", async () => {
+    flags.sheets = true;
     await start();
     fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
     const box = await screen.findByLabelText(w.where.sheetLabel);
@@ -232,5 +252,73 @@ describe("the wizard", () => {
     await api.start(G, "");
     await expect(api.set(G, 6, { supplements: ["tasha", "nope"] })).rejects.toMatchObject({ kind: "bad_value", key: "supplements" });
     await expect(api.set(G, 6, { supplements: ["tasha", "bigby"] })).resolves.toBeTruthy();
+  });
+
+  it("the first release hides the sheet-link field and the Google Drive choice", async () => {
+    await start();
+    expect(screen.queryByLabelText(w.where.drive)).toBeNull();
+    fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
+    await screen.findByText(w.where.limit);
+    expect(screen.queryByLabelText(w.where.sheetLabel)).toBeNull();
+    expect(screen.getByLabelText(w.where.pasteLabel)).toBeTruthy();
+  });
+
+  it("the Google Drive choice and the sheet-link field come back with their flags", async () => {
+    flags.drive = flags.sheets = true;
+    await start();
+    expect(screen.getByLabelText(w.where.drive)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
+    expect(await screen.findByLabelText(w.where.sheetLabel)).toBeTruthy();
+  });
+
+  it("steps 7 and 8 offer no upload or link, and say where to add them after Finish", async () => {
+    await start();
+    for (let to = 2; to <= 7; to++) await next(to);
+    expect(screen.getByText(w.house.later)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.docs.add })).toBeNull();
+    expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull();
+    await next(8);
+    expect(screen.getByText(w.homebrew.later)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.docs.add })).toBeNull();
+    await next(9); // (Next and Skip still work)
+  });
+
+  it("steps 7 and 8 take files again with their flag", async () => {
+    flags.house = true;
+    await start();
+    for (let to = 2; to <= 7; to++) await next(to);
+    expect(screen.getByRole("button", { name: w.docs.add })).toBeTruthy();
+  });
+
+  it("step 6 hides the person's own ruleset upload in the first release", async () => {
+    await start();
+    for (let to = 2; to <= 6; to++) await next(to);
+    expect(screen.queryByLabelText(w.rules.ownRights)).toBeNull();
+    expect(screen.getAllByRole("checkbox").length).toBe(7);
+  });
+
+  it("step 6 shows the two books that are on by default ticked and sends nothing until a box changes", async () => {
+    const api = await start();
+    for (let to = 2; to <= 6; to++) await next(to);
+    const box = (title: string) => screen.getByLabelText(new RegExp(title)) as HTMLInputElement;
+    expect(box("Xanathar").checked).toBe(true);
+    expect(box("Tasha").checked).toBe(true);
+    expect(box("Fizban").checked).toBe(false);
+    expect(api.calls.some((c) => c.endsWith(":supplements"))).toBe(false);
+    fireEvent.click(box("Xanathar"));
+    await waitFor(() => expect(api.calls.some((c) => c.endsWith(":supplements"))).toBe(true));
+    await waitFor(() => expect(box("Xanathar").checked).toBe(false));
+    expect(box("Tasha").checked).toBe(true); // (turning one off did not turn the other off)
+  });
+
+  it("a saved answer for the books is shown as saved", async () => {
+    const api = await start();
+    await api.set(G, 1, { supplements: ["fizban"] });
+    cleanup();
+    render(<Wizard api={api} guild={G} />);
+    await screen.findByText(w.step(1, 10));
+    for (let to = 2; to <= 6; to++) await next(to);
+    expect((screen.getByLabelText(/Fizban/) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(/Tasha/) as HTMLInputElement).checked).toBe(false);
   });
 });
