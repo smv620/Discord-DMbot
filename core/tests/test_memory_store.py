@@ -271,6 +271,13 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and the session a waiting name was made in (#4043): a time and an id only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id,"
+                " session_started_at) VALUES (%s, %s, %s, 77)",
+                (GUILD_A, self.c, a),
+            )
         # and which upload a name was read from (#3675): an id and a label only
         await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only

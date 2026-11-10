@@ -4347,12 +4347,14 @@ class MemoryStore:
             scene = await name_scene(w, gone)
         if scene is not None and source != DM:
             raise MemoryRuleError(AI_JOIN_REFUSED)  # (only the DM says who knows a name)
-        have = {a["key"] for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
-        arriving = [
-            str(a["id"])
-            for a in await w.select(ALIASES, " AND entity_id = %s", [gone_id])
-            if a["key"] not in have and a["status"] != "rejected"  # (a turned-down one is no name)
-        ]
+        arriving: list[str] = []
+        if scene is not None:  # (read only then: a merge is counted in statements, #164)
+            have = {a["key"] for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
+            arriving = [
+                str(a["id"])
+                for a in await w.select(ALIASES, " AND entity_id = %s", [gone_id])
+                if a["key"] not in have and a["status"] != "rejected"  # (turned down: no name)
+            ]
         await _move_aliases(
             w,
             keep_id,
