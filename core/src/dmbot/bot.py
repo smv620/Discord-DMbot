@@ -1281,7 +1281,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Document readers send the same instructions for every piece of a document, so their
         # system text is cached (#4054): a read of several pieces pays the instructions once at
         # 1.25 times and then at a tenth. The service only caches above a minimum length and
-        # otherwise answers as usual; the log line's cache_read says whether it did.
+        # otherwise answers as usual; the log line's cache_read says whether it did. (The shorter
+        # instructions here, such as the house rules' and the plan reader's, may sit under it today:
+        # check cache_read before counting them as savings.)
         # AI text calls (a document into a names list).
         self.ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES, cache_system=True)

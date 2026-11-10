@@ -17,7 +17,7 @@ READERS = {
 
 
 def tier_calls() -> dict[str, bool]:
-    """Feature name -> whether its `.tier(...)` call in bot.py sets cache_system=True."""
+    """Feature name -> whether every `.tier(...)` call for it in bot.py sets cache_system=True."""
     tree = ast.parse(Path(dmbot.bot.__file__).read_text(encoding="utf-8"))
     found: dict[str, bool] = {}
     for node in ast.walk(tree):
@@ -34,7 +34,7 @@ def tier_calls() -> dict[str, bool]:
             k.arg == "cache_system" and isinstance(k.value, ast.Constant) and k.value.value is True
             for k in node.keywords
         )
-        found[feature.attr] = found.get(feature.attr, False) or on
+        found[feature.attr] = found.get(feature.attr, True) and on  # (every call site)
     return found
 
 
@@ -48,4 +48,5 @@ class TheReaders(unittest.TestCase):
     def test_a_job_with_a_different_prompt_each_call_is_not_cached_by_this_change(self) -> None:
         found = tier_calls()
         for name in ("SIDEBAR", "FIGHTBOT", "TIME_SUGGEST", "SHEET"):
-            self.assertFalse(found.get(name, False), name)
+            self.assertIn(name, found, name)  # (so a rename can't make this pass for nothing)
+            self.assertFalse(found[name], name)

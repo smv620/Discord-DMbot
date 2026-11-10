@@ -26,6 +26,11 @@ and how to measure it again. Counts only: no text, no names, no campaign.
 | A session recast as a script (`THEATRE`) | the instructions | one call for each scene |
 | Story extractor (`EXTRACTOR`) | the instructions | already cached before #4054 |
 
+The service only caches above a minimum length (about 1,024 tokens for some models, 2,048 or
+more for others). The long reading instructions of the names read clear it; the shorter ones (house
+rules, plan reader, name pass) may not today. Under the minimum nothing is written or charged, so
+the flag is harmless, and the `cache_read` in the log says whether a caller really saves.
+
 Pieces read side by side do not hit the cache until the first has written it. A document with one
 piece pays the 1.25 write and never reads it back: a small loss, the price of the many-piece wins.
 
