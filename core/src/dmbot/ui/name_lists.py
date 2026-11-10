@@ -60,7 +60,7 @@ from dmbot.memory.name_list import (
 )
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic, name_unnamed
+from dmbot.ui import all_names, logic, name_unnamed, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -1126,6 +1126,8 @@ class KindQuestions(discord.ui.View):
                 f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
                 + rest
             )
+            if split := split_words.for_many(*written.split_counts):  # (#4037)
+                self.notes.append(split)
         finally:
             self.busy = False
             if not self.children:
