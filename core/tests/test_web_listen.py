@@ -300,8 +300,8 @@ class Listening(Base):
         self.assertEqual((first.tries, second.tries), (1, 2))
         self.assertFalse(await store.finish(THURSDAY.id, first, bot.Outcome(respelling="late")))
         self.assertTrue(await store.finish(THURSDAY.id, second, bot.Outcome(respelling="ok")))
-        # (the door made the row at the real time of this test, not at NOW, which is when the file was
-        # loaded: late in a long run the row would be younger than the sweep's age and none be swept)
+        # (the door made the row at this test's real time, not at NOW, which is when the file was
+        # loaded: late in a long run the row is younger than the sweep's age and none is swept)
         later = int(time.time()) + bot.KEEP_FOR_S + 1000
         old = bot.ListenStore(self.db, clock=lambda: later)
         self.assertEqual(await old.sweep(THURSDAY.id), 1)
