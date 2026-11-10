@@ -964,6 +964,7 @@ def create_app(
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
         "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
         "bad_sort": (400, "bad_sort"),
+        "bad_value": (400, "bad_value"),  # a shape that is wrong (a trait answer, #3946)
     }
     recap_files = audio_links.audio_files(settings.recap_audio_dir)
 
@@ -3456,6 +3457,30 @@ def create_app(
         session, _token = signed
         try:
             return await trait_offers.waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/trait-offers/answer")
+    async def me_trait_answer(ref: str, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Queue Yes (`keep`) or No (`never`) for one question; answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await trait_offers.answer(
+                db, session, ref, body.get("entity"), body.get("kind"), body.get("key"),
+                body.get("answer"),
+            )  # fmt: skip
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/campaigns/{ref}/trait-offers/answer/{answer_id}")
+    async def me_trait_answer_state(ref: str, answer_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one answer stands: the state, the error word, the change for Undo, the wait."""
+        session, _token = signed
+        try:
+            return await trait_offers.read_answer(db, session, ref, answer_id)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
