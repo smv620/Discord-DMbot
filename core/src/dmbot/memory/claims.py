@@ -27,6 +27,7 @@ from dmbot.memory import (
     forget_readings,
     graph_review,
     kin,
+    knowers,
     knows_how,
     link,
     one_off,
@@ -83,8 +84,10 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    learnable_in_scene,
     live_between,
     reveal_stated_in,
+    split_scene,
 )
 from dmbot.memory.voice import (
     EFFECT,
@@ -293,6 +296,11 @@ class Confirmed:
     # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
     # players on the website) when the players should see it.
     held: bool = False
+    # Said while the game clock had the party split (#2996 rule 1, slice 2a): kept from the whole
+    # party. `scene` is how many characters of the group that was there now know it (0: which group
+    # can't be told, so nobody does, and the DM decides).
+    split: bool = False
+    scene: int = 0
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -996,6 +1004,20 @@ def which_choices(
         options.sort(key=lambda o: (o.name.casefold(), o.kind, o.id))
         out.append(WhichOne(str(row[side]), side, tuple(options)))
     return out
+
+
+async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
+    """Each character of the group that was in the scene learns the connection (#2996 slice 2a),
+    in the claim's own change, so one Undo takes it back. A character the store refuses (gone
+    meanwhile) is skipped. Returns how many now know it."""
+    learned = 0
+    for character_id in characters:
+        try:
+            await knowers.learn(w, "connection", relation_id, character_id)
+            learned += 1
+        except MemoryRuleError:
+            continue
+    return learned
 
 
 class ClaimStore:
@@ -2139,7 +2161,8 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = held = False
+            shown = held = split = False
+            scene = 0
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2158,12 +2181,21 @@ class ClaimStore:
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
+                # Who was in the scene, when the game clock had the party split (#2996 rule 1),
+                # read BEFORE the write: a connection said in one group's scene is written held
+                # back from the start, so nothing a shown row sets off (a "met" upgrade, an item's
+                # whereabouts ended) reaches the other group (the reviewer).
+                in_scene = (
+                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    if not secret and not hold
+                    else None
+                )
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
-                    unrevealed=hold,
+                    unrevealed=hold or in_scene is not None,
                     # whether they've met, from the reader's own words for it (#3881)
                     knows_how=knows_how.how_from(
                         claim.relationship, claim.details, a=claim.subject, b=claim.object
@@ -2173,12 +2205,25 @@ class ClaimStore:
                 )  # fmt: skip
                 fact_id = relation.id
                 if relation.id in live:
-                    # (the table said a connection the story already has: held back, it is the
-                    # party's now, #3963 c; one already shown stays as it is)
-                    shown = not secret and await reveal_stated_in(w, relation.id)
+                    if not live[relation.id]:
+                        in_scene = None  # (one already shown stays as it is: nothing to learn)
+                    elif in_scene is None and not secret:
+                        # (the table said a connection the story holds back: the party's now,
+                        # #3963 c)
+                        shown = await reveal_stated_in(w, relation.id)
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                elif in_scene is not None and not relation.unrevealed:
+                    # (a twin the DM once turned down, brought back shown: held back here too)
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                if in_scene is not None:
+                    # only that group heard it: its characters learn it, nobody else. An unknown
+                    # group, or a connection the together rule wouldn't show either (a secret one,
+                    # an end the players haven't been shown): nobody, and the DM decides.
+                    split = True
+                    if in_scene and await learnable_in_scene(w, relation.id):
+                        scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
                 held = hold and not secret and relation.id not in live
             row = await w.update(
@@ -2187,4 +2232,4 @@ class ClaimStore:
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch, shown, held)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held, split, scene)
