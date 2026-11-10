@@ -77,6 +77,7 @@ from dmbot.campaigns.parts import (
     decode_part,
     encode_part,
 )
+from dmbot.campaigns.snowflakes import read_ids, write_ids
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
 from dmbot.memory import graph_review
@@ -93,7 +94,10 @@ EXPORT_FORMAT = "dmbot-campaign"
 # 5: story-memory rows carry `made_by`, the build that made them (#3739). Optional on load, so an
 # older file restores with none (read as "made before versions were recorded"). The bump is needed
 # so a DMbot that knows no `made_by` refuses the file instead of failing its strict row check.
-EXPORT_VERSION = 5
+# 6: Discord ids are written as strings (a number above 2^53 - 1 is not exact in a browser or `jq`,
+# #4060); an older file's numbers are still read. The bump is needed so a DMbot that expects numbers
+# refuses the file in plain words instead of failing a strict check.
+EXPORT_VERSION = 6
 
 RULE_ID_MAX = 64
 # Discord IDs and Unix timestamps must fit Postgres BIGINT (signed 64-bit).
@@ -1769,10 +1773,13 @@ class CampaignStore:
         }
         if files:
             main["parts"] = {"id": backup_id, "count": len(files)}
-        return main, files
+        return write_ids(main), files  # (an id is a string in the file, #4060)
 
     def _checked(self, data: object) -> tuple[dict[str, Any], dict[str, Any]]:
         """The backup's campaign settings and each section's rows, checked. Pure."""
+        data = read_ids(
+            data
+        )  # ids written as strings (#4060) back to the numbers the checks expect
         info, sections = _validate_backup(data, set(self._sections))
         checked: dict[str, Any] = {}
         for name, rows in sections.items():
