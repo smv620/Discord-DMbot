@@ -66,8 +66,8 @@ STAMPED_MEMORY = (
     "memory_role_codes", "memory_roles", "memory_flags", "memory_rule_links", "memory_report_runs",
     "backstory_links", "backstory_which", "waiting_name_questions", "name_pass_fixes",
     "name_pass_reports", "rel_ties", "lore_uploads", "memory_reveal_proposals",
-    "memory_name_sources",
-    "memory_npc_guesses", "memory_trait_offers", "memory_met",
+    "memory_name_sources", "memory_name_sessions",
+    "memory_npc_guesses", "memory_trait_offers", "memory_met", "memory_private_scenes",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -164,6 +164,7 @@ NOT_STAMPED: dict[str, str] = {
             "said_as_listens",
             "script_makes",
             "trait_answers",
+            "upload_undos",
             "web_backup_parts",
             "web_backups",
             "web_house_file_actions",
@@ -182,6 +183,7 @@ NOT_STAMPED: dict[str, str] = {
     **dict.fromkeys(
         (
             "active_sessions",
+            "ai_credit_spend",  # counts of AI cost kept per call, not made by a commit (#4005)
             "adventure_reads",
             "dm_waiting_sent",
             "game_clock_group_log",

@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from dmbot import consent_notify, entitlements, install, mail, plans
 from dmbot.account_id import from_dmbot_id, to_dmbot_id
@@ -163,6 +163,10 @@ from dmbot.web.recaps import (
     upload_recap,
 )
 from dmbot.web.return_path import safe_return_path
+
+# Every JSON answer of this API goes through the safe class, whether a route returns data or builds
+# the response itself: no integer above 2^53 reaches a browser as a number (#4060).
+from dmbot.web.safe_json import SafeJSONResponse as JSONResponse
 from dmbot.web.sessions import Session
 from dmbot.web.settings import WebSettings
 from dmbot.web.support_ai import SupportHelper
@@ -266,6 +270,7 @@ def create_app(
         docs_url=None,  # no public API browser
         redoc_url=None,
         openapi_url=None,
+        default_response_class=JSONResponse,  # (the safe one: no id above 2^53 as a number, #4060)
     )
     # The __Host- prefix makes browsers refuse a cookie unless it's Secure, set by this
     # exact host with Path=/ and no Domain: no other site or subdomain (the website shares
@@ -903,6 +908,8 @@ def create_app(
         "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
+        "undone": (409, "undone"),  # Undo this upload: taken back, or changed nothing (#3879)
+        "too_late": (409, "too_late"),  # Undo this upload: past its 7 days (#3879)
         "hour_full": (429, "hour_full"),  # thirty talk messages from the campaign this hour (#2545)
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122) or scenes (#2577)
@@ -3494,6 +3501,27 @@ def create_app(
         session, _token = signed
         try:
             return await upload_notice.read(db, session, ref, kind, source)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/upload-notice/undo")
+    async def me_upload_undo(ref: str, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Queue "Undo this upload" for one upload (`kind`, `id`); answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await upload_notice.undo(db, session, ref, body.get("kind"), body.get("id"))
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/campaigns/{ref}/upload-notice/undo/{undo_id}")
+    async def me_upload_undo_state(ref: str, undo_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one undo stands: the state, the error word, how many changes it took back."""
+        session, _token = signed
+        try:
+            return await upload_notice.read_undo(db, session, ref, undo_id)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

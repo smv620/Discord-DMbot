@@ -74,7 +74,7 @@ from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic, player_id, told_name
+from dmbot.ui import all_names, logic, player_id, split_words, told_name
 from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -2998,6 +2998,8 @@ class SameConfirm(_Menu):
             return
         changed(interaction, campaign)
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         await show_card(interaction, campaign.id, keep_id, replace=True, note=note)
         if written.batch is not None:
             # Its own message, so Undo outlives the card's menu (and a restart).

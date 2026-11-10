@@ -86,6 +86,7 @@ from dmbot.memory.store import (
     _new_alias,
     learnable_in_scene,
     live_between,
+    record_name_session,
     reveal_stated_in,
     split_scene,
 )
@@ -1268,7 +1269,9 @@ class ClaimStore:
             deferred = 0
             if chosen:
                 both = [*work, *((k, "", u) for _, k, u in old)]
-                new, joined = await self._link(w, onto, both, chosen, entities, aliases)
+                new, joined = await self._link(
+                    w, onto, both, chosen, entities, aliases, session_started_at
+                )
                 names = names_of(entities, aliases)
             else:
                 new, joined = [], 0
@@ -1473,9 +1476,14 @@ class ClaimStore:
         chosen: Sequence[str],
         entities: list[dict[str, Any]],
         aliases: list[dict[str, Any]],
+        session_started_at: int | None = None,
     ) -> tuple[list[str], int]:
         """Make the chosen name keys proposed entries, or join them to one already waiting.
         `entities` and `aliases` are the rows the caller holds; the new ones are added to them.
+        `session_started_at`: the session the names were heard in, recorded with each new one so
+        the split-party check reads that session's lines (#4043), never a guess by time. Only the
+        session a name was first made in is recorded: a spelling a later session joins to a name
+        still waiting is checked against that first session's lines (a known limit).
         Returns (the new entries' names, spellings joined to a waiting one)."""
         spelling: dict[str, str] = {}  # name key → the words as first said
         sides: dict[str, set[str]] = {}  # name key → the kinds the claims' relationships imply
@@ -1528,6 +1536,8 @@ class ClaimStore:
                 alias = await w.insert(
                     ALIASES, _new_alias(w, str(row["id"]), name, "full", PROPOSED, False, None)
                 )
+                if session_started_at is not None:
+                    await record_name_session(w, str(row["id"]), session_started_at)
                 entities.append(row)
                 aliases.append(alias)
                 home = str(row["id"])
@@ -1927,16 +1937,18 @@ class ClaimStore:
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
         words produced goes with what it made. Returns how many claims, readings, deeds, reveals,
-        scenes and beings met in play went."""
+        scenes, beings met in play and private scenes went."""
 
         # (imported here: they need this module's names)
-        from dmbot.memory import deed_proposals, met_store, reveal_proposals
+        from dmbot.memory import deed_proposals, met_store, private_scene_store, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
             readings += await met_store.forget_speaker(conn, guild_id, user_id)  # (#3172 slice 5)
+            # (the private scenes they spoke in, #2996 rule 5)
+            readings += await private_scene_store.forget_speaker(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)

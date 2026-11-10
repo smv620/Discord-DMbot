@@ -18,6 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 import discord
@@ -187,7 +188,7 @@ class UndoUploadButton(
         await _tell(interaction, text)
 
 
-async def undo_upload(
+async def undo_upload_result(
     bot: Any,
     guild_id: int,
     campaign_id: str,
@@ -195,27 +196,27 @@ async def undo_upload(
     user_id: int,
     *,
     started: Callable[[], Awaitable[None]] | None = None,
-) -> str:
+) -> Undone:
     """Undo one upload's changes for a game master, from the Discord button or the website's
     queue action: every check, the claim, the changes undone newest first as one chain, and the
-    plain-words answer. `started` runs once the undo is claimed (the button answers Discord with
-    it). Counts only in the log."""
+    plain-words answer and how many changes were taken back. `started` runs once the undo is
+    claimed (the button answers Discord with it). Counts only in the log."""
     campaign = await bot.campaigns.get(guild_id, campaign_id)
     if campaign is None or bot.memory is None or bot.upload_notices is None:
-        return GONE
+        return Undone(GONE)
     if user_id not in campaign.dm_user_ids:  # checked on every press
-        return NOT_YOURS
+        return Undone(NOT_YOURS)
     notices = bot.upload_notices
     found = await notices.get(guild_id, notice_id)
-    if found is None:
-        return GONE
+    if found is None or found.campaign_id != campaign_id:  # (an upload of another campaign: no)
+        return Undone(GONE)
     if found.undone_at is not None:
-        return ALREADY
+        return Undone(ALREADY)
     if not found.can_undo(int(time.time())):
-        return TOO_LATE
+        return Undone(TOO_LATE)
     claimed = await notices.claim_undo(guild_id, notice_id)
     if claimed is None:  # (a second press at the same moment)
-        return ALREADY
+        return Undone(ALREADY)
     if started is not None:
         await started()
     done = 0
@@ -243,10 +244,37 @@ async def undo_upload(
     total = len(claimed.changes)
     if broke and done == 0:
         await notices.give_back_undo(guild_id, notice_id)  # nothing changed: again
-        return COULD_NOT
+        return Undone(COULD_NOT)
     if broke:
-        return STOPPED.format(done=done, total=total)
-    return NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
+        return Undone(STOPPED.format(done=done, total=total), done, total, stopped=True)
+    answer = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
+    return Undone(answer, done, total)
+
+
+@dataclass(frozen=True, slots=True)
+class Undone:
+    """What an undo did: the plain-words answer, and the counts (changes taken back, and how many
+    the upload made) for the website's queue, which writes numbers and never the words."""
+
+    answer: str
+    done: int = 0
+    total: int = 0
+    stopped: bool = False  # an unexpected error ended it part way
+
+
+async def undo_upload(
+    bot: Any,
+    guild_id: int,
+    campaign_id: str,
+    notice_id: str,
+    user_id: int,
+    *,
+    started: Callable[[], Awaitable[None]] | None = None,
+) -> str:
+    """`undo_upload_result`'s answer: the words the Discord button shows."""
+    return (
+        await undo_upload_result(bot, guild_id, campaign_id, notice_id, user_id, started=started)
+    ).answer
 
 
 class DmClaims(NamedTuple):

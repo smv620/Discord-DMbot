@@ -40,7 +40,14 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
-from dmbot.memory.name_documents import DocumentError, kind_of_file, max_bytes_for
+from dmbot.memory.name_documents import (
+    MAX_DOCUMENT_BYTES,
+    MAX_PDF_BYTES,
+    DocumentError,
+    kind_of_file,
+    max_bytes_for,
+    picture_note,
+)
 from dmbot.memory.story_plan import Counts, Listed, ReadState
 from dmbot.waiting import (
     SHOW_ELAPSED_AFTER_S,
@@ -69,8 +76,19 @@ EMPTY = "Nothing yet. Press Give a file to add one."
 NOT_ON = (
     "Not yet. In Settings, turn on Shared story and say you have the right to use the material."
 )
-TOO_BIG = "That file is over 10 MB. Try a smaller file, or save a text copy (.txt)."
-TOO_BIG_PDF = "That PDF is over 100 MB. Try a smaller file, or save a text copy (.txt)."
+_MB = 1024 * 1024
+# The words name the limits in force, so a changed limit changes them (#4068).
+TOO_BIG = (
+    f"That file is over {MAX_DOCUMENT_BYTES // _MB} MB."
+    " Try a smaller file, or save a text copy (.txt)."
+)
+TOO_BIG_PDF = (
+    f"That PDF is over {MAX_PDF_BYTES // _MB} MB. Try a smaller file, or save a text copy (.txt)."
+)
+FILE_DESCRIPTION = (
+    f"One file: a PDF up to {MAX_PDF_BYTES // _MB} MB, others up to {MAX_DOCUMENT_BYTES // _MB} MB."
+    " DMbot keeps the text."
+)
 WRONG_TYPE = "DMbot can read PDF, Word (.docx) and text (.txt, .md) files. Save it as one of those."
 NO_FILE = "No file was picked. Press Give a file again and pick one."
 DOWNLOAD_FAILED = "DMbot couldn't download that file, and kept nothing. Try again."
@@ -565,7 +583,7 @@ class AddButton(
 class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
     file: discord.ui.Label[AdventureForm] = discord.ui.Label(
         text="Your adventure (PDF, Word or text)",  # 45 characters at most
-        description="One file: a PDF up to 100 MB, others up to 10 MB. DMbot keeps the text.",
+        description=FILE_DESCRIPTION,
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -625,6 +643,7 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
                     limit_s=READ_TIME_S,
                     max_reply=READ_REPLY_BYTES,
                 )
+            note = picture_note(text)  # pages with only pictures, in counts (#4000)
             await store.add(
                 fresh.guild_id, fresh.id, interaction.user.id, attachment.filename, text
             )
@@ -636,7 +655,8 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
         card, view = await _card(interaction, fresh)
-        await reply(f"Kept.\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+        kept = "Kept." + (f"\n{note}" if note else "")
+        await reply(f"{kept}\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
 
 class RemoveButton(

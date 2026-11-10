@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from dmbot.dm_screen import adventure_card, house_sync
 from dmbot.memory import document_reader
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
@@ -60,6 +61,23 @@ class TheLimit(unittest.TestCase):
         with self.assertRaises(DocumentError) as caught:
             text_of("notes.docx", b"x" * (15 * MB))
         self.assertIn("up to 10 MB", str(caught.exception))
+
+
+class TheWords(unittest.TestCase):
+    def test_the_too_big_words_say_the_limits_in_force(self) -> None:
+        # (the whole phrase, so "10" cannot pass for "100 MB")
+        pdf_mb, file_mb = MAX_PDF_BYTES // MB, MAX_DOCUMENT_BYTES // MB
+        self.assertIn(f"(up to {pdf_mb} MB)", house_sync.TOO_BIG_PDF)
+        self.assertIn(f"(up to {file_mb} MB)", house_sync.TOO_BIG)
+        self.assertIn(f"over {pdf_mb} MB", adventure_card.TOO_BIG_PDF)
+        self.assertIn(f"over {file_mb} MB", adventure_card.TOO_BIG)
+
+    def test_the_adventure_command_says_both_limits(self) -> None:
+        pdf_mb, file_mb = MAX_PDF_BYTES // MB, MAX_DOCUMENT_BYTES // MB
+        self.assertEqual(
+            adventure_card.FILE_DESCRIPTION,
+            f"One file: a PDF up to {pdf_mb} MB, others up to {file_mb} MB. DMbot keeps the text.",
+        )
 
 
 class TheChild(unittest.IsolatedAsyncioTestCase):
