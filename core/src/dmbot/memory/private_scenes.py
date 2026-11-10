@@ -38,6 +38,7 @@ class _Run:
     pair: tuple[str, str]
     from_ms: int
     to_ms: int
+    split_row: int  # (the main-clock row of its split: another row is another split)
     lines: int = 0
     speakers: set[int] = field(default_factory=set)
 
@@ -59,8 +60,13 @@ class Clock:
         }
 
     def split(self, at: int) -> bool:
-        i = bisect.bisect_right(self._main_at, at) - 1
+        i = self.row(at)
         return i >= 0 and self._main_group[i]
+
+    def row(self, at: int) -> int:
+        """Which main-clock row holds at this moment (-1: none yet): a new row is a new split,
+        even for the same two."""
+        return bisect.bisect_right(self._main_at, at) - 1
 
     def group(self, character_id: str, at: int) -> int | None:
         rows = self._placed.get(character_id)
@@ -82,7 +88,8 @@ def find(
 
     A split session's transcript interleaves the groups (the DM moves between them), so a line of
     another group touches no scene, and two pairs may each have a scene at once. A scene ends when
-    the clock rejoins the party or its two are no longer a group of two. A line nobody's character
+    the clock rejoins the party, splits anew (a new main-clock row, even with nobody speaking
+    in between), or its two are no longer a group of two. A line nobody's character
     places (the DM's, say) is counted in no scene: it can't be told which group it was said to."""
     found: list[Scene] = []
     runs: dict[tuple[str, str], _Run] = {}
@@ -102,7 +109,10 @@ def find(
                 close(pair)
             continue
         where = {c: clock.group(c, at) for c in players}
-        for pair in [p for p in runs if not _still_pair(p, where)]:
+        split_row = clock.row(at)
+        for pair in [
+            p for p, r in runs.items() if r.split_row != split_row or not _still_pair(p, where)
+        ]:
             close(pair)
         theirs = {where[c] for c, p in players.items() if p == speaker and where[c] is not None}
         if len(theirs) != 1:
@@ -112,7 +122,7 @@ def find(
         if len(members) != 2 or players[members[0]] == players[members[1]]:
             continue
         pair = (members[0], members[1])
-        run = runs.setdefault(pair, _Run(pair, started_ms, started_ms))
+        run = runs.setdefault(pair, _Run(pair, started_ms, started_ms, split_row))
         run.lines += 1
         run.to_ms = started_ms
         run.speakers.add(speaker)

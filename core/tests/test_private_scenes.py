@@ -74,6 +74,14 @@ class Finding(unittest.TestCase):
         (scene,) = find(lines, Clock(main, placed), PLAYERS)
         self.assertEqual((scene.to_ms, scene.line_count), (660_000, 2))
 
+    def test_a_rejoin_and_a_new_split_with_nobody_speaking_between_is_two_scenes(self) -> None:
+        main = [(100, False), (600, True), (700, False), (800, True)]
+        placed = {WREN: [(600, 1), (800, 1)], ASH: [(600, 1), (800, 1)], BRAM: [(600, 2), (800, 2)]}
+        lines = [at(650, P1), at(660, P2), at(850, P1), at(860, P2)]
+        scenes = find(lines, Clock(main, placed), PLAYERS)
+        self.assertEqual([(s.from_ms, s.to_ms) for s in scenes],
+                         [(650_000, 660_000), (850_000, 860_000)])  # fmt: skip
+
     def test_the_group_changing_ends_it(self) -> None:
         placed = {WREN: [(600, 1), (700, 2)], ASH: [(600, 1)], BRAM: [(600, 2)]}
         lines = [at(650, P1), at(660, P2), at(710, DM), at(720, P2)]

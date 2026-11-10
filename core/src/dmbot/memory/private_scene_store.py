@@ -63,12 +63,19 @@ class PrivateScenes:
     ) -> Written:
         """Find the session's private scenes and keep them, in place of the ones an earlier run on
         it kept. `opted_in`: who is recorded in this server now; nobody else's lines are read. One
-        transaction, holding the session's row, so two runs on one session never interleave."""
+        transaction; two runs on one session wait for each other on a lock of their own, never on
+        the session's row (a person's "Delete my transcripts" writes that row after deleting these,
+        so holding it here could deadlock). A scene found again keeps its id, so a "Not private"
+        button posted before a re-run still works."""
         recorded = sorted(set(opted_in))
         async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"dmbot.private_scenes:{guild_id}:{session_id}",),
+            )
             cur = await conn.execute(
                 "SELECT started_at FROM transcript_sessions WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s FOR UPDATE",
+                " AND campaign_id = %s AND id = %s",
                 (guild_id, campaign_id, session_id),
             )
             row = await cur.fetchone()
@@ -90,11 +97,17 @@ class PrivateScenes:
                 end = lines[-1][0] // 1000
                 clock = await _clock(conn, guild_id, campaign_id, list(players), end)
                 scenes = find(lines, clock, players)
-            await conn.execute(
+            cur = await conn.execute(
                 "DELETE FROM memory_private_scenes WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_started_at = %s AND status = 'kept'",
+                " AND session_started_at = %s AND status = 'kept'"
+                " RETURNING id, first_id, second_id, from_ms, to_ms",
                 (guild_id, campaign_id, started_at),
             )
+            before = [
+                (str(r["id"]), (str(r["first_id"]), str(r["second_id"]), int(r["from_ms"]),
+                                int(r["to_ms"])))
+                for r in await cur.fetchall()
+            ]  # fmt: skip
             cur = await conn.execute(
                 "SELECT first_id, second_id, from_ms, to_ms FROM memory_private_scenes"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = %s"
@@ -105,18 +118,23 @@ class PrivateScenes:
                 (str(r["first_id"]), str(r["second_id"]), int(r["from_ms"]), int(r["to_ms"]))
                 for r in await cur.fetchall()
             ]
+            used: set[str] = set()
             kept = skipped = 0
             for scene in scenes:
                 if any(_overlaps(scene, m) for m in marked):
                     skipped += 1
                     continue
+                # (the same scene found again keeps its id: the first earlier one it overlaps)
+                same = next((i for i, m in before if i not in used and _overlaps(scene, m)), None)
+                scene_id = same or secrets.token_hex(16)
+                used.add(scene_id)
                 cur = await conn.execute(
                     "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
                     " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids,"
                     " status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
                     " 'kept', %s) ON CONFLICT DO NOTHING",
                     (
-                        guild_id, campaign_id, secrets.token_hex(16), scene.first_id,
+                        guild_id, campaign_id, scene_id, scene.first_id,
                         scene.second_id, started_at, scene.from_ms, scene.to_ms,
                         scene.line_count, list(scene.speaker_ids), now,
                     ),

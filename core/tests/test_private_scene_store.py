@@ -9,7 +9,7 @@ from typing import Any
 from dmbot.campaigns.models import CampaignError
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import CONFIRMED
-from dmbot.memory.private_scene_store import Kept, PrivateScenes, keep_recorded
+from dmbot.memory.private_scene_store import Kept, PrivateScenes, forget_speaker, keep_recorded
 from dmbot.memory.private_scenes_backup import PrivateScenesSection
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -93,6 +93,35 @@ class PrivateSceneStore(NamesTest):
         await self.write()
         await self.write()
         self.assertEqual(len(await self.kept()), 1)
+
+    async def test_a_scene_found_again_keeps_its_id(self) -> None:
+        await self.said((650, P1), (670, P2))
+        await self.write()
+        (first,) = await self.kept()
+        await self.said((680, P1))
+        await self.write()
+        (again,) = await self.kept()
+        self.assertEqual((again.id, again.to_ms), (first.id, ms(680)))
+
+    async def test_a_speakers_removal_in_one_campaign_leaves_others(self) -> None:
+        await self.said((650, P1), (670, P2))
+        await self.write()
+        async with self.db.guild(GUILD) as conn:
+            await forget_speaker(conn, GUILD, P1, "f" * 32)  # (another campaign)
+        self.assertEqual(len(await self.kept()), 1)
+        async with self.db.guild(GUILD) as conn:
+            await forget_speaker(conn, GUILD, P1, self.cid)
+        self.assertEqual(await self.kept(), [])
+
+    async def test_a_move_strips_the_dms_mark_of_who_is_not_recorded_there(self) -> None:
+        await self.said((650, P1), (670, P2))
+        await self.write()
+        (scene,) = await self.kept()
+        await self.scenes.not_private(GUILD, self.cid, scene.id, 9)
+        async with self.db.guild(GUILD) as conn:
+            await keep_recorded(conn, GUILD, self.cid, {P2})
+        self.assertEqual([(r["status"], list(r["speaker_ids"])) for r in await self.all_rows()],
+                         [("not_private", [P2])])  # fmt: skip
 
     async def test_the_dms_not_private_survives_a_rerun(self) -> None:
         await self.said((650, P1), (670, P2))
