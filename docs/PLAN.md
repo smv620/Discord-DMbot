@@ -1839,6 +1839,8 @@ plus the list of fixes between them.
 - **Downloads use the transcript format** `[0:42:10] (Mia) {Cerric}: …` with time
   since the session started (owner decision, 2026-10-07, replacing the readable labels
   `0:42:10 Cerric (Mia): …`), and a header line explaining it.
+  A player with several characters gets all of them in the braces, oldest first, joined with
+  ` / ` (`{Mara / Bryn}`; Supervisor, 2026-11-10, #4004), because DMbot never guesses which spoke.
 - Transcripts never contain DM-screen content. The Cleaner never **adds** a secret
   identity to a line; the "as heard" version contains only what was actually said.
 
