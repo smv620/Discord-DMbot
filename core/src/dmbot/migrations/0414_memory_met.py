@@ -14,10 +14,13 @@ SQL = r"""
     -- nothing that lists names reads this table, so it is quiet by construction (the name check,
     -- the waiting counts and every player view never see it). Only the DM's list of them (#4045)
     -- will read it; naming or joining one there writes the entry at rank 0 (reason `met_in_play`)
-    -- and deletes this row in one transaction. `what` is the DM's word for them and `lines` the
-    -- line numbers, so a row is transcript-derived: it goes with its session (the key below), with
-    -- the session's transcript (`delete_session_transcript`) and with anyone it cites
-    -- (`speaker_ids`, the person forget paths). `count` 1 is one being; 0 is "several".
+    -- and deletes this row in one transaction. `what` is the DM's word for them and `line_ms`
+    -- the start of each line it came from (with the session, a line's own key: a line number
+    -- would shift when someone else's lines are deleted), so a row is transcript-derived: it goes
+    -- with its session (the key below), with the session's transcript
+    -- (`delete_session_transcript`) and with anyone it cites (`speaker_ids`: "Stop recording me",
+    -- "Delete my transcripts", a DM's removal).
+    -- `count` 1 is one being; 0 is "several". At most 10 rows a session (`met_store.add`).
     CREATE TABLE memory_met (
         guild_id           BIGINT NOT NULL,
         campaign_id        TEXT NOT NULL,
@@ -31,7 +34,7 @@ SQL = r"""
         what               TEXT NOT NULL CHECK (char_length(what) BETWEEN 1 AND 100),
         what_key           TEXT NOT NULL CHECK (char_length(what_key) BETWEEN 1 AND 200),
         count              INTEGER NOT NULL CHECK (count BETWEEN 0 AND 999),
-        lines              TEXT[] NOT NULL CHECK (cardinality(lines) BETWEEN 1 AND 10),
+        line_ms            BIGINT[] NOT NULL CHECK (cardinality(line_ms) BETWEEN 1 AND 10),
         speaker_ids        BIGINT[] NOT NULL CHECK (cardinality(speaker_ids) >= 1),
         created_at         BIGINT NOT NULL CHECK (created_at > 0),
         made_by_commit     TEXT CONSTRAINT memory_met_made_by_commit_check

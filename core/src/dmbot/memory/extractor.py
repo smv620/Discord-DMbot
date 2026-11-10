@@ -330,6 +330,7 @@ class Report:
     met_refused: int = 0  # items the rules turned down (a player's line among them: `met_not_dm`)
     met_not_dm: int = 0  # said only by a player, or not in the DM's words
     met_past_cap: int = 0  # past the cap of a session, never made
+    met_cut: int = 0  # claims answers cut short with the switch on: their "met" items are lost
     met_made: int = 0  # quiet entries made
     met_again: int = 0  # already kept for this session
     met_named: int = 0  # the words are a name the campaign has
@@ -383,8 +384,8 @@ class Report:
             + (
                 f", met: {self.met} found, {self.met_refused} refused ({self.met_not_dm} not the"
                 f" DM's), {self.met_past_cap} past the cap, {self.met_made} kept,"
-                f" {self.met_again} again, {self.met_named} named"
-                if self.met or self.met_refused
+                f" {self.met_again} again, {self.met_named} named, {self.met_cut} cut short"
+                if self.met or self.met_refused or self.met_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -623,6 +624,7 @@ async def run(
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    when: dict[str, int] = {}  # with `met`: a line's number to when it began (its lasting key)
     heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
     left_out = set(recap_lines)
@@ -705,6 +707,8 @@ async def run(
             report.met_refused += got.refused
             report.met_not_dm += got.not_dm
             report.met_proposals.extend(got.met)
+            report.met_cut += int(reply.cut)  # (never "none met": counted as cut short)
+            when.update((str(s.number), s.started_ms) for s in batch)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -903,7 +907,7 @@ async def run(
             for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
     if met and met_store is not None and session_id is not None and report.met_proposals:
-        await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone,
+        await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone, when,
                         consenting, session_started_at, skip)  # fmt: skip
     report.through_ms = reached
     return report
@@ -916,33 +920,38 @@ async def _keep_met(
     campaign_id: str,
     session_id: str,
     everyone: Mapping[str, int | None],
+    when: Mapping[str, int],
     consenting: Consenting,
     session_started_at: int | None,
     skip: Collection[str],
 ) -> None:
     """Keep the session's unnamed beings (#3172 slice 5): an item whose lines include someone who
     stopped being recorded is dropped (asked again here, after the last answer), then the same
-    words are joined, the cap applied, and the rest kept. Never fatal: the claims stand."""
-    still = await consenting()
-    heard = [
-        m
-        for m in report.met_proposals
-        if all(everyone.get(n) in still for n in m.lines) and name_key(m.what) not in skip
-    ]
-    report.met_refused += len(report.met_proposals) - len(heard)
-    items, report.met_past_cap = gathered(heard)
-    if report.met_past_cap:
-        log.info("Story extractor: %d unnamed being(s) past the cap, not kept", report.met_past_cap)
-    if not items:
-        return
+    words are joined, this read's cap applied, and the rest kept (the store holds the cap across
+    every read of the session). Each line is kept by when it began, which a deletion of other
+    lines never shifts. Never fatal: the claims stand."""
     try:
+        still = await consenting()
+        heard = [
+            m
+            for m in report.met_proposals
+            if all(everyone.get(n) in still for n in m.lines) and name_key(m.what) not in skip
+        ]
+        report.met_refused += len(report.met_proposals) - len(heard)
+        items, report.met_past_cap = gathered(heard)
+        if not items:
+            return
         added = await met_store.add(
             guild_id,
             campaign_id,
             session_id,
-            [(m.what, m.count, m.lines, speakers_of(m.lines, everyone)) for m in items],
+            [
+                (m.what, m.count, [when[n] for n in m.lines if n in when],
+                 speakers_of(m.lines, everyone))
+                for m in items
+            ],
             session_started_at=session_started_at,
-        )
+        )  # fmt: skip
     except Exception as exc:  # only the type: the row holds the words
         log.warning("Story extractor: keeping the unnamed beings failed (%s)", type(exc).__name__)
         report.failed += 1
@@ -950,3 +959,4 @@ async def _keep_met(
     report.met_made += added.made
     report.met_again += added.again
     report.met_named += added.named
+    report.met_past_cap += added.past_cap

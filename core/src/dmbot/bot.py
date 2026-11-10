@@ -9495,7 +9495,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
                 met=self.settings.met_unnamed_on,
-                met_store=MetStore(self.memory._db) if self.memory is not None else None,
+                met_store=MetStore(self.memory._db)
+                if self.settings.met_unnamed_on and self.memory is not None
+                else None,
                 session_id=sid,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
@@ -9676,7 +9678,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
                 met=self.settings.met_unnamed_on,
-                met_store=MetStore(self.memory._db) if self.memory is not None else None,
+                met_store=MetStore(self.memory._db)
+                if self.settings.met_unnamed_on and self.memory is not None
+                else None,
                 session_id=sid,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),

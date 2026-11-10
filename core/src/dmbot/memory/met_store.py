@@ -2,12 +2,13 @@
 Supervisor's ruling, option C, 2026-11-10): the table `memory_met`, apart from the campaign's
 names, so nothing that lists names can show them (quiet by construction).
 
-A row is one encounter in one session: the DM's word for them, how many, the line numbers it came
-from and who spoke those lines. Rows are transcript-derived, so they go with their session (the
-foreign key), with its transcript (`forget_session`) and with anyone they cite (`forget_speaker`).
-Nothing in the bot reads them yet but the tests: the DM's list is #4045, and naming or joining one
-there writes the entry at rank 0 (`importance_rank.MET_IN_PLAY`) and deletes the row in one
-transaction. Counts only leave this module; its words are never logged.
+A row is one encounter in one session: the DM's word for them, how many, when each line it came
+from began, and who spoke those lines. Rows are transcript-derived, so they go with their session
+(the foreign key), with its transcript (`forget_session`) and with anyone they cite
+(`forget_speaker`, on every path that forgets a person's words). Nothing in the bot reads them yet
+but the tests: the DM's list is #4045, and naming or joining one there writes the entry at rank 0
+(`importance_rank.MET_IN_PLAY`) and deletes the row in one transaction. Counts only leave this
+module; its words are never logged.
 """
 
 from __future__ import annotations
@@ -21,7 +22,22 @@ from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.models import name_key, new_id
 
-ROWS_MAX = 100  # per session: the reader's cap is 10, so this is only a guard
+MAX_PER_SESSION = 10  # Supervisor, 2026-11-10: the sample session met 4 (11 if counted one by one)
+_ENDINGS = (("ies", "y"), ("ves", "f"), ("s", ""))  # (only enough for a key: never shown)
+
+
+def _singular(word: str) -> str:
+    for end, put in _ENDINGS:
+        if word.endswith(end) and not word.endswith("ss") and len(word) > len(end) + 2:
+            return word[: -len(end)] + put
+    return word
+
+
+def what_key(what: str) -> str:
+    """Two items with this key are one encounter of a session: case, an article, punctuation and a
+    plain plural ignored, so "the barbarians" is "barbarian" and "wolves" is "wolf". Pure."""
+    plain = unnamed_mod.same_person_key(what, None).removeprefix("|")
+    return " ".join(_singular(w) for w in plain.split())
 
 
 @dataclass
@@ -31,6 +47,7 @@ class MetAdded:
     made: int = 0
     again: int = 0  # already kept for this session (a later batch, or a restarted read)
     named: int = 0  # the words are a name the campaign already has: not an unnamed being
+    past_cap: int = 0  # the session already has `MAX_PER_SESSION`: not kept
 
 
 @dataclass(frozen=True)
@@ -40,14 +57,8 @@ class MetRow:
     session_started_at: int | None
     what: str
     count: int
-    lines: tuple[str, ...]
+    line_ms: tuple[int, ...]
     speaker_ids: tuple[int, ...]
-
-
-def what_key(what: str) -> str:
-    """The same words twice in a session are one encounter: the unnamed person's own key (case,
-    an article and punctuation ignored), so "the barbarians" finds "barbarians". Pure."""
-    return unnamed_mod.same_person_key(what, None)
 
 
 class MetStore:
@@ -60,20 +71,36 @@ class MetStore:
         guild_id: int,
         campaign_id: str,
         session_id: str,
-        met: Sequence[tuple[str, int, Sequence[str], Sequence[int]]],
+        met: Sequence[tuple[str, int, Sequence[int], Sequence[int]]],
         *,
         session_started_at: int | None,
     ) -> MetAdded:
-        """Keep these encounters of one session, each as (the DM's word for them, how many, the
-        line numbers, who spoke those lines). Words that are a name the campaign already has are no
-        unnamed being (`named`); the same words already kept for this session are `again` (the
-        unique index holds it even when two reads overlap). Across sessions the same words are a
-        new row: two wolves a month apart are often two wolves."""
+        """Keep these encounters of one session, each as (the DM's word for them, how many, when
+        each of its lines began, who spoke those lines). Words that are a name the campaign already
+        has are no unnamed being (`named`); the same words already kept for this session are
+        `again` (the unique index holds it even when two reads overlap); past `MAX_PER_SESSION`
+        rows for the session, across every read of it, nothing is kept (`past_cap`). The session's
+        row is locked first, so two reads of one session count the cap one after the other.
+        Across sessions the same words are a new row: two wolves a month apart are often two
+        wolves."""
         out = MetAdded()
         if not met:
             return out
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s FOR UPDATE",
+                (guild_id, campaign_id, session_id),
+            )
+            if await cur.fetchone() is None:
+                return out  # (the session is gone, or not this campaign's)
+            cur = await conn.execute(
+                "SELECT what_key FROM memory_met WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_id = %s",
+                (guild_id, campaign_id, session_id),
+            )
+            kept = {str(r["what_key"]) for r in await cur.fetchall()}
             cur = await conn.execute(
                 "SELECT name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
                 " AND status IN ('proposed', 'confirmed') AND NOT unnamed",
@@ -86,36 +113,41 @@ class MetStore:
                 (guild_id, campaign_id),
             )
             named |= {str(r["key"]) for r in await cur.fetchall()}
-            for word, count, lines, speakers in met:
+            for word, count, line_ms, speakers in met:
                 what = unnamed_mod.tidy(word)
-                key = what_key(what)
-                if not what or {name_key(what), key.removeprefix("|")} & named:
+                plain = unnamed_mod.same_person_key(what, None).removeprefix("|")
+                if not what or {name_key(what), plain} & named:
                     out.named += 1
                     continue
-                cur = await conn.execute(
+                key = what_key(what)
+                if key in kept:
+                    out.again += 1
+                    continue
+                if len(kept) >= MAX_PER_SESSION:
+                    out.past_cap += 1
+                    continue
+                await conn.execute(
                     "INSERT INTO memory_met (guild_id, campaign_id, id, session_id,"
-                    " session_started_at, what, what_key, count, lines, speaker_ids, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    " ON CONFLICT (guild_id, campaign_id, session_id, what_key) DO NOTHING",
+                    " session_started_at, what, what_key, count, line_ms, speaker_ids, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         guild_id, campaign_id, new_id(), session_id, session_started_at, what,
-                        key, count, [str(n) for n in lines][:10], sorted(set(speakers)), now,
+                        key, count, sorted(set(line_ms))[:10], sorted(set(speakers)), now,
                     ),
                 )  # fmt: skip
-                if cur.rowcount:
-                    out.made += 1
-                else:
-                    out.again += 1
+                kept.add(key)
+                out.made += 1
         return out
 
     async def of_session(self, guild_id: int, campaign_id: str, session_id: str) -> list[MetRow]:
-        """This session's rows, oldest first (for the tests now, and #4045's list later)."""
+        """This session's rows, oldest first (for the tests now; #4045's list must also leave out
+        rows citing someone no longer recorded, as the deed and reveal readers do)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, session_id, session_started_at, what, count, lines, speaker_ids"
+                "SELECT id, session_id, session_started_at, what, count, line_ms, speaker_ids"
                 " FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND session_id = %s"
-                " ORDER BY created_at, id LIMIT %s",
-                (guild_id, campaign_id, session_id, ROWS_MAX),
+                " ORDER BY created_at, id",
+                (guild_id, campaign_id, session_id),
             )
             return [_row(r) for r in await cur.fetchall()]
 
@@ -124,13 +156,14 @@ def _row(r: Any) -> MetRow:
     return MetRow(
         str(r["id"]), str(r["session_id"]),
         None if r["session_started_at"] is None else int(r["session_started_at"]),
-        str(r["what"]), int(r["count"]), tuple(r["lines"]), tuple(int(u) for u in r["speaker_ids"]),
+        str(r["what"]), int(r["count"]), tuple(int(n) for n in r["line_ms"]),
+        tuple(int(u) for u in r["speaker_ids"]),
     )  # fmt: skip
 
 
 async def forget_session(conn: Any, guild_id: int, session_id: str) -> None:
     """A session's transcript is deleted: its met rows go with it (they hold the DM's words and
-    line numbers). In the caller's transaction."""
+    point at its lines). In the caller's transaction."""
     await conn.execute(
         "DELETE FROM memory_met WHERE guild_id = %s AND session_id = %s", (guild_id, session_id)
     )
@@ -138,15 +171,16 @@ async def forget_session(conn: Any, guild_id: int, session_id: str) -> None:
 
 async def forget_speaker(
     conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
-) -> None:
-    """Someone's lines are deleted (they stopped being recorded, or the DM removed them): every met
-    row that cites them goes. `campaign_id`: only that campaign's rows. In the caller's
-    transaction."""
-    await conn.execute(
+) -> int:
+    """Someone's words are forgotten ("Stop recording me", "Delete my transcripts", a DM's removal
+    of a speaker): every met row that cites them goes. `campaign_id`: only that campaign's rows.
+    In the caller's transaction; returns how many went."""
+    cur = await conn.execute(
         "DELETE FROM memory_met WHERE guild_id = %s AND %s = ANY(speaker_ids)"
         " AND (%s::text IS NULL OR campaign_id = %s)",
         (guild_id, user_id, campaign_id, campaign_id),
     )
+    return int(cur.rowcount or 0)
 
 
 def speakers_of(lines: Collection[str], everyone: Mapping[str, int | None]) -> list[int]:

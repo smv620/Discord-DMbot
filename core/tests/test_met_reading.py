@@ -13,8 +13,9 @@ from typing import Any
 
 from dmbot.ai import Reply
 from dmbot.memory import extractor, met_reading
+from dmbot.memory.claims import ClaimStore
 from dmbot.memory.met_reading import Met, gathered, in_words_of, parse_met
-from dmbot.memory.met_store import MetAdded, MetRow, MetStore
+from dmbot.memory.met_store import MAX_PER_SESSION, MetAdded, MetRow, MetStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -80,26 +81,33 @@ class Reading(unittest.TestCase):
     def test_the_words_are_checked_with_plurals(self) -> None:
         self.assertTrue(in_words_of("barbarian", ["Two barbarians jump out."]))
         self.assertTrue(in_words_of("the wolf", ["Three wolves circle the camp."]))
+        for one, many in (("snake", "snakes"), ("zombie", "Zombies"), ("ogre", "ogres"),
+                          ("horse", "horses"), ("box", "boxes"), ("pony", "ponies")):  # fmt: skip
+            self.assertTrue(in_words_of(one, [f"Two {many} here."]), one)
+            self.assertTrue(in_words_of(many, [f"A {one} here."]), many)
         self.assertFalse(in_words_of("ogre", ["Two barbarians jump out."]))
 
     def test_the_same_words_are_one_encounter_and_the_cap_holds(self) -> None:
         items, past = gathered(
-            [Met("barbarians", 2, ("1",)), Met("the barbarians", 0, ("4",))]
+            [Met("barbarians", 2, ("1",)), Met("the barbarian", 0, ("4",))]
             + [Met(f"thing {n}", 1, ("5",)) for n in range(12)]
         )
         self.assertEqual(items[0], Met("barbarians", 2, ("1", "4")))
-        self.assertEqual((len(items), past), (met_reading.MAX_PER_SESSION, 3))
+        self.assertEqual((len(items), past), (MAX_PER_SESSION, 3))
 
 
 class MetAnswer:
     """A fake AI: the claims call answers with no claims and the `met` it is given."""
 
-    def __init__(self, met: list[dict[str, Any]]) -> None:
+    def __init__(self, met: list[dict[str, Any]], *, cut: bool = False) -> None:
         self.systems: list[str] = []
         self.met = met
+        self.cut = cut
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
         self.systems.append(system)
+        if self.cut:  # (stopped at the length limit inside "claims": "met" never came)
+            return Reply('{"claims": [{"subject": "Br', True, 10, 5, "m-fast")
         return Reply(json.dumps({"claims": [], "met": self.met}), False, 10, 5, "m-fast")
 
 
@@ -107,16 +115,18 @@ class Keeping:
     """A met store that remembers what it was handed."""
 
     def __init__(self) -> None:
-        self.kept: list[list[tuple[str, int, Sequence[str], Sequence[int]]]] = []
+        self.kept: list[list[tuple[str, int, Sequence[int], Sequence[int]]]] = []
 
     async def add(
         self, guild_id: int, campaign_id: str, session_id: str,
-        met: Sequence[tuple[str, int, Sequence[str], Sequence[int]]],
+        met: Sequence[tuple[str, int, Sequence[int], Sequence[int]]],
         *, session_started_at: int | None,
     ) -> MetAdded:  # fmt: skip
         self.kept.append(list(met))
         return MetAdded(made=len(met))
 
+
+LINE_MS = 1_700_000_001_000
 
 DOGS = {"what": "sled dogs", "count": 7, "lines": [1]}
 
@@ -134,10 +144,16 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Kept(), lines, met=True, met_store=store, session_id="s")
         self.assertEqual(report.calls, 1)  # (asked in the claims call itself)
         self.assertIn(met_reading.MET_ADDENDUM, ai.systems[0])
-        self.assertEqual(store.kept, [[("sled dogs", 7, ("1",), [DM])]])
+        self.assertEqual(store.kept, [[("sled dogs", 7, [1000], [DM])]])  # (the line's start)
         self.assertEqual(report.met_made, 1)
         self.assertNotIn("sled", report.line())  # counts only in the log line
         self.assertIn("met: 1 found", report.line())
+
+    async def test_a_cut_answer_is_counted_never_read_as_none_met(self) -> None:
+        report = await go(MetAnswer([DOGS], cut=True), Kept(), dm_session(10), met=True,
+                          met_store=Keeping(), session_id="s")  # fmt: skip
+        self.assertEqual(report.met_cut, 1)
+        self.assertIn("1 cut short", report.line().split("met:")[1])
 
     async def test_a_players_line_is_refused(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
@@ -175,14 +191,14 @@ class Store(NamesTest):
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
         await self.transcripts.add_lines(
-            GUILD, self.sid, [Line(1_700_000_001_000, DM_ID, "Two barbarians jump out.", "x")]
+            GUILD, self.sid, [Line(LINE_MS, DM_ID, "Two barbarians jump out.", "x")]
         )
         await self.transcripts.end_session(GUILD, self.sid, 1_700_001_000)
 
     async def met(self, *items: tuple[str, int], sid: str | None = None) -> MetAdded:
         return await self.met_store.add(
             GUILD, self.campaign.id, sid or self.sid,
-            [(w, n, ("1",), (DM_ID,)) for w, n in items], session_started_at=1_700_000_000,
+            [(w, n, (LINE_MS,), (DM_ID,)) for w, n in items], session_started_at=1_700_000_000,
         )  # fmt: skip
 
     async def rows(self) -> list[MetRow]:
@@ -193,8 +209,8 @@ class Store(NamesTest):
         self.assertEqual((done.made, done.again, done.named), (2, 0, 0))
         rows = await self.rows()
         self.assertEqual(
-            sorted((r.what, r.count, r.lines) for r in rows),  # (one moment: no order between)
-            [("a monstrosity", 1, ("1",)), ("barbarians", 2, ("1",))],
+            sorted((r.what, r.count, r.line_ms) for r in rows),  # (one moment: no order between)
+            [("a monstrosity", 1, (LINE_MS,)), ("barbarians", 2, (LINE_MS,))],
         )
         # quiet by construction: nothing is a name, so no list, count or check can show it
         async with self.db.guild(GUILD) as conn:
@@ -245,3 +261,28 @@ class Store(NamesTest):
         await self.met(("barbarians", 2))
         await self.transcripts.remove_speaker(GUILD, self.campaign.id, DM_ID)
         self.assertEqual(await self.rows(), [])
+
+    async def test_the_cap_holds_across_every_read_of_the_session(self) -> None:
+        first = await self.met(*((f"thing {n}", 1) for n in range(7)))
+        second = await self.met(*((f"other {n}", 1) for n in range(7)))  # (a later read)
+        self.assertEqual((first.made, second.made, second.past_cap), (7, 3, 4))
+        self.assertEqual(len(await self.rows()), MAX_PER_SESSION)
+
+    async def test_singular_and_plural_are_one_encounter(self) -> None:
+        await self.met(("barbarian", 1))
+        self.assertEqual((await self.met(("Barbarians", 2))).again, 1)
+
+    async def test_it_goes_when_they_stop_being_recorded(self) -> None:
+        await self.met(("barbarians", 2))
+        await ClaimStore(self.memory).forget_speaker(GUILD, DM_ID)  # ("Stop recording me")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_it_goes_when_they_delete_their_transcripts(self) -> None:
+        await self.met(("barbarians", 2))
+        await self.transcripts.delete_person(GUILD, DM_ID)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_row_citing_someone_else_stays(self) -> None:
+        await self.met(("barbarians", 2))
+        await ClaimStore(self.memory).forget_speaker(GUILD, 4242)
+        self.assertEqual(len(await self.rows()), 1)

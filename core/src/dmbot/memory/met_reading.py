@@ -31,10 +31,10 @@ from typing import Any
 
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.claims import LINES_MAX, reads_like_instruction
+from dmbot.memory.met_store import MAX_PER_SESSION, what_key
 from dmbot.memory.readings import PRONOUNS
 
 MAX_PER_ANSWER = 10  # one batch of ten lines meets this many at most
-MAX_PER_SESSION = 10  # Supervisor, 2026-11-10: the sample session met 4 (11 if counted one by one)
 MAX_COUNT = 999  # a count past this is "several"
 WHAT_WORDS = 8  # "the barbarian with the maul" is a description; a sentence is not
 SEVERAL = 0  # the count when a line says only "some" or "several"
@@ -82,20 +82,26 @@ def _words(text: str) -> list[str]:
     return _WORD.findall(text.casefold().replace("’", "'"))
 
 
-def _stem(word: str) -> str:
-    """Enough to find "barbarians" for "barbarian" and "wolves" for "wolf": a quote check, not a
-    dictionary."""
-    for end, put in (("ves", "f"), ("ies", "y"), ("es", ""), ("s", "")):
+_FORMS = (("ves", ("f", "fe")), ("ies", ("y", "ie")), ("es", ("", "e")), ("s", ("",)))
+
+
+def _forms(word: str) -> set[str]:
+    """The word and what it would be without a plain plural ending, every reading of it ("snakes"
+    gives "snake", "boxes" gives "box", "wolves" gives "wolf"): a quote check, not a dictionary,
+    so two words match when their forms meet."""
+    out = {word}
+    for end, puts in _FORMS:
         if word.endswith(end) and len(word) > len(end) + 2:
-            return word[: -len(end)] + put
-    return word
+            out |= {word[: -len(end)] + put for put in puts}
+    return out
 
 
 def in_words_of(what: str, said: Iterable[str]) -> bool:
-    """Every word of `what` that tells something apart is in `said` (the DM's lines). Pure."""
-    heard = {_stem(w) for text in said for w in _words(text)}
-    wanted = [_stem(w) for w in _words(what) if w not in _SKIP_WORDS]
-    return bool(wanted) and all(w in heard for w in wanted)
+    """Every word of `what` that tells something apart is in `said` (the DM's lines), either one
+    plural or singular. Pure."""
+    heard = {f for text in said for w in _words(text) for f in _forms(w)}
+    wanted = [w for w in _words(what) if w not in _SKIP_WORDS]
+    return bool(wanted) and all(_forms(w) & heard for w in wanted)
 
 
 def _count(value: Any) -> int | None:
@@ -163,17 +169,12 @@ def parse_met(
     return out
 
 
-def key(what: str) -> str:
-    """Two items with this key are the same encounter's: the store's own same-person key."""
-    return unnamed_mod.same_person_key(what, None)
-
-
 def gathered(found: Iterable[Met], cap: int = MAX_PER_SESSION) -> tuple[list[Met], int]:
-    """The session's items, one per key in the order first met (the larger count, every line, up
-    to `LINES_MAX`), and how many were past `cap`. Pure."""
+    """The session's items, one per `what_key` in the order first met (the larger count, every
+    line, up to `LINES_MAX`), and how many were past `cap`. Pure."""
     by_key: dict[str, Met] = {}
     for m in found:
-        k = key(m.what)
+        k = what_key(m.what)
         had = by_key.get(k)
         if had is None:
             by_key[k] = m
