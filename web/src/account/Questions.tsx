@@ -15,6 +15,7 @@ import { QUESTIONS_LIVE } from "../content/questions-switch";
 import { kindWords, type QuestionHow, questionsPage as words } from "../content/questions-words";
 import { type AccountApi, ApiError, type QuestionCampaign, type QuestionCounts, type QuestionKind } from "./api";
 import { campaignHref } from "./campaignLinks";
+import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
 import QuestionsHere, { groupOf } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
@@ -43,6 +44,8 @@ export function mergeUnknown(kinds: QuestionKind[]): QuestionKind[] {
 
 /** Where a kind is answered today: a kind that opens its cards here falls back to its link while the page can't read them. */
 function howFor(kind: string, api: AccountApi): QuestionHow {
+  // The lineage and class question (#3946): answered here once its switch is on, else in Discord, as its words say.
+  if (kind === "traits") return TRAIT_QUESTIONS_LIVE && api.traitOffers !== undefined ? "here" : "discord";
   const how = kindWords(kind).how;
   if (how !== "here") return how;
   const group = groupOf(kind);
