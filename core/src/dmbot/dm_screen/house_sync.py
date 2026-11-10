@@ -103,7 +103,8 @@ TOO_BIG_PDF = (
     f"That PDF is too big. Send just the house-rules part (up to {MAX_PDF_BYTES // _MB} MB)."
     " Nothing was changed."
 )
-WORKING = "⏳ Working on it… this can take a few seconds."
+WORKING = "⏳ Working on it… a few seconds."
+STUCK = " The card above may stay greyed out: press 🔄 Compare now to start again."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
 BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off
 LABELS = {
@@ -305,11 +306,12 @@ class HouseSyncButton(
             await press(interaction, self.guild_id, self.key, self.action, self.n)
         except Exception:
             log.exception("A house-rules file button failed")
-            await _restore(interaction)  # the card goes back to what it was, buttons on
+            put_back = await _restore(interaction)  # the card goes back to what it was, buttons on
+            words = FAILED if put_back else FAILED + STUCK
             if interaction.response.is_done():
-                await interaction.followup.send(FAILED, ephemeral=True)
+                await interaction.followup.send(words, ephemeral=True)
             else:
-                await interaction.response.send_message(FAILED, ephemeral=True)
+                await interaction.response.send_message(words, ephemeral=True)
 
 
 async def _show(interaction: discord.Interaction, text: str, view: discord.ui.View | None) -> None:
@@ -349,16 +351,19 @@ async def _working(interaction: discord.Interaction) -> None:
     await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
 
-async def _restore(interaction: discord.Interaction) -> None:
+async def _restore(interaction: discord.Interaction) -> bool:
     """After a failure, put the card back as it was with its buttons on, so the DM can press again.
-    Best effort: the failure's own message is still sent."""
+    False only when the card was greyed out and could not be put back; the failure's own message
+    says so then. It is sent after this, never above a card still greyed out."""
     before = interaction.extras.pop("hrs_before", None)
-    if before is None or not interaction.response.is_done():
-        return
+    if before is None:
+        return True  # (nothing was greyed out)
     try:
         await interaction.edit_original_response(content=before[0], view=before[1])
     except discord.HTTPException:
         log.warning("A house-rules card could not be put back after a failure")
+        return False
+    return True
 
 
 async def _finish(interaction: discord.Interaction, key: str, pending: Pending) -> None:

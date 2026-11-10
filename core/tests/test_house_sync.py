@@ -345,6 +345,7 @@ class Pressing(SyncTest):
 
     async def test_a_store_that_breaks_is_said_and_nothing_more_is_changed(self) -> None:
         _, view = await self.offer()
+        self.store.add = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
         content = it.response.edited[-1][0]
@@ -497,6 +498,20 @@ class Safeguards(SyncTest):
         self.assertIn(hs.WORKING, it.response.edited[0][0])
         self.assertEqual(it.response.edited[-1][0], "offer")  # (the card as it was)
         it.followup.send.assert_awaited_with(hs.FAILED, ephemeral=True)
+
+    async def test_a_card_that_cannot_be_put_back_says_so(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        real_edit = it.edit_original_response
+
+        async def broken(**kw: Any) -> None:
+            raise discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")  # type: ignore[arg-type]
+
+        it.edit_original_response = broken
+        with patch.object(house_file_sync, "apply", AsyncMock(side_effect=RuntimeError("x"))):
+            await self.button(view, "Accept all").callback(it)
+        it.followup.send.assert_awaited_with(hs.FAILED + hs.STUCK, ephemeral=True)
+        del real_edit
 
     async def test_a_few_changes_are_answered_in_one_step(self) -> None:
         _, view = await self.offer()
