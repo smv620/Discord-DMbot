@@ -101,6 +101,9 @@ class TheActions(Acting):
         assert entity is not None
         self.assertTrue(entity.is_player_character)
         self.assertIsNone(entity.played_by)
+        # its player is "pending", and it is a member of the party all the same (#3995)
+        rows = await self.memory.relations(self.g, self.one.id, include_secret=True)
+        self.assertTrue(any(r.subject_id == self.mira and r.predicate == "member_of" for r in rows))
 
     PLAYER = "123456789012345678"
 
