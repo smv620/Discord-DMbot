@@ -43,6 +43,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
     "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
     "memory_reveal_proposals": ("memory_reveal_proposals",),  # who learned what (#2996)
+    "memory_private_scenes": ("memory_private_scenes",),  # private scenes (#2996 rule 5)
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),
@@ -105,6 +106,9 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
+    "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
+    "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "

@@ -312,6 +312,7 @@ class NamesHome(_Menu):
         left_out: bool = False,
         connections: int = 0,
         look_alikes: int | None = None,
+        met: int = 0,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -349,10 +350,15 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
         self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
+        if met:  # the DM's: who the party met that nobody named (#4045), only while any wait
+            from dmbot.ui.met_list import count_text
+
+            self.add_item(_Button(self._met, label=count_text(met), style=grey, row=3))
         # The reviews the after-session posts open, one button each, only while something waits
         # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
         if reviews:
-            # (the joins' button sits on row 3: row 4 already holds five with the connections)
+            # (the joins' button sits on row 3: row 4 already holds five with the connections;
+            # with 👣 Met but not named, row 3 is full at five too: a new button needs another row)
             for count, label, handler, row in (
                 (reviews.heard, "❓ Check names", self._check_heard, 4),
                 (reviews.people, "🧑 Check who is who", self._check_people, 4),
@@ -498,6 +504,12 @@ class NamesHome(_Menu):
 
         await start_claims_review(interaction, self.campaign_id)
 
+    async def _met(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.met_list import show as show_met
+
+        self.stop()
+        await show_met(interaction, self.campaign_id)
+
     async def _sheets(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import refresh_all
 
@@ -590,6 +602,15 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections += len(await memory.worked_out_waiting(campaign.guild_id, campaign.id))
         except Exception:
             log.exception("Couldn't count the worked-out family links")
+    met = 0
+    if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#4045)
+        try:
+            from dmbot.memory.met_store import MetStore
+
+            agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
+            met = await MetStore(memory._db).count(campaign.guild_id, campaign.id, opted_in=agreed)
+        except Exception:
+            log.exception("Couldn't count the met-but-not-named list")
     look_alikes = None
     if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
         from dmbot.ui.look_alikes import count_groups
@@ -608,6 +629,7 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             left_out=known > len(shown),
             connections=connections,
             look_alikes=look_alikes,
+            met=met,
         ),
     )
 

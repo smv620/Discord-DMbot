@@ -58,6 +58,7 @@ from dmbot.memory.name_list import (
     render_files,
     template,
 )
+from dmbot.memory.picture_read import PictureText
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import all_names, logic, name_unnamed, split_words
@@ -566,6 +567,9 @@ class Upload:
     document: bool = False  # not meant as a names list: straight to the AI
     source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
     note: str = ""  # pages that held only pictures, in counts (#4000); "" when none
+    # The words read from its pictures (#4003), one per picture in page order, given by the
+    # picture reading (CloudDev-lead's half); read only with DMBOT_PICTURE_NAMES on.
+    pictures: tuple[PictureText, ...] = ()
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)

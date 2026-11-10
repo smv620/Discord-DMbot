@@ -1089,6 +1089,7 @@ STEP_WORDS = {
     "reading": "Reading it.",
     "looking": "Reading it.",
     "shaping": "Finding names.",
+    "pictures": "Finding names in its pictures.",
     "who": "Finding how they connect.",
     "sorting": "Finding how they connect.",
 }
