@@ -501,9 +501,13 @@ class TierClient:
         max_tokens: int = 8000,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        cache_prefix: str = "",
     ) -> Reply:
         """`schema`: ask for the answer as JSON of this shape (structured outputs, #2039).
-        `images`: sent with the text, for a job that reads a picture (#2450)."""
+        `images`: sent with the text, for a job that reads a picture (#2450).
+        `cache_prefix`: text that comes first in the user's message and is the same on every call
+        of a job (a session's transcript), marked to be remembered between calls (#4054)."""
+        extra: dict[str, Any] = {"cache_prefix": cache_prefix} if cache_prefix else {}
         return await self._client.complete(
             system,
             text,
@@ -513,6 +517,7 @@ class TierClient:
             cache_system=self.cache_system,
             schema=schema,
             images=images,
+            **extra,  # (only when used, so a stand-in client without it is unaffected)
         )
 
 
@@ -759,16 +764,18 @@ class AnthropicClient:
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        cache_prefix: str = "",
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message (after any
-        `images`, #2450).
+        `images`, #2450). `cache_prefix`: the front of that message, marked to be remembered
+        between calls (#4054); the Gemini path sends it in front of `text`, uncached.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
         # A lore read or an import also notes the first 500 characters of the prompt and the reply
         # for the DM's live window (#3710). `begin`, `done` and `failed` only schedule a short write
         # on a connection of their own and never raise, so the call is exactly what it was.
-        entry = ai_feed.begin(text, tier.value, images)
+        entry = ai_feed.begin(cache_prefix + text, tier.value, images)
         try:
             reply = await self._complete(
                 system,
@@ -779,6 +786,7 @@ class AnthropicClient:
                 cache_system=cache_system,
                 schema=schema,
                 images=images,
+                cache_prefix=cache_prefix,
             )
         except BaseException as exc:
             ai_feed.failed(
@@ -804,6 +812,7 @@ class AnthropicClient:
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        cache_prefix: str = "",
     ) -> Reply:
         chain = self._chain(tier)
         unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
@@ -818,7 +827,7 @@ class AnthropicClient:
                     # against this limit) and never past what Gemini takes, or it refuses (#2575).
                     reply = await self._gemini.request(
                         system,
-                        text,
+                        cache_prefix + text,
                         min(room, max_output(model)),
                         step,
                         model,
@@ -842,6 +851,7 @@ class AnthropicClient:
                         schema=schema,
                         images=images,
                         live=live,
+                        cache_prefix=cache_prefix,
                     )
             except _ModelRefused as refused:
                 if lower is None:
@@ -894,6 +904,7 @@ class AnthropicClient:
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
         live: bool = False,
+        cache_prefix: str = "",
     ) -> Reply:
         # `live`: a table answer keeps the short wait (`LIVE_TIMEOUT_S`).
         # `images`: each goes in as an image block before the text, base64 (#2450).
@@ -903,19 +914,31 @@ class AnthropicClient:
         # `cache_system`: ask the service to remember the system text between calls, which it
         # charges much less to read again. It only does so above a minimum length that depends on
         # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
+        # `cache_prefix` (#4054): the same front for every call of a job, sent as the first block of
+        # the user's message and marked to be remembered, then the part that changes. The service
+        # reuses only an identical front, so the caller keeps the words and their order exact.
         content: Any = text
+        if cache_prefix:
+            content = [
+                {"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}
+            ]
         if images:
             content = [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": image.media_type,
-                        "data": base64.b64encode(image.data).decode("ascii"),
-                    },
-                }
-                for image in images
+                *(content if cache_prefix else []),
+                *(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.media_type,
+                            "data": base64.b64encode(image.data).decode("ascii"),
+                        },
+                    }
+                    for image in images
+                ),
+                {"type": "text", "text": text},
             ]
+        elif cache_prefix:
             content.append({"type": "text", "text": text})
         body: dict[str, Any] = {
             "model": model,
