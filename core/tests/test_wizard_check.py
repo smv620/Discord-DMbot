@@ -20,6 +20,15 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.pages, 3)  # (about 500 words a page)
         self.assertEqual(got.text, text)
 
+    async def test_a_pdf_with_picture_pages_says_how_many(self) -> None:
+        from tests.test_adventure import pdf
+
+        words = "The party reaches the old keep at dusk and finds the gate open."
+        got = await wizard_check.check_file("handout.pdf", pdf([[words], [], [words]]))
+        self.assertEqual((got.status, got.pages, got.picture_pages), ("ok", 3, 1))
+        plain = await wizard_check.check_file("lore.txt", b"The gate is open.")
+        self.assertEqual(plain.picture_pages, 0)
+
     async def test_a_csv_is_read_by_rows(self) -> None:
         got = await wizard_check.check_file("rules.csv", b"rule,text\nfall,take 1d6\n")
         self.assertEqual((got.status, got.words > 0), ("ok", True))
