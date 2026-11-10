@@ -1278,9 +1278,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if settings.ai_key
             else None
         )
+        # Document readers send the same instructions for every piece of a document, so their
+        # system text is cached (#4054): a read of several pieces pays the instructions once at
+        # 1.25 times and then at a tenth. The service only caches above a minimum length and
+        # otherwise answers as usual; the log line's cache_read says whether it did.
         # AI text calls (a document into a names list).
         self.ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES, cache_system=True)
             if self.ai_client
             else None
         )
@@ -1289,7 +1293,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.lore_context = lore_context.Held()
         # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
         self.background_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1302,14 +1308,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
         self.background_read_ai = (
             self.ai_client.tier(
-                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ], Feature.NAMES_BACKGROUND_READ
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ],
+                Feature.NAMES_BACKGROUND_READ,
+                cache_system=True,
             )
             if self.ai_client
             else None
         )
         # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
         self.plan_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1336,7 +1346,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # PlotBot's name pass on a finished transcript (#2628): which list name a word means.
         self.name_pass_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1452,7 +1464,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else None
         )
         self.house_file_ai = (  # house rules found in any file or link (#2377)
-            self.ai_client.tier(FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1474,7 +1488,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else None
         )
         self.theatre_ai = (  # a session recast as a script (#3244), background, DM only
-            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE)
+            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE, cache_system=True)
             if self.ai_client
             else None
         )
