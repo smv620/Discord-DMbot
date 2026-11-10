@@ -4972,6 +4972,16 @@ class MemoryStore:
                 [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, faction or ""],
             )  # (every status: a connection the DM removed is still "had")
             have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
+            # A character the DM took out of the party (removed, or its membership ended) is not at
+            # the table any more: it makes no new "played together" links (#3998, the reviewer;
+            # one player may play several, so DMbot can't tell a retired one by its player).
+            out = {
+                str(r["subject_id"])
+                for r in held
+                if r["predicate"] == party_mod.MEMBER_OF
+                and (r["status"] != CONFIRMED or r["to_session_at"] is not None)
+            }
+            chars = [c for c in chars if c not in out]
             pairs = members = 0
             for a, b in itertools.combinations(chars, 2):
                 if (a, party_mod.KNOWS, b) in have or (b, party_mod.KNOWS, a) in have:

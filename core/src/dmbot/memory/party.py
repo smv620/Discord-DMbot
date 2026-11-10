@@ -15,6 +15,7 @@ the open: the players sat at the same table.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
@@ -84,11 +85,15 @@ async def closed_beside_another(w: Changes, party_id: str) -> int:
     player has another player character: what the old "only the newest" rule closed (#3998), and
     any the DM ended by hand, which the store can't tell apart. Counted for Supervisor; never
     reopened by DMbot."""
-    ended = await w.select(
+    ties = await w.select(
         RELATIONS,
-        " AND predicate = %s AND object_id = %s AND status = %s AND to_session_at IS NOT NULL",
+        " AND predicate = %s AND object_id = %s AND status = %s AND source = 'dm'",
         [MEMBER_OF, party_id, CONFIRMED],
     )
+    still_in = {str(r["subject_id"]) for r in ties if r["to_session_at"] is None}
+    ended = [
+        r for r in ties if r["to_session_at"] is not None and str(r["subject_id"]) not in still_in
+    ]  # (one the DM added back is in again, not counted)
     if not ended:
         return 0
     chars = {
@@ -99,13 +104,8 @@ async def closed_beside_another(w: Changes, party_id: str) -> int:
             [PLAYER_CHARACTER, CONFIRMED],
         )
     }
-    players = [p for p in chars.values() if p is not None]
-    return sum(
-        1
-        for r in ended
-        if chars.get(str(r["subject_id"])) is not None
-        and players.count(chars[str(r["subject_id"])]) > 1
-    )
+    per_player = Counter(p for p in chars.values() if p is not None)
+    return sum(1 for r in ended if per_player[chars.get(str(r["subject_id"]))] > 1)
 
 
 # The names a group the DM made for the party goes by, for the one-time fill (#3954, Supervisor's

@@ -86,7 +86,7 @@ class TheParty(NamesTest):
         members = {s for s, _, _ in await self.edges("member_of")}
         self.assertTrue({self.ids["Mara"], second} <= members)
         knows = await self.edges("knows")
-        for other in ("Tavin", "Brann", "Ilse"):
+        for other in ("Tavin", "Brann", "Ilse", "Mara"):  # (Mara: the same player's other one)
             pair = {second, self.ids[other]}
             self.assertTrue(any({a, b} == pair for a, _, b in knows))
         out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
@@ -133,6 +133,35 @@ class TheParty(NamesTest):
         out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
         mine = [r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]]
         self.assertEqual(len(mine), 1)
+        self.assertIsNotNone(mine[0].to_session_at)  # (still ended: never reopened)
+
+    async def test_an_ended_membership_with_no_other_character_is_not_counted(self) -> None:
+        await self.link(*PLAYERS.values())
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        tie = next(
+            r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Tavin"]
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", to_session_at=int(time.time()) + 5
+        )
+        self.assertEqual((await self.memory.make_party(GUILD, self.campaign.id)).ended, 0)
+
+    async def test_a_character_the_dm_took_out_makes_no_new_played_together_links(self) -> None:
+        """#3998, the reviewer: one player may play several, so a retired character is told apart
+        only by the DM taking it out of the party; it then meets nobody new."""
+        await self.link(101, 102)
+        out = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        tie = next(
+            r for r in out if r.predicate == "member_of" and r.subject_id == self.ids["Mara"]
+        )
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", status=REJECTED
+        )
+        done = await self.link(*PLAYERS.values())
+        self.assertEqual(done.characters, 3)
+        knows = await self.edges("knows")
+        self.assertEqual(len([1 for a, _, b in knows if self.ids["Mara"] in (a, b)]), 1)  # (Tavin)
+        self.assertTrue(any(self.ids["Ilse"] in (a, b) for a, _, b in knows))
 
     async def test_a_member_the_dm_removed_who_did_not_speak_stays_removed(self) -> None:
         await self.link()

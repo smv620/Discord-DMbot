@@ -14930,7 +14930,7 @@ async def fill_parties(
         held,
         both,
         ended,
-    )  # fmt: skip (both: a #3036 party besides the flagged one; ended: #3998, for Supervisor)
+    )  # (both: a #3036 party besides the flagged one; ended: #3998; both for Supervisor)
     return steps
 
 
