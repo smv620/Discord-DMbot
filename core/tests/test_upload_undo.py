@@ -113,7 +113,9 @@ class Undos(NamesTest):
         rid = await self.queue()
         took, undo = await self.round(un.Undone(un.NOTHING_LEFT, 3, 3))
         self.assertEqual(took, 1)
-        args = undo.await_args.args
+        call = undo.await_args
+        assert call is not None
+        args = call.args
         self.assertEqual((args[1], args[3], args[4]), (GUILD, self.notice_for(1), DM))
         row = await self.row(rid)
         self.assertEqual((row["state"], row["error"], row["undone"]), ("done", "", 3))
