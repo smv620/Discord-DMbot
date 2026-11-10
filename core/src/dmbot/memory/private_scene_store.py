@@ -34,6 +34,7 @@ class Written:
 
     kept: int = 0
     not_private: int = 0
+    new: int = 0  # (kept and not found before: the after-session note counts only these)
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ class PrivateScenes:
                 )
                 marked.append((a, b, int(r["from_ms"]), int(r["to_ms"])))
             used: set[str] = set()
+            new = 0
             kept = skipped = 0
             for scene in scenes:
                 if any(_overlaps(scene, m) for m in marked):
@@ -146,7 +148,8 @@ class PrivateScenes:
                     ),
                 )  # fmt: skip
                 kept += int(cur.rowcount or 0)
-            return Written(kept, skipped)
+                new += int(cur.rowcount or 0) if same is None else 0
+            return Written(kept, skipped, new)
 
     async def not_private(self, guild_id: int, campaign_id: str, scene_id: str, now: int) -> bool:
         """The DM's "Not private": the scene stays marked, so no later run finds it again. False
@@ -159,6 +162,13 @@ class PrivateScenes:
                 (now, guild_id, campaign_id, scene_id),
             )
             return await cur.fetchone() is not None
+
+    async def roots(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> dict[str, str]:
+        """Each entry id to the entry it ended up as, following merges (a list shows a merged
+        character under the name it became)."""
+        async with self._db.guild(guild_id) as conn:
+            merged = await _merged(conn, guild_id, campaign_id)
+        return {i: _root(merged, i) for i in ids}
 
     async def listed(
         self,
