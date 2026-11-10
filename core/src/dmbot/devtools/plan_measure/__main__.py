@@ -27,7 +27,8 @@ from pathlib import Path
 
 from dmbot.ai import DEFAULT_MODELS, AIError, AIModelTier, AIOutOfFunds, AnthropicClient, Feature
 from dmbot.devtools.plan_measure.golden import golden_text, obeyed
-from dmbot.memory.adventure import FILE_MAX_BYTES, adventure_text, chunks_of
+from dmbot.memory.adventure import adventure_text, chunks_of
+from dmbot.memory.name_documents import max_bytes_for
 from dmbot.memory.plan_reader import MAX_TOKENS, SYSTEM, Client, book_text, unusable
 from dmbot.memory.story_plan import (
     CHARS_PER_TOKEN,
@@ -132,8 +133,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         try:
             raw = args.path.read_bytes()
-            if len(raw) > FILE_MAX_BYTES:
-                print("That file is over 10 MB, the most the bot reads.", file=sys.stderr)
+            if len(raw) > max_bytes_for(args.path.name):
+                print("That file is over the most the bot reads.", file=sys.stderr)
                 return 2
             text = adventure_text(args.path.name, raw)
         except Exception as exc:

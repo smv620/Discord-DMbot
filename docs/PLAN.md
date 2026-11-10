@@ -2676,7 +2676,9 @@ names panel nor the speech-to-text hints can be a fixed list.
     document is treated as untrusted data: quoted, with the AI told to ignore
     instructions in it, and its answer read by the same strict parser; secret names are
     asked for only for the campaign's DMs. Without a key, documents are refused with a
-    pointer to the template, and a list adds what fits. Up to 10 MB, 500 PDF pages and
+    pointer to the template, and a list adds what fits. Up to 10 MB (a PDF up to 100 MB in
+    Discord and 50 MB on the website, since an illustrated one is mostly pictures DMbot skips;
+    Supervisor, 2026-11-10, #4001), 500 PDF pages and
     about 100 pages of text, in pieces of 40,000 characters read side by side (at most 3
     AI requests at once across all servers, 10 minutes per document). Each server reads
     one document at a time and up to 20 a day (the operator pays until bring-your-own
