@@ -271,6 +271,13 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and the session a waiting name was made in (#4043): a time and an id only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id,"
+                " session_started_at) VALUES (%s, %s, %s, 77)",
+                (GUILD_A, self.c, a),
+            )
         # and a being met in play that nobody named yet (#3172 slice 5), on its session
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(

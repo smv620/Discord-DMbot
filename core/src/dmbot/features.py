@@ -320,6 +320,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
     "free_guilds": "the owner's own test server: never listed",
+    "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",
+    "disk_alert_pct": "a percentage: where the disk check tells the owner (#4075)",
     "elevenlabs_speech_model": "which voice model, a choice",
     "voyage_embed_model": "which meaning-search model, a choice",
     "voyage_rerank_model": "which meaning-search ranking model, a choice",

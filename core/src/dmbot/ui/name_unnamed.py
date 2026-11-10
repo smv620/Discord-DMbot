@@ -14,7 +14,7 @@ import discord
 from dmbot.memory import unnamed
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import DM, LIVE, MemoryRuleError, name_key
-from dmbot.ui import logic
+from dmbot.ui import logic, split_words
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -209,6 +209,8 @@ class JoinConfirm(_Menu):
             return
         changed(interaction, campaign)
         note = f"🔗 Done: **{_md(self.label)}** is **{_md(self.other_name)}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         await show_card(interaction, campaign.id, self.other_id, replace=True, note=note)
         if written.batch is not None:
             view = discord.ui.View(timeout=None)

@@ -10,6 +10,7 @@ from unittest import mock
 
 from dmbot import lineage
 from dmbot.campaigns import CampaignError, CampaignStore
+from dmbot.campaigns.store import EXPORT_VERSION
 from dmbot.memory._changes import ENTITIES
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.models import DM, PLAYER_CHARACTER
@@ -358,7 +359,7 @@ class TheBackup(DatabaseTest):
 
     async def test_a_round_trip_keeps_each_stamp_and_never_stamps_the_loading_build(self) -> None:
         backup = await self._two()
-        self.assertEqual(backup["version"], 5)
+        self.assertEqual(backup["version"], EXPORT_VERSION)  # (the stamp default is #4060's, v6)
         with mock.patch.dict(os.environ, {"GIT_COMMIT": NEW}):
             restored = await self.campaigns.import_backup(GUILD, backup, USER)
         stamps = await self._stamps(GUILD, restored.id)
@@ -370,6 +371,10 @@ class TheBackup(DatabaseTest):
     async def test_a_file_from_before_stamps_loads_with_none(self) -> None:
         backup = await self._two()
         backup["version"] = 4
+        # a file from before had no default row and a stamp on each row that has one
+        backup["sections"]["memory"] = [
+            r for r in backup["sections"]["memory"] if r["table"] != "defaults"
+        ]
         for row in backup["sections"]["memory"]:
             row.pop("made_by", None)
         restored = await self.campaigns.import_backup(GUILD, backup, USER)
