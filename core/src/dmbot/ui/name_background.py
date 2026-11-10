@@ -796,6 +796,11 @@ async def read_background(
         ai,
         progress,
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+        text=upload.text,
+        party_keys=(
+            await _party_keys(memory, campaign) if choice == lore_knowledge.SMART else set()
+        ),
+        player_keys=player_keys,
     )
     pcs = await keep.player_character_ids(memory, campaign.guild_id, campaign.id)
     # "Everyone in the story" (#3034, Supervisor's ruling on PLAN item 1): a disguise or an earlier
@@ -948,6 +953,20 @@ async def read_background(
     return done
 
 
+async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
+    """The keys of the party's names (the DM may have renamed it), for the code rule (#3963).
+    Never raises: none, and the rule's own words still count."""
+    try:
+        party = await memory.party(campaign.guild_id, campaign.id)
+        if party is None:
+            return set()
+        aliases = await memory.aliases(campaign.guild_id, campaign.id, entity_id=party.id)
+        return {name_key(party.name), *(name_key(a.text) for a in aliases)} - {""}
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
+        return set()
+
+
 def trait_questions_line(n: int) -> str:
     """The count line for an upload whose lineage questions wait (#3926); "" for none."""
     if not n:
@@ -1015,17 +1034,40 @@ async def _world(
     ai: Any,
     progress: Callable[[str, int, int], None] | None = None,
     until: float | None = None,
+    *,
+    text: str = "",
+    party_keys: Collection[str] = (),
+    player_keys: Collection[str] = (),
 ) -> tuple[set[str], set[tuple[str, str, str]], bool]:
     """What the upload's choice says every player character knows (#2959): the names (by key) and
     the connections (by their two names' keys and the kind), and whether it could all be sorted.
     Spoilers: nothing. World: all of it. Smart guess: the AI's call on one short line each (the
-    kind, the name with its other names and disguises, and the quote the read kept), a spoiler
-    wherever it does not say otherwise."""
+    document's section it is in, the kind, the name with its other names and disguises, and the
+    quote the read kept), a spoiler wherever it does not say otherwise. Each line says which section
+    of the document it is in, and whether its words name the party (#3963), as hints the AI weighs:
+    never the answer by themselves."""
     if choice == lore_knowledge.SPOILERS:
         return set(), set(), True
+    smart = choice == lore_knowledge.SMART
+    # The sections and the party hint matter only to the AI's sort (#3963): worked out once.
+    sections = lore_knowledge.Sections(text) if smart and text else None
 
-    lines = [lore_knowledge.name_line(f.name, f.also, f.secret, f.quote) for f in found] + [
-        lore_knowledge.connection_line(c.a, c.how, c.b, c.quote) for c in links
+    def where(quote: str) -> str:
+        return sections.of(quote) if sections is not None else ""
+
+    def hint(quote: str) -> bool:
+        return smart and lore_knowledge.party_by_code(quote, party_keys, player_keys)
+
+    lines = [
+        lore_knowledge.name_line(
+            f.name, f.also, f.secret, f.quote, where(f.quote), names_party=hint(f.quote)
+        )
+        for f in found
+    ] + [
+        lore_knowledge.connection_line(
+            c.a, c.how, c.b, c.quote, where(c.quote), names_party=hint(c.quote)
+        )
+        for c in links
     ]
 
     def sorting(done: int, total: int) -> None:
