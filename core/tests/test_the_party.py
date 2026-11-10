@@ -30,7 +30,7 @@ class TheParty(NamesTest):
         assert gid
         return gid
 
-    async def pc(self, name: str, player: int) -> str:
+    async def pc(self, name: str, player: int | None) -> str:
         made = await self.memory.add_names(
             GUILD, self.campaign.id, [NewName(name, "npc", CONFIRMED)], source="dm"
         )
@@ -66,6 +66,56 @@ class TheParty(NamesTest):
         # (what the confirm and assign screens run after a character gets its player, #3363)
         await self.memory.party_on_assignment(GUILD, self.campaign.id)
         self.assertEqual(await self.members(filled.party_id), {wren})
+
+    async def test_a_player_character_still_waiting_for_its_player_is_a_member(self) -> None:
+        """#3995: every confirmed player character is in the party, a "pending" one too (the
+        wizard's step 3 is optional); getting its player later changes nothing."""
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        assert filled.party_id is not None
+        wren = await self.pc("Wren", None)
+        ash = await self.pc("Ash", 78)
+        await self.group("Grey Wolves")  # (a group is never a member)
+        await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Old Marn", "npc", CONFIRMED)], source="dm"
+        )  # (an NPC never joins)
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        self.assertEqual(await self.members(filled.party_id), {wren, ash})
+        # (only characters with a player are linked as knowing each other; Wren waits for one)
+        rels = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        self.assertFalse(
+            [r for r in rels if r.predicate == "knows" and wren in (r.subject_id, r.object_id)]
+        )
+        await self.memory.confirm_entity(
+            GUILD, self.campaign.id, wren, "player_character", source="dm", played_by=79
+        )
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        self.assertEqual(await self.members(filled.party_id), {wren, ash})
+
+    async def test_a_character_the_dm_took_out_of_the_party_is_not_added_back(self) -> None:
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        assert filled.party_id is not None
+        wren = await self.pc("Wren", None)
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        (tie,) = [r for r in await self.memory.relations(GUILD, self.campaign.id)
+                  if r.subject_id == wren and r.predicate == "member_of"]  # fmt: skip
+        await self.memory.update_relation(
+            GUILD, self.campaign.id, tie.id, source="dm", status="rejected"
+        )
+        await self.memory.party_on_assignment(GUILD, self.campaign.id)
+        self.assertEqual(await self.members(filled.party_id), set())
+
+    async def test_the_fill_adopts_a_group_of_its_player_characters_pending_ones_too(self) -> None:
+        """#3995: the members step reads the same members, so a pending character counts."""
+        wren = await self.pc("Wren", None)
+        ash = await self.pc("Ash", 78)
+        crew = await self.group("Ash and Wren")
+        for c in (wren, ash):
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, c, "member_of", crew, source="dm", status=CONFIRMED,
+                confidence=1.0,
+            )  # fmt: skip
+        filled = await self.memory.make_party(GUILD, self.campaign.id)
+        self.assertEqual((filled.step, filled.party_id), ("members", crew))
 
     async def test_the_fill_flags_the_party_the_sessions_made(self) -> None:
         linked = await self.group("The party")
