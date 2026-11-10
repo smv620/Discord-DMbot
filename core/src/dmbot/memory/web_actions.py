@@ -542,7 +542,9 @@ async def _met(
         made = await memory.name_met(
             guild_id, cid, a.entity_id, " ".join(a.text.split()), opted_in=recorded
         )
-        return Outcome(result_id=made.value.id)
+        # met while the party was split (#4086): counted as the names' splits are, for the page
+        split = {"group": "names_split_group:1", "unknown": "names_split_unknown:1"}
+        return Outcome(result_id=made.value.id, counts=split.get(made.split, ""))
     except MemoryRuleError as exc:
         if str(exc) == MET_NAME_TAKEN:
             return _failed(EXISTS)

@@ -2226,12 +2226,15 @@ class MemoryStore:
         named" list): in ONE write, the entry is made (confirmed, the DM's word: a person for one
         being, a group for more), it is ranked 0 with the reason `met_in_play` (the owner's
         "background", raised later by the story), and the list's row goes. If any part fails,
-        none of it happens. A name another live entry has is refused, with the reason
+        none of it happens. Met while the party was split, it is hidden from the players and only
+        the group that was there learns it (#4086, the #4037 rule; `Written.split` says so, for the
+        DM). A name another live entry has is refused, with the reason
         (`met_name_owner`): one the DM can join ("Same as…"), or one still waiting in the name
         check. `opted_in`: who is recorded now, read at the press; a row citing anyone else is
         deleted and `MET_GONE` (its words must not become an entry's note). Shown to the players
-        like any name the DM adds: the party met them at the table (the owner's rule). An Undo of
-        the batch takes the entry (and its rank, by cascade) back; the row is not put back."""
+        like any name the DM adds when the party was together: they met them at the table (the
+        owner's rule). An Undo of the batch takes the entry (and its rank and knowers, by cascade)
+        back; the row is not put back."""
         name = clean_text(name)
         if not name or PRONOUNCED.search(name):  # how to say it is not how to spell it (#2332)
             raise MemoryRuleError(MET_BAD_NAME)
@@ -2249,6 +2252,15 @@ class MemoryStore:
             onto = await _load_ontology(w)
             onto.active_type(kind)
             _check_role(onto, kind, role, None)
+            # Met while the party was split (#4086, the #4037 rule): only the group that was there
+            # met them, so the entry is hidden from the players (written so, never shown first) and
+            # that group's characters learn it in this same write; nobody when it can't be told.
+            scene = await split_scene_at_ms(
+                w,
+                row["session_started_at"],
+                [int(ms) for ms in row["line_ms"]],
+                [int(u) for u in row["speaker_ids"]],
+            )
             entity = await w.insert(
                 ENTITIES,
                 {
@@ -2257,12 +2269,16 @@ class MemoryStore:
                     "status": CONFIRMED, "merged_into": None, "source": DM,
                     "created_at": w.now, "played_by": None, "role": role,
                     "needs_look": False, "unique_item": None,
+                    "hidden_from_players": scene is not None,
                 },
             )  # fmt: skip
             alias = _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
             await w.insert(ALIASES, alias)
+            if scene:
+                await learn_names_in_scene(w, str(entity["id"]), scene)
             await _met_done(w, row, str(entity["id"]), rank_always=True)
-            return Written(_entity(entity), w.batch)
+            split = "" if scene is None else ("group" if scene else "unknown")
+            return Written(_entity(entity), w.batch, split=split)
 
     async def _purge_met(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> None:
         """Rows citing someone not recorded now go first, in their own transaction (the write
@@ -7074,7 +7090,37 @@ async def split_scene(
         rows = await cur.fetchall()
     if not rows:
         return () if await _split_during_session(w, session_started_at) else None
-    moments = sorted({int(r["at"]) for r in rows})
+    return await _scene_at(w, sorted({int(r["at"]) for r in rows}), speaker_ids)
+
+
+async def split_scene_at_ms(
+    w: Changes,
+    session_started_at: int | None,
+    line_ms: Sequence[int],
+    speaker_ids: Sequence[int] = (),
+) -> tuple[str, ...] | None:
+    """`split_scene` for lines kept by when they began (`memory_met.line_ms`, #4086), not by their
+    number: the same answer, the same rule (None together, the one group's player characters, or
+    an empty tuple when it can't be told). No line kept: fails closed as `split_scene` does."""
+    if session_started_at is None:
+        return None
+    cur = await w.conn.execute(
+        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND position IS NOT NULL LIMIT 1",
+        (w.guild_id, w.campaign_id),
+    )
+    if await cur.fetchone() is None:
+        return None  # (the party was never split: the common case, one read)
+    moments = sorted({int(ms) // 1000 for ms in line_ms})
+    if not moments:
+        return () if await _split_during_session(w, session_started_at) else None
+    return await _scene_at(w, moments, speaker_ids)
+
+
+async def _scene_at(
+    w: Changes, moments: Sequence[int], speaker_ids: Sequence[int]
+) -> tuple[str, ...] | None:
+    """`split_scene`'s answer for these moments (Unix seconds), the clock read at each."""
     split = [await _split_at(w, at) for at in moments]
     if not any(split):
         return None
