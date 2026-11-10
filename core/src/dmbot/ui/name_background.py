@@ -704,8 +704,8 @@ class BackgroundRead:
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
     # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
     trait_questions: int = 0
-    # Names read from its pictures that its text did not plainly resolve (#4003): held for the DM's
-    # Names to check, which is the next slice. Counts only.
+    # Names read from its pictures that its text did not plainly resolve (#4003): waiting in the
+    # DM's Names to check with a note saying so, never added by themselves. Counts only.
     picture_held: int = 0
 
 
@@ -882,6 +882,13 @@ async def _read_background(
     # guess only (see `_backstory_owners`).
     owner_of = await _backstory_owners(memory, campaign, upload.text, speaker, choice)
     made_ids: dict[str, str] = {}
+    # A name read from a picture that the text didn't plainly resolve (#4003): its note says so, and
+    # it is never added by itself, whatever the campaign's "ask before adding" says.
+    picture_notes = (
+        {name_key(h.found.name): picture_read.held_note(h) for h in pictures.held}
+        if pictures is not None
+        else {}
+    )
     stored = await store(
         memory,
         campaign,
@@ -890,6 +897,7 @@ async def _read_background(
         upload.text,
         known_by,
         world=world_names,
+        notes=picture_notes,
         # a disguise becomes a plain other name only when the DM said everything is known;
         # under the smart guess it stays secret whatever the AI says (DM authority)
         fold_secret=choice == lore_knowledge.WORLD,
@@ -1007,7 +1015,7 @@ async def _read_background(
         added = await add_sure(
             bot,
             campaign,
-            stored,
+            not_held(stored, picture_notes, made_ids),
             label,
             source=("lore", upload.source_id) if upload.source_id else None,
         )
@@ -1018,6 +1026,15 @@ async def _read_background(
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
     return done
+
+
+def not_held(
+    stored: Mapping[str, Sequence[str]], held: Collection[str], made: Mapping[str, str]
+) -> dict[str, list[str]]:
+    """The stored names DMbot may add by itself: never one read from a picture that the text did
+    not resolve (`held`: their name keys; `made`: name key -> the id it was stored under). Pure."""
+    held_ids = {made[k] for k in held if k in made}
+    return {kind: [i for i in ids if i not in held_ids] for kind, ids in stored.items()}
 
 
 def _picture_progress(
@@ -1058,9 +1075,9 @@ async def _read_pictures(
     given: read through the same lore reader (`models`: the reader's and the shaper's) as an extra
     page, and each name checked against the document's own names (`picture_read.sort`). A matched
     name joins `read.names` under the document's spelling; a corrected one is the document's name
-    already; one the document does not plainly resolve is held for the DM (Names to check, with the
-    picture's link, is the next slice) and never added as it reads. Names only: a connection read
-    from a picture waits for that slice too.
+    already; one the document does not plainly resolve joins as a name only, which the caller stores
+    as a name to check with its own note and never adds by itself. Names only: a connection read
+    from a picture is not kept yet.
 
     One time limit for the whole upload: this read gets only what is left before `until` (a
     monotonic time that leaves the steps after it their share), is skipped when too little is left,
@@ -1094,6 +1111,10 @@ async def _read_pictures(
         return None
     sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
     read.names.extend(sorted_names.kept)
+    # (a held one waits for the DM as a name to check: its name only, its note said by the caller)
+    read.names.extend(
+        bg.Found(h.found.name, h.found.kind, (), (), "", "") for h in sorted_names.held
+    )
     log.info(
         "Picture names: %d pictures, %d names kept, %d corrected, %d held for the DM%s",
         len(upload.pictures), len(sorted_names.kept), sum(sorted_names.corrected.values()),
@@ -1443,6 +1464,7 @@ async def store(
     source: str = "",
     traits: Mapping[str, Sequence[Trait]] | None = None,
     made: dict[str, str] | None = None,
+    notes: Mapping[str, str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -1468,6 +1490,8 @@ async def store(
             log.info("Skipped a name from a background: %s", exc)
             continue
         note = f'{BACKGROUND}: "{item.quote}"' if item.quote else BACKGROUND
+        if notes and name_key(item.name) in notes:  # (its own note: read from a picture, #4003)
+            note = notes[name_key(item.name)]
         if len(note) > DESCRIPTION_MAX:
             note = BACKGROUND  # a long quote goes, the name stays
         known = name_key(item.name) in world

@@ -664,6 +664,17 @@ class ThePath(NamesTest):
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
 
+    async def test_a_name_read_from_a_picture_keeps_its_own_note(self) -> None:  # (#4003)
+        from dmbot.memory.models import name_key
+
+        held = bg.Found("Red Larch", "place", (), (), "", "")
+        note = 'Read from a picture on page 3 as "Red Larch". Check the spelling.'
+        made: dict[str, str] = {}
+        await ui_bg.store(self.memory, self.campaign, [held], notes={name_key("Red Larch"): note},
+                          made=made)  # fmt: skip
+        (entity,) = await self.entities()
+        self.assertEqual((entity.description, entity.id), (note, made[name_key("Red Larch")]))
+
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
         """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
         guess or a backstory never does; a line past the column's 120 letters is left to the DM,

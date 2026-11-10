@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from dmbot.memory import background as bg
-from dmbot.memory.picture_read import MAX_PICTURES, PictureText, as_pages, sort
+from dmbot.memory.picture_names import ToCheck
+from dmbot.memory.picture_read import MAX_PICTURES, Held, PictureText, as_pages, held_note, sort
 
 
 def found(name: str, kind: str = "npc") -> bg.Found:
@@ -65,6 +66,26 @@ class Sorting(unittest.TestCase):
     def test_a_held_name_no_picture_holds_has_no_link(self) -> None:
         (held,) = sort([found("Zorbo")], DOC, TEXT, [MAP]).held
         self.assertEqual((held.page, held.picture_id), (0, ""))
+
+
+class Notes(unittest.TestCase):
+    def test_the_dms_note_says_where_and_asks_when_a_name_came_close(self) -> None:
+        near = Held(found("Sephok Kaltrq"), ToCheck("Sephek Kaltro"), 5, "")
+        self.assertEqual(held_note(near), 'Read from a picture on page 5 as "Sephok Kaltrq". '
+                         "Is this Sephek Kaltro?")  # fmt: skip
+        lone = Held(found("Red Larch"), ToCheck(), 0, "")
+        self.assertEqual(
+            held_note(lone), 'Read from a picture in the file as "Red Larch". Check the spelling.'
+        )
+
+
+class NeverAddedByItself(unittest.TestCase):
+    def test_a_held_name_is_left_out_of_what_dmbot_adds_by_itself(self) -> None:
+        from dmbot.ui.name_background import not_held
+
+        stored = {"place": ["p1", "p2"], "npc": ["n1"]}
+        got = not_held(stored, {"red larch"}, {"red larch": "p2", "blue clam": "p1"})
+        self.assertEqual(got, {"place": ["p1"], "npc": ["n1"]})
 
 
 class Extras(unittest.TestCase):
@@ -133,7 +154,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
     async def test_on_keeps_only_matched_names_and_holds_the_rest(self) -> None:
         names, asked, got, _, _ = await self.run_it(True, (MAP,))
         self.assertEqual(asked, [as_pages([MAP])])
-        self.assertEqual(names, [*(f.name for f in DOC), "Blue Clam"])
+        # (the held one joins as a name only: the caller stores it as a name to check)
+        self.assertEqual(names, [*(f.name for f in DOC), "Blue Clam", "Red Larch"])
         self.assertEqual([h.found.name for h in got.held], ["Red Larch"])
         self.assertEqual(sum(got.corrected.values()), 1)
 
