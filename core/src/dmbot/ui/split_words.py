@@ -11,6 +11,21 @@ NAME_UNKNOWN = (
 )
 
 
+# A "Same as…" that joined such a name into a known one (#4043): the spelling became a secret name.
+JOIN_GROUP = (
+    "🤫 Kept as a secret name: the party was split, so only the characters who were there heard it."
+)
+JOIN_UNKNOWN = (
+    "🤫 Kept as a secret name: the party was split, and DMbot can't tell which group heard it. "
+    "To choose who knows: open the name, then 👁️ Who knows this?"
+)
+
+
+def for_join(split: str) -> str:
+    """The line for a join whose spelling was kept secret ("group" or "unknown"), or ""."""
+    return {"group": JOIN_GROUP, "unknown": JOIN_UNKNOWN}.get(split, "")
+
+
 def for_one(split: str) -> str:
     """The line for one name a confirm hid ("group" or "unknown"), or "" when it didn't."""
     return {"group": NAME_GROUP, "unknown": NAME_UNKNOWN}.get(split, "")

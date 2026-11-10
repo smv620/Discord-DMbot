@@ -344,6 +344,7 @@ def offer_text(
         )
         + (whose_text(speaker) if ask else "")
         + f"{rights_text()}"
+        + (f"\n\n{upload.note}" if upload.note else "")
     )
 
 
@@ -2690,7 +2691,20 @@ class ConnectionOffer(_Menu):
         if len(mine) < 2:
             return ""
         keeps = f"{len(mine)} from {_md(c.upload)}"
-        return f"\n✅ Keep all keeps the {keeps}, and none from other uploads."
+        # "Connection 1 of 9" counts everything waiting; Keep all is only this upload's, so say what
+        # becomes of the rest and why (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3"):
+        # another file's are never kept unseen, and one DMbot guessed waits for its own Keep.
+        guessed = sum(1 for w in self.shown if w.inferred)
+        elsewhere = sum(1 for w in self.shown if not w.inferred and w.upload != c.upload)
+        left = []
+        if elsewhere:
+            left.append(f"{elsewhere} from {'another file' if elsewhere == 1 else 'other files'}")
+        if guessed:
+            left.append(f"{guessed} guessed by DMbot")
+        if not left:
+            return f"\n✅ Keep all keeps the {keeps}."
+        decide = " and ".join(left)
+        return f"\n✅ Keep all keeps the {keeps}. For you to decide one by one: {decide}."
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)

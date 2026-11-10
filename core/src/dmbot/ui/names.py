@@ -1986,7 +1986,7 @@ class SuggestionReview(_Menu):
         )
         try:
             # One change: the merge and the names confirmed with it, so one undo.
-            await memory.merge(
+            written = await memory.merge(
                 gid,
                 cid,
                 keep.id,
@@ -2001,6 +2001,8 @@ class SuggestionReview(_Menu):
         shown = _and([f"**{_md(n)}**" for n in names])
         verb = "are now names" if len(names) > 1 else "is now a name"
         note = f"✅ Got it: {shown} {verb} for **{_md(keep.name)}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         if main:  # the spelled-out one becomes the main name; the old spelling stays (#2168)
             note = await self._respelled(memory, campaign, keep, entity.name, note)
         changed(interaction, campaign)

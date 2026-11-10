@@ -4,7 +4,7 @@ import json
 import unittest
 from typing import Any
 
-from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
+from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient, Image, Reply, TierClient
 
 
 class FakeResponse:
@@ -71,6 +71,47 @@ class Client(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(session.sent["json"]["system"], list)  # a tier client remembers it
         await ai.tier(AIModelTier.FAST).complete("rules", "doc")
         self.assertEqual(session.sent["json"]["system"], "rules")
+
+    async def test_a_cache_prefix_is_the_first_block_and_marked_only_when_given(self) -> None:
+        body = {"content": [{"type": "text", "text": "x"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertEqual(session.sent["json"]["messages"][0]["content"], "doc")  # as before
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST, cache_prefix="THE SESSION")
+        self.assertEqual(
+            session.sent["json"]["messages"][0]["content"],
+            [
+                {"type": "text", "text": "THE SESSION", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "doc"},
+            ],
+        )
+        await ai.tier(AIModelTier.FAST).complete("rules", "other", cache_prefix="THE SESSION")
+        first = session.sent["json"]["messages"][0]["content"][0]
+        self.assertEqual(first["text"], "THE SESSION")  # the same front, whatever follows it
+
+    async def test_a_cache_prefix_comes_before_pictures_and_the_text(self) -> None:
+        body = {"content": [{"type": "text", "text": "x"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        image = Image("image/png", b"\x89PNG")
+        await ai.complete(
+            "rules", "doc", tier=AIModelTier.FAST, images=[image], cache_prefix="THE SESSION"
+        )
+        kinds = [b["type"] for b in session.sent["json"]["messages"][0]["content"]]
+        self.assertEqual(kinds, ["text", "image", "text"])
+
+    async def test_a_stand_in_client_is_not_given_a_prefix_nobody_asked_for(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        class Stand:
+            async def complete(self, system: str, text: str, **kw: Any) -> Reply:
+                seen.append(kw)
+                return Reply("ok", False)
+
+        tier = TierClient(Stand(), AIModelTier.FAST)  # type: ignore[arg-type]
+        await tier.complete("s", "t")
+        await tier.complete("s", "t", cache_prefix="front")
+        self.assertNotIn("cache_prefix", seen[0])
+        self.assertEqual(seen[1]["cache_prefix"], "front")
 
     async def test_a_schema_is_sent_as_structured_outputs_only_when_asked(self) -> None:
         """#2039: `output_config.format` with `type: json_schema`, no beta header."""

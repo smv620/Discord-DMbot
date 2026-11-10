@@ -373,6 +373,21 @@ class Stored(ConfirmedMemoryTest):
         self.assertNotIn("Zed", got.new)  # the limit still holds for everyone else
         self.assertEqual(got.pc_named, 1)
 
+    async def test_a_new_name_records_the_session_it_was_made_in(self) -> None:
+        # (#4043) the split-party check reads this session, never a guess by time
+        got = await self.propose(said("Bram", "is in", "Zed"), said("Bram", "knows", "Zed"))
+        self.assertIn("Zed", got.new)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT s.session_started_at FROM memory_name_sessions s JOIN memory_entities e"
+                " ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                " AND e.id = s.entity_id"
+                " WHERE s.guild_id = %s AND e.name = 'Zed'",
+                (GUILD_A,),
+            )
+            rows = await cur.fetchall()
+        self.assertEqual([r["session_started_at"] for r in rows], [500])
+
     async def test_the_count_of_the_list_is_what_the_list_shows(self) -> None:
         # (#3435) a claim naming a still-proposed entry is waiting for that name, not listed
         await self.add("Zed", type="character", status="proposed")
