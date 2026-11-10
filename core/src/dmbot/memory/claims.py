@@ -84,6 +84,7 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    learnable_in_scene,
     live_between,
     reveal_stated_in,
     split_scene,
@@ -2179,12 +2180,21 @@ class ClaimStore:
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
+                # Who was in the scene, when the game clock had the party split (#2996 rule 1),
+                # read BEFORE the write: a connection said in one group's scene is written held
+                # back from the start, so nothing a shown row sets off (a "met" upgrade, an item's
+                # whereabouts ended) reaches the other group (the reviewer).
+                in_scene = (
+                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    if not secret and not hold
+                    else None
+                )
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
-                    unrevealed=hold,
+                    unrevealed=hold or in_scene is not None,
                     # whether they've met, from the reader's own words for it (#3881)
                     knows_how=knows_how.how_from(
                         claim.relationship, claim.details, a=claim.subject, b=claim.object
@@ -2193,31 +2203,26 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
-                # Who was in the scene, when the game clock had the party split (#2996 rule 1):
-                # read only for what the whole party would otherwise be shown.
-                # (a held-back connection the claim states, or a new one that would be shown)
-                asks = not secret and live.get(relation.id, not hold and not relation.unrevealed)
-                in_scene = (
-                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
-                    if asks
-                    else None
-                )
                 if relation.id in live:
-                    # (the table said a connection the story already has: held back, it is the
-                    # party's now, #3963 c; one already shown stays as it is)
-                    if live[relation.id] and not secret and in_scene is None:
+                    if not live[relation.id]:
+                        in_scene = None  # (one already shown stays as it is: nothing to learn)
+                    elif in_scene is None and not secret:
+                        # (the table said a connection the story holds back: the party's now,
+                        # #3963 c)
                         shown = await reveal_stated_in(w, relation.id)
                 elif hold and not relation.unrevealed:
                     # a twin the DM once turned down comes back as it was, shown: held back here
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
                 elif in_scene is not None and not relation.unrevealed:
-                    # a new connection said in one group's scene is not the whole party's
+                    # (a twin the DM once turned down, brought back shown: held back here too)
                     await w.update(RELATIONS, relation.id, {"unrevealed": True})
                 if in_scene is not None:
-                    # only that group heard it: its characters learn it, nobody else (an unknown
-                    # group: nobody, and the DM decides with 👁️ Who knows this?)
+                    # only that group heard it: its characters learn it, nobody else. An unknown
+                    # group, or a connection the together rule wouldn't show either (a secret one,
+                    # an end the players haven't been shown): nobody, and the DM decides.
                     split = True
-                    scene = await _learn_in_scene(w, relation.id, in_scene)
+                    if in_scene and await learnable_in_scene(w, relation.id):
+                        scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
                 held = hold and not secret and relation.id not in live
             row = await w.update(

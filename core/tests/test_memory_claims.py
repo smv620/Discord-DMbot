@@ -825,6 +825,67 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual((done.shown, done.split, done.scene), (False, True, 0))
         self.assertTrue(await self.unrevealed(rel))
 
+    async def test_speakers_in_two_groups_teach_nobody(self) -> None:
+        await self.session_lines()
+        wren, ash = await self.split_into_groups()
+        # (line 2, spoken by Ash's player (8), moves after the split, so both lines are split)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE transcript_lines SET started_ms = 640000"
+                " WHERE guild_id = %s AND started_ms = 520000",
+                (GUILD_A,),
+            )
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", "2", "3"), opted_in={7, 8})
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7, 8})
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 0))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertFalse({wren, ash} & set(knows.get(rel, [])))
+
+    async def test_a_secret_or_hidden_ended_connection_teaches_the_group_nothing(self) -> None:
+        """The split path refuses what the together rule refuses (the reviewer): a secret
+        held-back connection, or one with an end the players haven't been shown."""
+        await self.session_lines()
+        wren, _ash = await self.split_into_groups()
+        rel = await self.held_back(end_hidden=True)
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.split, done.scene), (True, 0))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertNotIn(wren, knows.get(rel, []))
+
+    async def test_a_connection_already_shown_stays_as_it_is_in_a_split_scene(self) -> None:
+        await self.session_lines()
+        await self.split_into_groups()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
+            status="confirmed", confidence=1.0,
+        )  # fmt: skip
+        rel = made.value[0].id
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.claim.fact_id, done.split, done.scene), (rel, False, 0))
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_an_item_said_carried_in_a_split_scene_keeps_its_public_whereabouts(
+        self,
+    ) -> None:
+        """Written held back from the start (the reviewer): a shown "carries" would end the item's
+        public whereabouts, and the other group would see it move."""
+        await self.session_lines()
+        await self.split_into_groups()
+        hesper = await self.add("Hesper", type="character")
+        blade = self.bow
+        old = await self.memory.add_relation(
+            GUILD_A, self.c, hesper, "carries", blade, source="dm",
+            status="confirmed", confidence=1.0,
+        )  # fmt: skip
+        await self.propose(said("Bram", "carries", "Heartseeker", "dm_said", "3"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(done.split)
+        kept = await self.relation(old.value[0].id)
+        self.assertIsNone(kept.to_session_at)  # (still where the table last saw it)
+
     async def test_a_new_connection_said_together_is_shown_as_before(self) -> None:
         await self.session_lines()
         done = await self.confirm_in_veldmoor("3")

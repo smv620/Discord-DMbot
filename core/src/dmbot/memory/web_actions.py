@@ -798,6 +798,20 @@ async def _player_lookup(a: Action, look_up: PlayerLookupFn | None) -> Outcome:
     return Outcome(result_other=("i" if found.in_server else "o") + found.name[:31])
 
 
+def _answer_counts(confirmed: claims_mod.Confirmed) -> str:
+    """What the bot did beside the yes, for the page to say: "shown:1" (the players can see it
+    now, #3963 c), "held:1" (kept hidden beside another hidden one, #3979), "scene:1" (said while
+    the party was split; the group there knows it) or "split:1" (which group can't be told), #2996.
+    Never two at once."""
+    if confirmed.shown:
+        return "shown:1"
+    if confirmed.held:
+        return "held:1"
+    if confirmed.split:
+        return "scene:1" if confirmed.scene else "split:1"
+    return ""
+
+
 async def _player_character(
     memory: MemoryStore,
     guild_id: int,
@@ -1131,13 +1145,7 @@ async def _answer_waiting(
             # and one kept hidden beside a hidden one, for the page to point at 👁️ Reveal (#3979)
             # and one said while the party was split: "scene" (the group there knows it) or
             # "split" (which group can't be told), #2996
-            counts="shown:1"
-            if confirmed.shown
-            else "held:1"
-            if confirmed.held
-            else ("scene:1" if confirmed.scene else "split:1")
-            if confirmed.split
-            else "",
+            counts=_answer_counts(confirmed),
         )
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)

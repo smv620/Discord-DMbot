@@ -6876,12 +6876,6 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
     return {str(r["id"]): bool(r["unrevealed"]) for r in rows}
 
 
-async def split_when_said(w: Changes, session_started_at: int | None, lines: Sequence[str]) -> bool:
-    """Was the party split by the game clock (#3131) when any of these lines was spoken? (#2996,
-    the leak found in #3963 c.) `split_scene` says which group was there."""
-    return await split_scene(w, session_started_at, lines) is not None
-
-
 async def split_scene(
     w: Changes,
     session_started_at: int | None,
@@ -6904,6 +6898,13 @@ async def split_scene(
     costs one 👁️ press, a wrong show leaks). No clock: together."""
     if session_started_at is None:
         return None
+    cur = await w.conn.execute(
+        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND position IS NOT NULL LIMIT 1",
+        (w.guild_id, w.campaign_id),
+    )
+    if await cur.fetchone() is None:
+        return None  # (the party was never split: the common case, one read)
     numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
     rows = []
     if numbers:
@@ -6932,17 +6933,21 @@ async def split_scene(
     if len(groups) != 1 or None in groups:
         return ()
     (group,) = groups
-    members: set[str] | None = None
-    for at in moments:
-        here = set()
+    pcs = [
+        str(row["id"])
         for row in await w.select(
             ENTITIES,
             " AND type = 'character' AND role = %s AND status = %s AND merged_into IS NULL",
             [PLAYER_CHARACTER, CONFIRMED],
-        ):
-            if await group_at(w.conn, w.guild_id, w.campaign_id, str(row["id"]), at) == group:
-                here.add(str(row["id"]))
+        )
+    ]
+    members: set[str] | None = None
+    for at in moments:
+        here = {
+            pc for pc in pcs if await group_at(w.conn, w.guild_id, w.campaign_id, pc, at) == group
+        }
         members = here if members is None else members & here
+    # (an empty answer, nobody of that group there at every line, reads as "can't be told": safe)
     return tuple(sorted(members or ()))
 
 
@@ -6968,6 +6973,27 @@ async def _split_during_session(w: Changes, started_at: int) -> bool:
         (w.guild_id, w.campaign_id, started_at, w.guild_id, w.campaign_id, started_at, w.now),
     )
     return await cur.fetchone() is not None
+
+
+async def learnable_in_scene(w: Changes, relation_id: str) -> bool:
+    """Whether the group that was in a split scene may learn this connection (#2996 slice 2a):
+    the same checks as the together rule's `reveal_stated_in`, the held-back flag aside. Confirmed,
+    live and not secret, with both ends already shown to the players: learning a connection makes
+    its names known, so a secret or a hidden name is never given away by it (the reviewer)."""
+    row = await w.get(RELATIONS, relation_id)
+    if (
+        row is None
+        or row["secret"]
+        or row["status"] != CONFIRMED
+        or row["to_session_at"] is not None
+    ):
+        return False
+    ends = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited AND NOT unnamed",
+        [[row["subject_id"], row["object_id"]]],
+    )
+    return len(ends) == 2
 
 
 async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
