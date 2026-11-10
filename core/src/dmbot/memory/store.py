@@ -18,7 +18,6 @@ import asyncio
 import dataclasses
 import itertools
 import logging
-import re
 import time
 import unicodedata
 from collections.abc import (
@@ -2001,6 +2000,39 @@ class MemoryStore:
                     shown.append(str(row["id"]))
             return Written(shown, w.batch if shown else None)
 
+    async def split_moments(
+        self, guild_id: int, campaign_id: str, times: Collection[int]
+    ) -> set[int]:
+        """Which of these moments (Unix seconds) the game clock had the party split (#3131): what
+        was said then was heard by one group, never the whole table (#4037). A campaign whose party
+        was never split costs one read."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+                " AND position IS NOT NULL LIMIT 1",
+                scope.ids,
+            )
+            if await cur.fetchone() is None:
+                return set()
+            split: set[int] = set()
+            for at in set(times):
+                cur = await scope.conn.execute(
+                    "SELECT position FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+                    " AND at <= %s ORDER BY at DESC, seq DESC LIMIT 1",
+                    (*scope.ids, at),
+                )
+                row = await cur.fetchone()
+                if row is not None and row["position"] is not None:
+                    split.add(at)
+            return split
+
+    async def session_ever_split(
+        self, guild_id: int, campaign_id: str, session_started_at: int
+    ) -> bool:
+        """Was the party split at the session's start or at any time during it (#4037)?"""
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            return await _split_during_session(w, session_started_at)
+
     async def waiting_connections(
         self, guild_id: int, campaign_id: str, touching: Sequence[str]
     ) -> int:
@@ -2867,13 +2899,13 @@ class MemoryStore:
                     " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
                     [group],
                 )
-            group = unknown = 0
+            heard = not_told = 0  # (said only while split: the group knows it / nobody does)
             for row in confirmed:
                 if str(row["id"]) in scenes:
                     if await learn_names_in_scene(w, str(row["id"]), scenes[str(row["id"])]):
-                        group += 1
+                        heard += 1
                     else:
-                        unknown += 1
+                        not_told += 1
             ids = [row["id"] for row in confirmed]
             await states.settle_kind(w, onto, ids, type)
             await _forget_quotes(w, [r["id"] for r in confirmed if r["id"] in quoted_set])
@@ -2884,7 +2916,7 @@ class MemoryStore:
                     " AND status = 'proposed' AND entity_id = ANY(%s)",
                     [ids],
                 )
-            return Written(len(ids), w.batch, split_counts=(group, unknown))
+            return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
@@ -7035,37 +7067,49 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
     )
     if await cur.fetchone() is None:
         return None  # (the party was never split: the common case, one read)
+    # The session it came from: the newest session that began at or before the entry was made
+    # (the story reader and the name scan run after a session, before the next one begins). The
+    # names-heard count is no help here: it is kept only for names known before the session ended.
     cur = await w.conn.execute(
-        "SELECT min(session_started_at) AS at FROM memory_heard"
-        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
-        (w.guild_id, w.campaign_id, row["id"]),
+        "SELECT max(started_at) AS at FROM transcript_sessions"
+        " WHERE guild_id = %s AND campaign_id = %s AND started_at <= %s",
+        (w.guild_id, w.campaign_id, int(row["created_at"])),
     )
     first = await cur.fetchone()
     if first is None or first["at"] is None:
-        return None  # (not heard in a session at all: no scene to place it in)
+        return None  # (made outside any session: no scene to place it in)
     session_at = int(first["at"])
-    spellings = {str(row["name"])} | {
-        str(a["text"])
+    if not await _split_during_session(w, session_at):
+        return None  # (that session was together throughout: one read, the common case)
+    # Its spellings, folded as names are (case, accents, apostrophes and hyphens aside): the main
+    # name and its confirmed, open other names. A secret spelling never counts: it would make the
+    # entry public by a name the players may only have heard in the split.
+    spellings = {spelling_key(str(row["name"]))} | {
+        spelling_key(str(a["text"]))
         for a in await w.select(
-            ALIASES, " AND entity_id = %s AND status = %s", [row["id"], CONFIRMED]
+            ALIASES,
+            " AND entity_id = %s AND status = %s AND NOT secret",
+            [row["id"], CONFIRMED],
         )
     }
-    patterns = [
-        re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, s.split())) + r"(?!\w)", re.IGNORECASE)
-        for s in spellings
-        if s.split()
-    ]
+    spellings.discard("")
     cur = await w.conn.execute(
-        "SELECT l.started_ms / 1000 AS at, l.user_id, COALESCE(l.text, l.heard) AS words"
+        "SELECT l.started_ms / 1000 AS at, l.user_id, l.text, l.heard"
         " FROM transcript_lines l JOIN transcript_sessions s"
         "  ON s.id = l.session_id AND s.guild_id = l.guild_id"
-        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s",
+        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.started_at = %s"
+        " AND l.sidebar IS NULL",  # (the DM's private questions to DMbot were said to nobody)
         (w.guild_id, w.campaign_id, session_at),
     )
+
+    def names_it(words: str) -> bool:
+        padded = f" {spelling_key(words)} "  # ("Grimsby's" is Grimsby too)
+        return any(f" {spelling} " in padded for spelling in spellings)
+
     said = [
         (int(r["at"]), int(r["user_id"]))
         for r in await cur.fetchall()
-        if any(p.search(str(r["words"] or "")) for p in patterns)
+        if names_it(str(r["text"] or "")) or names_it(str(r["heard"] or ""))
     ]
     if not said:
         # (no line: can't tell, so nobody knows it, but only if the session was ever split)

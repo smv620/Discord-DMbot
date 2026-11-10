@@ -50,20 +50,15 @@ class SplitNames(NamesTest):
             )
             await conn.execute(
                 "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard)"
-                " VALUES (%s, 's500', %s, %s, 'We ride for Grimsby at dawn.')",
+                " VALUES (%s, 's500', %s, %s, 'We ride for Grimsby’s gate at dawn.')",
                 (GUILD, said_at_ms, speaker),
             )
         made = await self.memory.add_entity(
             GUILD, cid, name="Grimsby", type="place", status="proposed", source="extractor"
         )
-        grimsby = made.value.id
-        async with self.db.guild(GUILD) as conn:
-            await conn.execute(
-                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
-                " speaker_id, times) VALUES (%s, %s, %s, 500, %s, 1)",
-                (GUILD, cid, grimsby, speaker),
-            )
-        return grimsby
+        # (no "names heard" row: the after-session reader makes the name after that count is
+        # kept, so the session is found by when the name was made, as in production)
+        return made.value.id
 
     async def hidden(self, entity_id: str) -> bool:
         entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
@@ -161,3 +156,23 @@ class SplitNames(NamesTest):
         self.assertIn("1 name is kept hidden", split_words.for_many(0, 1))
         self.assertEqual(split_words.for_one(""), "")
         self.assertIn("Who knows this?", split_words.for_one("unknown"))
+
+    async def test_the_dms_sidebar_question_while_together_is_said_to_nobody(self) -> None:
+        grimsby = await self.scene(split_at=600, speaker=7, said_at_ms=650_000)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard,"
+                " sidebar) VALUES (%s, 's500', 550000, 99, 'Who is in Grimsby?', 'question')",
+                (GUILD,),
+            )
+        done = await self.memory.confirm_entity(
+            GUILD, self.campaign.id, grimsby, "place", source="dm"
+        )
+        self.assertEqual((done.split, await self.hidden(grimsby)), ("group", True))
+
+    async def test_split_moments_are_found_and_a_together_campaign_costs_nothing(self) -> None:
+        cid = self.campaign.id
+        self.assertEqual(await self.memory.split_moments(GUILD, cid, [550, 650]), set())
+        await self.scene(split_at=600, speaker=7, said_at_ms=650_000)
+        self.assertEqual(await self.memory.split_moments(GUILD, cid, [550, 650]), {650})
+        self.assertTrue(await self.memory.session_ever_split(GUILD, cid, 500))
