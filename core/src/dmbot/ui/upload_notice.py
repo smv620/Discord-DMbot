@@ -208,7 +208,7 @@ async def undo_upload_result(
         return Undone(NOT_YOURS)
     notices = bot.upload_notices
     found = await notices.get(guild_id, notice_id)
-    if found is None:
+    if found is None or found.campaign_id != campaign_id:  # (an upload of another campaign: no)
         return Undone(GONE)
     if found.undone_at is not None:
         return Undone(ALREADY)

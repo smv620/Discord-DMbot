@@ -700,6 +700,8 @@ SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered
 SCRIPT_MAKE_EVERY_S = 5
 TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied (#3946)
 TRAIT_ANSWER_EVERY_S = 5
+UPLOAD_UNDO_FIRST_S = 30  # the website's "Undo this upload" presses are applied (#4078)
+UPLOAD_UNDO_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
 WIZARD_FINISH_EVERY_S = 5
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
@@ -13988,7 +13990,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Every few seconds: apply the website's "Undo this upload" presses (#4078;
         `upload_undo`). An undo is a few writes and a chain of Undos, so one pass per server; a
         server's trouble never stops the others."""
-        await asyncio.sleep(TRAIT_ANSWER_FIRST_S)
+        await asyncio.sleep(UPLOAD_UNDO_FIRST_S)
         while True:
             for guild in list(self.guilds):
                 try:
@@ -13996,7 +13998,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         pass
                 except Exception as exc:
                     log.warning("An upload undo round failed (%s)", type(exc).__name__)
-            await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
+            await asyncio.sleep(UPLOAD_UNDO_EVERY_S)
 
     async def _trait_answer_loop(self) -> None:
         """Every few seconds: apply the website's lineage and class answers (#3946;

@@ -155,23 +155,32 @@ async def run_round(bot: Any, guild_id: int) -> int:
 
 async def _apply(bot: Any, undos: UploadUndos, guild_id: int, press: Press) -> tuple[str, int]:
     """The press's word and count. The Discord button's own code makes every check again: a minute
-    may have passed since the page queued it."""
-    watcher = asyncio.create_task(_follow(undos, guild_id, press))
+    may have passed since the page queued it.
+
+    A press taken again after a crash part way through finds its upload already claimed (the claim
+    is made at the start, as for the button) and ends `already`, with nothing counted: the changes
+    already taken back stay taken back, and the DM sees the upload as undone either way."""
+    stop = asyncio.Event()
+    watcher = asyncio.create_task(_follow(undos, guild_id, press, stop))
     try:
         result = await un.undo_upload_result(
             bot, guild_id, press.campaign_id, press.notice_id, press.user_id
         )
     finally:
-        watcher.cancel()
+        stop.set()  # (not cancelled: a move that is committing finishes, so the stamp is current)
         await asyncio.gather(watcher, return_exceptions=True)
     return outcome(result)
 
 
-async def _follow(undos: UploadUndos, guild_id: int, press: Press) -> None:
-    """Move the claim while the undo runs. Its own failures end it quietly: the undo must never stop
-    for the page."""
+async def _follow(undos: UploadUndos, guild_id: int, press: Press, stop: asyncio.Event) -> None:
+    """Move the claim while the undo runs, until `stop`. Its own failures end it quietly: the undo
+    must never stop for the page."""
     while True:
-        await asyncio.sleep(WATCH_EVERY_S)
+        try:
+            await asyncio.wait_for(stop.wait(), WATCH_EVERY_S)
+            return  # (the undo is over)
+        except TimeoutError:
+            pass
         try:
             if not await undos.moved(guild_id, press):
                 return  # (the press is not ours any more)

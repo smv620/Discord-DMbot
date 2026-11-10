@@ -8,7 +8,7 @@ import asyncio
 import time
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot import upload_undo
@@ -180,22 +180,93 @@ class Undos(NamesTest):
         await self.undos.claim_next(GUILD)
         self.assertFalse(await self.undos.moved(GUILD, press))
 
-    async def test_the_heartbeat_runs_during_the_undo(self) -> None:
-        await self.queue()
-        slow = asyncio.Event()
+    async def test_the_heartbeat_moves_the_real_claim_while_the_undo_runs(self) -> None:
+        rid = await self.queue()
+        seen: list[int] = []
 
         async def slow_undo(*_a: Any, **_k: Any) -> un.Undone:
-            await asyncio.sleep(0.05)
-            slow.set()
+            before = (await self.row(rid))["claimed_at"]
+            for _ in range(200):  # (waits for the heartbeat itself, not for a fixed time)
+                await asyncio.sleep(0.01)
+                now = (await self.row(rid))["claimed_at"]
+                if now != before:
+                    seen.append(now)
+                    break
             return un.Undone(un.NOTHING_LEFT, 1, 1)
 
+        # the table's clock is the test's, so each move writes a later stamp
+        ticks = iter(range(1, 10_000))
+        self.undos._now = lambda: NOW + next(ticks)
         with (
             patch.object(un, "undo_upload_result", slow_undo),
             patch.object(upload_undo, "WATCH_EVERY_S", 0.01),
-            patch.object(UploadUndos, "moved", AsyncMock(return_value=True)) as moved,
+            patch.object(upload_undo, "UploadUndos", lambda _db: self.undos),
         ):
             await upload_undo.run_round(self.fake_bot(), GUILD)
-        self.assertGreaterEqual(moved.await_count, 1)
+        self.assertTrue(seen, "the claim was never moved while the undo ran")
+        row = await self.row(rid)
+        self.assertEqual((row["state"], row["undone"]), ("done", 1))  # (the late stamp was current)
+
+    async def test_the_watcher_stops_when_the_claim_is_not_ours_any_more(self) -> None:
+        calls: list[int] = []
+
+        class Stand:
+            async def moved(self, _guild: int, _press: Any) -> bool:
+                calls.append(1)
+                return False
+
+        with patch.object(upload_undo, "WATCH_EVERY_S", 0.01):
+            await asyncio.wait_for(
+                upload_undo._follow(
+                    cast(Any, Stand()), GUILD, cast(Any, SimpleNamespace()), asyncio.Event()
+                ),
+                2,
+            )
+        self.assertEqual(calls, [1])
+
+    async def test_an_already_taken_back_upload_is_failed_already(self) -> None:
+        rid = await self.queue()
+        await self.round(un.Undone(un.ALREADY))
+        row = await self.row(rid)
+        self.assertEqual((row["state"], row["error"], row["undone"]), ("failed", "already", 0))
+
+    async def test_an_undo_that_could_not_start_or_stopped_is_failed_with_what_it_did(self) -> None:
+        rid = await self.queue()
+        await self.round(un.Undone(un.COULD_NOT))
+        self.assertEqual(
+            ((await self.row(rid))["error"], (await self.row(rid))["undone"]), ("failed", 0)
+        )
+        rid2 = await self.queue()
+        await self.round(un.Undone(un.STOPPED.format(done=2, total=3), 2, 3, stopped=True))
+        row = await self.row(rid2)
+        self.assertEqual((row["state"], row["error"], row["undone"]), ("failed", "failed", 2))
+
+    async def test_an_upload_of_another_campaign_is_gone_and_nothing_is_undone(self) -> None:
+        """The real button code, with a notice that belongs to a different campaign."""
+        other = SimpleNamespace(
+            campaign_id="d" * 32, undone_at=None, changes=(1, 2), can_undo=lambda _n: True
+        )
+        undo = AsyncMock()
+        bot = SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=self.campaign)),
+            memory=SimpleNamespace(undo=undo),
+            upload_notices=SimpleNamespace(get=AsyncMock(return_value=other)),
+        )
+        got = await un.undo_upload_result(bot, GUILD, self.campaign.id, NOTICE, DM)
+        self.assertEqual(got.answer, un.GONE)
+        undo.assert_not_awaited()
+
+    async def test_a_notice_of_this_campaign_is_not_refused_by_the_campaign_check(self) -> None:
+        mine = SimpleNamespace(
+            campaign_id=self.campaign.id, undone_at=None, changes=(), can_undo=lambda _n: False
+        )
+        bot = SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=self.campaign)),
+            memory=object(),
+            upload_notices=SimpleNamespace(get=AsyncMock(return_value=mine)),
+        )
+        got = await un.undo_upload_result(bot, GUILD, self.campaign.id, NOTICE, DM)
+        self.assertEqual(got.answer, un.TOO_LATE)  # (it got past the check, to the next one)
 
     async def test_without_memory_nothing_is_taken(self) -> None:
         rid = await self.queue()
