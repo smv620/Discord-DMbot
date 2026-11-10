@@ -110,7 +110,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             if self.gate is not None:
                 await self.gate.wait()
             self.clock.now += SLOW_S
-            return SimpleNamespace(value=2)
+            return SimpleNamespace(value=2, split_counts=(0, 0))  # (none split, #4037)
 
         memory = MagicMock()
         memory.relations = AsyncMock(return_value=[])

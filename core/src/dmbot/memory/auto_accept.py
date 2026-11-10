@@ -71,6 +71,9 @@ class Tally:
     # Said while the party was split (#2996): the group there knows it, or which group can't be told
     split_group: int = 0
     split_unknown: int = 0
+    # A new name said only while the party was split (#4037): the group knows it / nobody does
+    names_split_group: int = 0
+    names_split_unknown: int = 0
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
@@ -114,6 +117,8 @@ async def accept_names(
             continue
         try:
             written = await memory.confirm_entity(guild, campaign, entity.id, kind, source=DM)
+            tally.names_split_group += written.split == "group"
+            tally.names_split_unknown += written.split == "unknown"
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
             tally.add_batch(written.batch)
