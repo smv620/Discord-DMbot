@@ -122,6 +122,11 @@ export const wizardWords = {
     linkBad: "A link must start with https://.",
     remove: "Remove",
     none: "Nothing added.",
+    // Pages that are only pictures (#4030): DMbot cannot read them, so the person types the text that matters into a file.
+    picturePages: (n: number): string =>
+      n === 1
+        ? "1 page is pictures only, so DMbot can't read it. If it holds text that matters (tables, handouts, map names), type it into a text file and add that too."
+        : `${n} pages are pictures only, so DMbot can't read them. If they hold text that matters (tables, handouts, map names), type it into a text file and add that too.`,
     counts: (pages: number, words: number): string =>
       `${pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}, ` : ""}${words} ${words === 1 ? "word" : "words"}`,
     checking: "Checking the file…",

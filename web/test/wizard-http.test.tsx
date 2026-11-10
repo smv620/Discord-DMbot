@@ -178,3 +178,18 @@ describe("the finish card", () => {
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
   });
 });
+
+describe("the pictures-only count (#4030)", () => {
+  it("docAdd keeps picturePages from the upload's own answer", async () => {
+    const { api } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d9", slot: "lore", name: "lore-pictures.pdf", pages: 4, words: 40, status: "ok", reason: "", picturePages: 3 } } });
+    const doc = await api.docAdd(G, "lore", { name: "lore-pictures.pdf", source: "upload", data: toBase64(new TextEncoder().encode("hello")) });
+    expect(doc.picturePages).toBe(3);
+  });
+
+  it("a re-read draft's documents have no pictures-only count", async () => {
+    const { api } = net({ [`GET /me/wizard/${G}`]: { body: draft({ documents: [{ id: "d1", slot: "lore", name: "lore-pictures.pdf", source: "upload", pages: 4, words: 40, status: "ok", reason: "", picturePages: 3 }] }) } });
+    const got = await api.get(G);
+    expect(got?.documents[0]?.picturePages).toBeUndefined();
+  });
+});
+

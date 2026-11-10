@@ -141,6 +141,25 @@ describe("the wizard", () => {
     expect(api.calls.some((c) => c.startsWith("docAdd:") && c.endsWith(":lore"))).toBe(true);
   });
 
+  it("a file with pictures-only pages says how many, singular and plural, and an ordinary file says nothing", async () => {
+    await start();
+    await next(2);
+    await next(3);
+    await next(4);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const pictures = new File(["the harbour town of Harrowgate and its bells"], "lore-pictures.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pictures] } });
+    expect(await screen.findByText(w.docs.picturePages(3))).toBeTruthy();
+    const one = new File(["the harbour town of Harrowgate and its bells"], "lore-onepicture.pdf", { type: "application/pdf" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [one] } });
+    expect(await screen.findByText(w.docs.picturePages(1))).toBeTruthy();
+    const plain = new File(["the harbour town of Harrowgate and its bells"], "lore-plain.txt", { type: "text/plain" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [plain] } });
+    expect(await screen.findByText("lore-plain.txt")).toBeTruthy();
+    expect(screen.getAllByText(/pictures only/)).toHaveLength(2);
+  });
+
   it("a file over the server's limit is refused with the way out before anything is sent", async () => {
     const api = await start();
     for (let to = 2; to <= 4; to++) await next(to);
