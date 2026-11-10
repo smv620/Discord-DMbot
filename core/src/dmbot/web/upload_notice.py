@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot import progress
 from dmbot.db import Database
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -89,4 +90,67 @@ async def read(
         # The questions an upload left are the bot's to count; not read here yet (#3879).
         "questionsLeft": 0,
         "serverNow": now,
+    }
+
+
+# ---- Undo this upload: queued for the bot, read back by polling (0417) ----------------
+
+_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+async def undo(db: Database, session: Session, ref: str, kind: object, source_id: object) -> str:
+    """Queue "Undo this upload" and return its id. Refusals: `bad_value` for a shape that is wrong,
+    `not_found` (not a DM, or no notice for that upload), `undone` (taken back already, or it
+    changed nothing), `too_late` (past 7 days) and `too_soon` (20 a minute for the campaign). A
+    second press on an undo already going is given that undo's id."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if kind not in KINDS or not isinstance(source_id, str) or not _SOURCE.match(source_id):
+        raise RecapError("bad_value")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_upload_undo_add(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, kind, source_id),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return str(got["id"])
+
+
+async def read_undo(db: Database, session: Session, ref: str, undo_id: str) -> dict[str, Any]:
+    """Where one undo stands: `state` (waiting, working, done, failed), the `error` word when it
+    failed, how many changes it `undone`, and the shared progress; counts and times only."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not _ID.match(undo_id):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_upload_undo_read(%s, %s, %s) AS r", (guild_id, campaign_id, undo_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    created = int(got["createdAt"])
+    taken = int(got["claimedAt"]) // 1000  # the queue's own stamp is milliseconds
+    state = str(got["state"])
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return {
+        "state": state,
+        "error": got["error"],
+        "undone": got["undone"],
+        "progress": progress.shape(
+            stage,
+            started_at=created,
+            updated_at=taken if state != "waiting" and taken else created,
+            now=int(got["now"]),
+            reason=(str(got["error"]) or "undo_failed") if stage == "failed" else None,
+        ),
     }
