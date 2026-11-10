@@ -45,6 +45,35 @@ HELD_NOW = (
     "then 👁️ Everyone at the table."
 )
 
+# Said while the game clock had the party split (#2996 rule 1, slice 2a): the group that was there
+# knows it; when DMbot can't tell which group, nobody does yet (never a guess).
+SPLIT_GROUP = "👁️ Only the characters who were there know this: the party was split."
+SPLIT_UNKNOWN = (
+    "🙈 Kept hidden from your players: the party was split, and DMbot can't tell which group "
+    "heard it. To choose who knows: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "pick who was there, then 👥 Only some characters."
+)
+
+
+def split_line(group: int, unknown: int) -> str:
+    """The "All true" summary's line for what was said while the party was split (#2996)."""
+    parts = []
+    if group:
+        parts.append(
+            f"👁️ {group} of them {'was' if group == 1 else 'were'} said while the party was split: "
+            "only the characters who were there know "
+            f"{'it' if group == 1 else 'them'}."
+        )
+    if unknown:
+        parts.append(
+            f"🙈 {unknown} of them {'is' if unknown == 1 else 'are'} kept hidden from your "
+            "players: the party was split, and DMbot can't tell which group heard "
+            f"{'it' if unknown == 1 else 'them'}. To choose who knows: open either name, "
+            "✏️ Edit a connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some "
+            "characters."
+        )
+    return "\n".join(parts)
+
 
 def shown_line(n: int) -> str:
     """The "All true" summary's line for the held-back connections it showed (#3963 c)."""
@@ -405,6 +434,8 @@ class ClaimsReview(_Menu):
                     done += f"\n{SHOWN_NOW}"
                 if result.held:
                     done += f"\n{HELD_NOW}"
+                if result.split:
+                    done += f"\n{SPLIT_GROUP if result.scene else SPLIT_UNKNOWN}"
                 await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
@@ -483,7 +514,7 @@ async def _answer_page(
 ) -> None:
     """The writing and the page that follows, for `_decide_all_on` (which holds the view's lock)."""
     claims = ClaimStore(memory)
-    kept = flagged = failed = shown = held = 0
+    kept = flagged = failed = shown = held = split_group = split_unknown = 0
     made: list[tuple[str, int]] = []  # (claim, batch) of what this press remembered
     refused: dict[str, int] = {}
     for claim in targets:
@@ -515,6 +546,8 @@ async def _answer_page(
         kept += 1
         shown += result.shown
         held += result.held
+        split_group += result.split and result.scene > 0
+        split_unknown += result.split and result.scene == 0
         await _watch_story(interaction, campaign, result.claim.fact_id)
         flagged += bool(result.flags)
     if made:  # a press that kept nothing leaves the earlier Undo alone
@@ -529,6 +562,8 @@ async def _answer_page(
         lines.append(shown_line(shown))
     if held:
         lines.append(held_line(held))
+    if split_group or split_unknown:
+        lines.append(split_line(split_group, split_unknown))
     for message, count in refused.items():
         lines.append(f"{count} not saved: {message}")
     if failed:
