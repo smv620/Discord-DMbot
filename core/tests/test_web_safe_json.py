@@ -24,7 +24,7 @@ class TheResponseClass(unittest.TestCase):
             {"id": SNOWFLAKE, "who": [SNOWFLAKE, 5], "deep": {"x": [{"y": SNOWFLAKE}]}, "at": 1_800}
         ).body
         self.assertEqual(
-            json.loads(body),
+            json.loads(bytes(body)),
             {
                 "id": str(SNOWFLAKE),
                 "who": [str(SNOWFLAKE), 5],

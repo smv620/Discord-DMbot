@@ -431,7 +431,7 @@ def _expand_default_stamp(rows: list[Any]) -> list[Any]:
     for r in rows:
         if r is head:
             continue
-        table = _TAGS.get(r.get("table")) if isinstance(r, dict) else None
+        table = _TAGS.get(str(r.get("table"))) if isinstance(r, dict) else None
         if table is not None and table.name in lineage.STAMPED and "made_by" not in r:
             r = {**r, "made_by": default}
         out.append(r)
