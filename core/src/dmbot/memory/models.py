@@ -586,6 +586,11 @@ class Written[T]:
 
     value: T
     batch: int | None
+    # A session's new name said only while the party was split (#4037): "group" (the group that
+    # heard it knows it) or "unknown" (which group can't be told: nobody does), for the caller to
+    # tell the DM; "" otherwise. (`confirm_kinds` counts both in `split_counts`.)
+    split: str = ""
+    split_counts: tuple[int, int] = (0, 0)
 
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).

@@ -46,7 +46,7 @@ from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import all_names, logic, name_places, player_id
+from dmbot.ui import all_names, logic, name_places, player_id, split_words
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -1760,14 +1760,16 @@ class SuggestionReview(_Menu):
             return
         if self.known_kind:  # it was read with its kind: one press (#2167)
             try:
-                await memory.confirm_entity(
+                written = await memory.confirm_entity(
                     campaign.guild_id, campaign.id, entity.id, self.known_kind, source=DM
                 )
             except MemoryRuleError:
                 await _tell(interaction, GONE)
                 return
             changed(interaction, campaign)
-            await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
+            added = f"✅ Added {self._added(entity)}."
+            note = "\n".join(filter(None, (added, split_words.for_one(written.split))))
+            await self._saved(interaction, campaign, memory, note)
             return
         await self._ask_kind(interaction, entity)
 
@@ -1810,12 +1812,17 @@ class SuggestionReview(_Menu):
             await self._ask_player(interaction, campaign, entity)
             return
         try:
-            await memory.confirm_entity(campaign.guild_id, campaign.id, entity.id, kind, source=DM)
+            written = await memory.confirm_entity(
+                campaign.guild_id, campaign.id, entity.id, kind, source=DM
+            )
         except MemoryRuleError:
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)  # the next card sees it at once
-        await self._saved(interaction, campaign, memory, f"✅ Added {self._added(entity)}.")
+        note = "\n".join(
+            filter(None, (f"✅ Added {self._added(entity)}.", split_words.for_one(written.split)))
+        )
+        await self._saved(interaction, campaign, memory, note)
 
     def _type_id(self, campaign: Campaign, entity: Entity) -> _Button:
         """⌨️ Type a Discord ID, for a player who is not in the server yet (#3004). It is for this
