@@ -176,6 +176,14 @@ FEATURES: tuple[Feature, ...] = (
         ),
     ),
     Feature(
+        "wizard link",
+        "Set up a campaign step by step",
+        "＋ New campaign offers the step-by-step setup on the website first; "
+        "the short form stays one press away.",
+        lambda s: s.wizard_link_on,
+        ("wizard_link_on",),
+    ),
+    Feature(
         "live heads-up",
         "Heads-up during play",
         "DMbot tells you on the DM screen when someone you said is dead is voiced at the table.",
