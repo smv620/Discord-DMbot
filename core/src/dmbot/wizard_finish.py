@@ -352,7 +352,7 @@ async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:
     making it and writing its id): theirs, with this name, made since the run was queued."""
     for campaign in await bot.campaigns.list_campaigns(guild_id):
         if (
-            campaign.owner_user_id == run.user_id
+            campaign.is_owner(run.user_id)
             and campaign.created_at >= run.started_at
             and campaign.name.casefold() == name.casefold()
         ):
