@@ -118,6 +118,9 @@ TOLD_ACTIONS = ("told-add", "told-remove")
 # DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
 # takes it back. Filed under no name; the target is the match's batch, in digits.
 MATCH_ACTIONS = ("match-confirm", "match-undo")
+# The "Met but not named" list (#4045): `entity_id` names the list's row (memory_met), not an entry.
+MET_ACTIONS = ("met-name", "met-join", "met-remove")
+MET_WAITING = "met_waiting"  # the name is still waiting in the name check: check it there first
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -450,6 +453,10 @@ async def apply(
         return await _confirm(memory, actions, guild_id, cid, action)
     if action.action in MATCH_ACTIONS:
         return await _match(memory, guild_id, cid, action)
+    if action.action in MET_ACTIONS:
+        if waiting is None and action.action != "met-remove":
+            return _failed(FAILED)  # (naming or joining needs who is recorded now)
+        return await _met(memory, guild_id, cid, action, waiting)
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
@@ -508,6 +515,42 @@ async def apply(
         return await _do(memory, guild_id, cid, entity.id, entity.name, action, look_up)
     except MemoryRuleError:
         return _failed(NOT_FOUND)  # the name changed under us (another DM, or Discord)
+
+
+async def _met(
+    memory: MemoryStore, guild_id: int, cid: str, a: Action, waiting: Waiting | None
+) -> Outcome:
+    """The website's "Met but not named" list (#4045): `entity_id` is the list's row. Name it (a
+    new entry; a name the campaign has is EXISTS, so the page offers Same as…), join it to the
+    entry `target_id`, or remove it. The same store calls as Discord's list, so each is one write
+    (the entry, its rank 0 and the row's removal together)."""
+    from dmbot.memory.met_store import MetStore
+    from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
+
+    try:
+        if a.action == "met-remove":
+            # (gone already is done too: a row taken again after a first run that removed it)
+            await MetStore(memory._db).remove(guild_id, cid, a.entity_id)
+            return Outcome()
+        assert waiting is not None  # (checked by the caller for these two)
+        recorded = await waiting.opted_in()  # (read now: the consent re-check at use, #4045)
+        if a.action == "met-join":
+            written = await memory.join_met(
+                guild_id, cid, a.entity_id, a.target_id, opted_in=recorded
+            )
+            return Outcome(result_id=written.value.id)
+        made = await memory.name_met(
+            guild_id, cid, a.entity_id, " ".join(a.text.split()), opted_in=recorded
+        )
+        return Outcome(result_id=made.value.id)
+    except MemoryRuleError as exc:
+        if str(exc) == MET_NAME_TAKEN:
+            return _failed(EXISTS)
+        if str(exc) == MET_NAME_WAITING:
+            return _failed(MET_WAITING)
+        if str(exc) == MET_GONE:
+            return _failed(GONE)
+        return _failed(NOT_FOUND if a.action == "met-join" else BAD_NAME)
 
 
 async def _unnamed(
