@@ -33,7 +33,6 @@ from dmbot.logs import set_log_context
 from dmbot.memory import plan_reader
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
-    FILE_MAX_BYTES,
     READ_REPLY_BYTES,
     READ_TIME_S,
     AdventureError,
@@ -41,7 +40,7 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
-from dmbot.memory.name_documents import DocumentError, kind_of_file
+from dmbot.memory.name_documents import DocumentError, kind_of_file, max_bytes_for
 from dmbot.memory.story_plan import Counts, Listed, ReadState
 from dmbot.waiting import (
     SHOW_ELAPSED_AFTER_S,
@@ -71,6 +70,7 @@ NOT_ON = (
     "Not yet. In Settings, turn on Shared story and say you have the right to use the material."
 )
 TOO_BIG = "That file is over 10 MB. Try a smaller file, or save a text copy (.txt)."
+TOO_BIG_PDF = "That PDF is over 100 MB. Try a smaller file, or save a text copy (.txt)."
 WRONG_TYPE = "DMbot can read PDF, Word (.docx) and text (.txt, .md) files. Save it as one of those."
 NO_FILE = "No file was picked. Press Give a file again and pick one."
 DOWNLOAD_FAILED = "DMbot couldn't download that file, and kept nothing. Try again."
@@ -565,7 +565,7 @@ class AddButton(
 class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
     file: discord.ui.Label[AdventureForm] = discord.ui.Label(
         text="Your adventure (PDF, Word or text)",  # 45 characters at most
-        description="One file, up to 10 MB. DMbot keeps the text, not the file.",
+        description="One file: a PDF up to 100 MB, others up to 10 MB. DMbot keeps the text.",
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -599,8 +599,11 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
             await reply(NO_FILE, ephemeral=True)
             return
         attachment = upload.values[0]
-        if attachment.size > FILE_MAX_BYTES:
-            await reply(TOO_BIG, ephemeral=True)
+        if attachment.size > max_bytes_for(attachment.filename):
+            await reply(
+                TOO_BIG_PDF if attachment.filename.casefold().endswith(".pdf") else TOO_BIG,
+                ephemeral=True,
+            )
             return
         if PurePath(attachment.filename).suffix.casefold() not in FILE_TYPES or (
             kind_of_file(attachment.filename) == "unknown"

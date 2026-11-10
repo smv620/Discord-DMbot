@@ -614,6 +614,22 @@ class UnnamedPeople(unittest.TestCase):
         report = gkc.check(old, self.raider_key())
         self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
 
+    def test_the_wind_spirit_is_found_by_the_lores_own_words(self) -> None:
+        # (the owner, 2026-11-10: lore line 30 says "an ancient wind spirit", which DMbot keeps as
+        # "unnamed - ancient wind spirit"; with only "The wind spirit" in the key, a right find and
+        # its tie to Okthandom, l035, both scored as misses)
+        key = load("lore_key.json")
+        data = backup(
+            [("ok", "Okthandom Korran", "character"), ("ws", "unnamed - ancient wind spirit",
+             "creature")],
+            [rel("r1", "ws", "associated_with", "ok")],
+        )  # fmt: skip
+        data["sections"]["memory"][1]["unnamed"] = True
+        report = gkc.check(data, key, "lore")
+        (spirit,) = [e for e in report.entries if e.id == "The wind spirit"]
+        (tie,) = [t for t in report.ties if t.id == "l035"]
+        self.assertEqual((spirit.status, tie.status), (gkc.FOUND, gkc.FOUND))
+
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
         data = backup([("u1", "unnamed - the attackers", "character")], [])

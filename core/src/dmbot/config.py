@@ -119,6 +119,10 @@ class Settings:
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
+    # Unnamed beings met in play kept apart from the names until the DM names one (#3172 slice 5),
+    # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
+    # (Supervisor, 2026-11-10).
+    met_unnamed_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -461,6 +465,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
+    met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
+    if met_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -662,6 +669,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_deeds_on=deeds_raw in ("1", "true", "on"),
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
+        met_unnamed_on=met_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),

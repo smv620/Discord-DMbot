@@ -21,7 +21,7 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError
+from dmbot.memory.name_documents import DocumentError, max_bytes_for
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_ai, house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
@@ -233,7 +233,6 @@ async def open_menu(interaction: discord.Interaction, campaign: Campaign) -> Non
     await _send(interaction, text, FileMenu(current, linked=link is not None))
 
 
-MAX_UPLOAD_BYTES = MAX_DOCUMENT_BYTES  # 10 MB, as for a names file
 COOLDOWN_S = 30.0  # between two comparisons of one campaign's file asked for by hand
 _busy: set[tuple[int, str]] = set()  # campaigns being compared right now
 _last: dict[tuple[int, str], float] = {}  # when each was last compared by hand
@@ -360,8 +359,9 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
             await _tell(interaction, f"No file was added. Press {UPLOAD_LABEL} and pick one.")
             return
         attachment = upload.values[0]
-        if attachment.size > MAX_UPLOAD_BYTES:
-            await _tell(interaction, house_sync.TOO_BIG)
+        if attachment.size > max_bytes_for(attachment.filename):  # a PDF's own, larger limit
+            is_pdf = attachment.filename.casefold().endswith(".pdf")
+            await _tell(interaction, house_sync.TOO_BIG_PDF if is_pdf else house_sync.TOO_BIG)
             return
         wait = _take(current)
         if wait is not None:
