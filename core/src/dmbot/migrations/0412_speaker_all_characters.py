@@ -10,8 +10,11 @@ from __future__ import annotations
 # characters spoke (`stamp.group_of_speakers` already says "not known" for two or more), and the
 # player's own name would hide that it was in-character speech. The bot's own label
 # (`cleaner.characters`) follows the same rule, so the site and the Discord file agree. A merged
-# or unconfirmed character is left out as before. Same signature, so the grants stay; the
-# function's search_path is set again, as a replace drops it. No table changes.
+# or unconfirmed character is left out as before. (The ids are compared as bytes, as Python
+# compares them, so a tie in time orders the same in both.) The export caps a label at 80
+# characters, so a very long joined label is cut there, the same on the site and in Discord.
+# Same signature, so the grants stay; the function's search_path is set again, as a replace
+# drops it. No table changes.
 SQL = r"""
     CREATE OR REPLACE FUNCTION dmbot_web_transcript_characters(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -43,7 +46,8 @@ SQL = r"""
                     -- all of a player's characters, in the order they were made, joined with
                     -- " / " (one row for each character: its first own-name alias)
                     SELECT one.played_by AS user_id,
-                           string_agg(one.text, ' / ' ORDER BY one.created_at, one.id) AS name
+                           string_agg(one.text, ' / '
+                                      ORDER BY one.created_at, one.id COLLATE "C") AS name
                     FROM (SELECT DISTINCT ON (id) id, created_at, played_by, text
                           FROM named
                           WHERE role = 'player_character' AND played_by IS NOT NULL

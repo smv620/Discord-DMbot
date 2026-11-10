@@ -648,6 +648,27 @@ class Characters(Transcripts):
         self.assertEqual(await self.chars(self.carol), {BOB.id: theirs[BOB.id]})
         self.assertEqual(theirs[BOB.id], "Cerric / Dorn")
 
+    async def test_three_characters_and_a_tie_in_time_order_alike_in_sql_and_python(
+        self,
+    ) -> None:
+        g, c = THURSDAY.id, self.one.id
+        for name in ("Ash", "Bryn"):
+            await self.memory.add_entity(
+                g, c, type="character", name=name, played_by=BOB.id, source=DM_SOURCE,
+                status="confirmed", role="player_character",
+            )  # fmt: skip
+        async with self.db.guild(g) as conn:  # Dorn, Ash and Bryn were made in the same second
+            await conn.execute(
+                "UPDATE memory_entities SET created_at = 20"
+                " WHERE campaign_id = %s AND name IN ('Ash', 'Bryn')",
+                (c,),
+            )
+        lookup = await LookupCache(self.memory).get(g, c)
+        theirs = cleaner.characters(lookup)[BOB.id]
+        self.assertEqual((await self.chars(self.carol))[BOB.id], theirs)
+        self.assertEqual(len(theirs.split(" / ")), 4)
+        self.assertTrue(theirs.startswith("Cerric / "))
+
     async def test_a_merged_character_is_left_out_and_one_character_is_unchanged(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(
