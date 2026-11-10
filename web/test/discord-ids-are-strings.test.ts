@@ -32,11 +32,19 @@ describe("Discord ids stay strings", () => {
     expect(found).toEqual([]);
   });
 
-  it("a campaign ref with a big guild id goes through the pretend API unchanged", async () => {
+  it("a campaign ref with a big guild id goes through the pretend API, and the ids it sends back are the same strings", async () => {
     const ref = `${BIG}.cmp1`;
     const api = mockApi("table");
     const waiting = await api.webWaiting!(ref);
     expect(JSON.stringify(waiting)).not.toContain("e+");
     expect(ref.split(".")[0]).toBe(BIG);
+    // The pretend game masters carry 18-digit ids, above 2^53 - 1: they come back whole, not rounded.
+    const { gameMasters } = await api.campaignGameMasters!(ref);
+    expect(gameMasters.length).toBeGreaterThan(0);
+    for (const g of gameMasters) {
+      expect(typeof g.userId).toBe("string");
+      expect(g.userId).toBe(String(BigInt(g.userId)));
+      expect(g.userId).toMatch(/^\d{18}$/);
+    }
   });
 });
