@@ -2902,7 +2902,7 @@ export interface AccountApi {
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
   /** `onLook` hears how the wait stands each time the page looks (#2921). */
-  answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number; batch?: number }>;
+  answerWaiting?(ref: string, answer: WaitingAnswer, onLook?: (look: WaitingLook) => void): Promise<{ kept?: number; batch?: number; shown?: number; held?: number }>;
   /** What people believe, waiting for the DM, and one answer to it (#2412; DM only: anyone else gets
    * `not-found`). `answerReading` queues the answer for the bot and waits for it, telling `onLook` how the
    * wait stands each time it looks; it resolves with the answer's id and whether it can be undone. */

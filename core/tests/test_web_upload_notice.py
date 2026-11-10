@@ -60,6 +60,15 @@ class UploadNoticeRead(Script):
         self.assertEqual(got["undoUntil"], made.created_at + UNDO_SECONDS)
         self.assertNotIn("changes", got)
 
+    async def test_connections_shown_or_kept_hidden_are_never_counted_as_names(self) -> None:
+        """#3963 (c) and #3979: an import's notice keeps these beside the kinds, never as one."""
+        await self.notices.add(
+            THURSDAY.id, self.one.id, "Session 3", {"npc": 1, "shown": 1, "held": 2}, [1],
+            source_kind="import", source_id="up1",
+        )  # fmt: skip
+        got = await self.read("import")
+        self.assertEqual((got["counts"]["names"], got["counts"]["byKind"]), (1, {"npc": 1}))
+
     async def test_another_upload_or_kind_is_not_this_notice(self) -> None:
         await self.add("up1", "lore")
         none = await self.read("lore", "up2")

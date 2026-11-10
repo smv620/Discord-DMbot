@@ -8,6 +8,9 @@
 export const WEB_WAITING_LIVE = false;
 
 export const waitingWords = {
+  // The line under a yes: the bot showed it to the players, or kept it hidden beside another hidden connection (#3974, #3986).
+  shownOne: "👁️ Your players can see this now: it was said at the table.",
+  heldOne: "🙈 Kept hidden from your players, so it can't give away another hidden connection between these two names. To show it, use “👁️ Reveal to players” on the Story Graph.",
   heading: "Waiting for you",
   count: (n: number): string => (n === 1 ? "1 thing is waiting for you." : `${n} things are waiting for you.`),
   none: "Nothing is waiting for you.",

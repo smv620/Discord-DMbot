@@ -13,6 +13,14 @@ export const bulkWords = {
   unit: "answers",
   markedTrue: (n: number): string => `You marked ${n} as true.`,
   markedSecret: (n: number): string => `You marked ${n} as secret.`,
+  shownMany: (n: number): string =>
+    n === 1
+      ? "👁️ 1 of them was said at the table, so your players can see it now."
+      : `👁️ ${n} of them were said at the table, so your players can see them now.`,
+  heldMany: (n: number): string =>
+    n === 1
+      ? "🙈 1 of them is kept hidden from your players, so it can't give away another hidden connection between the same two names. To show it, use “👁️ Reveal to players” on the Story Graph."
+      : `🙈 ${n} of them are kept hidden from your players, so they can't give away another hidden connection between the same two names. To show them, use “👁️ Reveal to players” on the Story Graph.`,
   skipped: (n: number): string => `${plural(n, "fact", "facts")} left for you, because they can't be secret.`,
   refused: (n: number, why: string): string => `${plural(n, "answer", "answers")} could not be saved: ${why}`,
   stoppedEarly: (n: number): string => `Stopped early: ${n} not tried. Check your connection and press again.`,
