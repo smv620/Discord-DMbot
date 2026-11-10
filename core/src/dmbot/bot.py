@@ -10565,6 +10565,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if not e.unnamed
             ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
+            session_at = await self._session_start(gid, table.transcript_session_id)  # (#4043)
             for word, user_id, near in spelled:
                 key = name_key(word)
                 if user_id not in agreed or key in known:
@@ -10594,6 +10595,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=word,
                         source="scan",
                         description=SPELLED_OUT,
+                        session_started_at=session_at,
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a spelled-out name: %s", exc)
@@ -10978,6 +10980,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 found.append(Suggestion(name, times))
         added: list[str] = []
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        # the session each name is made in, for the split-party check (#4043): never a guess
+        session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without",
             len(found), len(kinds), len(found) - len(kinds),
@@ -10994,6 +10998,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=suggestion.name,
                         source="scan",
                         description=f"Heard {suggestion.times} times",
+                        session_started_at=session_at,
                     )
                     break
                 except MemoryRuleError as exc:
@@ -11088,6 +11093,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
         except Exception:
             log.exception("Couldn't keep where a suggested name was said")
+
+    async def _session_start(self, gid: int, session_id: str | None) -> int | None:
+        """When a stored session began, recorded with the names made from it for the split-party
+        check (#4043). None when there is none or it can't be read (the check then falls back to
+        its older guess by time). Never raises."""
+        if session_id is None or self.transcripts is None:
+            return None
+        try:
+            session = await self._session_of(gid, session_id)
+        except Exception as exc:
+            log.warning("Couldn't read the session for its start (%s)", type(exc).__name__)
+            return None
+        return session.started_at if session is not None else None
 
     async def _session_of(self, gid: int, session_id: str) -> TranscriptSession | None:
         assert self.transcripts is not None
