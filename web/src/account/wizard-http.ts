@@ -114,7 +114,9 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
       else if (input.text !== undefined) body["text"] = input.text;
       else throw new WizardError("bad_document");
       const got = (await call("POST", at(guild, "/documents"), body)) as Partial<WizardDoc>;
-      return draftFrom({ documents: [got] }).documents[0]!;
+      // The pictures-only count comes from this upload's own answer only (#4030): a re-read draft never has it.
+      const doc = draftFrom({ documents: [got] }).documents[0]!;
+      return { ...doc, picturePages: typeof got.picturePages === "number" ? got.picturePages : 0 };
     },
     async docRemove(guild, id) {
       await call("DELETE", at(guild, `/documents/${encodeURIComponent(id)}`));

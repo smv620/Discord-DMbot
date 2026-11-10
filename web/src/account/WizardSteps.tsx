@@ -249,6 +249,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const [ticking, setTicking] = useState(false);
+  // The pictures-only count of each file, from the upload's own answer: a re-read draft does not carry it (#4030).
+  const [pictures, setPictures] = useState<Record<string, number>>({});
   const input = useRef<HTMLInputElement>(null);
   const kind = slot === "ruleset" ? "ruleset" : "shared";
   const ticked = draft.rights[kind];
@@ -257,7 +259,8 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
     setBusy(true);
     setProblem("");
     try {
-      await add;
+      const added = await add;
+      if ((added.picturePages ?? 0) > 0) setPictures((was) => ({ ...was, [added.id]: added.picturePages ?? 0 }));
       const next = await api.get(guild);
       if (next) onDraft(next);
     } catch (error) {
@@ -319,6 +322,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
             <li key={d.id}>
               {d.name}{" "}
               {d.status === "ok" ? <span class="small">{d.source === "upload" ? t.counts(d.pages, d.words) : ""}</span> : <span role="alert">{t.unreadable[d.reason] ?? w.failed}</span>}{" "}
+              {d.status === "ok" && (pictures[d.id] ?? 0) > 0 ? <span class="small">{t.picturePages(pictures[d.id] ?? 0)}</span> : null}{" "}
               <button type="button" class="link" onClick={() => void remove(d.id)}>
                 {t.remove}
               </button>
