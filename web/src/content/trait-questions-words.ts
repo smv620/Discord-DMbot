@@ -16,7 +16,7 @@ export const traitWords = {
   saving: "Saving your answer",
   waiting: (n: number): string => `${n} waiting`,
   source: (upload: string): string => (upload ? `Your lore "${upload}" says so` : "Your lore says so"),
-  noPlayers: "Only you see this question. It never goes to your players.",
+  stillWorking: "DMbot is still working on your answer. Reload in a minute to see where it stands.",
   // Said after a yes or a no (the bot's Undo for a yes is on the way).
   kept: (who: string, what: string, lineage: boolean): string => (lineage ? `Done: ${who} is now ${a(what)}.` : `Done: ${what} added to ${who}.`),
   left: (who: string, what: string): string =>

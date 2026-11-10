@@ -19,7 +19,10 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
   const [failed, setFailed] = useState(false);
   const flight = useRef(false);
   const live = useRef(true);
-  useEffect(() => () => void (live.current = false), []);
+  useEffect(() => {
+    live.current = true;
+    return () => void (live.current = false);
+  }, []);
 
   async function read(): Promise<void> {
     if (!api.traitOffers) return;
@@ -44,7 +47,7 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
       await api.answerTrait(campaignRef, offer, how);
       if (live.current) setSaid({ ok: true, text: how === "keep" ? w.kept(offer.who, offer.name.toLowerCase(), offer.kind === "species") : w.left(offer.who, offer.name.toLowerCase()) });
     } catch (error) {
-      if (live.current) setSaid({ ok: false, text: error instanceof ApiError && error.kind === "gone" ? w.gone : w.couldNot });
+      if (live.current) setSaid({ ok: false, text: error instanceof ApiError && error.kind === "gone" ? w.gone : error instanceof ApiError && error.kind === "still-waiting" ? w.stillWorking : w.couldNot });
     } finally {
       await read(); // (what shows is always the API's own)
       flight.current = false;

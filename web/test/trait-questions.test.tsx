@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mockApi } from "../src/account/mock";
 import TraitQuestions from "../src/account/TraitQuestions";
 import { questionOf, traitWords as w } from "../src/content/trait-questions-words";
-import type { TraitOffer } from "../src/account/api";
+import { ApiError, type TraitOffer } from "../src/account/api";
 
 afterEach(cleanup);
 
@@ -70,6 +70,23 @@ describe("the lineage and class question", () => {
     fireEvent.click(await screen.findByRole("button", { name: w.yes }));
     expect((await screen.findByRole("alert")).textContent).toBe(w.couldNot);
     await waitFor(() => expect((screen.getByRole("button", { name: w.yes }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("pressing Yes twice sends one answer", async () => {
+    const { api } = open();
+    const yes = await screen.findByRole("button", { name: w.yes });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await screen.findByText(w.kept("Torvin", "dwarf", true));
+    expect(api.calls.filter((c) => c.startsWith("answerTrait:")).length).toBe(1);
+  });
+
+  it("an answer the bot has not finished says it is still working", async () => {
+    const api = mockApi("table");
+    api.answerTrait = async () => Promise.reject(new ApiError("still-waiting"));
+    render(<TraitQuestions api={api} campaignRef={`100.cmp${(n += 1)}.traits`} id="q" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.yes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.stillWorking);
   });
 
   it("a campaign with none says nothing is left", async () => {
