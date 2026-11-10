@@ -115,6 +115,23 @@ class Sorting(unittest.IsolatedAsyncioTestCase):
         self.assertIn("still a SPOILER", lk.SYSTEM)
         self.assertEqual(lk.line("name", "X", section="[fake] mark"), "[fake mark] name: X")
 
+    def test_a_section_is_one_player_character_s_when_its_heading_is_their_name(self) -> None:
+        owners = {"tavin ash": "t1", "tavin": "t1", "brin": "b1", "major ursa": "b1"}
+        for heading, who in (
+            ("Tavin Ash (Elf Wizard)", "t1"),
+            ("Tavin: the early years", "t1"),
+            ("Tavin's Story", "t1"),
+            ("Brin / Major Ursa (Ursine Rogue)", "b1"),
+            ("How Our Heroes Met", ""),
+            ("Tavin and Brin", ""),  # (two: nobody's own)
+            ("Tavinwood Keep", ""),  # (whole names only)
+            ("Tavin Blackwood (Innkeeper)", ""),  # (an NPC who shares a first name)
+            ("Why Vecna Hunts Tavin", ""),  # (the DM's own secret section about him)
+            ("Brin / Tavin", ""),  # (two characters' names)
+        ):
+            with self.subTest(heading):
+                self.assertEqual(lk.section_owner(heading, owners), who)
+
     def test_prose_is_never_mined_for_numbers_but_a_bare_list_is_read(self) -> None:
         self.assertIsNone(lk.parse("5 is a spoiler, 3 is secret", 10))
         self.assertIsNone(lk.parse('{"world": "all"}', 10))
@@ -398,6 +415,66 @@ class TheUpload(Fixture):
         # (the list follows the flags once the DM confirms a name; until then Undo of the names
         # has nothing but the names to take back)
         self.assertEqual(await self.known("entry", [e.id for e in names.values()]), {})
+
+    async def smart_nothing_known(self) -> None:
+        """The stand-in sort says nothing is common knowledge or the party's."""
+        original = self.ai.complete
+
+        async def routed(system: str, user: str, **kw: Any) -> Reply:
+            if system == lk.SYSTEM:
+                return Reply(json.dumps({"world": [], "party": []}), False)
+            return await original(system, user, **kw)  # type: ignore[no-any-return]
+
+        self.ai.complete = routed  # type: ignore[assignment]
+
+    async def test_a_player_character_s_section_is_known_to_that_character(self) -> None:
+        """#3963 (b): backstory written into campaign lore, under a heading naming Tavin, is
+        Tavin's to know (names now, connections once kept), never the whole party's."""
+        await self.smart_nothing_known()
+        await self.read(lk.SMART, "Tavin (Elf Wizard)\n\n" + TEXT + "\n")
+        names = await self.proposed()
+        knowers = await self.known("entry", [e.id for e in names.values()])
+        self.assertTrue(knowers)
+        self.assertTrue(all(who == [self.tavin] for who in knowers.values()), knowers)
+        self.assertTrue(all(e.hidden_from_players for e in names.values()))  # (not the party's)
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertTrue(waiting)
+        self.assertTrue(all(w.known_by == self.tavin for w in waiting))
+
+    async def test_spoilers_teaches_nobody_even_in_a_character_s_section(self) -> None:
+        await self.read(lk.SPOILERS, "Tavin (Elf Wizard)\n\n" + TEXT + "\n")
+        names = await self.proposed()
+        self.assertEqual(await self.known("entry", [e.id for e in names.values()]), {})
+        self.assertFalse(any(w.known_by for w in await self.store.waiting(GUILD, self.campaign.id)))
+
+    async def test_a_character_s_section_stays_theirs_after_the_dm_adds_it(self) -> None:
+        """End to end: confirmed and kept, Tavin's backstory is still Tavin's alone; another
+        player's character learns nothing of it."""
+        brin = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Brin", type="character", role="player_character",
+                played_by=1002, status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        await self.smart_nothing_known()
+        await self.read(lk.SMART, "Tavin (Elf Wizard)\n\n" + TEXT + "\n")
+        names = await self.confirm_all()
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
+        knowers = await self.known("entry", [e.id for e in names.values()])
+        self.assertTrue(knowers)
+        self.assertTrue(all(who == [self.tavin] for who in knowers.values()), knowers)
+        kept = [r for w in waiting for r in await self.mine(w)]
+        links = await self.known("connection", [r.id for r in kept])
+        self.assertTrue(links)
+        self.assertFalse(any(brin in who for who in links.values()))
+
+    async def test_a_section_naming_no_player_character_teaches_nobody(self) -> None:
+        await self.smart_nothing_known()
+        await self.read(lk.SMART, "Recent Events\n\n" + TEXT + "\n")
+        names = await self.proposed()
+        self.assertEqual(await self.known("entry", [e.id for e in names.values()]), {})
+        self.assertFalse(any(w.known_by for w in await self.store.waiting(GUILD, self.campaign.id)))
 
     async def test_a_character_backstory_keeps_the_choices_off(self) -> None:
         await self.read(lk.WORLD, speaker="Tavin")

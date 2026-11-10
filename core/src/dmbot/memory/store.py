@@ -1433,7 +1433,10 @@ class MemoryStore:
                 )
                 row = await cur.fetchone()
                 held = int(row["n"]) if row else 0
-            return party_mod.Filled(filled.step, filled.party_id, held, filled.both)
+                ended = await party_mod.closed_beside_another(w, filled.party_id)
+            else:
+                ended = 0
+            return party_mod.Filled(filled.step, filled.party_id, held, filled.both, ended)
 
     async def add_deed(
         self,
@@ -4948,14 +4951,14 @@ class MemoryStore:
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
     ) -> party_mod.PartyLinked:
         """The party (#3036, and #3363 for who is in it). The player characters whose players took
-        part in a session (`user_ids`) know each other; **every** confirmed player character is a
-        member of "The party" (`party_mod.members_of`: the newest of each player, and every one
-        whose player is still pending, #3995), whether or not its player spoke in this session, so
-        lore first, a session first or an assignment later give the same members. A player's older
-        character, replaced by a newer one, leaves the party as history (its tie ends, nothing is
-        deleted). By rule, as the DM's standing choice, never by the AI: see `memory.party`. One
-        change (one Undo), idempotent, and a connection that exists in any state, a removed one
-        included, is left as it is."""
+        part in a session (`user_ids`, every character each of them plays: a player may play
+        several at once, the owner 2026-11-10, #3998) know each other; **every** confirmed player
+        character is a member of "The party" (`party_mod.members_of`, its player "pending" too,
+        #3995), whether or not its player spoke in this session, so lore first, a session first or
+        an assignment later give the same members. A character leaves the party only when the DM
+        removes it. By rule, as the DM's standing choice, never by the AI: see `memory.party`. One
+        change (one Undo), idempotent, and a connection that exists in any state, a removed or
+        ended one included, is left as it is."""
         async with self._write(guild_id, campaign_id, DM) as w:
             chars = await party_mod.characters_of(w, user_ids)
             member_ids = await party_mod.members_of(w)
@@ -4969,6 +4972,16 @@ class MemoryStore:
                 [party_mod.KNOWS, chars, chars, party_mod.MEMBER_OF, faction or ""],
             )  # (every status: a connection the DM removed is still "had")
             have = {(r["subject_id"], r["predicate"], r["object_id"]) for r in held}
+            # A character the DM took out of the party (removed, or its membership ended) is not at
+            # the table any more: it makes no new "played together" links (#3998, the reviewer;
+            # one player may play several, so DMbot can't tell a retired one by its player).
+            out = {
+                str(r["subject_id"])
+                for r in held
+                if r["predicate"] == party_mod.MEMBER_OF
+                and (r["status"] != CONFIRMED or r["to_session_at"] is not None)
+            }
+            chars = [c for c in chars if c not in out]
             pairs = members = 0
             for a, b in itertools.combinations(chars, 2):
                 if (a, party_mod.KNOWS, b) in have or (b, party_mod.KNOWS, a) in have:
@@ -4986,22 +4999,6 @@ class MemoryStore:
                         confidence=1.0, status=CONFIRMED, leave=True,
                     )  # fmt: skip
                     members += 1
-                # a player's replaced character leaves the party as history (the newest entry of
-                # a player is the one in; an older one the DM re-assigns later is not reopened)
-                current = set(member_ids)
-                for r in held:
-                    if (
-                        r["predicate"] == party_mod.MEMBER_OF
-                        and r["status"] == CONFIRMED
-                        and r["to_session_at"] is None
-                        and r["subject_id"] not in current
-                        and await party_mod.is_replaced(w, str(r["subject_id"]), current)
-                    ):
-                        await w.update(
-                            RELATIONS,
-                            r["id"],
-                            {"to_session_at": max(w.now, int(r["from_session_at"] or 0) + 1)},
-                        )  # fmt: skip  (a span is never empty)
             return party_mod.PartyLinked(len(chars), pairs, members, made)
 
     async def add_relation(
@@ -5466,6 +5463,28 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             changed = await knowers.learn(w, kind, statement_id, character_id)
             return Written(changed, w.batch)
+
+    async def learn_statements(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        pairs: Sequence[tuple[str, str]],
+        *,
+        source: str,
+    ) -> Written[int]:
+        """Several (statement, character) pairs learned at once (#3963 b: a backstory section's
+        names, by their own character), each as `learn_statement`, in ONE change, so one Undo
+        takes them all back. A pair that is refused (a name gone meanwhile) is skipped and the
+        rest are kept. Only the DM. Returns how many changed."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            changed = 0
+            for statement_id, character_id in pairs:
+                try:  # (`learn` checks before it writes: a refused one leaves the others)
+                    changed += int(await knowers.learn(w, kind, statement_id, character_id))
+                except MemoryRuleError:
+                    continue
+            return Written(changed, w.batch if changed else None)
 
     async def tell_character(
         self, guild_id: int, campaign_id: str, alias_id: str, character_id: str, *, source: str
