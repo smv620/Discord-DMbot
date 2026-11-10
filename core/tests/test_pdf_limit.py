@@ -67,7 +67,9 @@ class TheChild(unittest.IsolatedAsyncioTestCase):
     async def test_a_callers_own_time_limit_is_kept(self) -> None:
         seen: list[float] = []
 
-        def fake_run(parse: object, name: str, raw: bytes, limit_s: float, *_a: object) -> tuple:
+        def fake_run(
+            parse: object, name: str, raw: bytes, limit_s: float, *_a: object
+        ) -> tuple[str, str, str]:
             seen.append(limit_s)
             return ("ok", "", "words")
 
