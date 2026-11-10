@@ -23,7 +23,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.met_store import MetRow, MetStore
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
-from dmbot.ui import logic
+from dmbot.ui import logic, split_words
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -353,6 +353,8 @@ async def name_them(
         if many
         else f"✏️ **{_md(label(row))}** is now **{_md(written.value.name)}**, in your names."
     )
+    if hidden := split_words.for_one(written.split):  # (met while the party was split, #4086)
+        done = f"{done}\n{hidden}"
     await show(interaction, campaign_id, done, in_place=True)
 
 

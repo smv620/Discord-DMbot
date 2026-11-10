@@ -16,7 +16,7 @@ from dmbot.memory.models import CONFIRMED, MemoryRuleError
 from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING, MET_NO_ENTRY
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
-from dmbot.ui import met_list
+from dmbot.ui import met_list, split_words
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 LINE_MS = 1_700_000_001_000
@@ -245,3 +245,110 @@ class TheList(NamesTest):
         self.assertEqual(
             (await self.act("met-name", met_id, text="Rat King", agreed={DM})).error, wa.GONE
         )
+
+
+class MetWhileSplit(NamesTest):
+    """#4086: naming a being met while the party was split follows #4037's rule."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        cid = self.campaign.id
+        self.wren = await self.pc("Wren", DM)  # (7 plays Wren here, as in test_split_names)
+        self.ash = await self.pc("Ash", PLAYER)
+        self.met = MetStore(self.db)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                " VALUES (%s, %s, NULL, 100, 0)",
+                (GUILD, cid),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s500', %s, %s, 500)",
+                (GUILD, cid),
+            )
+
+    async def pc(self, name: str, player: int) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name=name, type="character", role="player_character",
+            played_by=player, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        return made.value.id
+
+    async def split(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                " VALUES (%s, %s, 1, 600, 0)",
+                (GUILD, self.campaign.id),
+            )
+            for character, group in ((self.wren, 1), (self.ash, 2)):
+                await conn.execute(
+                    "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                    " position, at) VALUES (%s, %s, %s, %s, 600)",
+                    (GUILD, self.campaign.id, character, group),
+                )
+
+    async def named(self, speaker: int, line_ms: tuple[int, ...] = (650_000,)) -> Any:
+        await self.met.add(
+            GUILD, self.campaign.id, "s500", [("a wolf", 1, line_ms, (speaker,))],
+            session_started_at=500,
+        )  # fmt: skip
+        (row,) = await self.met.of_session(GUILD, self.campaign.id, "s500")
+        return await self.memory.name_met(
+            GUILD, self.campaign.id, row.id, "Greyfang", opted_in={DM, PLAYER, 99}
+        )
+
+    async def knowers(self, entity_id: str) -> list[str]:
+        known = await self.memory.statement_knowers(GUILD, self.campaign.id, "entry", [entity_id])
+        return known.get(entity_id, [])
+
+    async def test_met_while_together_is_shown(self) -> None:
+        done = await self.named(DM)
+        self.assertEqual((done.split, done.value.hidden_from_players), ("", False))
+
+    async def test_met_in_one_groups_scene_only_that_group_knows_it(self) -> None:
+        await self.split()
+        done = await self.named(DM)  # (Wren's player spoke: group 1)
+        self.assertEqual((done.split, done.value.hidden_from_players), ("group", True))
+        self.assertEqual(await self.knowers(done.value.id), [self.wren])
+        self.assertIn("were there", split_words.for_one(done.split))
+        assert done.batch is not None
+        await self.memory.undo(GUILD, self.campaign.id, done.batch)  # (one Undo takes it all)
+        self.assertIsNone(await self.memory.entity(GUILD, self.campaign.id, done.value.id))
+        self.assertEqual(await self.knowers(done.value.id), [])
+
+    async def test_when_the_group_cant_be_told_it_is_hidden_and_nobody_knows_it(self) -> None:
+        await self.split()
+        done = await self.named(99)  # (nobody's character: can't tell)
+        self.assertEqual((done.split, done.value.hidden_from_players), ("unknown", True))
+        self.assertEqual(await self.knowers(done.value.id), [])
+
+    async def test_met_once_while_together_is_shown_even_if_met_again_split(self) -> None:
+        await self.split()  # (#4037's rule: the whole party met them at 550)
+        done = await self.named(DM, (550_000, 650_000))
+        self.assertEqual((done.split, done.value.hidden_from_players), ("", False))
+
+    async def test_a_line_just_before_the_split_is_together(self) -> None:
+        await self.split()  # (logged at 600 s: a line at 599.999 s is before it)
+        done = await self.named(DM, (599_999,))
+        self.assertEqual(done.split, "")
+
+    async def test_the_website_counts_what_the_dm_is_told(self) -> None:
+        await self.split()
+        await self.met.add(
+            GUILD, self.campaign.id, "s500", [("a wolf", 1, (650_000,), (99,))],
+            session_started_at=500,
+        )  # fmt: skip
+        (row,) = await self.met.of_session(GUILD, self.campaign.id, "s500")
+
+        async def recorded() -> Collection[int]:
+            return {DM, PLAYER, 99}
+
+        waiting = wa.Waiting(claims=None, backstory=None, opted_in=recorded)  # type: ignore[arg-type]
+        out = await wa.apply(
+            self.memory, GUILD, {DM},
+            wa.Action("a" * 32, self.campaign.id, row.id, DM, "met-name", text="Greyfang"),
+            waiting,
+        )  # fmt: skip
+        self.assertEqual(out.counts, "names_split_unknown:1")
