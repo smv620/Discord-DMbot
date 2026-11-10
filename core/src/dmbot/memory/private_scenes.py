@@ -74,10 +74,12 @@ def find(
     lines: Sequence[tuple[int, int]],
     clock: Clock,
     players: Mapping[str, int],
+    session_started_at: int,
 ) -> list[Scene]:
     """The session's private scenes, in the order they began. `lines`: (started_ms, speaker id) in
-    the order spoken, the DM's sidebar and table questions already left out by the caller;
-    `players`: each confirmed player character's id to who plays it. Pure.
+    the order spoken, `started_ms` counted from `session_started_at` (Unix seconds), the DM's
+    sidebar and table questions already left out by the caller; `players`: each confirmed player
+    character's id to who plays it. Pure.
 
     A split session's transcript interleaves the groups (the DM moves between them), so a line of
     another group touches no scene, and two pairs may each have a scene at once. A scene ends when
@@ -95,7 +97,7 @@ def find(
             )
 
     for started_ms, speaker in lines:
-        at = started_ms // 1000
+        at = session_started_at + started_ms // 1000  # (the clock's rows are in real time)
         if not clock.split(at):
             for pair in list(runs):
                 close(pair)
