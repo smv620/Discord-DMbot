@@ -83,6 +83,7 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    live_between,
     reveal_stated_in,
 )
 from dmbot.memory.voice import (
@@ -2143,6 +2144,12 @@ class ClaimStore:
                 assert resolved is not None and not isinstance(other, str)
                 term, from_object, label = resolved
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
+                # A claim the reader could only file under the catch-all, between two entries the
+                # story already holds a connection back for, may be that connection in other
+                # words: it is written held back too, never shown beside it (#3975). The DM
+                # decides with 👁️ Reveal; DMbot never guesses which one it means.
+                live = await live_between(w, subject_id, object_id)
+                hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
@@ -2151,6 +2158,7 @@ class ClaimStore:
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    unrevealed=hold,
                     # whether they've met, from the reader's own words for it (#3881)
                     knows_how=knows_how.how_from(
                         claim.relationship, claim.details, a=claim.subject, b=claim.object
@@ -2159,8 +2167,13 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
-                # (the table said it: a connection the story held back is the party's now)
-                shown = not secret and await reveal_stated_in(w, relation.id)
+                if relation.id in live:
+                    # (the table said a connection the story already has: held back, it is the
+                    # party's now, #3963 c; one already shown stays as it is)
+                    shown = not secret and await reveal_stated_in(w, relation.id)
+                elif hold and not relation.unrevealed:
+                    # a twin the DM once turned down comes back as it was, shown: held back here
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
             row = await w.update(
                 CLAIMS,
                 claim_id,
