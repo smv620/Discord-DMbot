@@ -220,6 +220,11 @@ describe("the wizard", () => {
     fireEvent.change(input, { target: { files: [docx] } });
     expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
     expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
+    const huge = new File(["x"], "bigger.pdf", { type: "application/pdf" });
+    Object.defineProperty(huge, "size", { value: 51 * 1024 * 1024 });
+    fireEvent.change(input, { target: { files: [huge] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
   });
 
   it("a link is not offered in the first release", async () => {
