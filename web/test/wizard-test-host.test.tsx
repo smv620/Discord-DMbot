@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // Until WIZARD_LIVE is flipped, the wizard pages are on only at the development site's own address, so the owner can try the real
 // wizard on the test server (docs/DEPLOY.md); every other address (the public site, a pull request preview, localhost) says "not yet".
-import { cleanup, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import WizardIsland from "../src/account/WizardIsland";
@@ -19,7 +19,7 @@ describe("wizardOn", () => {
     expect(WIZARD_LIVE).toBe(false); // (the real switch stays off; this test is about the host)
     expect(WIZARD_TEST_HOST).toBe("dev.getdmbot.com");
     expect(wizardOn("dev.getdmbot.com")).toBe(true);
-    for (const host of ["getdmbot.com", "www.getdmbot.com", "dev.getdmbot.com.evil.example", "evil-dev.getdmbot.com", "getdmbot.pages.dev", "abc123.getdmbot.pages.dev", "localhost", ""]) {
+    for (const host of ["getdmbot.com", "www.getdmbot.com", "dev.getdmbot.com.evil.example", "evil-dev.getdmbot.com", "getdmbot.pages.dev", "abc123.getdmbot.pages.dev", "localhost", "", "dev.getdmbot.com.", "DEV.GETDMBOT.COM"]) {
       expect(wizardOn(host), host).toBe(false);
     }
   });
@@ -33,7 +33,12 @@ describe("the wizard island", () => {
   it("says not yet on the public address", async () => {
     visit("getdmbot.com", "?server=123");
     render(<WizardIsland />);
-    expect(await screen.findByText(w.notYet)).toBeTruthy();
+    await act(async () => {
+      await Promise.resolve(); // (let the effect run: the first paint is "not yet" anyway)
+    });
+    expect(screen.getByText(w.notYet)).toBeTruthy();
+    expect(screen.queryByText(w.noServer)).toBeNull();
+    expect(screen.queryByText(w.loading)).toBeNull();
   });
 
   it("opens on the development site (and asks for a server when the address has none)", async () => {
@@ -41,5 +46,12 @@ describe("the wizard island", () => {
     render(<WizardIsland />);
     await waitFor(() => expect(screen.queryByText(w.notYet)).toBeNull());
     expect(await screen.findByText(w.noServer)).toBeTruthy();
+  });
+});
+
+describe("nothing else follows the test host", () => {
+  it("the What's new entry for the wizard stays held", async () => {
+    const { entry } = await import("../src/content/whats-new/2026-11-09-set-up-a-campaign-step-by-step");
+    expect(typeof entry.held).toBe("string");
   });
 });

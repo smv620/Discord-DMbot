@@ -4,7 +4,7 @@
 // by step" (docs/GO_LIVE.md).
 export const WIZARD_LIVE = false;
 
-/** The one address the wizard pages are on at before WIZARD_LIVE: the development site, so the owner can try the real wizard on the
+/** A TEST SWITCH, removed when WIZARD_LIVE goes on (Supervisor, 2026-11-10). The one address the wizard pages are on at before WIZARD_LIVE: the development site, so the owner can try the real wizard on the
  * test server (the API only lets this address talk to it, docs/DEPLOY.md). An exact host, never a pattern: getdmbot.com, a pull
  * request preview and localhost stay off. */
 export const WIZARD_TEST_HOST = "dev.getdmbot.com";
