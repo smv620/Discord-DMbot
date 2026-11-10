@@ -558,6 +558,7 @@ from dmbot.ui import (
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import met_list as met_list_ui
+from dmbot.ui import private_scenes_list as private_scenes_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -1787,6 +1788,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(met_list_ui.MetListButton)  # who the party met, unnamed (#4045)
+        self.add_dynamic_items(private_scenes_ui.PrivateScenesButton)  # (#2996 rule 5)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
@@ -10425,6 +10427,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 written.kept,
                 written.not_private,
             )
+            if written.kept and table.screen_channel_id is not None:  # (counts only)
+                try:
+                    await self.post(
+                        table.screen_channel_id,
+                        private_scenes_ui.notice(written.kept),
+                        view=private_scenes_ui.notice_view(cid),
+                    )
+                except Exception as exc:
+                    log.warning("Private scenes: the note was not posted (%s)", type(exc).__name__)
 
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
