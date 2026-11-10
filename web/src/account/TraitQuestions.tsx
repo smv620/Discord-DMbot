@@ -10,6 +10,16 @@ import { questionOf, traitWords as w } from "../content/trait-questions-words";
 import { ApiError, type AccountApi, type TraitOffer } from "./api";
 import SavingWait from "./SavingWait";
 
+/** The plain line for how an answer ended: the bot's own word (`gone`, `refused`, `not-allowed`, `failed`) or the door's `lost`. */
+function sayFailure(error: unknown): string {
+  if (!(error instanceof ApiError)) return w.couldNot;
+  if (error.kind === "still-waiting") return w.stillWorking;
+  if (error.kind === "gone" || error.note === "gone") return w.gone;
+  if (error.note === "refused") return w.refused;
+  if (error.kind === "not-allowed" || error.note === "not-allowed") return w.notAllowed;
+  return w.couldNot; // (failed, lost, anything else: try again in a minute)
+}
+
 const QUOTE_SHOWN = 200; // as Discord's card: the quote stays short
 
 export default function TraitQuestions({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id: string }) {
@@ -47,7 +57,7 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
       await api.answerTrait(campaignRef, offer, how);
       if (live.current) setSaid({ ok: true, text: how === "keep" ? w.kept(offer.who, offer.name.toLowerCase(), offer.kind === "species") : w.left(offer.who, offer.name.toLowerCase()) });
     } catch (error) {
-      if (live.current) setSaid({ ok: false, text: error instanceof ApiError && error.kind === "gone" ? w.gone : error instanceof ApiError && error.kind === "still-waiting" ? w.stillWorking : w.couldNot });
+      if (live.current) setSaid({ ok: false, text: sayFailure(error) });
     } finally {
       await read(); // (what shows is always the API's own)
       flight.current = false;

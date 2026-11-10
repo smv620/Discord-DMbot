@@ -2888,6 +2888,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (webView(ref) !== "dm") throw new ApiError("not-found");
       onLook?.({ waits: null, progress: null });
       if (/\.traits-fail/.test(ref)) throw new ApiError("server");
+      // The bot's own words for an answer that ended badly (`refused`, `not-allowed`, `lost`), as the real client gives them in `note`.
+      const word = /\.traits-(refused|notallowed|lost)/.exec(ref)?.[1];
+      if (word) {
+        const failure = new ApiError(word === "notallowed" ? "not-allowed" : "server");
+        failure.note = word === "notallowed" ? "not-allowed" : word;
+        throw failure;
+      }
       const list = (traitState[ref] ??= pretendTraitOffers());
       const at = list.findIndex((o) => o.entity === offer.entity && o.kind === offer.kind && o.key === offer.key);
       if (at < 0 || /\.traits-gone/.test(ref)) {

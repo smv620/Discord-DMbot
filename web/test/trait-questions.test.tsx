@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mockApi } from "../src/account/mock";
 import TraitQuestions from "../src/account/TraitQuestions";
 import { questionOf, traitWords as w } from "../src/content/trait-questions-words";
-import { ApiError, type TraitOffer } from "../src/account/api";
+import { ApiError, httpApi, type TraitOffer } from "../src/account/api";
 
 afterEach(cleanup);
 
@@ -72,6 +72,18 @@ describe("the lineage and class question", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: w.yes }) as HTMLButtonElement).disabled).toBe(false));
   });
 
+  it.each([
+    [".traits-refused", w.refused],
+    [".traits-notallowed", w.notAllowed],
+    [".traits-lost", w.couldNot],
+    [".traits-gone", w.gone],
+    [".traits-fail", w.couldNot],
+  ])("an answer that ends %s says its plain line", async (ending, line) => {
+    open(ending);
+    fireEvent.click(await screen.findByRole("button", { name: w.yes }));
+    expect((await screen.findByRole("alert")).textContent).toBe(line);
+  });
+
   it("pressing Yes twice sends one answer", async () => {
     const { api } = open();
     const yes = await screen.findByRole("button", { name: w.yes });
@@ -109,5 +121,24 @@ describe("the question's words", () => {
     expect(q.ask).toBe("Add cleric to Ilya's classes?");
     expect(q.has).toBe("DMbot has Ilya as fighter.");
     expect(q.yes).toBe("cleric is added to Ilya's classes; the ones they have stay.");
+  });
+});
+
+describe("the real client reads how an answer ended", () => {
+  const net = (reads: unknown[]) => {
+    const queue = [...reads];
+    return httpApi("https://api.example", (async (_url: string, init: RequestInit) => {
+      const body = init.method === "POST" ? { id: "a".repeat(32) } : (queue.length > 1 ? queue.shift() : queue[0]);
+      return new Response(JSON.stringify(body), { status: init.method === "POST" ? 202 : 200, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch);
+  };
+  const offer = { entity: "e1", kind: "species" as const, key: "dwarf" };
+  it("a done answer gives the change's number", async () => {
+    const api = net([{ state: "waiting" }, { state: "done", batch: 7 }]);
+    expect(await api.answerTrait!("100.cmp1", offer, "keep")).toEqual({ batch: 7 });
+  });
+  it.each(["gone", "refused", "not-allowed", "failed", "lost"])("a failed answer keeps the word %s", async (word) => {
+    const api = net([{ state: "failed", error: word }]);
+    await expect(api.answerTrait!("100.cmp1", offer, "never")).rejects.toMatchObject({ note: word });
   });
 });

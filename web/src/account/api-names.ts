@@ -37,7 +37,7 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, NodeSummary, TraitOffer, UploadNotice } from "./api";
+import type { AccountApi, ApiHelpers, NodeSummary, TraitOffer, UploadNotice, WaitingLook } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -419,9 +419,29 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const base = `/me/campaigns/${encodeURIComponent(ref)}/trait-offers/answer`;
       const queued = (await call("POST", base, { entity: offer.entity, kind: offer.kind, key: offer.key, answer: how })) as { id: string };
       if (!queued?.id) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/${encodeURIComponent(queued.id)}`, (look) => onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }));
-      const batch = (got as { batch?: unknown }).batch;
-      return typeof batch === "number" ? { batch } : {};
+      // Polled here (not by `waitForAnswer`) so the bot's own word for a failure reaches the card: `gone`, `refused`, `not-allowed`, `failed`
+      // (or the door's `lost`) each have their own plain line. The word is in `note`; the card reads it, no page prints it.
+      let misses = 0;
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; batch?: unknown; waits?: WaitingLook["waits"]; progress?: Parameters<typeof countsOf>[0] } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          misses = 0;
+          onLook?.({ waits: got.waits ?? null, progress: countsOf(got.progress) });
+        } catch (error) {
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
+        }
+        if (got?.state === "done") return typeof got.batch === "number" ? { batch: got.batch } : {};
+        if (got?.state === "failed") {
+          const word = got.error ?? "";
+          const failure = new ApiError(word === "gone" ? "gone" : word === "not-allowed" ? "not-allowed" : "server");
+          failure.note = word;
+          throw failure;
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
