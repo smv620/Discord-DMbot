@@ -11,7 +11,7 @@ import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
 // The first release leaves four things out behind small flags (#3953); each test turns on what it needs.
-const flags = vi.hoisted(() => ({ sheets: false, house: false, own: false, drive: false }));
+const flags = vi.hoisted(() => ({ sheets: false, house: false, own: false, drive: false, links: false }));
 vi.mock("../src/content/wizard-switch", () => ({
   WIZARD_LIVE: true,
   get WIZARD_SHEETS_LIVE() {
@@ -26,10 +26,13 @@ vi.mock("../src/content/wizard-switch", () => ({
   get WIZARD_DRIVE_LIVE() {
     return flags.drive;
   },
+  get WIZARD_LINKS_LIVE() {
+    return flags.links;
+  },
 }));
 
 afterEach(() => {
-  flags.sheets = flags.house = flags.own = flags.drive = false;
+  flags.sheets = flags.house = flags.own = flags.drive = flags.links = false;
   cleanup();
   vi.useRealTimers();
 });
@@ -131,11 +134,29 @@ describe("the wizard", () => {
     expect(screen.getByText(w.docs.rightsNeeded)).toBeTruthy();
     fireEvent.click(screen.getByLabelText(w.docs.rights));
     await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
-    const link = screen.getByLabelText(w.docs.linkLabel);
-    fireEvent.input(link, { target: { value: "https://example.com/lore" } });
-    fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
-    expect(await screen.findByText("https://example.com/lore")).toBeTruthy();
+    const file = new File(["the harbour town of Harrowgate and its bells"], "lore.txt", { type: "text/plain" });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } });
+    expect(await screen.findByText("lore.txt")).toBeTruthy();
+    expect(await screen.findByText(w.docs.counts(0, 8))).toBeTruthy();
     expect(api.calls.some((c) => c.startsWith("docAdd:") && c.endsWith(":lore"))).toBe(true);
+  });
+
+  it("a file over the server's limit is refused with the way out before anything is sent", async () => {
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    const big = new File(["x"], "huge.txt", { type: "text/plain" });
+    Object.defineProperty(big, "size", { value: 11 * 1024 * 1024 });
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [big] } });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.unreadable["too_big"]);
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+  });
+
+  it("a link is not offered in the first release", async () => {
+    await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull();
   });
 
   it("the rules step keeps the two sets different and lists the seven books", async () => {
@@ -203,6 +224,7 @@ describe("the wizard", () => {
   });
 
   it("a link must be https", async () => {
+    flags.links = true;
     const api = await start();
     for (let to = 2; to <= 4; to++) await next(to);
     fireEvent.click(screen.getByLabelText(w.docs.rights));

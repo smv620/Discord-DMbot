@@ -14,3 +14,5 @@ export const WIZARD_HOUSE_FILES_LIVE = false;
 export const WIZARD_OWN_RULESET_LIVE = false;
 /** The Google Drive choice in step 1 and its button in the file steps (needs Google's file picker). */
 export const WIZARD_DRIVE_LIVE = false;
+/** A link as a document in the file steps (the server reads a file or text, not a link; links come with the imports of #3953's follow-ups). */
+export const WIZARD_LINKS_LIVE = false;
