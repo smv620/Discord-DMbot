@@ -638,3 +638,40 @@ class TheSupplements(FinishTest):
         order = list(wizard_finish.STAGES)
         self.assertLess(order.index("data_use"), order.index("rules"))
         self.assertLess(order.index("rules"), order.index("party"))
+
+
+class TheDocumentsNotReadYet(FinishTest):
+    async def test_house_homebrew_and_ruleset_documents_are_not_dropped_in_silence(self) -> None:
+        docs = (
+            ("house", "h.txt", "No flanking."),
+            ("homebrew", "b.txt", "A hollow king."),
+            ("ruleset", "r.txt", "My rules."),
+        )
+        await self.draft(docs=docs)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "docs_left"))
+        self.assertEqual(
+            len(await self.campaigns.list_campaigns(GUILD)), 1
+        )  # (the campaign stands)
+        self.assertEqual(await self.sql("SELECT 1 FROM lore_uploads"), [])  # (none was read)
+
+    async def test_a_run_with_only_lore_and_secrets_ends_clean(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["error"], "")
+
+    async def test_a_lore_failure_keeps_its_own_word_over_docs_left(self) -> None:
+        docs = (("lore", "l.txt", "Words."), ("house", "h.txt", "No flanking."))
+        await self.draft(docs=docs)
+        await self.queue()
+        with (
+            patch.object(wizard_finish, "LORE_POLL_S", 0.01),
+            patch.object(wizard_finish, "LORE_WAIT_S", 0.03),
+        ):
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["error"], "lore_failed")
