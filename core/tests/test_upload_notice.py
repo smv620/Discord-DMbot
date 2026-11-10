@@ -61,6 +61,14 @@ class Words(NamesTest):
         self.assertIn("then 👥 Only some characters.", text)
         self.assertNotIn("split_", text)
 
+    def test_names_said_while_the_party_was_split_are_said_never_as_names(self) -> None:
+        """#4037: an import's new names said only while the party was split."""
+        counts = {"npc": 2, "names_split_group": 1, "names_split_unknown": 1}
+        text = un.notice_text("a session", counts, 0)
+        self.assertIn("**2 names**", text)
+        self.assertIn("1 name was said while the party was split", text)
+        self.assertIn("1 name is kept hidden from your players", text)
+
 
 class Undoing(NamesTest):
     async def asyncSetUp(self) -> None:
