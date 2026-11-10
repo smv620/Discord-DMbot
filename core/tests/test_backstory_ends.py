@@ -746,7 +746,38 @@ class WhenKept(NamesTest):
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn("Connection 1 of 3", text)
         self.assertIn("Keep all keeps the 2 from", text)
-        self.assertIn("The other one stays for you to decide one by one.", text)
+        self.assertIn("For you to decide one by one: 1 from another file.", text)
+
+    async def test_the_card_says_how_many_are_from_other_files_and_how_many_dmbot_guessed(
+        self,
+    ) -> None:
+        await self.read()
+        await self.confirm_all()
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+            source="dm",
+        )
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() + 100
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [
+                NewLink(ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other file"),
+                NewLink(ids["Holt"], "ally_of", ids["Edda"], "Holt and Edda", upload="Other file"),
+                NewLink(
+                    ids["Holt"], "friend_of", ids["Edda"], "Holt knew Edda", inferred="they travel"
+                ),
+            ],
+        )
+        it, _ = await self.offer()
+        sent = it.followup.send.await_args
+        text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
+        self.assertIn(
+            "For you to decide one by one: 2 from other files and 1 guessed by DMbot.", text
+        )
 
     async def test_the_counts_for_the_check_are_read_only(self) -> None:
         await self.read()

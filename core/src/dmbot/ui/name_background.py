@@ -2690,13 +2690,20 @@ class ConnectionOffer(_Menu):
         if len(mine) < 2:
             return ""
         keeps = f"{len(mine)} from {_md(c.upload)}"
-        # The count in "Connection 1 of 9" is everything waiting; Keep all is only this upload's, so
-        # say what happens to the rest (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3").
-        rest = len(self.shown) - len(mine)
-        if rest <= 0:
+        # "Connection 1 of 9" counts everything waiting; Keep all is only this upload's, so say what
+        # becomes of the rest and why (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3"):
+        # another file's are never kept unseen, and one DMbot guessed waits for its own Keep.
+        guessed = sum(1 for w in self.shown if w.inferred)
+        elsewhere = sum(1 for w in self.shown if not w.inferred and w.upload != c.upload)
+        left = []
+        if elsewhere:
+            left.append(f"{elsewhere} from {'another file' if elsewhere == 1 else 'other files'}")
+        if guessed:
+            left.append(f"{guessed} guessed by DMbot")
+        if not left:
             return f"\n✅ Keep all keeps the {keeps}."
-        others = "The other one stays" if rest == 1 else f"The other {rest} stay"
-        return f"\n✅ Keep all keeps the {keeps}. {others} for you to decide one by one."
+        decide = " and ".join(left)
+        return f"\n✅ Keep all keeps the {keeps}. For you to decide one by one: {decide}."
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
