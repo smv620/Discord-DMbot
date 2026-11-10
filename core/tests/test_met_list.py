@@ -289,9 +289,9 @@ class MetWhileSplit(NamesTest):
                     (GUILD, self.campaign.id, character, group),
                 )
 
-    async def named(self, speaker: int) -> Any:
+    async def named(self, speaker: int, line_ms: tuple[int, ...] = (650_000,)) -> Any:
         await self.met.add(
-            GUILD, self.campaign.id, "s500", [("a wolf", 1, (650_000,), (speaker,))],
+            GUILD, self.campaign.id, "s500", [("a wolf", 1, line_ms, (speaker,))],
             session_started_at=500,
         )  # fmt: skip
         (row,) = await self.met.of_session(GUILD, self.campaign.id, "s500")
@@ -315,8 +315,7 @@ class MetWhileSplit(NamesTest):
         self.assertIn("were there", split_words.for_one(done.split))
         assert done.batch is not None
         await self.memory.undo(GUILD, self.campaign.id, done.batch)  # (one Undo takes it all)
-        entity = await self.memory.entity(GUILD, self.campaign.id, done.value.id)
-        self.assertTrue(entity is None or entity.status != CONFIRMED)
+        self.assertIsNone(await self.memory.entity(GUILD, self.campaign.id, done.value.id))
         self.assertEqual(await self.knowers(done.value.id), [])
 
     async def test_when_the_group_cant_be_told_it_is_hidden_and_nobody_knows_it(self) -> None:
@@ -324,3 +323,32 @@ class MetWhileSplit(NamesTest):
         done = await self.named(99)  # (nobody's character: can't tell)
         self.assertEqual((done.split, done.value.hidden_from_players), ("unknown", True))
         self.assertEqual(await self.knowers(done.value.id), [])
+
+    async def test_met_once_while_together_is_shown_even_if_met_again_split(self) -> None:
+        await self.split()  # (#4037's rule: the whole party met them at 550)
+        done = await self.named(DM, (550_000, 650_000))
+        self.assertEqual((done.split, done.value.hidden_from_players), ("", False))
+
+    async def test_a_line_just_before_the_split_is_together(self) -> None:
+        await self.split()  # (logged at 600 s: a line at 599.999 s is before it)
+        done = await self.named(DM, (599_999,))
+        self.assertEqual(done.split, "")
+
+    async def test_the_website_counts_what_the_dm_is_told(self) -> None:
+        await self.split()
+        await self.met.add(
+            GUILD, self.campaign.id, "s500", [("a wolf", 1, (650_000,), (99,))],
+            session_started_at=500,
+        )  # fmt: skip
+        (row,) = await self.met.of_session(GUILD, self.campaign.id, "s500")
+
+        async def recorded() -> Collection[int]:
+            return {DM, PLAYER, 99}
+
+        waiting = wa.Waiting(claims=None, backstory=None, opted_in=recorded)  # type: ignore[arg-type]
+        out = await wa.apply(
+            self.memory, GUILD, {DM},
+            wa.Action("a" * 32, self.campaign.id, row.id, DM, "met-name", text="Greyfang"),
+            waiting,
+        )  # fmt: skip
+        self.assertEqual(out.counts, "names_split_unknown:1")

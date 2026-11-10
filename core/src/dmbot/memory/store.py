@@ -2233,8 +2233,9 @@ class MemoryStore:
         check. `opted_in`: who is recorded now, read at the press; a row citing anyone else is
         deleted and `MET_GONE` (its words must not become an entry's note). Shown to the players
         like any name the DM adds when the party was together: they met them at the table (the
-        owner's rule). An Undo of the batch takes the entry (and its rank and knowers, by cascade)
-        back; the row is not put back."""
+        owner's rule). Met only while split, in the DM's lines alone, it usually can't be placed
+        (the DM plays no character), so it is hidden and the DM is told so. An Undo of the batch
+        takes the entry (and its rank and knowers, by cascade) back; the row is not put back."""
         name = clean_text(name)
         if not name or PRONOUNCED.search(name):  # how to say it is not how to spell it (#2332)
             raise MemoryRuleError(MET_BAD_NAME)
@@ -2274,10 +2275,10 @@ class MemoryStore:
             )  # fmt: skip
             alias = _new_alias(w, entity["id"], name, "full", CONFIRMED, False, None)
             await w.insert(ALIASES, alias)
-            if scene:
-                await learn_names_in_scene(w, str(entity["id"]), scene)
+            learned = await learn_names_in_scene(w, str(entity["id"]), scene) if scene else 0
             await _met_done(w, row, str(entity["id"]), rank_always=True)
-            split = "" if scene is None else ("group" if scene else "unknown")
+            # (told by who learned it, as `confirm_entity` does: a refused character learns nothing)
+            split = "" if scene is None else ("group" if learned else "unknown")
             return Written(_entity(entity), w.batch, split=split)
 
     async def _purge_met(self, guild_id: int, campaign_id: str, opted_in: Collection[int]) -> None:
@@ -7068,12 +7069,7 @@ async def split_scene(
     costs one 👁️ press, a wrong show leaks). No clock: together."""
     if session_started_at is None:
         return None
-    cur = await w.conn.execute(
-        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
-        " AND position IS NOT NULL LIMIT 1",
-        (w.guild_id, w.campaign_id),
-    )
-    if await cur.fetchone() is None:
+    if not await _ever_split(w):
         return None  # (the party was never split: the common case, one read)
     numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
     rows = []
@@ -7099,22 +7095,33 @@ async def split_scene_at_ms(
     line_ms: Sequence[int],
     speaker_ids: Sequence[int] = (),
 ) -> tuple[str, ...] | None:
-    """`split_scene` for lines kept by when they began (`memory_met.line_ms`, #4086), not by their
-    number: the same answer, the same rule (None together, the one group's player characters, or
-    an empty tuple when it can't be told). No line kept: fails closed as `split_scene` does."""
-    if session_started_at is None:
-        return None
+    """Where the party was when it met a being (`memory_met.line_ms`, #4086), by #4037's rule for
+    a new name: None (shown) when any of its lines was said while the party was together (the
+    whole party met them then); the one group's player characters when every line was in that
+    group's scene; an empty tuple (hidden, nobody knows) when it can't be told. `line_ms` are the
+    lines' starts in Unix ms, as `transcript_lines.started_ms`. No line kept: fails closed, hidden
+    when the clock was split during the session, or at all when the session's start is unknown."""
+    if not await _ever_split(w):
+        return None  # (the party was never split: the common case, one read)
+    moments = sorted({int(ms) // 1000 for ms in line_ms})
+    if not moments:
+        if session_started_at is None:
+            return ()  # (no line and no session start: can't tell, so nobody knows)
+        return () if await _split_during_session(w, session_started_at) else None
+    for at in moments:
+        if not await _split_at(w, at):
+            return None  # (met once while together: the whole party met them)
+    return await _scene_at(w, moments, speaker_ids)
+
+
+async def _ever_split(w: Changes) -> bool:
+    """Whether the campaign's clock was ever split (one read; the common answer is no)."""
     cur = await w.conn.execute(
         "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
         " AND position IS NOT NULL LIMIT 1",
         (w.guild_id, w.campaign_id),
     )
-    if await cur.fetchone() is None:
-        return None  # (the party was never split: the common case, one read)
-    moments = sorted({int(ms) // 1000 for ms in line_ms})
-    if not moments:
-        return () if await _split_during_session(w, session_started_at) else None
-    return await _scene_at(w, moments, speaker_ids)
+    return await cur.fetchone() is not None
 
 
 async def _scene_at(
@@ -7199,12 +7206,7 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
         or row.get("role") == PLAYER_CHARACTER
     ):
         return None
-    cur = await w.conn.execute(
-        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
-        " AND position IS NOT NULL LIMIT 1",
-        (w.guild_id, w.campaign_id),
-    )
-    if await cur.fetchone() is None:
+    if not await _ever_split(w):
         return None  # (the party was never split: the common case, one read)
     # The session it came from: the newest session that began at or before the entry was made
     # (the story reader and the name scan run after a session, before the next one begins). The
