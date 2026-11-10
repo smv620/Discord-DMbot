@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at d3ef2f73 (step 12c: migrations 0393 to 0396; DMBOT_SITE_ASK off, Cloudflare values empty). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 12c exit 0 (counts on #3545). Full entry: docs/testing-history.log.
+core + web-api at 9d74d20f (step 13a: migrations 0397 to 0401; DMBOT_THEATRE_ON on (already set in .env); theatre measure done, see #3244; DMBOT_SITE_ASK off). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 12c exit 0 (counts on #3545). Full entry: docs/testing-history.log.
 
 Switches off: DMBOT_WEB_LORE, DMBOT_WEB_RECAP_STYLE, DMBOT_WEB_PAUSE, DMBOT_STORY_FAMILY_ONLY (unset = off).
 
