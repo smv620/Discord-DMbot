@@ -230,6 +230,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 'reveals-1', 'm', 'proposed', 5)",
                 (g, c, "e" * 32, A, A, SPEAKER),
             ),
+            "memory_private_scenes": (
+                "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
+                " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids, status,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 2000, 2,"
+                " ARRAY[%s::bigint, 4242], 'kept', 5)",
+                (g, c, "d" * 32, A, B, SPEAKER),
+            ),
             "memory_scenes": (
                 "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
                 " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"

@@ -36,7 +36,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from dmbot import ai_feed
+from dmbot import ai_feed, credits
 from dmbot.alerts import Problem, raise_alert
 
 log = logging.getLogger(__name__)
@@ -799,6 +799,9 @@ class AnthropicClient:
             )
             raise
         ai_feed.done(entry, reply.text)
+        # Charged for what the service reported, even when the answer was cut: it billed DMbot for
+        # those tokens. Free outside a job that prepares material (#4005).
+        await credits.record(reply, feature)
         return reply
 
     async def _complete(

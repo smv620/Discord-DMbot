@@ -42,6 +42,7 @@ from dmbot.memory.name_documents import (
     decode_text,
     kind_of_file,
     max_bytes_for,
+    picture_note,
     too_big_words,
 )
 from dmbot.memory.name_list import (
@@ -57,6 +58,7 @@ from dmbot.memory.name_list import (
     render_files,
     template,
 )
+from dmbot.memory.picture_read import PictureText
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import all_names, logic, name_unnamed, split_words
@@ -564,6 +566,10 @@ class Upload:
     label: str  # "report.pdf", "your list", "the linked page or file"
     document: bool = False  # not meant as a names list: straight to the AI
     source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
+    note: str = ""  # pages that held only pictures, in counts (#4000); "" when none
+    # The words read from its pictures (#4003), one per picture in page order, given by the
+    # picture reading (CloudDev-lead's half); read only with DMBOT_PICTURE_NAMES on.
+    pictures: tuple[PictureText, ...] = ()
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)
@@ -572,7 +578,8 @@ _PARSING = READING  # the one limit on documents read at once, shared (document_
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
     async with _PARSING:
         try:
-            return Upload(await read_document(filename, raw), label, True), None
+            text = await read_document(filename, raw)
+            return Upload(text, label, True, note=picture_note(text)), None
         except DocumentError as exc:
             return None, str(exc)
 
@@ -1386,6 +1393,8 @@ class NearQuestions(_Questions):
             item.answer = f"couldn't join them. {exc}"
             return
         item.answer = f"🔗 now another name for **{_short(item.like)}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            item.answer = f"{item.answer} {secret}"
         if one and written.batch is not None:  # its own message, so Undo outlives this one
             view = discord.ui.View(timeout=None)
             view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))

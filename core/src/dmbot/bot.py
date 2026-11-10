@@ -43,6 +43,8 @@ from dmbot import (
     alerts,
     auto_script,
     campaign_cap,
+    credits,
+    disk_check,
     entitlements,
     features,
     fightbot,
@@ -59,6 +61,7 @@ from dmbot import (
     table_chat,
     trait_answer,
     trial_jobs,
+    upload_undo,
     usage,
     wizard_finish,
 )
@@ -353,6 +356,8 @@ from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
+from dmbot.memory.private_scene_store import PrivateScenes
+from dmbot.memory.private_scenes_backup import PrivateScenesSection
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
@@ -552,6 +557,7 @@ from dmbot.ui import (
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import met_list as met_list_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -699,8 +705,11 @@ SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered
 SCRIPT_MAKE_EVERY_S = 5
 TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied (#3946)
 TRAIT_ANSWER_EVERY_S = 5
+UPLOAD_UNDO_FIRST_S = 30  # the website's "Undo this upload" presses are applied (#4078)
+UPLOAD_UNDO_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
 WIZARD_FINISH_EVERY_S = 5
+DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
@@ -1022,6 +1031,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What DMbot asks the AI during a lore read or an import, for the DM's live window (#3710):
         # off unless DMBOT_AI_FEED is on, and then only inside a job's `ai_feed.job(...)`.
         ai_feed.configure(recaps.db if recaps is not None else None, on=settings.ai_feed_on)
+        # What a call costs in AI credits, for the calls made because a DM added material (#4005):
+        # it needs the campaign's owner, found the first time a job charges.
+        credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
         self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # The website's House-rules file requests (#3087), one at a time per server like lore.
@@ -1774,6 +1786,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
+        self.add_dynamic_items(met_list_ui.MetListButton)  # who the party met, unnamed (#4045)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
@@ -1907,7 +1920,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
+            self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
+            self._watched(self._upload_undo_loop(), "upload-undos"),
             *(
                 [
                     self._watched(self._auto_script_loop(), "auto-scripts"),
@@ -3295,6 +3310,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("deeds to record", lambda: self.offer_deeds(table)),
             # What the characters learned in the session, for the DM to keep (#2996).
             ("reveals to keep", lambda: self.offer_reveals(table)),
+            # Private scenes between two player characters (#2996 rule 5): before the importance
+            # step, which will weigh them; no AI call. Off unless its switch is on.
+            ("private scenes", lambda: self.find_private_scenes(table)),
             # How much each entry the session touched matters, and its roles (#3172): after the
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
@@ -9543,6 +9561,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(
                     notice_channel, held_back_text(report.new_names), view=review_view(cid)
                 )
+            if report.met_made and notice_channel is not None:  # (#4045: counts only)
+                try:
+                    await self.post(
+                        notice_channel,
+                        met_list_ui.notice(report.met_made),
+                        view=met_list_ui.notice_view(cid),
+                    )
+                except Exception as exc:
+                    log.warning("Met list: the note was not posted (%s)", type(exc).__name__)
             return "limit" if report.stopped or report.failed else "done"
 
     async def read_put_back_lines(self, guild_id: int) -> None:
@@ -10369,6 +10396,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Reveals: %d waiting for the DM", count)
                 await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
+    async def find_private_scenes(self, table: Table) -> None:
+        """After a session (#2996 rule 5), only with DMBOT_PRIVATE_SCENES: find the stretches when
+        the party was split and two player characters, played by two different people, were alone
+        together and both spoke, and keep them (ids and times, never words). Found by code from
+        the game clock and who spoke, never by the AI, so it costs no call. Only for a campaign
+        whose plan has story memory; the log gets counts only."""
+        if (
+            not self.settings.private_scenes_on
+            or self.memory is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            written = await PrivateScenes(self.memory._db).write_session(
+                gid, cid, table.transcript_session_id, await self.consent.consenting(gid),
+                int(time.time()),
+            )  # fmt: skip
+            log.info(
+                "Private scenes: %d kept, %d the DM said are not private",
+                written.kept,
+                written.not_private,
+            )
+
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
         connection?", when the table has kept using the same words (3 or more times) on
@@ -10562,6 +10619,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if not e.unnamed
             ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
+            session_at = await self._session_start(gid, table.transcript_session_id)  # (#4043)
             for word, user_id, near in spelled:
                 key = name_key(word)
                 if user_id not in agreed or key in known:
@@ -10591,6 +10649,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=word,
                         source="scan",
                         description=SPELLED_OUT,
+                        session_started_at=session_at,
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a spelled-out name: %s", exc)
@@ -10975,6 +11034,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 found.append(Suggestion(name, times))
         added: list[str] = []
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        # the session each name is made in, for the split-party check (#4043): never a guess
+        session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without",
             len(found), len(kinds), len(found) - len(kinds),
@@ -10991,6 +11052,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=suggestion.name,
                         source="scan",
                         description=f"Heard {suggestion.times} times",
+                        session_started_at=session_at,
                     )
                     break
                 except MemoryRuleError as exc:
@@ -11085,6 +11147,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
         except Exception:
             log.exception("Couldn't keep where a suggested name was said")
+
+    async def _session_start(self, gid: int, session_id: str | None) -> int | None:
+        """When a stored session began, recorded with the names made from it for the split-party
+        check (#4043). None when there is none or it can't be read (the check then falls back to
+        its older guess by time). Never raises."""
+        if session_id is None or self.transcripts is None:
+            return None
+        try:
+            session = await self._session_of(gid, session_id)
+        except Exception as exc:
+            log.warning("Couldn't read the session for its start (%s)", type(exc).__name__)
+            return None
+        return session.started_at if session is not None else None
 
     async def _session_of(self, gid: int, session_id: str) -> TranscriptSession | None:
         assert self.transcripts is not None
@@ -11823,10 +11898,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if not now:
                 self._import_left_told.pop(cid, None)
 
+    async def _owner_of_campaign(self, gid: int, campaign_id: str) -> int | None:
+        """The account that owns a campaign, or None (for the AI credits ledger, #4005)."""
+        campaign = await self.campaigns.get(gid, campaign_id)
+        return None if campaign is None else campaign.owner_user_id
+
     async def _extract_import(self, gid: int, ready: Ready) -> str:
         """`_read_import_story`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING),
+        ):
             return await DMBot._read_import_story(self, gid, ready)
 
     async def _read_import_story(self, gid: int, ready: Ready) -> str:
@@ -12297,7 +12380,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES),
+        ):
             return await DMBot._scan_import_lines(self, gid, ready)
 
     async def _scan_import_lines(self, gid: int, ready: Ready) -> list[str]:
@@ -13982,6 +14068,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
 
+    async def _upload_undo_loop(self) -> None:
+        """Every few seconds: apply the website's "Undo this upload" presses (#4078;
+        `upload_undo`). An undo is a few writes and a chain of Undos, so one pass per server; a
+        server's trouble never stops the others."""
+        await asyncio.sleep(UPLOAD_UNDO_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    while await upload_undo.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("An upload undo round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(UPLOAD_UNDO_EVERY_S)
+
     async def _trait_answer_loop(self) -> None:
         """Every few seconds: apply the website's lineage and class answers (#3946;
         `trait_answer`). Quick work (no AI), so one pass per server; a server's trouble never
@@ -13995,6 +14095,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception as exc:
                     log.warning("A lineage answer round failed (%s)", type(exc).__name__)
             await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
+
+    async def _disk_check_loop(self) -> None:
+        """Every ten minutes: look at how full the disks core can see are, and say so before one is
+        full (#4075; `disk_check`). Counts only in the log; the owner is told by the usual alert."""
+        watch = disk_check.DiskWatch(
+            disk_check.places_for(self.settings.data_dir),
+            warn_pct=self.settings.disk_warn_pct,
+            alert_pct=self.settings.disk_alert_pct,
+        )
+        await asyncio.sleep(DISK_CHECK_FIRST_S)
+        while True:
+            await disk_check.look(watch)  # (never raises)
+            await asyncio.sleep(disk_check.CHECK_EVERY_S)
 
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
@@ -14948,6 +15061,7 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
+    campaigns.register_section(PrivateScenesSection())  # private scenes (#2996 rule 5)
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)

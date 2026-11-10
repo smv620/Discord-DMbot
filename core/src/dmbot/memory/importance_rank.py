@@ -44,7 +44,9 @@ READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
 # A being met in play that the story never named, once the DM names or joins it from the list of
 # them (#3172 slice 5, #4045): it enters at rank 0 with this reason.
 MET_IN_PLAY = "met_in_play"
-REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY)
+# A rank PlotBot raised for a private scene between two player characters (#2996 rule 5).
+PRIVATE_SCENE = "private_scene"
+REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY, PRIVATE_SCENE)
 ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)
 # An old backup's `basis` code, as migration 0388 mapped the rows already stored.
 OLD_BASIS = frozenset({
