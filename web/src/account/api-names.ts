@@ -39,6 +39,18 @@ import {
 import { countsOf, sharedOf } from "./api";
 import type { AccountApi, ApiHelpers, NodeSummary, UploadNotice } from "./api";
 
+/** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
+export function countOf(counts: unknown, key: string): number | undefined {
+  if (typeof counts !== "string") return undefined;
+  for (const [, name, digits] of counts.matchAll(/(?<![a-z_])([a-z_]+):(\d+)/g)) {
+    if (name === key) {
+      const n = Number(digits);
+      return n > 0 ? n : undefined;
+    }
+  }
+  return undefined;
+}
+
 export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
     namesFixed: async (recapRef) =>
@@ -389,7 +401,16 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       );
       const kept = (got as { kept?: unknown }).kept;
       const batch = (got as { batch?: unknown }).batch; // the change an answer made, for its Undo (#3645)
-      return { ...(typeof kept === "number" ? { kept } : {}), ...(typeof batch === "number" ? { batch } : {}) };
+      // Whether the bot showed the connection to the players, or kept it hidden (#3974, #3986); only a count above 0 is said.
+      const counts = (got as { counts?: unknown }).counts;
+      const shown = countOf(counts, "shown");
+      const held = countOf(counts, "held");
+      return {
+        ...(typeof kept === "number" ? { kept } : {}),
+        ...(typeof batch === "number" ? { batch } : {}),
+        ...(shown !== undefined ? { shown } : {}),
+        ...(held !== undefined ? { held } : {}),
+      };
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,

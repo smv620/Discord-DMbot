@@ -1022,17 +1022,20 @@ class MatchButton(
         await show_matches(interaction, campaign.id)
 
 
-def finished_text(file_name: str, state: ReadState, counts: Counts | None) -> str:
-    """The line posted on the DM screen when a read ends."""
-    name = discord.utils.escape_markdown(file_name[:NAME_SHOWN])
+def finished_text(
+    file_name: str, state: ReadState, counts: Counts | None, *, named: bool = True
+) -> str:
+    """The line posted when a read ends. `named=False` (the DM Bot channel, which the campaign's
+    people can read, #3874) says "your file" instead of the file's name."""
+    name = f"**{discord.utils.escape_markdown(file_name[:NAME_SHOWN])}**" if named else "your file"
     if state.status == "done":
         found = found_line(counts or Counts())
         return (
-            f"📖 DMbot finished reading **{name}**: {found}. Open **Shared story** in Settings, "
+            f"📖 DMbot finished reading {name}: {found}. Open **Shared story** in Settings, "
             "then **Give your adventure**, to see what it read."
         )
     words = STOPPED_WORDS.get(state.stop_reason, CARRY_ON)
-    return f"📖 DMbot stopped reading **{name}** at {state.percent}%. {words}"
+    return f"📖 DMbot stopped reading {name} at {state.percent}%. {words}"
 
 
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}

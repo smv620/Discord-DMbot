@@ -44,7 +44,9 @@ const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.s
 
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
-type Said = { ok: boolean; text: string; n: number } | null;
+type Said = { ok: boolean; text: string; n: number; more?: string } | null;
+/** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
+type Answered = { kept?: number; shown?: number; held?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -117,7 +119,7 @@ export default function WebWaiting({
 
   async function send(
     answer: WaitingAnswer,
-    ok: string | ((kept?: number) => string),
+    ok: string | ((got: Answered) => string),
     stage: string = w.savingStage,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
@@ -127,7 +129,9 @@ export default function WebWaiting({
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
-      setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
+      // A yes on one connection says whether it was shown to the players or kept hidden (the second line).
+      const more = answer.kind === "claim" && answer.action === "confirm" ? (got.shown ? w.shownOne : got.held ? w.heldOne : undefined) : undefined;
+      setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
       onChanged?.();
     } catch (error) {
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
@@ -192,6 +196,11 @@ export default function WebWaiting({
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {said?.ok && said.more ? (
+        <p class="ok" role="status">
+          <span key={`${said.n}-more`}>{said.more}</span>
+        </p>
+      ) : null}
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
@@ -469,7 +478,7 @@ export default function WebWaiting({
                       disabled={busy}
                       onClick={() =>
                         void send({ kind: "backstory", action: "keep_all", ids },
-                          (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
+                          (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
                         )
                       }

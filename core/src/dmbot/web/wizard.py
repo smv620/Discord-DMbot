@@ -44,6 +44,41 @@ KNOWN = frozenset(
 )  # fmt: skip
 
 
+# The pages speak camelCase (the website's own style); the database keeps snake_case. One place
+# maps both ways, so neither side learns the other's spelling (#3955, #3956).
+_TO_STORED = {
+    "pageTextUsed": "page_text_used",
+    "dataUse": "data_use",
+    "partyName": "party_name",
+    "sheetUrl": "sheet_url",
+}
+_TO_PAGE = {stored: page for page, stored in _TO_STORED.items()}
+
+
+def _rename(value: Any, names: dict[str, str]) -> Any:
+    """The answers with their keys renamed (and each character's), values untouched."""
+    if isinstance(value, list):
+        return [_rename(item, names) for item in value]
+    if isinstance(value, dict):
+        return {names.get(str(k), k): _rename(v, names) for k, v in value.items()}
+    return value
+
+
+def from_page(patch: dict[str, Any]) -> dict[str, Any]:
+    """A page's answers in the database's spelling. A key already in the database's spelling is
+    refused like any other unknown one, so there is one spelling on the wire."""
+    renamed = _rename(patch, _TO_STORED)
+    if any(k in patch and k in _TO_PAGE for k in patch):
+        raise RecapError("bad_key")
+    return renamed if isinstance(renamed, dict) else {}
+
+
+def to_page(answers: dict[str, Any]) -> dict[str, Any]:
+    """The stored answers in the page's spelling."""
+    renamed = _rename(answers, _TO_PAGE)
+    return renamed if isinstance(renamed, dict) else {}
+
+
 def _text(value: Any, limit: int, key: str) -> str:
     # A NUL character is refused: the database cannot hold it, and it would come back as a crash
     # instead of a word the page shows.
@@ -148,6 +183,19 @@ def _ok(found: dict[str, Any] | None) -> dict[str, Any]:
     if status != "ok":
         raise RecapError(status if status in KNOWN else "failed")
     return found
+
+
+async def has_room(db: Database, session: Session, *, now: int, enforce_plans: bool) -> bool:
+    """Whether the signed-in account's plan has room for one more campaign: the check the + New
+    campaign button makes (`campaign_cap.room`), made when a draft starts so the DM is told
+    before nine steps, and again by the bot at Finish. With plans not enforced there is always
+    room."""
+    if not enforce_plans:
+        return True
+    from dmbot import campaign_cap
+
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        return (await campaign_cap.room(conn, session.user_id, now)).fits(1)
 
 
 async def get(db: Database, session: Session, guild_id: int) -> dict[str, Any] | None:

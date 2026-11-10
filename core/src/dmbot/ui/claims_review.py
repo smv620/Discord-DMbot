@@ -36,6 +36,35 @@ REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters
 )
 YES, NO, HIDE = "✅", "❌", "🤫"
+# A held-back connection the table stated, now shown to the players (#3963 c): said every time.
+SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
+# Kept hidden beside a connection the story already hides between the same two (#3975, #3979).
+HELD_NOW = (
+    "🙈 Kept hidden from your players, so it can't give away another hidden connection between "
+    "these two names. To show it: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "then 👁️ Everyone at the table."
+)
+
+
+def shown_line(n: int) -> str:
+    """The "All true" summary's line for the held-back connections it showed (#3963 c)."""
+    return (
+        f"👁️ {n} of them {'was' if n == 1 else 'were'} said at the table, so your players can see "
+        f"{'it' if n == 1 else 'them'} now."
+    )
+
+
+def held_line(n: int) -> str:
+    """The "All true" summary's line for the connections kept hidden beside a hidden one (#3979)."""
+    one = n == 1
+    return (
+        f"🙈 {n} of them {'is' if one else 'are'} kept hidden from your players, so "
+        f"{'it' if one else 'they'} can't give away another hidden connection between the same "
+        f"two names. To show {'it' if one else 'them'}: open either name, ✏️ Edit a connection…, "
+        f"👁️ Who knows this?, then 👁️ Everyone at the table."
+    )
+
+
 ALL_TRUE, ALL_SECRET = (
     f"{YES} All true",
     f"{HIDE} All secret",
@@ -372,6 +401,10 @@ class ClaimsReview(_Menu):
                     if secret
                     else f"{YES} Remembered: {saying}."
                 )
+                if result.shown:
+                    done += f"\n{SHOWN_NOW}"
+                if result.held:
+                    done += f"\n{HELD_NOW}"
                 await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
@@ -450,7 +483,7 @@ async def _answer_page(
 ) -> None:
     """The writing and the page that follows, for `_decide_all_on` (which holds the view's lock)."""
     claims = ClaimStore(memory)
-    kept = flagged = failed = 0
+    kept = flagged = failed = shown = held = 0
     made: list[tuple[str, int]] = []  # (claim, batch) of what this press remembered
     refused: dict[str, int] = {}
     for claim in targets:
@@ -480,6 +513,8 @@ async def _answer_page(
             else f"{YES} Remembered: {saying}."
         )
         kept += 1
+        shown += result.shown
+        held += result.held
         await _watch_story(interaction, campaign, result.claim.fact_id)
         flagged += bool(result.flags)
     if made:  # a press that kept nothing leaves the earlier Undo alone
@@ -490,6 +525,10 @@ async def _answer_page(
         else f"{YES} Saved {kept} as true."
     )
     lines = [saved]
+    if shown:
+        lines.append(shown_line(shown))
+    if held:
+        lines.append(held_line(held))
     for message, count in refused.items():
         lines.append(f"{count} not saved: {message}")
     if failed:
