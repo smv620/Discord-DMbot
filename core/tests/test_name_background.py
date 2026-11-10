@@ -675,6 +675,32 @@ class ThePath(NamesTest):
         (entity,) = await self.entities()
         self.assertEqual((entity.description, entity.id), (note, made[name_key("Red Larch")]))
 
+    async def test_held_picture_names_are_stored_alone_unsplit_and_never_folded(self) -> None:
+        """#4003, the reviewer's two holes: a list-shaped picture name is one name to check (never
+        split into parts with no note), and a held "North Haven" beside the text's "Northhaven" is
+        its own name to check (never folded into the text's place as an other name)."""
+        from dmbot.memory.picture_names import ToCheck
+        from dmbot.memory.picture_read import Held, Sorted
+
+        text_place = bg.Found("Northhaven", "place", (), (), "")
+        sorted_ = Sorted(held=[
+            Held(bg.Found("Aldmoor, Quillgate, Fenwick", "place", (), (), ""), ToCheck(), 3, ""),
+            Held(bg.Found("North Haven", "place", (), (), ""), ToCheck("Northhaven"), 4, ""),
+        ])  # fmt: skip
+        stored = await ui_bg.store(self.memory, self.campaign, [text_place])
+        held = await ui_bg._store_held(
+            self.memory, self.campaign, sorted_, set(), [text_place], stored, "map.pdf"
+        )
+        self.assertEqual(len(held), 2)
+        entities = {e.name: e for e in await self.entities()}
+        self.assertEqual(
+            set(entities), {"Northhaven", "Aldmoor, Quillgate, Fenwick", "North Haven"}
+        )
+        self.assertIn("Is this Northhaven?", entities["North Haven"].description)
+        self.assertEqual({entities[n].id for n in ("North Haven", "Aldmoor, Quillgate, Fenwick")},
+                         held)  # fmt: skip
+        self.assertEqual(ui_bg.not_held(stored, held), {"place": [entities["Northhaven"].id]})
+
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
         """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
         guess or a backstory never does; a line past the column's 120 letters is left to the DM,

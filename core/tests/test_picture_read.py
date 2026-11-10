@@ -84,8 +84,17 @@ class NeverAddedByItself(unittest.TestCase):
         from dmbot.ui.name_background import not_held
 
         stored = {"place": ["p1", "p2"], "npc": ["n1"]}
-        got = not_held(stored, {"red larch"}, {"red larch": "p2", "blue clam": "p1"})
+        got = not_held(stored, {"p2"})
         self.assertEqual(got, {"place": ["p1"], "npc": ["n1"]})
+
+
+class TheSummaryLine(unittest.TestCase):
+    def test_it_says_how_many_wait_and_where(self) -> None:
+        from dmbot.ui.name_background import picture_held_line
+
+        self.assertEqual(picture_held_line(0), "")
+        self.assertIn("1 name was read from a picture", picture_held_line(1))
+        self.assertIn("3 names were read from pictures", picture_held_line(3))
 
 
 class Extras(unittest.TestCase):
@@ -154,8 +163,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
     async def test_on_keeps_only_matched_names_and_holds_the_rest(self) -> None:
         names, asked, got, _, _ = await self.run_it(True, (MAP,))
         self.assertEqual(asked, [as_pages([MAP])])
-        # (the held one joins as a name only: the caller stores it as a name to check)
-        self.assertEqual(names, [*(f.name for f in DOC), "Blue Clam", "Red Larch"])
+        # (the held one never joins the text's names: the caller stores it on its own)
+        self.assertEqual(names, [*(f.name for f in DOC), "Blue Clam"])
         self.assertEqual([h.found.name for h in got.held], ["Red Larch"])
         self.assertEqual(sum(got.corrected.values()), 1)
 
