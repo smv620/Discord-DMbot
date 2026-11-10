@@ -1,6 +1,6 @@
 """PDF pages that hold only pictures are counted, not skipped in silence (#4000): the reader keeps
 how many pages a PDF had and how many had no text DMbot could read, across its child process, and
-the note for the DM is counts only. A PDF with no readable page at all is still refused as scanned.
+the note for the DM is counts only. A PDF with no text at all is still refused as scanned.
 """
 
 from __future__ import annotations
@@ -44,10 +44,15 @@ class TheCount(unittest.TestCase):
         text = text_of("map.pdf", pdf([[WORDS], [short], [enough]]))
         self.assertEqual((text.pages, text.picture_pages), (3, 1))  # type: ignore[attr-defined]
 
-    def test_a_pdf_whose_every_page_is_nearly_empty_is_refused_as_scanned(self) -> None:
-        with self.assertRaises(DocumentError) as caught:
-            text_of("caption.pdf", pdf([["Map"], ["Fig 2"]]))
-        self.assertIn("pictures of pages", str(caught.exception))
+    def test_a_short_one_page_names_pdf_is_read_with_no_note(self) -> None:
+        text = text_of("names.pdf", pdf([["Torvin", "Wren"]]))
+        self.assertIn("Torvin", text)
+        self.assertEqual(picture_note(text), "")
+
+    def test_every_page_short_but_some_text_read_is_read_with_no_note(self) -> None:
+        text = text_of("caption.pdf", pdf([["Map"], ["Fig 2"]]))
+        self.assertIn("Fig 2", text)
+        self.assertEqual(picture_note(text), "")
 
     def test_spaces_and_line_breaks_do_not_count_as_text(self) -> None:
         padded = [" " * 100, "\n" * 50, "abcde"]  # 5 letters among 150 blanks: a picture page

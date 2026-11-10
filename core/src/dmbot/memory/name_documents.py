@@ -64,7 +64,9 @@ def picture_note(text: str) -> str:
     it."""
     pictures = getattr(text, "picture_pages", 0)
     pages = getattr(text, "pages", 0)
-    if not pictures or not pages:
+    if not pictures or not pages or pictures >= pages:
+        # (every page short but some text read, such as a one-page list of names: nothing was
+        # skipped that the reader could tell from a short page, so say nothing)
         return ""
     return (
         f"**{pictures} of {pages} pages** had only pictures, so DMbot couldn't read them. If they "
@@ -172,10 +174,10 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
         if size > max_chars:
             break  # too long anyway: text_of says so
     text = "\n".join(parts)
-    # Every page is pictures (or nearly nothing): refused as scanned, not counted. Only when the
-    # loop saw every page: it stops early on a text that is too long anyway, and then the counts
-    # below are partial (`text_of` refuses that text as too long).
-    if not text.strip() or pictures == len(reader.pages):
+    # Refused as scanned only when no page gave any text at all. A short PDF (a one-page list of
+    # names) is read; the counts below are partial when the loop stopped early on a text that is
+    # too long anyway (`text_of` refuses that text as too long).
+    if not text.strip():
         raise DocumentError(SCANNED_PDF)
     return ReadText(text, len(reader.pages), pictures)
 
