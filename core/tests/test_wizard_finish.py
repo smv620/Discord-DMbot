@@ -597,3 +597,44 @@ class TheCharacters(FinishTest):
         with patch.object(wizard_finish, "_make_characters", look):
             await wizard_finish.run_round(self.bot, GUILD)
         self.assertEqual(seen, ["party"])
+
+
+class TheSupplements(FinishTest):
+    async def rules(self) -> dict[str, bool]:
+        rows = await self.sql("SELECT rule_id, enabled FROM campaign_optional_rules")
+        return {r["rule_id"]: r["enabled"] for r in rows}
+
+    async def run_with(self, answers: dict[str, Any]) -> None:
+        await self.draft({"name": "Frostmaiden", **answers})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["state"], "done")
+
+    async def test_a_ticked_book_turns_its_rules_on_and_the_other_books_rules_off(self) -> None:
+        from dmbot.rules import optional
+
+        await self.run_with({"supplements": ["tasha"]})
+        chosen = await self.rules()
+        for rule in optional.CATALOG:
+            self.assertEqual(chosen[rule.id], rule.source == optional.TASHA, rule.id)
+
+    async def test_no_book_ticked_turns_every_catalog_rule_off(self) -> None:
+        await self.run_with({"supplements": []})
+        self.assertTrue(await self.rules())
+        self.assertFalse(any((await self.rules()).values()))
+
+    async def test_a_skipped_step_keeps_the_campaigns_defaults(self) -> None:
+        await self.run_with({})
+        self.assertEqual(await self.rules(), {})  # (no stored choice: the default follows)
+
+    async def test_a_book_with_no_rules_in_the_catalog_changes_nothing(self) -> None:
+        from dmbot.rules import optional
+
+        await self.run_with({"supplements": ["bigby", "ravnica"]})
+        self.assertFalse(any((await self.rules()).values()))  # (and the catalog books are off)
+        self.assertEqual(set(await self.rules()), {r.id for r in optional.CATALOG})
+
+    async def test_the_rules_stage_comes_after_the_data_choice_and_before_the_party(self) -> None:
+        order = list(wizard_finish.STAGES)
+        self.assertLess(order.index("data_use"), order.index("rules"))
+        self.assertLess(order.index("rules"), order.index("party"))
