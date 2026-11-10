@@ -19,6 +19,7 @@ from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import house_sync as hs
 from dmbot.dm_screen import settings as screen_settings
+from dmbot.memory.name_documents import max_bytes_for
 from dmbot.rules import house, house_file, house_file_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file_link import FileLink
@@ -637,11 +638,13 @@ class Menu(SyncTest):
 
 
 class Uploading(SyncTest):
-    def form(self, data: bytes | None, size: int | None = None) -> Any:
+    def form(
+        self, data: bytes | None, size: int | None = None, filename: str = "our-rules.txt"
+    ) -> Any:
         form = file_ui.UploadForm(campaign())
         attachment = SimpleNamespace(
             size=size or len(data or b""),
-            filename="our-rules.txt",
+            filename=filename,
             read=AsyncMock(return_value=data),
         )
         form.file.component._values = [attachment] if data is not None else []  # type: ignore[attr-defined]
@@ -677,11 +680,17 @@ class Uploading(SyncTest):
         none = self.interaction()
         await self.form(None).on_submit(none)
         self.assertIn("No file was added", none.followup.send.await_args.args[0])
-        big = self.form(b"x", size=file_ui.MAX_UPLOAD_BYTES + 1)
+        big = self.form(b"x", size=max_bytes_for("rules.txt") + 1)
         it = self.interaction()
         await big.on_submit(it)
         self.assertEqual(it.followup.send.await_args.args[0], hs.TOO_BIG)
         big.attachment.read.assert_not_awaited()
+        # a PDF has its own, larger limit, and its own words (#4001)
+        pdf_big = self.form(b"x", size=max_bytes_for("rules.pdf") + 1, filename="rules.pdf")
+        it = self.interaction()
+        await pdf_big.on_submit(it)
+        self.assertEqual(it.followup.send.await_args.args[0], hs.TOO_BIG_PDF)
+        pdf_big.attachment.read.assert_not_awaited()
 
     async def test_a_matching_file_and_a_junk_file_are_told(self) -> None:
         same = self.interaction()

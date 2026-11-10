@@ -151,7 +151,11 @@ ignore it. See docs/PLAN.md, "Players and the DM in the names".
   A name not in the rules data keeps its words and is marked "not in DMbot's rules".
 - Rules vocabulary (species, creature type, class, background, feat, spell, skill, ability) is
   not campaign memory: memory only links to it. Unnamed monsters are not entries: "three goblins
-  attack" is a reference to the goblin stat block; an organized band is a group.
+  attack" is a reference to the goblin stat block; an organized band is a group. Creatures met in
+  play are kept apart, in a quiet list the DM sees, until the DM names one (slice 5): one row for
+  each encounter (the two ambushers, the sled dogs), only from the DM's own words, at most 10 a
+  session, in `memory_met`, which no list of names reads; naming or joining one makes it an entry
+  at rank 0 (#3172, #4045).
 
 **Examples.** *Snot, son of Garg, the goblin prince*: character · NPC · species goblin (creature
 type humanoid) · stat block Goblin Warrior; he is a member of the Cragmaw tribe (a group). *Auril*:
@@ -1601,8 +1605,10 @@ gods and royalty, even while their name is hidden), 5 player character.
   in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
 - **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
   section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
-  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
-  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+  unnamed creatures met in play (the mouse in the dark), changes the rule in section 3 that unnamed
+  monsters are not entries: they are kept apart in `memory_met` until the DM names one, which then
+  enters at rank 0 with the reason `met_in_play` (Supervisor's option C, 2026-11-10). Play only;
+  behind `DMBOT_MET_UNNAMED`, off until the DM's list of them (#4045) has merged.
 
 ### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
 

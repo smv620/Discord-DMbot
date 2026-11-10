@@ -271,6 +271,19 @@ class Isolation(MemoryTest):
                 " 'proposed', 5)",
                 (GUILD_A, self.c, "e" * 32, a, b, DM),
             )
+        # and a being met in play that nobody named yet (#3172 slice 5), on its session
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('met-session', %s, %s, 77)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_met (guild_id, campaign_id, id, session_id, what, what_key,"
+                " count, line_ms, speaker_ids, created_at) VALUES (%s, %s, %s, 'met-session',"
+                " 'barbarians', 'barbarian', 2, ARRAY[1000::bigint], ARRAY[%s::bigint], 5)",
+                (GUILD_A, self.c, "f" * 32, DM),
+            )
         # and which upload a name was read from (#3675): an id and a label only
         await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only

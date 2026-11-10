@@ -9,8 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at 62d84025 (step 13c: migrations 0402 and 0409; the wizard off; DMBOT_THEATRE_ON on; DMBOT_STORY_NPC_GUESS off; DMBOT_SITE_ASK off). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 13c exit 0 (counts on #3545). Full entry: docs/testing-history.log.
-
+core + web-api at 95289464 (step 14: migration 0410; DMBOT_RECAP_BY_RANK and DMBOT_WIZARD_LINK off; DMBOT_THEATRE_ON on; DMBOT_SITE_ASK off). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 14 exit 0 (counts on #3545). Full entry: docs/testing-history.log.
 ------------------------------------------------------------------------------
 READY TO DEPLOY
 ------------------------------------------------------------------------------
