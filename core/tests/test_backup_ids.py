@@ -12,7 +12,14 @@ from typing import Any
 
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns import parts as pt
-from dmbot.campaigns.snowflakes import JS_SAFE, read_ids, unsafe_keys, write_ids
+from dmbot.campaigns.snowflakes import (
+    ID_KEYS,
+    JS_SAFE,
+    NOT_DISCORD_IDS,
+    read_ids,
+    unsafe_keys,
+    write_ids,
+)
 from tests.test_transcript_parts import DM_B, GUILD_A, GUILD_B, _Base
 
 SNOWFLAKE = 1234567890123456789  # (invented) 19 digits, past what a browser holds exactly
@@ -65,6 +72,25 @@ class ThePureRules(unittest.TestCase):
     def test_a_string_that_is_not_an_id_is_never_turned_into_a_number(self) -> None:
         text = {"text": str(SNOWFLAKE), "name": "123", "known_by": "a" * 32, "drive_id": "123"}
         self.assertEqual(read_ids(text), text)
+
+    def test_a_text_column_that_ends_id_or_by_is_never_touched_even_if_all_digits(self) -> None:
+        text = {
+            "source_id": str(SNOWFLAKE), "replaced_by": str(OTHER), "made_by": "9" * 19,
+            "created_by": "1" * 18, "thread_id": str(SNOWFLAKE),
+        }  # fmt: skip
+        self.assertEqual(read_ids(text), text)
+        self.assertEqual(write_ids({"source_id": SNOWFLAKE}), {"source_id": SNOWFLAKE})
+
+    def test_a_negative_or_too_big_number_stays_a_number(self) -> None:
+        negative = {"user_id": -(JS_SAFE + 5)}  # (a speaker without Discord is -1, -2, ...)
+        self.assertEqual(write_ids(negative), negative)
+        too_big = {"user_id": 10**21}
+        self.assertEqual(write_ids(too_big), too_big)
+
+    def test_every_id_column_of_the_parts_and_the_memory_section_is_on_the_list(self) -> None:
+        """Kept honest against the catalog below (`TheBackup`): see the database test."""
+        self.assertIn("user_id", ID_KEYS)
+        self.assertTrue({"guild", "speakers", "played_by"} <= ID_KEYS)
 
     def test_a_key_that_says_id_but_holds_letters_is_left_for_the_check_to_refuse(self) -> None:
         self.assertEqual(read_ids({"user_id": "12a45"}), {"user_id": "12a45"})
@@ -164,6 +190,62 @@ class TheBackup(_Base):
             consenting=cast(Callable[[int], Awaitable[frozenset[int]]], AsyncMock()),
         )
         return store
+
+    async def test_every_bigint_id_column_of_the_parts_and_memory_is_listed(self) -> None:
+        """A new id column in a part's table or the memory section must be on `ID_KEYS` (or be
+        listed as no Discord id), or a snowflake in it would stay a number a browser can't hold."""
+        import re
+
+        from dmbot.memory.backup import _TAGS
+
+        tables = {t.name for t in _TAGS.values()} | {
+            "transcript_sessions", "transcript_lines", "transcript_suggestions",
+            "transcript_respells", "session_imports",
+        }  # fmt: skip
+        rows = await self.sql(
+            GUILD_A,
+            "SELECT table_name::text AS t, column_name::text AS c FROM information_schema.columns"
+            " WHERE table_schema = current_schema()"
+            " AND (data_type = 'bigint' OR udt_name = '_int8')",
+        )
+        named = re.compile(r"(_id|_ids|_by)$|^(guild|user|speakers|speaker_ids|played_by)$")
+        missing = sorted(
+            f"{r['t']}.{r['c']}"
+            for r in rows
+            if r["t"] in tables
+            and named.search(r["c"])
+            and r["c"] not in ID_KEYS
+            and r["c"] not in NOT_DISCORD_IDS
+        )
+        self.assertEqual(missing, [], "add each to ID_KEYS (or NOT_DISCORD_IDS, with why)")
+
+    async def test_a_deeply_nested_part_or_file_is_refused_not_crashed(self) -> None:
+        main, files = await self.campaigns.export_set(GUILD_A, self.cid)
+        deep: Any = []
+        for _ in range(3000):
+            deep = [deep]
+        bad_part = self.part_json(files[0])
+        bad_part["sessions"][0]["lines"][0]["user_id"] = deep
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(
+                GUILD_B, main, DM_B, parts=[gzip.compress(json.dumps(bad_part).encode())]
+            )
+        bad_main = json.loads(json.dumps(main))
+        bad_main["sections"]["memory"] = deep
+        with self.assertRaises(CampaignError):
+            await self.full_store().import_backup(GUILD_B, bad_main, DM_B)
+
+    async def test_an_erased_speakers_lines_are_still_left_out_of_a_new_format_part(self) -> None:
+        main, files = await self.campaigns.export_set(GUILD_A, self.cid)
+        await self.sql(
+            GUILD_B,
+            "INSERT INTO transcript_erasures (guild_id, user_id, erased_at) VALUES (%s, %s, 99999)",
+            GUILD_B, SNOWFLAKE,
+        )  # fmt: skip
+        restored = await self.campaigns.import_backup(GUILD_B, main, DM_B, parts=files)
+        got = await self.everything(GUILD_B, restored.id)
+        users = [r["user_id"] for r in next(iter(got.values()))["lines"]]
+        self.assertEqual(users, [OTHER])
 
     async def test_a_snowflake_in_the_story_memory_is_a_string_and_comes_back(self) -> None:
         from dmbot.memory.store import MemoryStore

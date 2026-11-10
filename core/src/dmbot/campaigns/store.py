@@ -1773,16 +1773,20 @@ class CampaignStore:
         }
         if files:
             main["parts"] = {"id": backup_id, "count": len(files)}
-        # (the memory section's ids are strings in the file, #4060)
-        written = {**main, "sections": write_sections(main["sections"])}
-        left = unsafe_keys(written)
+        # (the memory section's ids are strings in the file, #4060; in a thread: a big memory
+        # section is a good fraction of a second of CPU)
+        written = {**main, "sections": await asyncio.to_thread(write_sections, main["sections"])}
+        left = await asyncio.to_thread(unsafe_keys, written)
         if left:  # a field the id rule does not know: it stays a number so the file still restores
             log.warning("Backup: numbers above 2^53 left as numbers under: %s", sorted(left)[:20])
         return written, files
 
     def _checked(self, data: object) -> tuple[dict[str, Any], dict[str, Any]]:
         """The backup's campaign settings and each section's rows, checked. Pure."""
-        data = read_sections(data)  # ids written as strings (#4060): back to numbers
+        try:
+            data = read_sections(data)  # ids written as strings (#4060): back to numbers
+        except RecursionError as exc:  # (a hostile file nested past Python's limit)
+            raise CampaignError(DAMAGED) from exc
         info, sections = _validate_backup(data, set(self._sections))
         checked: dict[str, Any] = {}
         for name, rows in sections.items():

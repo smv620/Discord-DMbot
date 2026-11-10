@@ -155,7 +155,10 @@ class TranscriptParts:
     @staticmethod
     def check(data: object) -> dict[str, Any]:
         """The shape of one part, checked. Pure. Raises CampaignError."""
-        data = read_ids(data)  # ids written as strings (#4060) back to numbers
+        try:
+            data = read_ids(data)  # ids written as strings (#4060) back to numbers
+        except RecursionError as exc:  # (a hostile file nested past Python's limit)
+            raise CampaignError(DAMAGED) from exc
         if not isinstance(data, dict) or data.get("format") != PART_FORMAT:
             raise CampaignError(DAMAGED)
         version, backup, part = data.get("version"), data.get("backup"), data.get("part")

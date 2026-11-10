@@ -6,37 +6,37 @@ last digits come back changed. So a backup writes any number above 2^53 - 1 as a
 campaign file and in every transcript part. Small numbers (times, counts, line numbers) stay
 numbers.
 
-Reading is the other way, and only where the key says an id lives. A string of digits above
-2^53 - 1 under such a key is the number it is (the only strings a backup writes); a number (a file
-from before this change) stays one. Under a few keys that only ever hold a Discord id (`user_id`,
-`guild`, `speakers`, ...) a string of 1 to 20 digits is accepted too. A string anywhere else is
-left alone, so a name, a line of speech or a text id (a payment provider's, an entry's: 32 hex
-characters) that is all digits is never turned into a number. A key that says an id but holds
-something else (`"12a"`) stays as it is and the section's own check refuses the whole backup, as
-for any damaged file.
+Reading is the other way, and only under the keys that hold a Discord id (`ID_KEYS`, a written
+list): a string of 1 to 20 digits there is the number it is, and a number (a file from before this
+change) stays one. Nowhere else is a string touched, so a name, a line of speech or a text id (an
+entry's, a payment provider's) that is all digits is never turned into a number. A key that holds an
+id but something else (`"12a"`) stays as it is, and the section's own check or the database refuses
+the whole backup, as for any damaged file. The conversion applies only to the sections and parts
+whose rows are the database's own columns; the other sections write and check their ids as strings
+themselves.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 JS_SAFE = 2**53 - 1  # the largest integer a double holds exactly
 ID_DIGITS_MAX = 20  # a 64-bit id is at most 20 digits
+INT64_MAX = 2**63 - 1
 
-# The keys (database column names in the parts and the memory section; the sections' own names for
-# the rest) whose values are Discord ids that the sections check as numbers. The `dms` and
-# `confirmations` sections already wrote their ids as strings (`user`) and check them so: not here.
-# `test_backup_ids` walks a full backup and fails on any number above JS_SAFE, so a field named
-# some other way cannot slip through.
-ONLY_IDS = re.compile(
-    r"^(user_id|guild|speakers|speaker_ids|players|roles|owner_user_id|played_by"
-    r"|imported_by|dm_user_ids|dm_accounts|channel_id|message_id)$|_user_id$|_channel_id$"
-)
-ID_KEY = re.compile(
-    r"(_id|_ids|_by|_accounts|_users)$"
-    r"|^(guild|speakers|speaker_ids|players|roles|channels|owner|owners)$"
-)
+# The keys whose values are Discord ids that the checks read as numbers: the BIGINT id columns of
+# the transcript parts' tables and of the memory section (and the part's own `guild`), by name.
+# An explicit list, not a pattern: a text column that happens to end `_id` or `_by` (an entry's id,
+# a payment provider's) must never be turned into a number. `test_backup_ids` checks the list
+# against the catalog, so a new id column cannot be forgotten.
+ID_KEYS = frozenset(
+    {
+        "user_id", "guild", "speakers", "speaker_ids", "played_by", "imported_by", "decided_by",
+        "topic_by", "player_id",
+    }
+)  # fmt: skip
+# (BIGINT columns of those tables that hold no Discord id: counters and scope.)
+NOT_DISCORD_IDS = frozenset({"guild_id", "line_id"})
 
 
 # The sections of the campaign file whose rows are the database's columns as they are, so an id in
@@ -71,9 +71,10 @@ def write_ids(value: Any, *, under: bool = False) -> Any:
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
-        return str(value) if under and abs(value) > JS_SAFE else value
+        # (only what the reader can put back: a positive id that fits 64 bits)
+        return str(value) if under and JS_SAFE < value <= INT64_MAX else value
     if isinstance(value, dict):
-        return {k: write_ids(v, under=bool(ID_KEY.search(str(k)))) for k, v in value.items()}
+        return {k: write_ids(v, under=str(k) in ID_KEYS) for k, v in value.items()}
     if isinstance(value, list):
         return [write_ids(v, under=under) for v in value]
     return value
@@ -107,22 +108,19 @@ def unsafe_keys(value: Any, key: str = "") -> set[str]:
     return set()
 
 
-def _id_text(value: Any, strict: bool) -> Any:
-    """A string of digits as the number it is, when the key allows it; anything else as it came.
-    `strict`: the key only ever holds a Discord id, so any 1 to 20 digits count."""
+def _id_text(value: Any) -> Any:
+    """A string of 1 to 20 digits as the number it is; anything else as it came."""
     is_digits = isinstance(value, str) and 1 <= len(value) <= ID_DIGITS_MAX and value.isascii()
-    if is_digits and value.isdigit() and (strict or int(value) > JS_SAFE):
+    if is_digits and value.isdigit():
         return int(value)
     return value
 
 
-def read_ids(value: Any, *, under: str = "") -> Any:
+def read_ids(value: Any, *, under: bool = False) -> Any:
     """The value with the ids written as strings put back to numbers: only under a key that names
-    an id (a list under such a key too). `under`: that key, "" outside one. Nothing else changes."""
+    an id (a list under such a key too). `under`: inside such a key. Nothing else changes."""
     if isinstance(value, dict):
-        return {
-            k: read_ids(v, under=str(k) if ID_KEY.search(str(k)) else "") for k, v in value.items()
-        }
+        return {k: read_ids(v, under=str(k) in ID_KEYS) for k, v in value.items()}
     if isinstance(value, list):
         return [read_ids(v, under=under) for v in value]
-    return _id_text(value, bool(ONLY_IDS.search(under))) if under else value
+    return _id_text(value) if under else value
