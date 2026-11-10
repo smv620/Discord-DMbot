@@ -57,58 +57,31 @@ class PrivateScenes(unittest.TestCase):
     matters: the rule is given only when one is in the call, and the floor is held in code."""
 
     def test_the_rule_and_the_line_only_when_an_entry_has_one(self) -> None:
-        self.assertNotIn("at least 2 (Recurring)", ir.system({}))
-        self.assertIn("at least 2 (Recurring)", ir.system({}, private=True))
+        self.assertNotIn("never below 2 (Recurring)", ir.system({}))
+        self.assertIn("never below 2 (Recurring)", ir.system({}, private=True))
         text = ir.message([item(1, "e1", private_with=("Ash and Wren",))])
         self.assertIn("private scene: Ash and Wren", text)
         self.assertNotIn("private scene", ir.message([item(1, "e1")]))
 
-    def test_the_reason_is_taken_only_for_an_entry_said_in_one(self) -> None:
+    def test_two_scenes_are_two_lines(self) -> None:
+        text = ir.message([item(1, "e1", private_with=("Ash and Wren", "Bryn and Cass"))])
+        self.assertEqual(text.count("private scene: "), 2)
+
+    def test_no_private_scene_reason_is_ever_stored(self) -> None:
+        """#4110 (Supervisor): the floor is worked out on read, so an answer that names the reason
+        reads as an ordinary one, and nothing is raised or added for it."""
         raw = answer({"entry": 1, "rank": 3, "reason": "private_scene"},
                      {"entry": 2, "rank": 3, "reason": "private_scene"})  # fmt: skip
         got = ir.parse(raw, [item(1, "a", private_with=("Ash and Wren",)), item(2, "b")], CODES,
                        cut=False)  # fmt: skip
         assert got is not None
         self.assertEqual([(v.entity_id, v.rank, v.reason) for v in got.verdicts],
-                         [("a", 3, "private_scene")])  # fmt: skip
-        self.assertEqual(got.lost["bad_reason"], 1)
-
-    def test_two_scenes_are_two_lines(self) -> None:
-        text = ir.message([item(1, "e1", private_with=("Ash and Wren", "Bryn and Cass"))])
-        self.assertEqual(text.count("private scene: "), 2)
-
-    def test_the_floor_holds_when_the_answer_leaves_it_out_or_is_refused(self) -> None:
-        said = item(1, "a", rank=0, private_with=("Ash and Wren",))
-        for raw in (answer(), answer({"entry": 1, "rank": 9}),
-                    answer({"entry": 1, "reason": "cool"})):  # fmt: skip
-            got = ir.parse(raw, [said], CODES, cut=False)
-            assert got is not None
-            self.assertEqual([(v.rank, v.reason) for v in got.verdicts],
-                             [(2, "private_scene")], raw)  # fmt: skip
-            self.assertEqual(got.raised, 1)
-
-    def test_it_is_never_ranked_below_recurring(self) -> None:
-        said = item(1, "a", rank=0, private_with=("Ash and Wren",))
-        for raw in (answer({"entry": 1, "rank": 1, "reason": "reading"}), answer({"entry": 1})):
-            got = ir.parse(raw, [said], CODES, cut=False)
-            assert got is not None
-            (verdict,) = got.verdicts
-            self.assertEqual((verdict.rank, verdict.reason, got.raised), (2, "private_scene", 1))
-
-    def test_a_higher_rank_stands_and_the_dms_rank_is_never_overwritten(self) -> None:
-        high = ir.parse(
-            answer({"entry": 1, "rank": 4, "reason": "revealed"}),
-            [item(1, "a", private_with=("Ash and Wren",))],
-            CODES,
-            cut=False,
-        )
-        assert high is not None
-        self.assertEqual((high.verdicts[0].rank, high.raised), (4, 0))
-        kept = ir.parse(answer({"entry": 1, "rank": 1}),
-                        [item(1, "a", rank=0, dm_rank=True, private_with=("A and B",))], CODES,
-                        cut=False)  # fmt: skip
-        assert kept is not None
-        self.assertEqual((kept.verdicts[0].rank, kept.raised), (None, 0))
+                         [("a", 3, "reading")])  # fmt: skip
+        self.assertEqual(got.lost["bad_reason"], 1)  # (said for an entry with no scene)
+        left_out = ir.parse(answer(), [item(1, "a", rank=0, private_with=("A and B",))], CODES,
+                            cut=False)  # fmt: skip
+        assert left_out is not None
+        self.assertEqual(left_out.verdicts, [])
 
 
 class TheAnswer(unittest.TestCase):
@@ -366,54 +339,43 @@ class TheStep(DatabaseTest):
             pcs.append(str(made.value.id))
         first, second = sorted(pcs)
         async with self.db.guild(self.g) as conn:
-            await conn.execute(
-                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
-                " speaker_id, times) VALUES (%s, %s, %s, 100, 5, 1)",
-                (self.g, self.c, self.hara),
-            )
+            for eid in (self.hara, self.vex):
+                await conn.execute(
+                    "INSERT INTO memory_heard (guild_id, campaign_id, entity_id,"
+                    " session_started_at, speaker_id, times) VALUES (%s, %s, %s, 100, 5, 1)",
+                    (self.g, self.c, eid),
+                )
             await conn.execute(
                 "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
                 " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids, status,"
                 " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 5000, 2, '{5,6}', 'kept', 1)",
                 (self.g, self.c, "d" * 32, first, second),
             )
+            await conn.execute(  # (Hara was said in it; Vex was not)
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (self.g, self.c, "d" * 32, self.hara),
+            )
 
-        from dmbot.transcript.models import line_ref
         from dmbot.transcript.store import TranscriptStore
 
-        async def mentions(eid: str) -> list[tuple[str, int | None]]:
-            if eid == self.hara:
-                return [(line_ref("s", 2000, 5), 100)]
-            if eid == self.vex:  # (said in the same minutes, by someone not in the scene)
-                return [(line_ref("s", 3000, 7), 100)]
+        async def no_mentions(_: str) -> list[tuple[str, int | None]]:
             return []
 
-        async def hara(private: bool, agreed: set[int]) -> ir.Item:
+        async def gathered(private: bool, agreed: set[int]) -> dict[str, ir.Item]:
             items, _, _ = await step.gather(
                 self.db, TranscriptStore(self.db), guild_id=self.g, campaign_id=self.c,
-                session_id="s", session_started_at=100, agreed=agreed, mentions=mentions,
+                session_id="s", session_started_at=100, agreed=agreed, mentions=no_mentions,
                 private=private,
             )  # fmt: skip
-            return next(i for i in items if i.entity_id == self.hara)
+            return {i.entity_id: i for i in items}
 
-        said = await hara(True, {5, 6})
-        self.assertEqual(said.private_with, ("Ash and Wren",))
-        self.assertIn(6, said.speaker_ids)  # (the scene's two: re-checked after the call)
-        self.assertEqual((await hara(False, {5, 6})).private_with, ())  # (the switch is off)
-        self.assertEqual((await hara(True, {5})).private_with, ())  # (6 is not recorded now)
-        async with self.db.guild(self.g) as conn:  # (Vex heard too: said by 7, in no scene)
-            await conn.execute(
-                "INSERT INTO memory_heard (guild_id, campaign_id, entity_id, session_started_at,"
-                " speaker_id, times) VALUES (%s, %s, %s, 100, 7, 1)",
-                (self.g, self.c, self.vex),
-            )
-        items, _, _ = await step.gather(
-            self.db, TranscriptStore(self.db), guild_id=self.g, campaign_id=self.c,
-            session_id="s", session_started_at=100, agreed={5, 6, 7}, mentions=mentions,
-            private=True,
-        )  # fmt: skip
-        vex = next(i for i in items if i.entity_id == self.vex)
-        self.assertEqual(vex.private_with, ())
+        both = await gathered(True, {5, 6})
+        self.assertEqual(both[self.hara].private_with, ("Ash and Wren",))
+        self.assertIn(6, both[self.hara].speaker_ids)  # (the scene's two: re-checked after)
+        self.assertEqual(both[self.vex].private_with, ())  # (not said in it)
+        self.assertEqual((await gathered(False, {5, 6}))[self.hara].private_with, ())  # (off)
+        self.assertEqual((await gathered(True, {5}))[self.hara].private_with, ())  # (6 stopped)
 
 
 if __name__ == "__main__":

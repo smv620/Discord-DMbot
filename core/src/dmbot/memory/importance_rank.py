@@ -8,7 +8,8 @@ a hidden villain would be a spoiler). Nothing here asks the DM.
 Where a rank comes from, strongest first:
 - the FLOOR, worked out from what the code can count and never stored (so it cannot drift): a
   player character is 5; a player character's companion at least 3; an entry heard in two or more
-  separate sessions at least 2; and the connection table (`CONNECTION_FLOORS`: the more entries it
+  separate sessions at least 2; one spoken of in a kept private scene at least 2 (#4110); and the
+  connection table (`CONNECTION_FLOORS`: the more entries it
   is joined to, the higher its lowest rank), the highest of them and never their sum;
 - PlotBot's reading of the story, one assessment at a time in `memory_importance` (append-only,
   like the rest of the graph); the newest is current, and the rank is never read below the floor.
@@ -84,15 +85,22 @@ def connection_floor(pairs: int) -> int:
 
 
 def floor(
-    is_player_character: bool, sessions_heard: int, pairs: int = 0, companion: bool = False
+    is_player_character: bool,
+    sessions_heard: int,
+    pairs: int = 0,
+    companion: bool = False,
+    private_scene: bool = False,
 ) -> int:
     """The lowest rank an entry can have, from facts the code counts: a player character is 5, a
     player character's companion at least Significant, one heard in two separate sessions at
-    least Recurring, and the connection table. The highest of them, never their sum. Pure."""
+    least Recurring, one spoken of in a kept private scene between two player characters at least
+    Recurring (#2996 rule 5, #4110: the owner's "always matters, always"), and the connection
+    table. The highest of them, never their sum. Pure."""
     if is_player_character:
         return PLAYER
     return max(
         RECURRING if sessions_heard >= SESSIONS_FOR_RECURRING else BACKGROUND,
+        RECURRING if private_scene else BACKGROUND,
         COMPANION_FLOOR if companion else BACKGROUND,
         connection_floor(pairs),
     )
@@ -215,15 +223,18 @@ def ranks_from(
     heard: Mapping[str, set[int]],
     links: Mapping[str, int],
     companions: Collection[str],
+    private: Collection[str] = (),
 ) -> dict[str, int]:
     """The current rank of every live entry from the counted facts (entry id -> 0 to 5). `group`:
     the newest assessment of each live entry's merged group as (seq, rank); `heard`: the session
-    times each entry was heard in. A merged name's sessions join the survivor's. Pure, so the
+    times each entry was heard in; `private`: the entries said in a kept private scene. A merged
+    name's sessions and scenes join the survivor's. Pure, so the
     website's door (which hands over only these inputs) and the bot's reader cannot disagree."""
     sessions: dict[str, set[int]] = {}
     for entity_id, at in ended.items():
         if at is not None:
             sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
+    in_scene = {ended[e] for e in private if ended.get(e) is not None}
     out: dict[str, int] = {}
     for entity_id, row in entities.items():
         if row["status"] == "merged":
@@ -235,6 +246,7 @@ def ranks_from(
                 len(sessions.get(entity_id, ())),
                 links.get(entity_id, 0),
                 entity_id in companions,
+                entity_id in in_scene,
             ),
             latest[1] if latest else None,
         )
@@ -354,7 +366,10 @@ class ImportanceStore:
         )
         heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
         links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
-        return ranks_from(entities, ended, group, heard, links, companions), ended
+        from dmbot.memory.private_scene_store import entries as private_entries
+
+        private = await private_entries(conn, guild_id, campaign_id)
+        return ranks_from(entities, ended, group, heard, links, companions, private), ended
 
     async def by_name(self, guild_id: int, campaign_id: str) -> dict[str, int]:
         """name key -> rank, for the name and every confirmed other name of each confirmed entry,

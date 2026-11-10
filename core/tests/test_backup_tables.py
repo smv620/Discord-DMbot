@@ -237,6 +237,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " ARRAY[%s::bigint, 4242], 'kept', 5)",
                 (g, c, "d" * 32, A, B, SPEAKER),
             ),
+            "memory_private_scene_entries": (
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (g, c, "d" * 32, A),
+            ),
             "memory_scenes": (
                 "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
                 " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"

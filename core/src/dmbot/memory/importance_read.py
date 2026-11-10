@@ -31,11 +31,10 @@ from dmbot.memory.importance_rank import (
     PLAYER,
     PRIVATE_SCENE,
     READING,
-    RECURRING,
     REVEALED,
 )
 
-PROMPT_VERSION = "importance-2"  # (2: the private-scene rule, #2996 rule 5, when an item has one)
+PROMPT_VERSION = "importance-3"  # (3: the private-scene line; its floor is on read, #4110)
 ITEMS_PER_CALL = (
     60  # Supervisor's ruling: 60 per call; the rest go in a later call, inside the limit
 )
@@ -84,8 +83,8 @@ class Item:
     dm_rank: bool = False  # the DM corrected its rank last: a reading never overwrites that
     group: tuple[str, ...] = ()  # the names merged into it (their stored roles are its own)
     # Each private scene it was said in (#2996 rule 5), as its two player characters ("Ash and
-    # Wren"): "always matters, always", so it ranks at least Recurring (`parse` holds that floor
-    # in code, whatever the answer says or leaves out).
+    # Wren"): "always matters, always". The floor (at least Recurring) is worked out on read
+    # (`importance_rank.floor`, #4110); this line lets the reading rank it higher when it should.
     private_with: tuple[str, ...] = ()
 
 
@@ -112,7 +111,6 @@ class Answer:
     verdicts: list[Verdict] = field(default_factory=list)
     new_codes: list[NewCode] = field(default_factory=list)
     lost: Counter[str] = field(default_factory=Counter)
-    raised: int = 0  # verdicts the private-scene floor set to Recurring (#2996 rule 5)
 
 
 def _tag(text: str) -> str:
@@ -147,8 +145,8 @@ def system(added: Mapping[str, str], *, private: bool = False) -> str:  # (code 
         "- Keep the current rank when nothing in this session changes it: leave rank out.\n"
         + (
             '- An entry with a "private scene:" line was spoken of while two player characters '
-            "were alone together. That always matters: rank it at least 2 (Recurring), higher if "
-            'the story shows more, with reason "private_scene" when that is why.\n'
+            "were alone together. That always matters: it is never below 2 (Recurring) whatever "
+            "you answer, so give a rank only when the story shows it matters more.\n"
             if private
             else ""
         )
@@ -251,8 +249,11 @@ def parse(
             out.lost["bad_rank"] += 1
             continue
         reason = raw.get("reason", READING)
-        # ("private_scene" only for an entry said in one)
-        if reason not in READING_REASONS and not (reason == PRIVATE_SCENE and item.private_with):
+        # (the private-scene floor is worked out on read, #4110: never a stored reason, so an
+        # answer that names it reads as an ordinary assessment)
+        if reason == PRIVATE_SCENE and item.private_with:
+            reason = READING
+        if reason not in READING_REASONS:
             out.lost["bad_reason"] += 1
             continue
         held = _strs(raw.get("roles") or [])
@@ -263,33 +264,12 @@ def parse(
         if rank is not None and item.dm_rank:
             out.lost["rank_kept_by_dm"] += 1  # (its roles are still read)
             rank = None
-        if (
-            item.private_with
-            and not item.dm_rank
-            and (item.rank if rank is None else rank) < RECURRING
-        ):
-            # "always matters, always" (the owner, #2996 rule 5): held in code, not left to the AI
-            rank, reason = RECURRING, PRIVATE_SCENE
-            out.raised += 1
         good = tuple(c for c in held if c in known and c != roles.COMMONER)
         out.lost["unknown_role"] += len(held) - len(good)
         stop = tuple(c for c in ended if c in known and c not in item.dm_roles and c not in good)
         out.lost["role_kept_by_dm"] += sum(c in item.dm_roles for c in ended)
         out.verdicts.append(Verdict(item.entity_id, rank, str(reason), good, stop))
     out.lost["entry_left_out"] += len(by_number) - len(seen)
-    # The floor for an entry said in a private scene whatever the answer did with it: left out, or
-    # refused for a bad rank, reason or roles (the owner's "always", #2996 rule 5).
-    given = {v.entity_id for v in out.verdicts}
-    for item in items:
-        if (
-            item.private_with
-            and item.entity_id not in given
-            and not item.player
-            and not item.dm_rank
-            and item.rank < RECURRING
-        ):
-            out.verdicts.append(Verdict(item.entity_id, RECURRING, PRIVATE_SCENE))
-            out.raised += 1
     return out
 
 
