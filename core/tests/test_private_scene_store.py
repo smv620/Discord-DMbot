@@ -134,6 +134,23 @@ class PrivateSceneStore(NamesTest):
         self.assertEqual((written.kept, written.not_private), (0, 1))
         self.assertEqual(await self.kept(), [])
 
+    async def test_the_dms_mark_follows_a_merged_character(self) -> None:
+        await self.said((650, P1), (670, P2))
+        await self.write()
+        (scene,) = await self.kept()
+        await self.scenes.not_private(GUILD, self.cid, scene.id, 9)
+        # (Ash turns out to be a second entry for the same character, kept as "Ashe")
+        ashe = await self.pc("Ashe", P2)
+        await self.memory.merge(GUILD, self.cid, ashe, self.ash, source="dm", dm_said_same=True)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                " position, at) VALUES (%s, %s, %s, 1, %s)",
+                (GUILD, self.cid, ashe, SPLIT),
+            )
+        written = await self.write()
+        self.assertEqual((written.kept, written.not_private), (0, 1))
+
     async def test_someone_not_recorded_now_is_not_read(self) -> None:
         await self.said((650, P1), (670, P2))
         self.assertEqual((await self.write({DM, P1, P3})).kept, 0)

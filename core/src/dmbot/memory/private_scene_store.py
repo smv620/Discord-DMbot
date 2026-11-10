@@ -114,10 +114,15 @@ class PrivateScenes:
                 " AND status = 'not_private'",
                 (guild_id, campaign_id, started_at),
             )
+            rows = list(await cur.fetchall())
+            # (a mark follows a merge: a character merged since is the one it became, so the DM's
+            # "Not private" still holds for the same two under the kept entries)
+            now_as = await _merged(conn, guild_id, campaign_id) if rows else {}
             marked = [
-                (str(r["first_id"]), str(r["second_id"]), int(r["from_ms"]), int(r["to_ms"]))
-                for r in await cur.fetchall()
-            ]
+                (*sorted((_root(now_as, str(r["first_id"])), _root(now_as, str(r["second_id"])))),
+                 int(r["from_ms"]), int(r["to_ms"]))
+                for r in rows
+            ]  # fmt: skip
             used: set[str] = set()
             kept = skipped = 0
             for scene in scenes:
@@ -189,6 +194,25 @@ def _overlaps(scene: Scene, marked: tuple[str, str, int, int]) -> bool:
         and scene.from_ms <= to_ms
         and from_ms <= scene.to_ms
     )
+
+
+async def _merged(conn: Any, guild_id: int, campaign_id: str) -> dict[str, str]:
+    """Each merged entry to the entry it was merged into (one step; `_root` follows the chain)."""
+    cur = await conn.execute(
+        "SELECT id, merged_into FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+        " AND merged_into IS NOT NULL",
+        (guild_id, campaign_id),
+    )
+    return {str(r["id"]): str(r["merged_into"]) for r in await cur.fetchall()}
+
+
+def _root(merged: dict[str, str], entity_id: str) -> str:
+    """The entry `entity_id` ended up as, following merges (a cycle stops where it started)."""
+    seen = {entity_id}
+    while entity_id in merged and merged[entity_id] not in seen:
+        entity_id = merged[entity_id]
+        seen.add(entity_id)
+    return entity_id
 
 
 async def _players(conn: Any, guild_id: int, campaign_id: str) -> dict[str, int]:
