@@ -44,8 +44,13 @@ LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 NOT_ALLOWED, PLAN, GONE, FAILED = "not-allowed", "plan", "gone", "failed"
 DRIVE_GONE, LORE_FAILED, BAD_ANSWERS = "drive_gone", "lore_failed", "bad_answers"
 PARTY_FAILED = "party_failed"  # the characters could not be made; the campaign stands
+# Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
+# not read, and the draft is cleaned up, so the run says so and the page tells the DM to add them on
+# the House rules and Homebrew pages. Nothing is silently dropped.
+DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
-SOME_DOCS = (DRIVE_GONE, LORE_FAILED, PARTY_FAILED)
+SOME_DOCS = (DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT)
+NOT_READ_YET = ("house", "homebrew", "ruleset")
 
 # The stage codes the page shows, in order.
 STAGES = ("campaign", "data_use", "rules", "party", "lore", "secrets", "clean")
@@ -356,6 +361,8 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     for slot in ("lore", "secrets"):
         docs = [d for d in draft.documents if d["slot"] == slot]
         word = await _read_slot(runs, guild_id, run, campaign_id, draft, slot, docs) or word
+    if any(d["slot"] in NOT_READ_YET for d in draft.documents):
+        word = word or DOCS_LEFT
     await runs.move(guild_id, run, stage="clean")
     await runs.delete_draft(guild_id, run)
     return word

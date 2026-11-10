@@ -9,7 +9,7 @@ const STAGES: WizardFinishStage[] = ["campaign", "party", "rules", "house_homebr
 const NOW = (): number => Math.floor(Date.now() / 1000);
 
 export function emptyAnswers(): WizardAnswers {
-  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: [], dataUse: false, skipped: [] };
+  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
 }
 
 export function mockWizard(): WizardApi & { calls: string[] } {
