@@ -519,6 +519,23 @@ class TheCrashAndTheNews(WithImports):
             self.assertIn("2 new names to check", text)
             self.assertIn("your imported sessions", text)
             self.assertEqual("Bryn Shander" in text, names_shown)
+            if not names_shown:
+                self.assertNotIn("Bryn", text)  # (the privacy intent, stated directly)
+                self.assertNotIn("Kazeth", text)
+            self.assertIsNotNone(bot.post.await_args.kwargs["view"])  # (the Check button)
+
+    async def test_the_given_up_note_in_the_dm_bot_channel_is_a_count_and_has_no_button(
+        self,
+    ) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        bot._import_unchecked[self.campaign.id] = 2
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("2 imported sessions", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
 
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
