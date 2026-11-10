@@ -27,8 +27,13 @@ from dataclasses import dataclass
 from dmbot.memory.models import name_key, spelling_key
 from dmbot.memory.scan import NEAR, NEAR_ONE_WORD, TIE, alike, sound_keys
 
-# A cut-short name must keep at least this many letters before it can resolve (#4003 note).
+# A cut-short name must keep at least this many letters before it can resolve (#4003 note), with a
+# mark that it was cut ("…", "...", "-"). With no mark, it needs `MIN_UNMARKED` letters and at least
+# `MIN_SHARE` of the word it starts, and must not be a whole word itself: "Mara" is a name, not a
+# cut "Marabel" (the reviewer); a label clipped at the page edge ("Sparkwalk") still resolves.
 MIN_CUT = 4
+MIN_UNMARKED = 6
+MIN_SHARE = 0.6
 # How far under the likeness threshold a single near name may be and still be offered as a likely
 # match on the DM's question (never applied).
 LIKELY_BELOW = 0.1
@@ -37,7 +42,7 @@ LIKELY_BELOW = 0.1
 # for "m" and the reverse, "cl" for "d", "vv" for "w", and l / 1 / I, 0 / O, 5 / S. Order matters:
 # the pairs go first, then the single letters.
 _PAIRS = (("rn", "m"), ("cl", "d"), ("vv", "w"))
-_SINGLES = str.maketrans({"1": "i", "l": "i", "|": "i", "0": "o", "5": "s"})
+_SINGLES = str.maketrans({"1": "i", "l": "i", "0": "o", "5": "s"})
 _CUT_MARK = re.compile(r"(?:\.\.\.|…|-)\s*$")
 _INITIAL = re.compile(r"^[A-Za-z]\.?$")
 
@@ -79,11 +84,14 @@ Checked = Matched | Corrected | ToCheck
 
 
 def fold(text: str) -> str:
-    """A spelling with the letters a picture read confuses folded alike, on top of `name_key`."""
-    key = name_key(text).replace(" ", "")
-    for pair, single in _PAIRS:
-        key = key.replace(pair, single)
-    return key.translate(_SINGLES)
+    """A spelling with the letters a picture read confuses folded alike, on top of `name_key`,
+    word by word: a pair is never made across a space ("Eric Lane" is not "Eridane")."""
+    words = []
+    for word in name_key(text).split():
+        for pair, single in _PAIRS:
+            word = word.replace(pair, single)
+        words.append(word.translate(_SINGLES))
+    return " ".join(words)
 
 
 def check(
@@ -103,13 +111,18 @@ def check(
     for known in (*document, *campaign):
         if spelling_key(known.name) == spelling_key(name):
             return Matched(known.name)
-    if text and _written_in(name, text):
-        return Matched(name.strip())
-    fits = [k for k in document if _same_kind(kind, k.kind)]
+    if text:
+        written = _written_in(name, text)
+        if written is not None:
+            return Matched(written)  # (the text's own spelling, not an all-capitals label's)
+    fits = _one_each(k for k in document if _same_kind(kind, k.kind))
+    # A campaign name of the same kind is never a target, but it is a rival: a correction is only
+    # made when nothing else the campaign knows fits about as well (never a guess, Supervisor).
+    rivals = _one_each([*fits, *(k for k in campaign if _same_kind(kind, k.kind))])
     found: dict[str, str] = {}  # the document's name -> the test it passed
     for test, how in ((_slip, "slip"), (_cut, "cut"), (_initials, "initials")):
         for known in fits:
-            if test(name, known.name, fits):
+            if test(name, known.name, rivals):
                 found.setdefault(known.name, how)
     if len(found) == 1:
         ((only, how),) = found.items()
@@ -119,17 +132,27 @@ def check(
     return ToCheck(_likely(name, fits))
 
 
+def _one_each(names: Iterable[Known]) -> list[Known]:
+    """One per spelling key, the first kept: two spellings of one name are not two candidates."""
+    seen: dict[str, Known] = {}
+    for k in names:
+        seen.setdefault(spelling_key(k.name).replace(" ", ""), k)  # ("Sephek-Kaltro" too)
+    return list(seen.values())
+
+
 def _same_kind(a: str | None, b: str | None) -> bool:
     return a is None or b is None or a == b
 
 
-def _written_in(name: str, text: str) -> bool:
-    """The name, word for word (case and spacing aside), in the document's text."""
+def _written_in(name: str, text: str) -> str | None:
+    """The name as the document's text writes it, when it is there word for word (case and spacing
+    aside). Lower-case prose counts too ("a blue clam shell"): the name is in the document."""
     words = name.split()
     if not words:
-        return False
+        return None
     pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
-    return re.search(pattern, text, re.IGNORECASE) is not None
+    found = re.search(pattern, text, re.IGNORECASE)
+    return " ".join(found.group(0).split()) if found else None
 
 
 def _need(a: str, b: str) -> float:
@@ -137,11 +160,13 @@ def _need(a: str, b: str) -> float:
 
 
 def _slip(name: str, candidate: str, fits: Sequence[Known]) -> bool:
-    """(a) A spelling slip: after folding, as alike as the table's near-name test needs, sharing a
-    sound code, and no other name of the document within the tie margin of it."""
+    """(a) A spelling slip: as alike as the table's near-name test needs, and either sharing a
+    sound code as written, or the same after folding with one word unchanged as its anchor
+    ("Torrga Lcevein"). A one-word name the fold alone makes equal is never enough: "Clara" is
+    not "Dara" (the reviewer). No other name within the tie margin of it."""
     need = _need(name, candidate)
     score = _folded_alike(name, candidate)
-    if score < need or not _sounds_alike(name, candidate):
+    if score < need or not (_sounds_alike(name, candidate) or _anchored(name, candidate)):
         return False
     return not any(k.name != candidate and _folded_alike(name, k.name) > score - TIE for k in fits)
 
@@ -151,39 +176,57 @@ def _folded_alike(a: str, b: str) -> float:
 
 
 def _sounds_alike(a: str, b: str) -> bool:
-    return bool(
-        set(sound_keys(a)) & set(sound_keys(b))
-        or set(sound_keys(fold(a))) & set(sound_keys(fold(b)))
+    """A sound code shared as written: never after folding, which makes equal spellings of
+    different names (the reviewer)."""
+    return bool(set(sound_keys(a)) & set(sound_keys(b)))
+
+
+def _anchored(a: str, b: str) -> bool:
+    """The same words after folding, word by word, with at least one word the same as written."""
+    wa, wb = name_key(a).split(), name_key(b).split()
+    return (
+        len(wa) == len(wb) > 1
+        and fold(a) == fold(b)
+        and any(x == y for x, y in zip(wa, wb, strict=True))
     )
 
 
 def _cut(name: str, candidate: str, fits: Sequence[Known]) -> bool:
     """(b) Cut short: the start of the document's name, or of one of its words, with at least
     `MIN_CUT` letters, and the start of no other name of the document."""
+    marked = _CUT_MARK.search(name) is not None
     stem = name_key(_CUT_MARK.sub("", name)).replace(" ", "")
-    if len(stem) < MIN_CUT:
+    if len(stem) < (MIN_CUT if marked else MIN_UNMARKED):
         return False
 
     def starts(full: str) -> bool:
         k = name_key(full)
         return k.replace(" ", "").startswith(stem) or any(w.startswith(stem) for w in k.split())
 
-    if not starts(candidate) or name_key(candidate).replace(" ", "") == stem:
+    words = name_key(candidate).split()
+    if not starts(candidate) or stem in words or "".join(words) == stem:
+        return False  # (a whole word or the whole name is not cut short)
+    if (
+        not marked
+        and not any(w.startswith(stem) and len(stem) >= MIN_SHARE * len(w) for w in words)
+        and not "".join(words).startswith(stem)
+    ):
         return False
     return not any(k.name != candidate and starts(k.name) for k in fits)
 
 
 def _initials(name: str, candidate: str, fits: Sequence[Known]) -> bool:
     """(c) Shortened: one or more initials, then one whole last word ("S. Kaltro"). The last word
-    must be the candidate's last word and each initial the first letter of the words before it, in
-    order; initials alone never resolve."""
+    must be the candidate's last word (a possessive aside) and each initial the first letter of the
+    candidate's first words, in order ("S. Kaltro" fits "Sephek Vel Kaltro" too); initials alone
+    never resolve."""
     parts = name.split()
     if len(parts) < 2 or not all(_INITIAL.match(p) for p in parts[:-1]):
         return False
 
     def fits_it(full: str) -> bool:
         words = name_key(full).split()
-        last = name_key(parts[-1])
+        last = spelling_key(parts[-1])
         if not words or words[-1] != last or len(words) - 1 < len(parts) - 1:
             return False
         firsts = [w[0] for w in words[: len(parts) - 1]]

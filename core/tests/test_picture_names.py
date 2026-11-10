@@ -93,6 +93,73 @@ class NeverAGuess(unittest.TestCase):
         self.assertEqual(check("Kaltri Vane", "character", doc), ToCheck())
 
 
+class TheReviewersWrongCorrections(unittest.TestCase):
+    """#4003, the reviewer: each of these was once corrected to another, real name."""
+
+    def test_a_one_word_name_the_fold_alone_makes_equal_is_not_corrected(self) -> None:
+        for read, other in (("Clara", "Dara"), ("Carl", "Cari"), ("Vern", "Vem"), ("Lina", "Iina")):
+            got = check(read, "character", [Known(other, "character")])
+            self.assertNotIsInstance(got, Corrected, read)
+
+    def test_a_pair_is_never_folded_across_a_space(self) -> None:
+        self.assertNotEqual(fold("Eric Lane"), fold("Eridane"))
+        got = check("Eric Lane", "character", [Known("Eridane", "character")])
+        self.assertNotIsInstance(got, Corrected)
+
+    def test_a_whole_word_is_not_a_cut_name(self) -> None:
+        doc = [Known("Marabel Stone", "character"), Known("Towerfall Keep", "place"),
+               Known("Sephek Kaltro", "character")]  # fmt: skip
+        for read in ("Mara", "Tower", "Spark", "Kaltro"):
+            self.assertNotIsInstance(check(read, None, doc), Corrected, read)
+
+    def test_a_label_clipped_at_the_page_edge_still_resolves(self) -> None:
+        self.assertEqual(
+            check("Sparkwalk", "character", DOC), Corrected("Syllar Sparkwalker", "cut")
+        )
+
+
+class Rivals(unittest.TestCase):
+    def test_a_close_campaign_name_blocks_a_correction(self) -> None:
+        got = check(
+            "Sephik Kaltro", "character", [Known("Sephek Kaltro", "character")],
+            [Known("Sephik Kaltra", "character")],
+        )  # fmt: skip
+        self.assertNotIsInstance(got, Corrected)
+
+    def test_two_spellings_of_one_name_are_one_candidate(self) -> None:
+        doc = [Known("Sephek Kaltro", "character"), Known("Sephek-Kaltro", "character")]
+        self.assertEqual(
+            check("Sephik Kaltro", "character", doc), Corrected("Sephek Kaltro", "slip")
+        )
+
+    def test_a_name_of_no_known_kind_is_a_rival(self) -> None:
+        doc = [Known("Sparkwalker Spire"), Known("Syllar Sparkwalker", "character")]
+        self.assertEqual(check("Sparkwal…", "character", doc), ToCheck())
+
+    def test_initials_with_a_possessive_resolve(self) -> None:
+        self.assertEqual(
+            check("S. Kaltro's", "character", DOC), Corrected("Sephek Kaltro", "initials")
+        )
+
+
+class Edges(unittest.TestCase):
+    def test_an_all_capitals_label_matches_the_texts_own_spelling(self) -> None:
+        self.assertEqual(
+            check("BLUE CLAM", "place", [], text="the Blue Clam inn"), Matched("Blue Clam")
+        )
+
+    def test_only_punctuation_is_to_check(self) -> None:
+        self.assertEqual(check("…", None, DOC), ToCheck())
+
+    def test_a_name_with_no_sound_code_can_still_be_cut(self) -> None:
+        doc = [Known("Ηρακλειδης", "character")]
+        self.assertEqual(check("Ηρακλει…", "character", doc), Corrected("Ηρακλειδης", "cut"))
+
+    def test_two_close_names_offer_no_likely_one(self) -> None:
+        doc = [Known("Sephek Kaltro", "character"), Known("Sephak Kaltro", "character")]
+        self.assertEqual(check("Sefuk Kaltrow", "character", doc), ToCheck())
+
+
 class ForTheDM(unittest.TestCase):
     def test_a_name_that_lines_up_with_nothing_is_to_check(self) -> None:
         self.assertEqual(check("Grimsby Hollow", "place", DOC), ToCheck())
