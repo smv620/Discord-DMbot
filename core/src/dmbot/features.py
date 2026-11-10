@@ -123,8 +123,8 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # how the work is done, not something a DM chooses (#2952)
     ),
     Feature(
-        "recap cache",
-        "Recap writer's prompt cached",
+        "recap reuse",
+        "Recap writer reuses its repeated text",
         "",
         lambda s: s.recap_cache,
         ("recap_cache",),
