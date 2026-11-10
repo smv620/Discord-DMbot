@@ -4924,13 +4924,15 @@ class MemoryStore:
                 )
                 had_session = await cur.fetchone() is not None
                 cur = await scope.conn.execute(
-                    "SELECT DISTINCT played_by FROM memory_entities WHERE guild_id = %s"
-                    " AND campaign_id = %s AND role = %s AND status = %s"
-                    " AND played_by IS NOT NULL AND merged_into IS NULL",
+                    "SELECT played_by FROM memory_entities WHERE guild_id = %s"
+                    " AND campaign_id = %s AND role = %s AND status = %s AND merged_into IS NULL",
                     (guild_id, campaign_id, PLAYER_CHARACTER, CONFIRMED),
                 )
-                players = {int(r["played_by"]) for r in await cur.fetchall()}
-            if players:
+                rows = await cur.fetchall()
+                players = {int(r["played_by"]) for r in rows if r["played_by"] is not None}
+            # every player character is a member, a "pending" one too (#3995); only those with a
+            # player are linked as knowing each other before the first session
+            if rows:
                 # after a session they have not all met: membership only (#3363), no `knows`
                 linked = await self.link_party(
                     guild_id, campaign_id, set() if had_session else players
@@ -4946,13 +4948,14 @@ class MemoryStore:
         self, guild_id: int, campaign_id: str, user_ids: Collection[int]
     ) -> party_mod.PartyLinked:
         """The party (#3036, and #3363 for who is in it). The player characters whose players took
-        part in a session (`user_ids`) know each other; **every** confirmed player character that
-        has a player (`party_mod.members_of`, the newest of each player) is a member of "The
-        party", whether or not its player spoke in this session, so lore first, a session first or
-        an assignment later give the same members. A player's older character, replaced by a newer
-        one, leaves the party as history (its tie ends, nothing is deleted). By rule, as the DM's
-        standing choice, never by the AI: see `memory.party`. One change (one Undo), idempotent,
-        and a connection that exists in any state, a removed one included, is left as it is."""
+        part in a session (`user_ids`) know each other; **every** confirmed player character is a
+        member of "The party" (`party_mod.members_of`: the newest of each player, and every one
+        whose player is still pending, #3995), whether or not its player spoke in this session, so
+        lore first, a session first or an assignment later give the same members. A player's older
+        character, replaced by a newer one, leaves the party as history (its tie ends, nothing is
+        deleted). By rule, as the DM's standing choice, never by the AI: see `memory.party`. One
+        change (one Undo), idempotent, and a connection that exists in any state, a removed one
+        included, is left as it is."""
         async with self._write(guild_id, campaign_id, DM) as w:
             chars = await party_mod.characters_of(w, user_ids)
             member_ids = await party_mod.members_of(w)

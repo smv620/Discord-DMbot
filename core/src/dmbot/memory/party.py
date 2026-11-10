@@ -70,23 +70,28 @@ async def characters_of(w: Changes, user_ids: Collection[int]) -> list[str]:
 
 
 async def members_of(w: Changes) -> list[str]:
-    """The party's members (#3363, Supervisor 2026-11-05): the campaign's confirmed player
-    characters that have a player, the newest of each player, whether or not that player spoke in a
-    given session. So lore first, a session first or an assignment later all give the same members.
-    A merged or unconfirmed entry is not one, and a character with no player is not a member. A
-    replaced character (the player's older one) is no longer the newest: it leaves as history, not
-    deleted."""
+    """The party's members (#3363, Supervisor 2026-11-05; #3995, 2026-11-10): every confirmed
+    player character of the campaign, with or without a player (a character whose player is still
+    "pending", as the wizard's optional step 3 leaves it, is a player character all the same), and
+    of a player's characters only the newest, whether or not that player spoke in a given session.
+    So lore first, a session first or an assignment later all give the same members. A merged or
+    unconfirmed entry is not one. A replaced character (the player's older one) is no longer the
+    newest: it leaves as history, not deleted."""
     rows = await w.select(
         ENTITIES,
-        " AND role = %s AND status = %s AND played_by IS NOT NULL AND merged_into IS NULL",
+        " AND role = %s AND status = %s AND merged_into IS NULL",
         [PLAYER_CHARACTER, CONFIRMED],
     )
     newest: dict[int, dict[str, Any]] = {}
+    pending: list[str] = []
     for row in rows:
+        if row["played_by"] is None:
+            pending.append(str(row["id"]))
+            continue
         best = newest.get(int(row["played_by"]))
         if best is None or (row["created_at"], row["id"]) > (best["created_at"], best["id"]):
             newest[int(row["played_by"])] = row
-    return sorted(str(r["id"]) for r in newest.values())
+    return sorted([str(r["id"]) for r in newest.values()] + pending)
 
 
 async def is_replaced(w: Changes, entity_id: str, current: Collection[str]) -> bool:
