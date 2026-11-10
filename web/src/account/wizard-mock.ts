@@ -102,8 +102,10 @@ export function mockWizard(): WizardApi & { calls: string[] } {
         status: scanned || (input.source === "upload" && words === 0) ? "unreadable" : "ok",
         reason: scanned ? "scanned" : input.source === "upload" && words === 0 ? "empty" : "",
       };
-      draft.documents.push(doc);
-      return { ...doc };
+      // The pretend server answers how many pages are pictures only, as the real one does for a name that says so (#4030).
+      const picturePages = input.name.includes("onepicture") ? 1 : input.name.includes("pictures") ? 3 : 0;
+      draft.documents.push(doc); // (kept on the draft without the count, as the server keeps it)
+      return { ...doc, picturePages };
     },
     async docRemove(guild, id) {
       calls.push(`docRemove:${guild}:${id}`);

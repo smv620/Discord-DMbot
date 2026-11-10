@@ -105,6 +105,10 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
+    "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
+    "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
+    "as with any request still waiting; one the DM named is an entry, which a backup carries",
     "question_counts": "the count of each kind of question waiting for the DM, made again every "
     "minute by the bot: counts and times only (#3435)",
     "question_notices": "the timer of the 'Questions for you' reminders for each DM: step, next "
