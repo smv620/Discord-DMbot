@@ -126,6 +126,10 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_name_sessions": "which session a waiting name was made in, by the session's start "
+    "(#4043): a time and an id only, for the split-party check, kept only while a name waits; a "
+    "restored campaign's waiting names fall back to the check's older guess by time, which may "
+    "pick the wrong session (the DM can still choose who knows a name)",
     "memory_name_sources": "which upload a name was read from, for the Names page's filter: "
     "provenance of working data (an upload id or label and a time, never a word of it), made again "
     "by the next read; a restored campaign's names read as not known yet (#3675)",
@@ -193,6 +197,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
+    "upload_undos": _WAIT,  # a press of Undo this upload: ids and counts, gone in a day (#3879)
     "trait_answers": _WAIT,  # a Yes or No on a lineage or class question, gone in a day (#3946)
     "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
