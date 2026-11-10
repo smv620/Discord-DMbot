@@ -57,6 +57,7 @@ class TheWatch(unittest.TestCase):
             {"data": Path("/data")},
             usage=usage,
             device=lambda _path: 1,
+            inodes=lambda _path: (1000, 900),  # (10% of inodes used: healthy)
             clock=lambda: clock[0],
         )
         return watch, clock
@@ -158,6 +159,81 @@ class TheWatch(unittest.TestCase):
             any("couldn't read the gone disk (FileNotFoundError)" in m for m in messages)
         )
         self.assertFalse(any("/gone" in m for m in messages))  # (the name of the place, not a path)
+
+    def inodes_watch(
+        self, bytes_pct: int, inodes_pct: int, clock: list[float] | None = None
+    ) -> DiskWatch:
+        """A disk with `bytes_pct` of its bytes and `inodes_pct` of its inodes used (#4077)."""
+        now = clock or [0.0]
+        return DiskWatch(
+            {"data": Path("/data")},
+            usage=lambda _p: (100 * GB, bytes_pct * GB, (100 - bytes_pct) * GB),
+            device=lambda _p: 1,
+            inodes=lambda _p: (1000, 1000 - inodes_pct * 10),
+            clock=lambda: now[0],
+        )
+
+    def test_inodes_at_the_warning_level_are_a_warning_and_tell_no_one(self) -> None:
+        watch = self.inodes_watch(40, 88)
+        with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
+            got = watch.check()
+        self.assertEqual(got.alerts, [])
+        self.assertEqual(
+            [r.getMessage() for r in logged.records],
+            ["Disk check: the data disk's inodes are 88% used"],
+        )
+        self.assertEqual(logged.records[0].levelname, "WARNING")
+
+    def test_inodes_at_the_alert_level_are_an_error_and_ask_for_the_owner_alert(self) -> None:
+        watch = self.inodes_watch(40, 96)
+        with self.assertLogs("dmbot.disk_check", level="ERROR") as logged:
+            got = watch.check()
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(
+            logged.records[0].getMessage(), "Disk check: the data disk's inodes are 96% used"
+        )
+
+    def test_a_filesystem_with_no_inodes_to_count_is_skipped(self) -> None:
+        watch = DiskWatch(
+            {"data": Path("/data")},
+            usage=lambda _p: (100 * GB, 40 * GB, 60 * GB),
+            device=lambda _p: 1,
+            inodes=lambda _p: (0, 0),
+        )
+        with self.assertNoLogs("dmbot.disk_check", level="WARNING"):
+            got = watch.check()
+        self.assertEqual(got.alerts, [])
+
+    def test_a_full_disk_and_full_inodes_are_each_said_once_an_hour(self) -> None:
+        clock = [0.0]
+        watch = self.inodes_watch(96, 96, clock)
+        with self.assertLogs("dmbot.disk_check", level="ERROR"):
+            first = watch.check()
+        # one owner alert per look, even with both full
+        self.assertEqual(first.alerts, [Problem.DISK_FULL])
+        clock[0] = 600.0  # ten minutes later: both were said within the hour
+        with self.assertNoLogs("dmbot.disk_check", level="ERROR"):
+            later = watch.check()
+        self.assertEqual(later.alerts, [])
+
+    def test_inodes_that_cannot_be_read_are_one_warning(self) -> None:
+        def unreadable(_p: Path) -> tuple[int, int]:
+            raise OSError("no inodes here")
+
+        watch = DiskWatch(
+            {"data": Path("/data")},
+            usage=lambda _p: (100 * GB, 40 * GB, 60 * GB),
+            device=lambda _p: 1,
+            inodes=unreadable,
+        )
+        with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
+            got = watch.check()
+        self.assertEqual(
+            [r.getMessage() for r in logged.records],
+            ["Disk check: couldn't read the data disk's inodes (OSError)"],
+        )
+        self.assertEqual([r.path for r in got.readings], ["data"])  # the bytes are still read
 
     def test_the_owner_message_is_fixed_plain_words_with_the_issue(self) -> None:
         text = Problem.DISK_FULL.value

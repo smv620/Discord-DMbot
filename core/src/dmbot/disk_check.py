@@ -53,6 +53,13 @@ class Result:
     alerts: list[Problem]
 
 
+def _inodes(path: Path) -> tuple[int, int]:
+    """(total, free) inodes of the filesystem `path` is on: a disk of tiny files can have free bytes
+    and no free inodes, and then nothing can be written either (#4077)."""
+    st = os.statvfs(path)
+    return st.f_files, st.f_ffree
+
+
 def level_of(used_pct: float, warn_pct: int, alert_pct: int) -> str:
     """Which level a percentage of the disk used is at. Pure."""
     if used_pct >= alert_pct:
@@ -72,12 +79,14 @@ class DiskWatch:
         warn_pct: int = 85,
         alert_pct: int = 95,
         usage: Callable[[Path], tuple[int, int, int]] = shutil.disk_usage,
+        inodes: Callable[[Path], tuple[int, int]] = _inodes,
         device: Callable[[Path], int] = lambda path: os.stat(path).st_dev,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._places = dict(places)
         self._warn, self._alert_at = warn_pct, alert_pct
         self._usage = usage
+        self._inodes = inodes
         self._device = device
         self._clock = clock
         self._said: dict[tuple[str, str], float] = {}  # (place, level) -> when it was last said
@@ -130,7 +139,34 @@ class DiskWatch:
                     "Disk check: the %s disk is %d%% full, %.1f GB free",
                     name, reading.used_pct, reading.free_gb,
                 )  # fmt: skip
+            self._look_at_inodes(name, path, alerts)
         return Result(found, alerts)
+
+    def _look_at_inodes(self, name: str, path: Path, alerts: list[Problem]) -> None:
+        """The inodes of a place, at the same levels and once an hour, under their own keys
+        so the bytes check and this one do not silence each other (#4077). One owner alert
+        per look at most, even when both are full."""
+        key = f"{name} inodes"
+        try:
+            total, free = self._inodes(path)
+        except OSError as exc:
+            if self._due(key, "unreadable"):
+                log.warning(
+                    "Disk check: couldn't read the %s disk's inodes (%s)",
+                    name,
+                    type(exc).__name__,
+                )
+            return
+        if total <= 0:
+            return
+        pct = math.floor((total - free) * 100 / total)
+        level = level_of(pct, self._warn, self._alert_at)
+        if level == ALERT and self._due(key, ALERT):
+            log.error("Disk check: the %s disk's inodes are %d%% used", name, pct)
+            if Problem.DISK_FULL not in alerts:
+                alerts.append(Problem.DISK_FULL)
+        elif level == WARN and self._due(key, WARN):
+            log.warning("Disk check: the %s disk's inodes are %d%% used", name, pct)
 
 
 def places_for(data_dir: Path) -> dict[str, Path]:
