@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.recaps.discord import RecapFeatures
@@ -29,7 +29,7 @@ def fake(*, dm_bot: int | None) -> Any:
         settings=SimpleNamespace(site_url=""),
         _recap_refusal=AsyncMock(return_value="you've used this month's recaps; next on 3 Dec."),
     )
-    me._upkeep_channel = lambda c: RecapFeatures._upkeep_channel(me, c)
+    me._upkeep_channel = lambda c: RecapFeatures._upkeep_channel(cast(Any, me), c)
     return me, campaign
 
 
