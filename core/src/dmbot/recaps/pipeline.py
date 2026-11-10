@@ -124,6 +124,10 @@ class Inputs:
     # How connected each name is in The truth, hidden connections too (#2411): numbers by name,
     # used only to rank which beats the writer keeps. No connection and no fact is in it.
     importance: Mapping[str, float] = field(default_factory=dict)
+    # Each name's importance rank, 0 to 5 (#3172 slice 4), only with DMBOT_RECAP_BY_RANK on: sorts
+    # the beats before `importance` does. One rank for everyone (owner, 2026-11-01): it may know
+    # DM secrets, but it only chooses beats; the writer still gets only what the players know.
+    ranks: Mapping[str, int] = field(default_factory=dict)
     # Who is who, from the story memory (#2573): another spelling -> the name (a character the
     # speech to text heard as a stranger), every player character, and each player's characters.
     aliases: Mapping[str, str] = field(default_factory=dict)
@@ -168,6 +172,12 @@ NOT_FACT_CHECKED_NOTE = (
     "This recap was not fact-checked: the check could not be had. Read it against the session."
 )
 DM_TOLD = (ENDING_CUT_NOTE, NOT_FACT_CHECKED_NOTE)  # kept through the critics (#2741)
+
+
+def shown_beats(sheet: Sequence[bt.Beat], limit: int, inputs: Inputs) -> list[bt.Beat]:
+    """The beats the writer is shown (`draft.pick_beats`), ranked by the same tables at every
+    stage, so the writer, the checks and the revision all see one choice."""
+    return rd.pick_beats(sheet, limit, importance=inputs.importance, ranks=inputs.ranks)
 
 
 def hard_after_cut(problems: Sequence[str]) -> list[str]:
@@ -1157,7 +1167,7 @@ class RecapWorker:
         sheet = bt.from_json(job.beats)
         play, _, _ = self._parts(job, self._said(inputs, set(job.speakers)))
         length = rd.length_for(rd.session_hours(play, inputs.hours))
-        shown = rd.pick_beats(sheet, length.beats, importance=inputs.importance)
+        shown = shown_beats(sheet, length.beats, inputs)
         heard, given = await self._context_for(gid, cid, job, inputs, play, shown)
         self._given[key] = given
         if heard:
@@ -1245,7 +1255,7 @@ class RecapWorker:
         play, retold, _ = self._parts(job, said)
         # (the hours are the play's: the talk and the retelling are not session time)
         length = rd.length_for(rd.session_hours(play, inputs.hours))
-        shown = rd.pick_beats(sheet, length.beats, importance=inputs.importance)
+        shown = shown_beats(sheet, length.beats, inputs)
         heard, given = await self._context_for(gid, cid, job, inputs, play, shown)
         message = rd.prose_message(
             shown,
@@ -1405,7 +1415,7 @@ class RecapWorker:
         try:
             facts, asked = await self._facts(
                 gid, cid, job,
-                rd.pick_beats(sheet, length.beats, importance=inputs.importance), prose,
+                shown_beats(sheet, length.beats, inputs), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
                 inputs.corrections, False, consenting, inputs=inputs,
             )  # fmt: skip
@@ -2204,7 +2214,7 @@ class RecapWorker:
         key = (gid, cid, job.session_at)
         assert loop.pending
         length = rd.length_for(rd.session_hours(play, inputs.hours))
-        shown = rd.pick_beats(sheet, length.beats, importance=inputs.importance)
+        shown = shown_beats(sheet, length.beats, inputs)
         # the revision reads what the first draft read (#2954), so it is not a worse writer
         heard, given = await self._context_for(gid, cid, job, inputs, play, shown)
         self._given[key] = given
@@ -2288,7 +2298,7 @@ class RecapWorker:
             try:
                 facts, asked = await self._facts(
                     gid, cid, job,
-                    rd.pick_beats(sheet, length.beats, importance=inputs.importance), revised,
+                    shown_beats(sheet, length.beats, inputs), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
                     inputs.corrections, loop.waits > 0, consenting, inputs=inputs,
                 )  # fmt: skip
@@ -2363,7 +2373,7 @@ class RecapWorker:
         said = self._said(inputs, set(job.speakers))
         play, retold, _ = self._parts(job, said)
         length = rd.length_for(rd.session_hours(play, inputs.hours))
-        shown = rd.pick_beats(sheet, length.beats, importance=inputs.importance)
+        shown = shown_beats(sheet, length.beats, inputs)
         heard, given = await self._context_for(gid, cid, job, inputs, play, shown)
         self._given[key] = given
         if heard:
