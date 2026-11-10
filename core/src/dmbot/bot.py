@@ -13974,15 +13974,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             looked = 0
             for guild in list(self.guilds):
                 try:
-                    for campaign in await self.campaigns.list_campaigns(guild.id):
+                    campaigns = await self.campaigns.list_campaigns(guild.id)
+                except Exception:
+                    log.exception("Channel sync: a server's look failed")
+                    continue
+                for campaign in campaigns:
+                    try:  # one campaign's trouble never stops the next
                         with log_context(guild_id=guild.id, campaign_id=campaign.id):
                             await channel_sync.reconcile(
                                 guild, campaign, self.campaigns, self.memory
                             )
-                        looked += 1
-                        await asyncio.sleep(OWNER_CHECK_GAP_S)
-                except Exception:
-                    log.exception("Channel sync: a server's look failed")
+                    except Exception:
+                        log.exception("Channel sync: a campaign's look failed")
+                    looked += 1
+                    await asyncio.sleep(OWNER_CHECK_GAP_S)
             log.info("Channel sync: %d campaign(s) looked at", looked)
             await asyncio.sleep(CHANNEL_SYNC_EVERY_S)
 
