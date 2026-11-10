@@ -46,6 +46,8 @@ PLACE_YES, PLACE_NO = "✅ Yes, the same place", "❌ No, two places"
 EPITHET_PLACE_YES, EPITHET_PLACE_NO = "✅ Yes, the same place", "❌ No, somewhere else"
 # Any other kind (a group, a thing): neither a person nor a place (#4097).
 OTHER_YES, OTHER_NO = "✅ Yes, the same one", "❌ No, a different one"
+# An item (an object the party has): "thing" words (#4097).
+ITEM_YES, ITEM_NO = "✅ Yes, the same thing", "❌ No, a different thing"
 PERSON_KINDS = ("player_character", "npc", "deity")
 
 
@@ -111,6 +113,8 @@ class NameQuestions(_Menu):
             yes, no = EPITHET_PLACE_YES, EPITHET_PLACE_NO
         elif entity is None or entity.type in PERSON_KINDS:
             yes, no = PERSON_YES, PERSON_NO
+        elif entity.type == "item":
+            yes, no = ITEM_YES, ITEM_NO
         else:
             yes, no = OTHER_YES, OTHER_NO
         self.yes_button.label, self.no_button.label = yes, no

@@ -579,6 +579,10 @@ class TheWordsByKind(NamesTest):
         self.assertEqual(names, {"Neverwinter"})
         self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
 
+    async def test_an_item_is_asked_in_thing_words(self) -> None:
+        view = await self.ask("The Amulet", "item", "Amulet of Vell")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same thing", "❌ No, a different thing"])
+
     async def test_a_group_is_asked_with_the_one_words(self) -> None:
         view = await self.ask("Lantern Council", "faction", "The Lantern Circle")
         self.assertEqual(self.labels(view), ["✅ Yes, the same one", "❌ No, a different one"])
