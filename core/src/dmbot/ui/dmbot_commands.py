@@ -226,10 +226,56 @@ SETTINGS_HINT = "Settings: press ⚙️ Manage DMbot here, or use the DM Bot cha
 # ---- /dmbot start: welcome, then which campaign? ---------------------------------------
 
 
+NEW_CAMPAIGN_TEXT = (
+    "**New campaign**\n"
+    "You can set it up step by step on the website (add your story, your characters and your "
+    "rules), or use the short form here. Nothing is lost either way."
+)
+
+
+class NewCampaignChoice(_Menu):
+    """Offered when the start-up wizard is on: the website link first, the short form one press
+    away (#3955). The link is a plain link button; nothing here changes the campaign."""
+
+    def __init__(self, link: str) -> None:
+        super().__init__()
+        self.add_item(
+            discord.ui.Button(
+                label="Set up step by step on the website",
+                emoji=dm_links.SITE_ICON,
+                url=link,
+                row=0,
+            )
+        )
+        self.add_item(
+            _Button(
+                self._short_form,
+                label="Use the short form here",
+                style=discord.ButtonStyle.secondary,
+                row=0,
+            )
+        )
+
+    async def _short_form(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(NewCampaignForm())
+
+
+async def open_new_campaign(interaction: discord.Interaction) -> None:
+    """Both "new campaign" buttons end here: with the wizard's switch on and a website address,
+    the choice is offered (link first); otherwise the short form opens as it always has."""
+    link = ""
+    if interaction.guild is not None and _bot(interaction).settings.wizard_link_on:
+        link = dm_links.wizard_link(dm_links.configured_site(), interaction.guild.id)
+    if not link:
+        await interaction.response.send_modal(NewCampaignForm())
+        return
+    await _send(interaction, NEW_CAMPAIGN_TEXT, NewCampaignChoice(link))
+
+
 class Welcome(_Menu):
     @discord.ui.button(label="Set up my first campaign", style=discord.ButtonStyle.success)
     async def setup(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        await interaction.response.send_modal(NewCampaignForm())
+        await open_new_campaign(interaction)
 
 
 class CampaignPicker(_Menu):
@@ -273,7 +319,7 @@ class CampaignPicker(_Menu):
         await choose_campaign(interaction, self.pick.values[0])
 
     async def _new(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(NewCampaignForm())
+        await open_new_campaign(interaction)
 
 
 def picker_text(last: Campaign) -> str:
