@@ -103,7 +103,11 @@ class Companions(NamesTest):
         shown = await self.memory.relations(GUILD, self.campaign.id)  # (the public reader)
         self.assertEqual([r for r in shown if r.predicate == TRAVELS], [])
 
-    async def test_a_merge_cannot_leave_a_companion_with_an_invalid_target(self) -> None:
+    async def test_the_party_merged_into_a_group_makes_it_the_party_and_keeps_the_companion(
+        self,
+    ) -> None:
+        """#3954: the `party` flag is the one marker, and a merge moves it to a group it is kept
+        on (#1655), so the companion still travels with the party."""
         await self.go(self.owl, self.party, "dm")
         other = (
             await self.memory.add_entity(
@@ -111,9 +115,24 @@ class Companions(NamesTest):
                 status=CONFIRMED, source="dm",
             )
         ).value.id  # fmt: skip
-        with self.assertRaises(MemoryRuleError):
+        await self.memory.merge(
+            GUILD, self.campaign.id, other, self.party, source="dm", dm_said_same=True
+        )
+        rows = await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+        self.assertIn((self.owl, other), {(r.subject_id, r.object_id) for r in rows
+                                          if r.predicate == TRAVELS})  # fmt: skip
+
+    async def test_a_merge_cannot_leave_a_companion_with_an_invalid_target(self) -> None:
+        await self.go(self.owl, self.party, "dm")
+        town = (
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name="Bryn Shander", type="place",
+                status=CONFIRMED, source="dm",
+            )
+        ).value.id  # fmt: skip
+        with self.assertRaises(MemoryRuleError):  # (a place is never the party)
             await self.memory.merge(
-                GUILD, self.campaign.id, other, self.party, source="dm", dm_said_same=True
+                GUILD, self.campaign.id, town, self.party, source="dm", dm_said_same=True
             )
 
     async def test_a_player_character_with_a_companion_cannot_become_an_npc(self) -> None:

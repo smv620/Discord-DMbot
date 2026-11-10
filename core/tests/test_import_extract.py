@@ -128,7 +128,9 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
         _import_left_told={},
         _extract_import=extract,
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_screen_channel_id=9))
+            get=AsyncMock(
+                return_value=SimpleNamespace(dm_screen_channel_id=9, dm_bot_channel_id=None)
+            )
         ),
         post=AsyncMock(),
         sent=sent,
@@ -136,6 +138,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
     )
     me._extract_imports_left = partial(BOT._extract_imports_left, me)
     me._tell_imports_left = partial(BOT._tell_imports_left, me)
+    me._upkeep_channel = partial(BOT._upkeep_channel, me)
     return me
 
 
@@ -179,6 +182,14 @@ class TheSweep(WithImports):
         await me._tell_imports_left(GUILD, self.store, {})  # (all read: no word)
         self.assertEqual(me.post.await_count, 2)
         self.assertEqual(me._import_left_told, {})
+
+    async def test_the_word_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
+        me = bot_for(self.store, [])
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_screen_channel_id=9, dm_bot_channel_id=12)
+        )
+        await me._tell_imports_left(GUILD, self.store, {self.campaign.id: 2})
+        self.assertEqual(me.post.await_args.args[0], 12)  # (#3874: not the DM screen)
 
     async def test_nothing_is_said_while_a_scan_is_still_waiting(self) -> None:
         await self.imported(1)  # (cleaned, not scanned)

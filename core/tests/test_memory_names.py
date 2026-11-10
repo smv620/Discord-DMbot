@@ -3552,7 +3552,9 @@ class AfterSession(NamesTest):
         await self.bot.post_new_names(table)
         self.assertEqual(table.new_names, [])  # told once
         text = posted.await_args.args[1]  # type: ignore[union-attr]
-        self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
+        # (#3874) no DM could be reached privately here, so the fallback post is counts only
+        self.assertIn("1 new name to check** from your last session", text)
+        self.assertNotIn("Bryn Shander", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
 
     async def test_new_names_question_goes_to_the_dms_private_chat(self) -> None:

@@ -17,8 +17,8 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from typing import Any, NamedTuple
 
 import discord
 
@@ -55,7 +55,11 @@ def _plural(kind: str, count: int) -> str:
 def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     """ "📜 Added **62 names** (30 NPCs, 24 places) and **48 connections** from <label>." and, when
     something is left, "**3 questions** need you." Counts only."""
-    kinds = {k: v for k, v in counts.items() if k not in ("connections", "other_names") and v}
+    kinds = {
+        k: v
+        for k, v in counts.items()
+        if k not in ("connections", "other_names", "shown", "held") and v
+    }
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
     connections = counts.get("connections", 0)
@@ -70,6 +74,22 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     what = " and ".join(added) if added else "**nothing new**"
     source = f" from {discord.utils.escape_markdown(label)}" if label else ""
     text = f"📜 Added {what}{source}."
+    shown = counts.get("shown", 0)
+    if shown:  # (an import's: held-back connections the table stated, #3963 c)
+        text += (
+            f"\n👁️ **{shown} connection{'' if shown == 1 else 's'}** said at the table "
+            f"{'is' if shown == 1 else 'are'} now shown to your players."
+        )
+    held = counts.get("held", 0)
+    if held:  # (an import's: kept hidden beside a connection the story hides, #3979)
+        one = held == 1
+        text += (
+            f"\n🙈 **{held} connection{'' if one else 's'}** {'is' if one else 'are'} kept hidden "
+            f"from your players, so {'it' if one else 'they'} can't give away another hidden "
+            f"connection between the same two names. To show {'it' if one else 'them'}: open "
+            f"either name, ✏️ Edit a connection…, 👁️ Who knows this?, then 👁️ Everyone at the "
+            f"table."
+        )
     if questions:
         text += (
             f"\n❓ **{questions} question{'' if questions == 1 else 's'}** "
@@ -186,6 +206,14 @@ async def undo_upload(
             log.warning("Undoing an upload stopped (%s)", type(exc).__name__)
             broke = True
             break
+    try:  # the lineage questions the upload left waiting go too (#3926); never stops the undo
+        from dmbot.memory.trait_offers import TraitOfferStore
+
+        await TraitOfferStore(bot.memory._db).drop_for_notice(
+            campaign.guild_id, campaign.id, notice_id
+        )
+    except Exception as exc:
+        log.warning("Undoing an upload's lineage questions failed (%s)", type(exc).__name__)
     if bot.lookup is not None:
         bot.lookup.drop([campaign.id])
     total = len(claimed.changes)
@@ -197,6 +225,14 @@ async def undo_upload(
     return NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
 
 
+class DmClaims(NamedTuple):
+    """Which connections an import may keep as sure (#3897): stated in the lines of these DMs, in
+    the sessions that start at these times."""
+
+    dm_ids: Collection[int]
+    sessions: Collection[int]
+
+
 async def add_sure(
     bot: Any,
     campaign: Any,
@@ -205,13 +241,16 @@ async def add_sure(
     *,
     connections: bool = True,
     source: tuple[str, str] | None = None,
+    dm_claims: DmClaims | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
     None when nothing could be kept (no store). `connections=False`: names only (an import's).
     `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
-    by it (#3879). Never raises."""
+    by it (#3879). `dm_claims`: the DMs and this import's sessions, to also keep the connections the
+    DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
+    again just before. Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.ui.names import background_kind
 
@@ -226,6 +265,13 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
+        if dm_claims is not None:  # (after the names, so the claims about them are ready)
+            # (read again after the names; an import counts who is recorded in its own sessions)
+            opted_in = await bot.consent.recorded_in(guild, cid)
+            await auto.accept_dm_claims(
+                memory, guild, cid, tally,
+                dm_ids=dm_claims.dm_ids, opted_in=opted_in, sessions=dm_claims.sessions,
+            )  # fmt: skip
         if (
             links is not None and connections
         ):  # (a bot without the connections store adds the names only)
@@ -237,6 +283,10 @@ async def add_sure(
             counts["connections"] = tally.accepted[auto.CONNECTIONS]
         if tally.accepted[auto.OTHER_NAMES]:
             counts["other_names"] = tally.accepted[auto.OTHER_NAMES]
+        if tally.shown:
+            counts["shown"] = tally.shown
+        if tally.held:
+            counts["held"] = tally.held
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]

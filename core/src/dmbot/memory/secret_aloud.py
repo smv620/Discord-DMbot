@@ -20,7 +20,6 @@ from dmbot.memory.models import name_key, spelling_key
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
 
-MAX_ASKED = 5  # names asked about after one session, most said first; the rest next time
 MIN_KEY = 3  # a secret "name" shorter than this is too common a word to look for
 
 
@@ -90,7 +89,7 @@ def spoken(secrets: Sequence[SecretName], texts: Iterable[str]) -> list[Said]:
     by_id = {s.alias_id: (s, key) for s, key, _ in wanted}
     out = [Said(a, by_id[a][0].text, n, tuple(ids_by_key[by_id[a][1]])) for a, n in counts.items()]
     out.sort(key=lambda s: (-s.times, name_key(s.text), s.alias_id))
-    return out  # all of them; the caller asks about the first `MAX_ASKED` and says there are more
+    return out  # all of them, most said first; exposures.py takes every one
 
 
 async def secret_names(memory: MemoryStore, guild_id: int, campaign_id: str) -> list[SecretName]:
