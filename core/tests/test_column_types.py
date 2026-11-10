@@ -1,11 +1,11 @@
 """A column that holds a Discord id, a millisecond time or a time of any kind is 64-bit (#4060).
 
 Discord ids (snowflakes) are about 19 digits and a time in milliseconds passes 2^31 within weeks of
-1970: a 32-bit INTEGER column overflows on either. The rule is by name: every column that ends
-`_id`, `_ids`, `_ms`, `_at` or `_by`, or is called `guild`, `user` or `speaker_ids`, is BIGINT,
-BIGINT[], TEXT or TEXT[] (an id kept as text, such as a campaign's or an entry's, a 32-character
-hex string). A column that is none of those must be
-on the written list below, with its reason, so a new table with an INTEGER id fails CI.
+1970: a 32-bit INTEGER column overflows on either. The rule is by name: a column that ends `_id`,
+`_ids`, `_ms`, `_at` or `_by`, or is called `guild`, `user` or `speaker_ids`, is BIGINT or BIGINT[].
+Only an id or a who (`_id`, `_ids`, `_by`) may be TEXT or TEXT[]: a campaign's or an entry's id is a
+32-character hex string. Anything else must be on the written list below, with its reason, so a new
+table with an INTEGER id, or a time kept as text, fails CI.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import re
 
 from tests.pg import DatabaseTest
 
-GUILD = 1
+GUILD = 1  # (any server: the test only reads the catalog)
 
 NAMED = re.compile(r"(_id|_ids|_ms|_at|_by)$|^(guild|user|speaker_ids)$")
 
@@ -46,8 +46,12 @@ class ColumnTypes(DatabaseTest):
         for table, column, data_type, udt in await self.columns():
             if not NAMED.search(column) or (table, column) in EXCEPTIONS:
                 continue
-            ok = data_type in ("bigint", "text") or (
-                data_type == "ARRAY" and udt in ("_int8", "_text")
+            is_id = column.endswith(("_id", "_ids", "_by"))  # (who: an entry id kept as text)
+            kinds = ("_int8", "_text") if is_id else ("_int8",)
+            ok = (
+                data_type == "bigint"
+                or (is_id and data_type == "text")
+                or (data_type == "ARRAY" and udt in kinds)
             )
             if not ok:
                 wrong.append(f"{table}.{column} is {data_type if data_type != 'ARRAY' else udt}")
