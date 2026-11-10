@@ -54,6 +54,7 @@ describe("a yes says whether the bot kept it for those who were there, or hid it
     expect(screen.getByText(saidLine(b.splitMany(1)))).toBeTruthy();
   }, 15000);
 
+  // The count is the two plain claims of the default campaign (mock.ts), each answered with the same scene line.
   it("All true says the plural of each when several were scene and split", async () => {
     const api = mockApi("table");
     api.answerWaiting = async () => ({ scene: 1 });
