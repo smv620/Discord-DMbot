@@ -14903,7 +14903,7 @@ async def fill_parties(
     campaign took, and how many knower rows a party holds (Supervisor's ruling: posted first, then
     a follow-up turns them into the member characters' own rows)."""
     steps: Counter[str] = Counter()
-    held = both = 0
+    held = both = ended = 0
     try:
         guilds = await campaigns.guilds_with_campaigns()
     except Exception as exc:
@@ -14928,9 +14928,14 @@ async def fill_parties(
             steps[filled.step] += 1
             held += filled.knower_rows
             both += filled.both
+            ended += filled.ended
     log.info(
-        "Party fill: %s; knower rows on a party: %d; both: %d", dict(steps), held, both
-    )  # (both: campaigns with a #3036 party besides the flagged one, for Supervisor)
+        "Party fill: %s; knower rows on a party: %d; both: %d; ended beside another: %d",
+        dict(steps),
+        held,
+        both,
+        ended,
+    )  # (both: a #3036 party besides the flagged one; ended: #3998; both for Supervisor)
     return steps
 
 
