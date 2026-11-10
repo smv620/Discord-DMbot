@@ -79,6 +79,14 @@ class TheNotices(unittest.IsolatedAsyncioTestCase):
         await RecapFeatures._say_group_writing(me2, campaign2, SCREEN, 3)
         self.assertEqual([c.args[0] for c in me2.post.await_args_list], [SCREEN, SCREEN])
 
+    async def test_without_a_dm_bot_channel_the_callers_own_channel_is_kept(self) -> None:
+        me, campaign = fake(dm_bot=None)
+        campaign.recaps_email = False
+        me.recaps.waiting_for_script = AsyncMock(return_value=False)
+        await RecapFeatures._say_writing(me, campaign, 999, 100)  # (a hold's stored channel)
+        await RecapFeatures._say_group_writing(me, campaign, 999, 2)
+        self.assertEqual([c.args[0] for c in me.post.await_args_list], [999, 999])
+
     async def test_no_title_text_says_this_session_s_recap_and_a_title_is_in_bold(self) -> None:
         for make in (recap_audio.ready_text, recap_audio.failed_text):
             self.assertIn("this session's recap", make(""))

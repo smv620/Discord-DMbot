@@ -1083,7 +1083,7 @@ class RecapFeatures:
         people)."""
         # Upkeep goes to the DM Bot channel (#3874); the callers' channel is the DM screen as before
         # when there is none. Fixed words and counts only, so the campaign's people may read it.
-        channel_id = self._upkeep_channel(campaign)[0] or channel_id
+        channel_id = campaign.dm_bot_channel_id or channel_id  # (else the caller's, as before)
         link = page_link(self.settings.site_url, campaign.guild_id, campaign.id, session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
         ready = (
@@ -1131,7 +1131,7 @@ class RecapFeatures:
         lead = f"{note} " if note else ""
         # Upkeep, like the single line above (#3874): the DM Bot channel, else the caller's. `note`
         # and `also` are fixed words and counts only.
-        channel_id = self._upkeep_channel(campaign)[0] or channel_id
+        channel_id = campaign.dm_bot_channel_id or channel_id  # (else the caller's, as before)
         await self.post(
             channel_id,
             f"📜 {lead}Writing {count} {'recap' if count == 1 else 'recaps'} from your imported "
