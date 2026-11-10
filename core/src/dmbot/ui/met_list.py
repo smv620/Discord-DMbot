@@ -20,6 +20,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import Campaign
+from dmbot.discord_limits import fit_message
 from dmbot.memory.met_store import MetRow, MetStore
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
@@ -52,6 +53,7 @@ EMPTY = (
 DM_ONLY = "Only a DM of this campaign can see this list."
 NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
+MESSAGE_LIMIT = 1990  # Discord's 2,000, with room to spare
 NAME_LABEL = "Their name"
 NAME_HELP = "What you call them"
 GROUP_HELP = "Their name, or the group's name"
@@ -134,14 +136,26 @@ async def show(
         await _replace(interaction, head + EMPTY, BackOnly(campaign.id))
         return
     shown = rows[:SHOWN_MAX]
+    await _replace(interaction, list_text(head, shown, len(rows)), MetList(campaign.id, shown))
+
+
+def list_text(head: str, shown: list[MetRow], total: int) -> str:
+    """The list's message, one row a line, inside Discord's limit (#4106: `logic.shorten` joined
+    every line into one paragraph). When every line does not fit, the newest that do are written
+    and the rest are counted; the menu below still offers them all. Pure."""
     lines = [f"• **{_md(logic.shorten(label(r), 90))}** · {when(r)}" for r in shown]
-    more = (
-        f"\n…and {len(rows) - len(shown)} more. Name or remove some to see the rest."
-        if len(rows) > len(shown)
-        else ""
-    )
-    text = f"{head}**{TITLE}**\n{INTRO}\n\n" + "\n".join(lines) + more
-    await _replace(interaction, logic.shorten(text, 1990), MetList(campaign.id, shown))
+    top = f"{head}**{TITLE}**\n{INTRO}\n\n"
+    for written in range(len(lines), -1, -1):
+        rest = total - written
+        more = ""
+        if rest and written < len(shown):
+            more = f"\n…and {rest} more: pick them in the menu below."
+        elif rest:
+            more = f"\n…and {rest} more. Name or remove some to see the rest."
+        text = top + "\n".join(lines[:written]) + more
+        if len(text) <= MESSAGE_LIMIT:
+            return text
+    return fit_message(top, limit=MESSAGE_LIMIT)
 
 
 async def _back_to_names(interaction: discord.Interaction, campaign_id: str) -> None:
