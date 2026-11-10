@@ -49,8 +49,9 @@ HELD_NOW = (
 # knows it; when DMbot can't tell which group, nobody does yet (never a guess).
 SPLIT_GROUP = "👁️ Only the characters who were there know this: the party was split."
 SPLIT_UNKNOWN = (
-    "🙈 Kept hidden: the party was split, and DMbot can't tell which group heard it. To show it: "
-    "open either name, ✏️ Edit a connection…, then 👁️ Who knows this?"
+    "🙈 Kept hidden from your players: the party was split, and DMbot can't tell which group "
+    "heard it. To choose who knows: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "pick who was there, then 👥 Only some characters."
 )
 
 
@@ -65,9 +66,11 @@ def split_line(group: int, unknown: int) -> str:
         )
     if unknown:
         parts.append(
-            f"🙈 {unknown} {'is' if unknown == 1 else 'are'} kept hidden: the party was split, and "
-            "DMbot can't tell which group heard "
-            f"{'it' if unknown == 1 else 'them'}. Use 👁️ Who knows this? on the connection."
+            f"🙈 {unknown} of them {'is' if unknown == 1 else 'are'} kept hidden from your "
+            "players: the party was split, and DMbot can't tell which group heard "
+            f"{'it' if unknown == 1 else 'them'}. To choose who knows: open either name, "
+            "✏️ Edit a connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some "
+            "characters."
         )
     return "\n".join(parts)
 

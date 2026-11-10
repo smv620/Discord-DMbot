@@ -64,7 +64,7 @@ class UploadNoticeRead(Script):
         """#3963 (c) and #3979: an import's notice keeps these beside the kinds, never as one."""
         await self.notices.add(
             THURSDAY.id, self.one.id, "Session 3",
-            {"npc": 1, "shown": 1, "held": 2, "split": 1}, [1],
+            {"npc": 1, "shown": 1, "held": 2, "split_group": 1, "split_unknown": 1}, [1],
             source_kind="import", source_id="up1",
         )  # fmt: skip
         got = await self.read("import")

@@ -53,9 +53,11 @@ class Words(NamesTest):
 
     def test_connections_said_while_the_party_was_split_are_said_never_as_names(self) -> None:
         """#2996: an import's connections said while the game clock had the party split."""
-        text = un.notice_text("a session", {"npc": 1, "split": 2}, 0)
+        text = un.notice_text("a session", {"npc": 1, "split_group": 2, "split_unknown": 1}, 0)
         self.assertIn("**1 name**", text)
         self.assertIn("**2 connections** were said while the party was split", text)
+        self.assertIn("**1 connection** is kept hidden from your players", text)
+        self.assertIn("then 👥 Only some characters.", text)
         self.assertNotIn("held", text)
 
 

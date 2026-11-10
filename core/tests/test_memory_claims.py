@@ -878,7 +878,7 @@ class Stored(ConfirmedMemoryTest):
         self.assertIn("To show them: open either name", claims_review.held_line(2))
         both = claims_review.split_line(1, 2)  # (#2996: said while the party was split)
         self.assertIn("1 of them was said while the party was split", both)
-        self.assertIn("2 are kept hidden", both)
+        self.assertIn("2 of them are kept hidden from your players", both)
         self.assertNotIn("kept hidden", claims_review.split_line(3, 0))
 
     async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
