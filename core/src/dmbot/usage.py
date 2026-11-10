@@ -231,6 +231,49 @@ async def add_minutes(
     return Standing(s.access, s.month, after - minutes, after, grace, s.buys_hours, s.renews)
 
 
+async def add_credits(
+    db: Database,
+    *,
+    guild_id: int,
+    campaign_id: str,
+    owner_user_id: int,
+    spend_id: str,
+    job_kind: str,
+    feature: str,
+    credits: int,
+    now_ms: int,
+) -> None:
+    """Write one AI call's cost (#4005): its ledger row and, for a paid owner, their month's total,
+    in one short transaction. Here because only this module opens the meter door. A listed person
+    or server is metered but not added to the month (the rule #3792 gave hours)."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        s = await standing_of(conn, owner_user_id, now_ms // 1000, read_used=False)
+        await conn.execute(
+            "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
+            " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                spend_id,
+                guild_id,
+                campaign_id,
+                owner_user_id,
+                job_kind,
+                feature,
+                credits,
+                s.month.start,
+                now_ms,
+            ),
+        )
+        if owner_user_id in entitlements.free_users() or await entitlements.on_free_guild(conn):
+            return
+        # The row lock this upsert takes serialises two campaigns of one owner charging at once.
+        await conn.execute(
+            "INSERT INTO owner_credits (owner_user_id, month_start, credits) VALUES (%s, %s, %s)"
+            " ON CONFLICT (owner_user_id, month_start)"
+            " DO UPDATE SET credits = owner_credits.credits + EXCLUDED.credits",
+            (owner_user_id, s.month.start, credits),
+        )
+
+
 async def _hours_row(
     conn: Conn, owner_user_id: int, month: hours.Month, *, read: bool = True
 ) -> tuple[int, int | None]:

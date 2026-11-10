@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dmbot import entitlements, usage
+from dmbot import usage
 
 if TYPE_CHECKING:
     from dmbot.ai import Reply
@@ -162,18 +162,14 @@ async def _write(db: Database, scope: Scope, feature: str, credits: int) -> None
         async with db.guild(scope.guild_id) as conn:
             await conn.execute(sql, (*row, 0, scope.job_kind, feature, credits, month, now_ms))
         return
-    async with db.meter(scope.guild_id, owner) as conn:
-        standing = await usage.standing_of(conn, owner, now_ms // 1000, read_used=False)
-        month = standing.month.start
-        await conn.execute(sql, (*row, owner, scope.job_kind, feature, credits, month, now_ms))
-        if owner in entitlements.free_users() or await entitlements.on_free_guild(conn):
-            # Free because of the person or the server: metered, but a paid owner's other
-            # servers still draw on their own allowance (the rule #3792 gave hours).
-            return
-        # The row lock this upsert takes serialises two campaigns of one owner charging at once.
-        await conn.execute(
-            "INSERT INTO owner_credits (owner_user_id, month_start, credits) VALUES (%s, %s, %s)"
-            " ON CONFLICT (owner_user_id, month_start)"
-            " DO UPDATE SET credits = owner_credits.credits + EXCLUDED.credits",
-            (owner, month, credits),
-        )
+    await usage.add_credits(
+        db,
+        guild_id=scope.guild_id,
+        campaign_id=scope.campaign_id,
+        owner_user_id=owner,
+        spend_id=row[0],
+        job_kind=scope.job_kind,
+        feature=feature,
+        credits=credits,
+        now_ms=now_ms,
+    )
