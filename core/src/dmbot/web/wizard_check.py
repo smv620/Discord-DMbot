@@ -15,6 +15,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 
+from dmbot.memory.document_reader import READING
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     NO_TEXT,
@@ -28,7 +29,7 @@ WORDS_PER_PAGE = 500
 # The website takes a PDF up to this size, less than Discord's 100 MB (#4001): the file travels as
 # base64 (a third bigger) in one request through the tunnel, whose own request limit is 100 MB on
 # the usual plans, and is held whole in the API container while it is read. A bigger PDF is added
-# in Discord, or from Google Drive. Every other type keeps 10 MB.
+# in Discord. Every other type keeps 10 MB.
 MAX_WEB_PDF_BYTES = 50 * 1024 * 1024
 MAX_WEB_BYTES = MAX_WEB_PDF_BYTES  # the largest file of any type that this door takes
 # The base64 text of the largest file: 4 characters for each 3 bytes, a little over.
@@ -40,8 +41,21 @@ def web_limit(filename: str) -> int:
     return MAX_WEB_PDF_BYTES if filename.casefold().endswith(".pdf") else MAX_DOCUMENT_BYTES
 
 
-# The whole JSON request: one file as base64 plus a little for the other fields.
+# The whole JSON request that adds a file: one file as base64 plus a little for the other fields.
 MAX_BODY_BYTES = MAX_BASE64_CHARS + 4_096
+# Every other request of the wizard (answers, pasted text) carries no file: its text is at most
+# 262,144 characters, up to 6 bytes each as JSON escapes, so this is plenty (#4001).
+MAX_SMALL_BODY_BYTES = 4 * 1024 * 1024
+
+
+def base64_limit(filename: str) -> int:
+    """The most base64 characters this file's name allows, checked before anything is decoded."""
+    return web_limit(filename) * 4 // 3 + 8
+
+
+def too_big_file() -> Checked:
+    """The answer for a file over its limit, given without decoding or reading it."""
+    return _unreadable("too_big")
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +111,8 @@ async def check_file(filename: str, raw: bytes) -> Checked:
     if len(raw) > web_limit(filename):
         return _unreadable("too_big")
     try:
-        text = await house_reader.read_file(filename, raw)
+        async with READING:  # as every other way in: two big reads at a time, not more
+            text = await house_reader.read_file(filename, raw)
     except DocumentError as exc:
         return _unreadable(_reason(exc))
     except Exception:  # a damaged or hostile file must never escape as another error

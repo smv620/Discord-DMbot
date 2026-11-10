@@ -406,6 +406,18 @@ class TheRoutes(Wizard):
             headers={"content-type": "application/json"},
         )
         self.assertEqual(big.status_code, 413)
+        # (a request that carries no file has a small cap of its own)
+        small = await c.post(
+            base, content=b'{"x": "' + b"A" * 5_000_000 + b'"}',
+            headers={"content-type": "application/json"},
+        )  # fmt: skip
+        self.assertEqual(small.status_code, 413)
+        # a name that allows 10 MB is refused before its 60 MB of base64 is decoded
+        docx = await c.post(
+            f"{base}/documents",
+            json={"slot": "lore", "name": "a.docx", "data": "A" * 20_000_000},
+        )
+        self.assertEqual(docx.json()["reason"], "too_big")
         bob = await self.client(BOB)
         self.assertEqual((await bob.get(base)).json(), {})  # Bob has no draft: Alice's is hers
         gone = await bob.post(f"{base}/documents", json={"slot": "lore", "name": "a", "text": "w"})

@@ -59,6 +59,23 @@ class TheChild(unittest.TestCase):
         self.assertEqual(document_reader.memory_for(10 * MB), base)
         self.assertEqual(document_reader.memory_for(100 * MB), base + 4 * 90 * MB)
 
+    def test_the_time_allowed_grows_only_for_a_file_over_the_usual_size(self) -> None:
+        base = document_reader.READ_TIME_S
+        self.assertEqual(document_reader.read_time_for(10 * MB), base)
+        self.assertEqual(document_reader.read_time_for(100 * MB), base + 0.75 * 90)
+
+    async def test_a_callers_own_time_limit_is_kept(self) -> None:
+        seen: list[float] = []
+
+        def fake_run(parse: object, name: str, raw: bytes, limit_s: float, *_a: object) -> tuple:
+            seen.append(limit_s)
+            return ("ok", "", "words")
+
+        with patch.object(document_reader, "_run", fake_run):
+            await document_reader.read_document("a.pdf", b"x" * (20 * MB))
+            await document_reader.read_document("a.pdf", b"x" * (20 * MB), limit_s=120.0)
+        self.assertEqual(seen, [document_reader.read_time_for(20 * MB), 120.0])
+
 
 class TheWebsite(unittest.IsolatedAsyncioTestCase):
     def test_the_website_takes_a_smaller_pdf_than_discord_and_ten_mb_for_the_rest(self) -> None:
@@ -67,6 +84,11 @@ class TheWebsite(unittest.IsolatedAsyncioTestCase):
         self.assertLess(wizard_check.MAX_WEB_PDF_BYTES, MAX_PDF_BYTES)
         # the body (base64 is a third bigger) stays under the tunnel's 100 MB request limit
         self.assertLess(wizard_check.MAX_BODY_BYTES, 100 * MB)
+
+    def test_the_base64_check_before_decoding_follows_the_file_name(self) -> None:
+        self.assertEqual(wizard_check.base64_limit("a.pdf"), 50 * MB * 4 // 3 + 8)
+        self.assertEqual(wizard_check.base64_limit("a.docx"), 10 * MB * 4 // 3 + 8)
+        self.assertEqual(wizard_check.too_big_file().reason, "too_big")
 
     async def test_a_big_pdf_is_checked_and_an_over_the_limit_one_is_too_big(self) -> None:
         body = pdf([["The gate is open. " * 5]])

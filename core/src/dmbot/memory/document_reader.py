@@ -75,6 +75,13 @@ def shutdown() -> None:
     _WAITERS.shutdown(wait=False, cancel_futures=True)
 
 
+def read_time_for(size: int) -> float:
+    """How long a read may take: the base, plus three quarters of a second for each MB over the
+    usual 10 MB, so a big illustrated PDF is not stopped for being big. A first estimate, to be
+    set from a measure of a real one (#4001)."""
+    return READ_TIME_S + 0.75 * max(0, size - MEMORY_BASE_FILE_BYTES) / (1024 * 1024)
+
+
 def memory_for(size: int) -> int:
     """A child's memory for a file of `size` bytes: the base, plus four times what the file has
     over the usual 10 MB. A big PDF is held whole in the parent, sent to the child and held again
@@ -177,7 +184,7 @@ async def read_document(
     raw: bytes,
     *,
     parse: Parse = text_of,
-    limit_s: float = READ_TIME_S,
+    limit_s: float | None = None,
     max_reply: int = MAX_REPLY_BYTES,
 ) -> str:
     """The file's text, as `text_of` gives it. PDF and Word files are read in a child
@@ -187,6 +194,8 @@ async def read_document(
     suffix = PurePath(filename).suffix.casefold()
     if suffix not in IN_A_PROCESS:
         return await asyncio.to_thread(parse, filename, raw)
+    if limit_s is None:  # (a caller's own limit, such as the adventure's, is kept as given)
+        limit_s = read_time_for(len(raw))
     stop = threading.Event()
     try:
         work = asyncio.get_running_loop().run_in_executor(
