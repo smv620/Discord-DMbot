@@ -102,10 +102,25 @@ export interface WizardApi {
   /** The optional pasted campaign page: the name and characters found by the plain reader. The text is not kept. */
   pageText(guild: string, text: string): Promise<WizardPageText>;
   /** Add one checked document: a file's bytes are checked on the server (no AI), a link or Drive file is kept as it is. */
-  docAdd(guild: string, slot: WizardSlot, input: { name: string; source: "upload" | "link" | "drive"; text?: string; link?: string }): Promise<WizardDoc>;
+  docAdd(guild: string, slot: WizardSlot, input: { name: string; source: "upload" | "link" | "drive"; text?: string; link?: string; data?: string }): Promise<WizardDoc>;
   docRemove(guild: string, id: string): Promise<void>;
   rights(guild: string, kind: "shared" | "ruleset"): Promise<void>;
   finish(guild: string): Promise<string>;
   finishState(guild: string): Promise<WizardFinish | null>;
   discard(guild: string): Promise<void>;
+}
+
+/** The largest file the server reads, in bytes (core name_documents.MAX_DOCUMENT_BYTES); a bigger one is refused before sending. */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+/** Bytes as base64, in pieces so a big file does not overflow the call stack. */
+export function toBase64(bytes: Uint8Array): string {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+}
+
+/** A new draft's answers: nothing chosen yet (the books are `null` until a box changes, so the defaults hold). */
+export function emptyAnswers(): WizardAnswers {
+  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
 }

@@ -8,22 +8,13 @@ import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
 import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
 import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
+import { problemWords } from "./wizard-problems";
 import WorkProgress from "./WorkProgress";
 
+// The finish words a second try can help with; the others need something else first (a plan, a key, the pages named in the line).
+const RETRY_AFTER = ["failed", "lost", "party_failed", "lore_failed", ""];
 const STALLED_AFTER = 120; // seconds without a move before the wait says it has stalled
 const POLL_MS = 2000;
-
-const problemWords = (error: unknown): string => {
-  if (error instanceof WizardError) {
-    if (error.kind === "no_room") return w.noRoom;
-    if (error.kind === "too_fast") return w.tooFast;
-    if (error.kind === "expired") return w.expired;
-    if (error.kind === "not_allowed") return w.notAllowed;
-    if (error.kind === "rights_needed") return w.docs.rightsNeeded;
-    if (error.kind === "bad_value" && error.key === "fallback") return w.rules.same;
-  }
-  return w.failed;
-};
 
 /** Where the campaign's page is, from the ref the finish run gives (`<server>.<campaign>`). */
 const campaignHref = (ref: string): string => `/account/campaigns#${encodeURIComponent(ref)}`;
@@ -51,7 +42,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
   useEffect(() => {
     api.get(guild).then(
       (got) => live.current && setDraft(got),
-      () => live.current && setProblem(w.failed),
+      (error) => live.current && setProblem(problemWords(error)),
     );
   }, [api, guild]);
 
@@ -190,7 +181,7 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
       onMade(next);
     } catch (error) {
       setWorking(false);
-      setProblem(error instanceof WizardError && error.kind === "rights_needed" ? w.skipRights : problemWords(error));
+      setProblem(error instanceof WizardError && (error.kind === "rights_needed" || error.kind === "needs_rights") ? w.skipRights : problemWords(error));
     }
   }
   return (
@@ -301,7 +292,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
         {!run && <p class="muted" role="status">{w.loading}</p>}
         {run && !failed && <p class="small">{t.quiet}</p>}
         {failed && run && run.campaignRef && <a class="button secondary" href={campaignHref(run.campaignRef)}>{t.open}</a>}
-        {failed && run && run.error !== "no-key" && (
+        {failed && run && RETRY_AFTER.includes(run.error) && (
           <button type="button" class="button" disabled={pressing} onClick={() => void press()}>
             {t.retry}
           </button>
