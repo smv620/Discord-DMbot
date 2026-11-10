@@ -10948,6 +10948,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 found.append(Suggestion(name, times))
         added: list[str] = []
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        # the session each name is made in, for the split-party check (#4043): never a guess
+        session = None
+        if session_id is not None and self.transcripts is not None:
+            try:
+                session = await self._session_of(gid, session_id)
+            except Exception as exc:  # (the check then falls back to its guess, hidden if split)
+                log.warning("Name scan: couldn't read the session (%s)", type(exc).__name__)
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without",
             len(found), len(kinds), len(found) - len(kinds),
@@ -10964,6 +10971,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=suggestion.name,
                         source="scan",
                         description=f"Heard {suggestion.times} times",
+                        session_started_at=session.started_at if session is not None else None,
                     )
                     break
                 except MemoryRuleError as exc:

@@ -2164,12 +2164,14 @@ class MemoryStore:
         played_by: int | None = None,
         role: str | None = None,
         hidden_from_players: bool = False,
+        session_started_at: int | None = None,
     ) -> Written[Entity]:
         """A new person, place or thing, with its name as the first alias. `role`: for a
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
-        know this one yet" (#2321), theirs to say."""
+        know this one yet" (#2321), theirs to say. `session_started_at`: the session a name scan
+        found it in, recorded for the split-party check (#4043)."""
         if hidden_from_players and source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         check_named(type, name)
@@ -2207,6 +2209,8 @@ class MemoryStore:
                 },
             )
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
+            if session_started_at is not None:
+                await record_name_session(w, str(row["id"]), session_started_at)
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
             return Written(_entity(row), w.batch)
@@ -3870,6 +3874,7 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
+            split: list[str] = []
             kept = await self._merge_in(
                 w,
                 keep_id,
@@ -3877,10 +3882,11 @@ class MemoryStore:
                 source=source,
                 dm_said_same=dm_said_same,
                 confirm_keys=confirm_keys,
+                split_out=split,
             )
             final = await w.get(ENTITIES, kept)
             assert final is not None
-            return Written(_entity(final), w.batch)
+            return Written(_entity(final), w.batch, split=_one_split(split))
 
     async def merge_many(
         self,
@@ -3905,14 +3911,17 @@ class MemoryStore:
         if len(gone) > MERGE_MANY_MAX:
             raise MemoryRuleError(f"Merge up to {MERGE_MANY_MAX} names at a time.")
         async with self._write(guild_id, campaign_id, source) as w:
+            split: list[str] = []  # (#4043: one per name said only in a split scene)
             for gone_id in gone:
                 # (a named entry is kept over an unnamed one, whichever way round: #2790)
                 keep_id = await self._merge_in(
-                    w, keep_id, gone_id, source=source, dm_said_same=True
+                    w, keep_id, gone_id, source=source, dm_said_same=True, split_out=split
                 )
             final = await w.get(ENTITIES, keep_id)
             assert final is not None
-            return Written(_entity(final), w.batch)
+            return Written(
+                _entity(final), w.batch, split=_one_split(split), split_counts=_split_counts(split)
+            )
 
     async def look_alikes(
         self, guild_id: int, campaign_id: str, *, only: Collection[str] | None = None
@@ -4229,11 +4238,14 @@ class MemoryStore:
         confirm_keys: Collection[str] = (),
         join_alias: str | None = None,
         keep_own_flags: bool = False,
+        split_out: list[str] | None = None,
     ) -> str:
-        """One merge inside an open write (see `merge`). `keep_own_flags`: the kept entry's
-        "hidden from players" and "limited to some" stay as they are (DMbot's own join, #3602: a
-        name read from a session starts hidden, and joining it must never hide the confirmed
-        entry). `join_alias`: the merge joins an unnamed
+        """One merge inside an open write (see `merge`). `split_out`: told "group" or "unknown"
+        when the joined name was said only while the party was split (#4043), so the caller can
+        tell the DM; its spellings then join as secret other names (see below). `keep_own_flags`:
+        the kept entry's "hidden from players" and "limited to some" stay as they are (DMbot's own
+        join, #3602: a name read from a session starts hidden, and joining it must never hide the
+        confirmed entry). `join_alias`: the merge joins an unnamed
         person to the named one it turned out to be (#3037), and this is the secret other name made
         from the description; who knew the unnamed person now know that name and nothing more.
         Returns the id that was kept: a named entry is always the one kept when the other has no
@@ -4292,9 +4304,36 @@ class MemoryStore:
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
             raise ValueError("Only the DM confirms names")
+        # A session's waiting name said only while the party was split (#4043): joined into a
+        # confirmed entry, its spellings would be open other names every player sees, so the other
+        # group would learn the entry goes by them. They join as secret names instead, known to
+        # the group that heard them, or to nobody when that can't be told (the DM decides). Read
+        # before anything moves: the lines are matched on the waiting name's own spellings.
+        scene = None
+        if keep["status"] == CONFIRMED and join_alias is None:
+            scene = await name_scene(w, gone)
+        if scene is not None and source != DM:
+            raise MemoryRuleError(AI_JOIN_REFUSED)  # (only the DM says who knows a name)
+        have = {a["key"] for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
+        arriving = [
+            str(a["id"])
+            for a in await w.select(ALIASES, " AND entity_id = %s", [gone_id])
+            if a["key"] not in have
+        ]
         await _move_aliases(
-            w, keep_id, gone_id, frozenset(confirm_keys), join=join_alias is not None
+            w,
+            keep_id,
+            gone_id,
+            frozenset(confirm_keys),
+            join=join_alias is not None,
+            secret=scene is not None,
         )
+        if scene is not None:
+            for alias_id in arriving:
+                for character in scene:
+                    await knowers.learn(w, "alias", alias_id, character)
+            if split_out is not None:
+                split_out.append("group" if scene else "unknown")
         await merge_restore.move_sheets(w.conn, w.ids, keep_id, gone_id)
         own = await w.select(
             ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
@@ -7040,6 +7079,16 @@ async def _split_during_session(w: Changes, started_at: int) -> bool:
 _SESSION_SOURCES = ("extractor", "scan")
 
 
+async def record_name_session(w: Changes, entity_id: str, session_started_at: int) -> None:
+    """Which session the story reader made this waiting name in (#4043), for `name_scene`. A time
+    and an id only; written in the same write as the name, so it is never left without one."""
+    await w.conn.execute(
+        "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id, session_started_at)"
+        " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        (w.guild_id, w.campaign_id, entity_id, session_started_at),
+    )
+
+
 async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
     """Who heard a session's new name, when the game clock had the party split (#4037, the
     names half of #2996 slice 2a; Supervisor's ruling on the issue). Read before the entry is
@@ -7067,15 +7116,24 @@ async def name_scene(w: Changes, row: dict[str, Any]) -> tuple[str, ...] | None:
     )
     if await cur.fetchone() is None:
         return None  # (the party was never split: the common case, one read)
-    # The session it came from: the newest session that began at or before the entry was made
-    # (the story reader and the name scan run after a session, before the next one begins). The
-    # names-heard count is no help here: it is kept only for names known before the session ended.
+    # The session it came from: the one the story reader recorded when it made the name (#4043),
+    # else, for a name made before that record existed, the newest session that began at or before
+    # the entry was made (the reader runs after a session; an import dated before a live session
+    # is what the record fixes). The names-heard count is no help: it is kept only for names known
+    # before the session ended.
     cur = await w.conn.execute(
-        "SELECT max(started_at) AS at FROM transcript_sessions"
-        " WHERE guild_id = %s AND campaign_id = %s AND started_at <= %s",
-        (w.guild_id, w.campaign_id, int(row["created_at"])),
+        "SELECT session_started_at AS at FROM memory_name_sessions"
+        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
+        (w.guild_id, w.campaign_id, row["id"]),
     )
     first = await cur.fetchone()
+    if first is None:
+        cur = await w.conn.execute(
+            "SELECT max(started_at) AS at FROM transcript_sessions"
+            " WHERE guild_id = %s AND campaign_id = %s AND started_at <= %s",
+            (w.guild_id, w.campaign_id, int(row["created_at"])),
+        )
+        first = await cur.fetchone()
     if first is None or first["at"] is None:
         return None  # (made outside any session: no scene to place it in)
     session_at = int(first["at"])
@@ -7682,6 +7740,17 @@ async def _moved_by_join(
     return list(await cur.fetchall())
 
 
+def _one_split(split: Sequence[str]) -> str:
+    """One word for a write's split names (#4043): "unknown" if any couldn't be placed, else
+    "group" if any was, else "". Pure."""
+    return "unknown" if "unknown" in split else ("group" if split else "")
+
+
+def _split_counts(split: Sequence[str]) -> tuple[int, int]:
+    """(heard by a group, heard but not told) for a write's split names. Pure."""
+    return (split.count("group"), split.count("unknown"))
+
+
 async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any]) -> str:
     """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
     else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
@@ -7705,6 +7774,8 @@ async def _ai_join_refusal(w: Scope, keep: dict[str, Any], gone: dict[str, Any])
         return AI_JOIN_REFUSED
     if keep["type"] != gone["type"] or keep["role"] != gone["role"]:
         return AI_JOIN_REFUSED
+    if isinstance(w, Changes) and await name_scene(w, gone) is not None:
+        return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)
     ids = [keep["id"], gone["id"]]
     if await w.select(ALIASES, " AND entity_id = ANY(%s) AND secret", [ids]):
         return AI_JOIN_REFUSED
@@ -7738,11 +7809,13 @@ async def _move_aliases(
     confirm: frozenset[str] = frozenset(),
     *,
     join: bool = False,
+    secret: bool = False,
 ) -> None:
     """The other entry's names move over in one statement (#164); a name both have is
     kept once, with the stronger status and any secret mark. Names whose key is in
     `confirm` (the DM just said they mean `keep_id`) are confirmed as they move, in the
-    same row change, so one undo puts them back exactly."""
+    same row change, so one undo puts them back exactly. `secret`: the names that arrive are
+    made secret in that same change (a name said only in a split scene, #4043)."""
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
     moving: list[str] = []
     confirming: list[str] = []
@@ -7763,15 +7836,15 @@ async def _move_aliases(
             await w.update(ALIASES, twin["id"], upgrade)
     # (a join makes the moved names secret in this same update: a second one would make Undo
     # refuse)
-    secret = {"secret": True} if join else {}
+    secret_mark = {"secret": True} if join or secret else {}
     if moving:
         await w.update_where(
-            ALIASES, {"entity_id": keep_id, **secret}, " AND id = ANY(%s)", [moving]
+            ALIASES, {"entity_id": keep_id, **secret_mark}, " AND id = ANY(%s)", [moving]
         )
     if confirming:
         await w.update_where(
             ALIASES,
-            {"entity_id": keep_id, "status": CONFIRMED, **secret},
+            {"entity_id": keep_id, "status": CONFIRMED, **secret_mark},
             " AND id = ANY(%s)",
             [confirming],
         )

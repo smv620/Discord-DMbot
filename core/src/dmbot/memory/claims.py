@@ -86,6 +86,7 @@ from dmbot.memory.store import (
     _new_alias,
     learnable_in_scene,
     live_between,
+    record_name_session,
     reveal_stated_in,
     split_scene,
 )
@@ -1268,7 +1269,9 @@ class ClaimStore:
             deferred = 0
             if chosen:
                 both = [*work, *((k, "", u) for _, k, u in old)]
-                new, joined = await self._link(w, onto, both, chosen, entities, aliases)
+                new, joined = await self._link(
+                    w, onto, both, chosen, entities, aliases, session_started_at
+                )
                 names = names_of(entities, aliases)
             else:
                 new, joined = [], 0
@@ -1473,9 +1476,12 @@ class ClaimStore:
         chosen: Sequence[str],
         entities: list[dict[str, Any]],
         aliases: list[dict[str, Any]],
+        session_started_at: int | None = None,
     ) -> tuple[list[str], int]:
         """Make the chosen name keys proposed entries, or join them to one already waiting.
         `entities` and `aliases` are the rows the caller holds; the new ones are added to them.
+        `session_started_at`: the session the names were heard in, recorded with each new one so
+        the split-party check reads that session's lines (#4043), never a guess by time.
         Returns (the new entries' names, spellings joined to a waiting one)."""
         spelling: dict[str, str] = {}  # name key → the words as first said
         sides: dict[str, set[str]] = {}  # name key → the kinds the claims' relationships imply
@@ -1528,6 +1534,8 @@ class ClaimStore:
                 alias = await w.insert(
                     ALIASES, _new_alias(w, str(row["id"]), name, "full", PROPOSED, False, None)
                 )
+                if session_started_at is not None:
+                    await record_name_session(w, str(row["id"]), session_started_at)
                 entities.append(row)
                 aliases.append(alias)
                 home = str(row["id"])
