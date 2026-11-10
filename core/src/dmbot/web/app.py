@@ -73,6 +73,7 @@ from dmbot.web import (
     report,
     restores,
     rule_sharing,
+    safe_json,
     script_make,
     see_as,
     session_notes,
@@ -266,6 +267,7 @@ def create_app(
         docs_url=None,  # no public API browser
         redoc_url=None,
         openapi_url=None,
+        default_response_class=safe_json.SafeJSONResponse,  # no id above 2^53 as a number (#4060)
     )
     # The __Host- prefix makes browsers refuse a cookie unless it's Secure, set by this
     # exact host with Path=/ and no Domain: no other site or subdomain (the website shares

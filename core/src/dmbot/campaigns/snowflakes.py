@@ -55,6 +55,21 @@ def write_ids(value: Any, *, under: bool = False) -> Any:
     return value
 
 
+def stringify_unsafe(value: Any) -> Any:
+    """The value with every integer above JS_SAFE written as a string, under any key: for what the
+    website's API sends a browser, where a number that big loses its last digits (#4060). Nothing
+    else changes."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value) if abs(value) > JS_SAFE else value
+    if isinstance(value, dict):
+        return {k: stringify_unsafe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [stringify_unsafe(v) for v in value]
+    return value
+
+
 def unsafe_keys(value: Any, key: str = "") -> set[str]:
     """The keys that still hold an integer above JS_SAFE (for the log: names only, never values)."""
     if isinstance(value, bool):

@@ -26,12 +26,14 @@ import io
 import json
 import uuid
 import zlib
+from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.snowflakes import read_ids, write_ids
 from dmbot.db import Conn
@@ -173,8 +175,16 @@ class TranscriptParts:
         if not isinstance(sessions, list) or len(sessions) > SESSIONS_MAX:
             raise CampaignError(DAMAGED)
         for s in sessions:
-            if not isinstance(s, dict) or set(s) != set(_SESSION_KEYS):
+            if not isinstance(s, dict) or set(s) - {"made_by_commit"} != set(_SESSION_KEYS):
                 raise CampaignError(DAMAGED)
+            default = s.pop("made_by_commit", None)
+            if default is not None and (not isinstance(default, str) or not lineage.valid(default)):
+                raise CampaignError(
+                    DAMAGED
+                )  # (a default is 40 lower-case hex characters or absent)
+            if default is not None:
+                for r in _stamped_rows(s):
+                    r.setdefault("made_by_commit", default)  # a row with the key keeps its own
             if not isinstance(s["session"], dict) or not _keys_ok(s["session"]):
                 raise CampaignError(DAMAGED)
             for name in ("lines", "suggestions", "respells"):
@@ -414,10 +424,37 @@ _ALWAYS_MADE_HERE = frozenset({"id", "guild_id", "campaign_id", "session_id", "l
 # ---- the files ---------------------------------------------------------------------------
 
 
+# The part's tables that carry a build stamp (`dmbot.lineage`), by where they are in a session.
+_STAMPED_ROWS = ("session", "lines", "import")
+
+
+def _stamped_rows(session: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rows of one session whose table carries `made_by_commit`."""
+    found: list[dict[str, Any]] = []
+    for name in _STAMPED_ROWS:
+        got = session.get(name)
+        if isinstance(got, dict):
+            found.append(got)
+        elif isinstance(got, list):
+            found.extend(r for r in got if isinstance(r, dict))
+    return found
+
+
 def _session_text(text: str) -> str:
-    """One session's JSON as the file carries it: a Discord id is a string (#4060). The database
-    made the text with numbers; it is read and written again here, in the worker thread."""
-    return json.dumps(write_ids(json.loads(text)))
+    """One session's JSON as the file carries it (#4060). A Discord id is a string. The build stamp
+    most of its rows share is written once, on the session, and left off the rows that have it; a
+    row that differs keeps its own (a null for "none"). The database made the text with numbers and
+    a stamp on every row; it is read and written again here, in the worker thread."""
+    data = write_ids(json.loads(text))
+    rows = _stamped_rows(data)
+    stamps = Counter(r["made_by_commit"] for r in rows if r.get("made_by_commit"))
+    if stamps:
+        default = stamps.most_common(1)[0][0]
+        data["made_by_commit"] = default
+        for r in rows:
+            if r.get("made_by_commit") == default:
+                del r["made_by_commit"]
+    return json.dumps(data)
 
 
 def encode_part(

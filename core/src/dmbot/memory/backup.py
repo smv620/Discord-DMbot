@@ -9,6 +9,7 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -387,6 +388,52 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
                 # (it keeps the kind and the session). A backup is read by the whole server.
                 row["target_id"] = None
             out.append({"table": tag, **row})
+    return _with_default_stamp(out)
+
+
+# The row that carries the build stamp most rows share (#4060): written first, once, so a row holds
+# its own `made_by` only when it differs (an explicit null for "none"). A file from before has no
+# such row and a stamp on every row.
+DEFAULTS_TAG = "defaults"
+
+
+def _with_default_stamp(rows: list[Any]) -> list[Any]:
+    """The rows with the most common build stamp written once, ahead of them, and left off the rows
+    that have it."""
+    stamps = Counter(r["made_by"] for r in rows if r.get("made_by"))
+    if not stamps:
+        return rows
+    default = stamps.most_common(1)[0][0]
+    shared = [({k: v for k, v in r.items() if k != "made_by"} if r.get("made_by") == default else r)
+              for r in rows]  # fmt: skip
+    return [{"table": DEFAULTS_TAG, "made_by": default}, *shared]
+
+
+def _expand_default_stamp(rows: list[Any]) -> list[Any]:
+    """The rows as before the default was taken off them. Untrusted: a default that is not a stamp
+    (40 lower-case hex characters), or that is not alone in its row, refuses the whole backup."""
+    if not isinstance(rows, list):
+        return rows
+    heads = [r for r in rows if isinstance(r, dict) and r.get("table") == DEFAULTS_TAG]
+    if not heads:
+        return rows
+    head = heads[0]
+    default = head.get("made_by")
+    if (
+        len(heads) != 1
+        or set(head) != {"table", "made_by"}
+        or not isinstance(default, str)
+        or not lineage.valid(default)
+    ):
+        raise CampaignError(DAMAGED)
+    out: list[Any] = []
+    for r in rows:
+        if r is head:
+            continue
+        table = _TAGS.get(r.get("table")) if isinstance(r, dict) else None
+        if table is not None and table.name in lineage.STAMPED and "made_by" not in r:
+            r = {**r, "made_by": default}
+        out.append(r)
     return out
 
 
@@ -400,6 +447,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     it would strand the campaign, while a loop only shows as a neighbour on a card (the readers
     follow one link, not a chain) and a new link or a merge can't add to it."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
+    rows = _expand_default_stamp(rows)
     rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(_unnamed_names(rows))))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
