@@ -206,6 +206,7 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
 from dmbot.names import not_names
+from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
 
@@ -6875,20 +6876,35 @@ async def live_between(w: Changes, a: str, b: str) -> dict[str, bool]:
     return {str(r["id"]): bool(r["unrevealed"]) for r in rows}
 
 
-async def split_when_said(w: Changes, session_started_at: int | None, lines: Sequence[str]) -> bool:
-    """Was the party split by the game clock (#3131) when any of these lines was spoken? Then a
-    held-back connection the claim states is not shown to the whole party: only one group was in
-    that scene (#2996, the leak found in #3963 c; slice 2a gives that group its own knower rows).
-    `lines` are the claim's line numbers, 1-based as `extractor.readable` numbers the session's
-    lines (by `started_ms`, then id). A moment is split when the clock's newest log row at or
-    before it belongs to a group (the rule of `timebot.stamp`).
+async def split_scene(
+    w: Changes,
+    session_started_at: int | None,
+    lines: Sequence[str],
+    speaker_ids: Sequence[int] = (),
+) -> tuple[str, ...] | None:
+    """Who was in the scene of these lines, when the game clock had the party split (#2996 rule 1,
+    slice 2a): None when the party was together at every cited line (the whole party was there);
+    otherwise the player characters of the one group the lines' speakers were in, the same group
+    at every line (`timebot.stamp.group_of_speakers`, and `group_at` for its members); an empty
+    tuple when that can't be told (two groups, nobody placed, only the DM spoke, a line together
+    and another split). DMbot never guesses whose scene it was.
 
-    When no cited line is found (a person's lines were taken back since), it fails closed: split
-    when the clock was split at the session's start or at any time during it. An imported session's
-    lines carry the dates the DM chose (the extractor reads no clock for them), so the answer for
-    one is whatever the log holds at those dates: a hold is the safe side. No clock: not split."""
+    `lines` are the claim's line numbers, 1-based as `extractor.readable` numbers the session's
+    lines (by `started_ms`, then id). A moment is split when the clock's newest log row at or before
+    it belongs to a group (the rule of `timebot.stamp`). When no cited line is found (a person's
+    lines were taken back since), it fails closed: split, group unknown, when the clock was split
+    at the session's start or at any time during it. An imported session's lines carry the dates
+    the DM chose; the clock is read at those dates all the same (Supervisor, #4034: a wrong hold
+    costs one 👁️ press, a wrong show leaks). No clock: together."""
     if session_started_at is None:
-        return False
+        return None
+    cur = await w.conn.execute(
+        "SELECT 1 FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND position IS NOT NULL LIMIT 1",
+        (w.guild_id, w.campaign_id),
+    )
+    if await cur.fetchone() is None:
+        return None  # (the party was never split: the common case, one read)
     numbers = sorted({int(n) for n in lines if str(n).isascii() and str(n).isdecimal()})
     rows = []
     if numbers:
@@ -6903,11 +6919,36 @@ async def split_when_said(w: Changes, session_started_at: int | None, lines: Seq
         )
         rows = await cur.fetchall()
     if not rows:
-        return await _split_during_session(w, session_started_at)
-    for at in {int(r["at"]) for r in rows}:
-        if await _split_at(w, at):
-            return True
-    return False
+        return () if await _split_during_session(w, session_started_at) else None
+    moments = sorted({int(r["at"]) for r in rows})
+    split = [await _split_at(w, at) for at in moments]
+    if not any(split):
+        return None
+    if not all(split):
+        return ()  # (part together, part split: not one scene)
+    groups = {
+        await group_of_speakers(w.conn, w.guild_id, w.campaign_id, speaker_ids, at)
+        for at in moments
+    }
+    if len(groups) != 1 or None in groups:
+        return ()
+    (group,) = groups
+    pcs = [
+        str(row["id"])
+        for row in await w.select(
+            ENTITIES,
+            " AND type = 'character' AND role = %s AND status = %s AND merged_into IS NULL",
+            [PLAYER_CHARACTER, CONFIRMED],
+        )
+    ]
+    members: set[str] | None = None
+    for at in moments:
+        here = {
+            pc for pc in pcs if await group_at(w.conn, w.guild_id, w.campaign_id, pc, at) == group
+        }
+        members = here if members is None else members & here
+    # (an empty answer, nobody of that group there at every line, reads as "can't be told": safe)
+    return tuple(sorted(members or ()))
 
 
 async def _split_at(w: Changes, at: int) -> bool:
@@ -6932,6 +6973,27 @@ async def _split_during_session(w: Changes, started_at: int) -> bool:
         (w.guild_id, w.campaign_id, started_at, w.guild_id, w.campaign_id, started_at, w.now),
     )
     return await cur.fetchone() is not None
+
+
+async def learnable_in_scene(w: Changes, relation_id: str) -> bool:
+    """Whether the group that was in a split scene may learn this connection (#2996 slice 2a):
+    the same checks as the together rule's `reveal_stated_in`, the held-back flag aside. Confirmed,
+    live and not secret, with both ends already shown to the players: learning a connection makes
+    its names known, so a secret or a hidden name is never given away by it (the reviewer)."""
+    row = await w.get(RELATIONS, relation_id)
+    if (
+        row is None
+        or row["secret"]
+        or row["status"] != CONFIRMED
+        or row["to_session_at"] is not None
+    ):
+        return False
+    ends = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited AND NOT unnamed",
+        [[row["subject_id"], row["object_id"]]],
+    )
+    return len(ends) == 2
 
 
 async def reveal_stated_in(w: Changes, relation_id: str) -> bool:

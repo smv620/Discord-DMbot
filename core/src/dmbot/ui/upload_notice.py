@@ -52,14 +52,14 @@ def _plural(kind: str, count: int) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
+# Counts that ride beside the kinds of names, never one of them (#3963 c, #3979, #2996).
+_NOT_NAMES = ("connections", "other_names", "shown", "held", "split_group", "split_unknown")
+
+
 def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     """ "📜 Added **62 names** (30 NPCs, 24 places) and **48 connections** from <label>." and, when
     something is left, "**3 questions** need you." Counts only."""
-    kinds = {
-        k: v
-        for k, v in counts.items()
-        if k not in ("connections", "other_names", "shown", "held") and v
-    }
+    kinds = {k: v for k, v in counts.items() if k not in _NOT_NAMES and v}
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
     connections = counts.get("connections", 0)
@@ -89,6 +89,23 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
             f"connection between the same two names. To show {'it' if one else 'them'}: open "
             f"either name, ✏️ Edit a connection…, 👁️ Who knows this?, then 👁️ Everyone at the "
             f"table."
+        )
+    group = counts.get("split_group", 0)
+    if group:  # (an import's: said while the game clock had the party split, #2996)
+        one = group == 1
+        text += (
+            f"\n👁️ **{group} connection{'' if one else 's'}** {'was' if one else 'were'} said "
+            f"while the party was split, so only the characters who were there know "
+            f"{'it' if one else 'them'}."
+        )
+    unknown = counts.get("split_unknown", 0)
+    if unknown:  # (… and which group heard it can't be told: nobody knows it yet)
+        one = unknown == 1
+        text += (
+            f"\n🙈 **{unknown} connection{'' if one else 's'}** {'is' if one else 'are'} kept "
+            f"hidden from your players: the party was split, and DMbot can't tell which group "
+            f"heard {'it' if one else 'them'}. To choose who knows: open either name, ✏️ Edit a "
+            f"connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some characters."
         )
     if questions:
         text += (
@@ -287,6 +304,10 @@ async def add_sure(
             counts["shown"] = tally.shown
         if tally.held:
             counts["held"] = tally.held
+        if tally.split_group:
+            counts["split_group"] = tally.split_group
+        if tally.split_unknown:
+            counts["split_unknown"] = tally.split_unknown
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]
