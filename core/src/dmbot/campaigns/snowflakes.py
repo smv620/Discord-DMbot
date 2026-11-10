@@ -39,17 +39,33 @@ ID_KEY = re.compile(
 )
 
 
-def write_ids(value: Any) -> Any:
-    """The value with every integer above JS_SAFE (or below its negative) written as a string."""
+def write_ids(value: Any, *, under: bool = False) -> Any:
+    """The value with every integer above JS_SAFE (or below its negative) written as a string,
+    where a key names an id (a list under such a key too): exactly where `read_ids` puts it back,
+    so a file always restores. A big number under any other key stays a number, and `unsafe_keys`
+    names it so the writer can say so."""
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
-        return str(value) if abs(value) > JS_SAFE else value
+        return str(value) if under and abs(value) > JS_SAFE else value
     if isinstance(value, dict):
-        return {k: write_ids(v) for k, v in value.items()}
+        return {k: write_ids(v, under=bool(ID_KEY.search(str(k)))) for k, v in value.items()}
     if isinstance(value, list):
-        return [write_ids(v) for v in value]
+        return [write_ids(v, under=under) for v in value]
     return value
+
+
+def unsafe_keys(value: Any, key: str = "") -> set[str]:
+    """The keys that still hold an integer above JS_SAFE (for the log: names only, never values)."""
+    if isinstance(value, bool):
+        return set()
+    if isinstance(value, int):
+        return {key} if abs(value) > JS_SAFE else set()
+    if isinstance(value, dict):
+        return {k for name, v in value.items() for k in unsafe_keys(v, str(name))}
+    if isinstance(value, list):
+        return {k for v in value for k in unsafe_keys(v, key)}
+    return set()
 
 
 def _id_text(value: Any, strict: bool) -> Any:

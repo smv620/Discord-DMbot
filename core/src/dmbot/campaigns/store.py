@@ -77,7 +77,7 @@ from dmbot.campaigns.parts import (
     decode_part,
     encode_part,
 )
-from dmbot.campaigns.snowflakes import read_ids, write_ids
+from dmbot.campaigns.snowflakes import read_ids, unsafe_keys, write_ids
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
 from dmbot.memory import graph_review
@@ -1773,7 +1773,11 @@ class CampaignStore:
         }
         if files:
             main["parts"] = {"id": backup_id, "count": len(files)}
-        return write_ids(main), files  # (an id is a string in the file, #4060)
+        written = write_ids(main)  # (an id is a string in the file, #4060)
+        left = unsafe_keys(written)
+        if left:  # a field the id rule does not know: it stays a number so the file still restores
+            log.warning("Backup: numbers above 2^53 left as numbers under: %s", sorted(left)[:20])
+        return written, files
 
     def _checked(self, data: object) -> tuple[dict[str, Any], dict[str, Any]]:
         """The backup's campaign settings and each section's rows, checked. Pure."""
