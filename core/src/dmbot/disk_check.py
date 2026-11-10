@@ -15,7 +15,10 @@ percentage and the free space in GB ever appear: no file names, no sizes of anyt
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+import os
 import shutil
 import tempfile
 import time
@@ -41,6 +44,15 @@ class Reading:
     free_gb: float
 
 
+@dataclass(frozen=True, slots=True)
+class Result:
+    """One look: what was read, and the owner alerts that are due. The alerts are sent by the
+    caller, on the event loop (`raise_alert` starts a task, which a worker thread cannot)."""
+
+    readings: list[Reading]
+    alerts: list[Problem]
+
+
 def level_of(used_pct: float, warn_pct: int, alert_pct: int) -> str:
     """Which level a percentage of the disk used is at. Pure."""
     if used_pct >= alert_pct:
@@ -60,13 +72,13 @@ class DiskWatch:
         warn_pct: int = 85,
         alert_pct: int = 95,
         usage: Callable[[Path], tuple[int, int, int]] = shutil.disk_usage,
-        alert: Callable[[Problem], None] = raise_alert,
+        device: Callable[[Path], int] = lambda path: os.stat(path).st_dev,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._places = dict(places)
         self._warn, self._alert_at = warn_pct, alert_pct
         self._usage = usage
-        self._alert = alert
+        self._device = device
         self._clock = clock
         self._said: dict[tuple[str, str], float] = {}  # (place, level) -> when it was last said
 
@@ -78,12 +90,20 @@ class DiskWatch:
         self._said[(place, level)] = now
         return True
 
-    def check(self) -> list[Reading]:
-        """One look at every place. A place that cannot be read is one WARNING line and the rest
-        are still looked at. Returns what was read (for the tests and the log's sake)."""
+    def check(self) -> Result:
+        """One look at every place (in a worker thread: it only reads and logs). A place that
+        cannot be read is one WARNING line and the rest are still looked at. Places on one disk are
+        one place: on a default Docker install the data volume and the temp directory share a
+        filesystem, and saying it twice would only repeat itself."""
         found: list[Reading] = []
+        alerts: list[Problem] = []
+        seen: set[int] = set()
         for name, path in self._places.items():
             try:
+                device = self._device(path)
+                if device in seen:
+                    continue  # (this disk was just looked at under another name)
+                seen.add(device)
                 total, used, free = self._usage(path)
             except OSError as exc:  # a path that is not there or not readable
                 if self._due(name, "unreadable"):
@@ -93,23 +113,42 @@ class DiskWatch:
                 continue
             if total <= 0:
                 continue
-            reading = Reading(name, round(used * 100 / total), round(free / GB, 1))
+            # Rounded down, as the level is: 94.6% is 94% and a warning, never "95% full" at the
+            # warning level. `df` counts what a normal user may use, so it can read a little higher.
+            pct = math.floor(used * 100 / total)
+            reading = Reading(name, pct, round(free / GB, 1))
             found.append(reading)
-            level = level_of(used * 100 / total, self._warn, self._alert_at)
+            level = level_of(pct, self._warn, self._alert_at)
             if level == ALERT and self._due(name, ALERT):
                 log.error(
                     "Disk check: the %s disk is %d%% full, %.1f GB free",
                     name, reading.used_pct, reading.free_gb,
                 )  # fmt: skip
-                self._alert(Problem.DISK_FULL)
+                alerts.append(Problem.DISK_FULL)
             elif level == WARN and self._due(name, WARN):
                 log.warning(
                     "Disk check: the %s disk is %d%% full, %.1f GB free",
                     name, reading.used_pct, reading.free_gb,
                 )  # fmt: skip
-        return found
+        return Result(found, alerts)
 
 
 def places_for(data_dir: Path) -> dict[str, Path]:
     """The places core can read: its data volume and the temp directory."""
     return {"data": data_dir, "temp": Path(tempfile.gettempdir())}
+
+
+async def look(watch: DiskWatch) -> Result:
+    """One look from the event loop: the reading in a worker thread (a disk read), the owner alert
+    from here (a task can only be started on the loop). Never raises: a failed look is one line."""
+    try:
+        result = await asyncio.to_thread(watch.check)
+    except Exception as exc:  # the check must never stop the bot
+        log.warning("Disk check failed (%s)", type(exc).__name__)
+        return Result([], [])
+    if Problem.DISK_FULL in result.alerts:
+        try:  # (a named problem, as `alerts` requires of every caller: never a value that was read)
+            raise_alert(Problem.DISK_FULL)
+        except Exception as exc:  # an alert that cannot start is a line, not the end of the loop
+            log.warning("Disk check: couldn't raise the owner alert (%s)", type(exc).__name__)
+    return result

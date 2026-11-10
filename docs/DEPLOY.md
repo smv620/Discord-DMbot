@@ -191,13 +191,13 @@ in a volume, so restarts are fast.
 | Add or change a key | `scripts/set-key` |
 | Change any other setting (an address, a model, a limit) | `scripts/set-variables` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
-| Free the disk after a deploy (#4075) | `docker image prune -a --filter "until=240h" -f` (images older than about the last five deploys) and `docker builder prune -f`; never `docker volume prune` (the database lives in a volume) |
+| Free the disk after a deploy (#4075; dev1 only, as every Docker command here) | `docker image prune -a --filter "until=240h" -f` (images older than about the last five deploys) and `docker builder prune -f`; never `docker volume prune` (the database lives in a volume) |
 | Put the admin API online (#836) | see "Put the admin API online" below |
 
 **Watch the disk.** Old test images and build cache fill it quietly: on 2026-11-10 the Docker disk hit
 100% and Postgres panicked on its checkpoint writes (#4075). DMbot now checks its data volume and temp
 directory every ten minutes and warns at 85% and tells the owner at 95% (`DMBOT_DISK_WARN_PCT`,
-`DMBOT_DISK_ALERT_PCT`), but it cannot see the database's own volume if that is another disk: run
+`DMBOT_DISK_ALERT_PCT`), but it sees only the filesystem its own data volume and temp directory are on (usually the same Docker disk as the database's volume, but not another mount, the host's root disk or inodes): run
 `df -h` after a deploy, and remove test images after each one.
 
 Updates never change your `.env`. When one brings a new `.env.example`, run

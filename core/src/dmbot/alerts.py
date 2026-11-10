@@ -72,8 +72,8 @@ class Problem(enum.Enum):
         "the server's .env and the mail provider's dashboard."
     )
     DISK_FULL = (
-        "The server's disk is almost full: free space before the database stops. dev1: see issue "
-        "#4075 on GitHub."
+        "The server's disk is almost full. Free some space on it before the database stops. "
+        "Details: issue #4075 on GitHub."
     )
     DATABASE_DOWN = (
         "DMbot couldn't start its database (it wouldn't connect, or its role or tables were "

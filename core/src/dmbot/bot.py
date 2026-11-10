@@ -14009,10 +14009,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         await asyncio.sleep(DISK_CHECK_FIRST_S)
         while True:
-            try:
-                await asyncio.to_thread(watch.check)  # (a disk read: not on the event loop)
-            except Exception as exc:  # the check must never stop the bot
-                log.warning("Disk check failed (%s)", type(exc).__name__)
+            await disk_check.look(watch)  # (never raises)
             await asyncio.sleep(disk_check.CHECK_EVERY_S)
 
     async def _wizard_round(self, guild_id: int) -> int:

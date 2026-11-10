@@ -4,13 +4,26 @@ numbers; no real disk is read."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import unittest
 from pathlib import Path
+from typing import Any, cast
 
+from dmbot import alerts
 from dmbot.alerts import Problem
 from dmbot.config import ConfigError, Settings, load_settings
-from dmbot.disk_check import ALERT, OK, SAY_EVERY_S, WARN, DiskWatch, level_of, places_for
+from dmbot.disk_check import (
+    ALERT,
+    OK,
+    SAY_EVERY_S,
+    WARN,
+    DiskWatch,
+    Result,
+    level_of,
+    look,
+    places_for,
+)
 from tests.test_config import BASE
 
 GB = 1024**3
@@ -32,8 +45,7 @@ class TheLevels(unittest.TestCase):
 
 
 class TheWatch(unittest.TestCase):
-    def watch(self, used_pct: int) -> tuple[DiskWatch, list[Problem], list[float]]:
-        alerts: list[Problem] = []
+    def watch(self, used_pct: int) -> tuple[DiskWatch, list[float]]:
         clock = [0.0]
         self.used = used_pct
 
@@ -42,82 +54,154 @@ class TheWatch(unittest.TestCase):
             return total, self.used * GB, (100 - self.used) * GB
 
         watch = DiskWatch(
-            {"data": Path("/data")}, usage=usage, alert=alerts.append, clock=lambda: clock[0]
+            {"data": Path("/data")},
+            usage=usage,
+            device=lambda _path: 1,
+            clock=lambda: clock[0],
         )
-        return watch, alerts, clock
+        return watch, clock
 
     def test_a_healthy_disk_says_nothing(self) -> None:
-        watch, alerts, _ = self.watch(40)
+        watch, _ = self.watch(40)
         with self.assertNoLogs("dmbot.disk_check", level="WARNING"):
-            found = watch.check()
-        self.assertEqual([(r.path, r.used_pct, r.free_gb) for r in found], [("data", 40, 60.0)])
-        self.assertEqual(alerts, [])
+            got = watch.check()
+        self.assertEqual(
+            [(r.path, r.used_pct, r.free_gb) for r in got.readings], [("data", 40, 60.0)]
+        )
+        self.assertEqual(got.alerts, [])
 
     def test_the_warning_level_logs_a_warning_with_counts_only_and_tells_no_one(self) -> None:
-        watch, alerts, _ = self.watch(88)
+        watch, _ = self.watch(88)
         with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
-            watch.check()
+            got = watch.check()
         self.assertEqual(len(logged.records), 1)
         self.assertEqual(logged.records[0].levelno, logging.WARNING)
         self.assertEqual(
             logged.records[0].getMessage(), "Disk check: the data disk is 88% full, 12.0 GB free"
         )
-        self.assertEqual(alerts, [])
+        self.assertEqual(got.alerts, [])
 
-    def test_the_alert_level_logs_an_error_and_tells_the_owner(self) -> None:
-        watch, alerts, _ = self.watch(96)
+    def test_the_alert_level_logs_an_error_and_asks_to_tell_the_owner(self) -> None:
+        watch, _ = self.watch(96)
         with self.assertLogs("dmbot.disk_check", level="ERROR") as logged:
-            watch.check()
+            got = watch.check()
         self.assertEqual(logged.records[0].levelno, logging.ERROR)
-        self.assertEqual(alerts, [Problem.DISK_FULL])
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
+
+    def test_the_level_is_the_percent_rounded_down(self) -> None:
+        """94.6% is 94% and a warning: it is never logged "95% full" at the warning level."""
+        watch = DiskWatch(
+            {"data": Path("/data")}, usage=lambda _p: (1000, 946, 54), device=lambda _p: 1
+        )
+        with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
+            got = watch.check()
+        self.assertEqual(got.alerts, [])
+        self.assertIn("94% full", logged.records[0].getMessage())
 
     def test_each_level_is_said_once_an_hour_and_again_after(self) -> None:
-        watch, alerts, clock = self.watch(96)
-        watch.check()
+        watch, clock = self.watch(96)
+        self.assertEqual(len(watch.check().alerts), 1)
         clock[0] += 600
-        watch.check()
-        self.assertEqual(len(alerts), 1)  # (ten minutes later: still the same hour)
+        self.assertEqual(watch.check().alerts, [])  # (ten minutes later: still the same hour)
         clock[0] += SAY_EVERY_S
-        watch.check()
-        self.assertEqual(len(alerts), 2)
+        self.assertEqual(len(watch.check().alerts), 1)
 
     def test_a_disk_that_got_worse_is_said_at_the_new_level_at_once(self) -> None:
-        watch, alerts, clock = self.watch(88)
+        watch, clock = self.watch(88)
         with self.assertLogs("dmbot.disk_check", level="WARNING"):
             watch.check()
         self.used = 97
         clock[0] += 60
         with self.assertLogs("dmbot.disk_check", level="ERROR"):
-            watch.check()
-        self.assertEqual(alerts, [Problem.DISK_FULL])
+            got = watch.check()
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
+
+    def test_places_on_one_disk_are_one_place(self) -> None:
+        watch = DiskWatch(
+            {"data": Path("/data"), "temp": Path("/tmp")},
+            usage=lambda _p: (100 * GB, 97 * GB, 3 * GB),
+            device=lambda _p: 7,  # (the same filesystem under both names)
+        )
+        with self.assertLogs("dmbot.disk_check", level="ERROR") as logged:
+            got = watch.check()
+        self.assertEqual([r.path for r in got.readings], ["data"])
+        self.assertEqual(len(logged.records), 1)
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
+
+    def test_two_different_disks_are_both_looked_at(self) -> None:
+        devices = {Path("/data"): 1, Path("/tmp"): 2}
+        watch = DiskWatch(
+            {"data": Path("/data"), "temp": Path("/tmp")},
+            usage=lambda _p: (100 * GB, 50 * GB, 50 * GB),
+            device=lambda p: devices[p],
+        )
+        self.assertEqual([r.path for r in watch.check().readings], ["data", "temp"])
 
     def test_a_path_that_cannot_be_read_is_one_warning_and_the_others_go_on(self) -> None:
-        alerts: list[Problem] = []
-
         def usage(path: Path) -> tuple[int, int, int]:
             if path == Path("/gone"):
                 raise FileNotFoundError(str(path))
             return 100 * GB, 97 * GB, 3 * GB
 
+        devices = {Path("/gone"): 1, Path("/tmp"): 2}
         watch = DiskWatch(
-            {"gone": Path("/gone"), "temp": Path("/tmp")}, usage=usage, alert=alerts.append
+            {"gone": Path("/gone"), "temp": Path("/tmp")},
+            usage=usage,
+            device=lambda p: devices[p],
         )
         with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
-            found = watch.check()
-        self.assertEqual(
-            [r.path for r in found], ["temp"]
-        )  # (the readable one was still looked at)
-        self.assertEqual(alerts, [Problem.DISK_FULL])
+            got = watch.check()
+        self.assertEqual([r.path for r in got.readings], ["temp"])  # (still looked at)
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
         messages = [r.getMessage() for r in logged.records]
         self.assertTrue(
             any("couldn't read the gone disk (FileNotFoundError)" in m for m in messages)
         )
         self.assertFalse(any("/gone" in m for m in messages))  # (the name of the place, not a path)
 
-    def test_the_owner_message_is_fixed_words_with_the_issue_and_nothing_else(self) -> None:
+    def test_the_owner_message_is_fixed_plain_words_with_the_issue(self) -> None:
         text = Problem.DISK_FULL.value
-        self.assertIn("free space before the database stops", text)
+        self.assertIn("Free some space", text)
+        self.assertIn("before the database stops", text)
         self.assertIn("#4075", text)
+
+
+class TheRealPath(unittest.IsolatedAsyncioTestCase):
+    """The look is made in a worker thread, but the owner alert must start on the event loop:
+    `raise_alert` starts a task, which a thread cannot (the bug a stand-in alert hid)."""
+
+    async def test_the_alert_reaches_the_alerter_from_a_look_made_in_a_thread(self) -> None:
+        told: list[Problem] = []
+
+        class Stand:
+            async def alert(self, problem: Problem) -> None:
+                told.append(problem)
+
+        watch = DiskWatch(
+            {"data": Path("/data")},
+            usage=lambda _p: (100 * GB, 97 * GB, 3 * GB),
+            device=lambda _p: 1,
+        )
+        before = alerts._current
+        alerts._current = cast(Any, Stand())
+        try:
+            got = await look(watch)
+            for _ in range(3):
+                await asyncio.sleep(0)  # (let the task `raise_alert` started run)
+        finally:
+            alerts._current = before
+        self.assertEqual(got.alerts, [Problem.DISK_FULL])
+        self.assertEqual(told, [Problem.DISK_FULL])
+
+    async def test_a_look_that_fails_is_a_line_and_not_an_error(self) -> None:
+        class Broken(DiskWatch):
+            def check(self) -> Result:
+                raise RuntimeError("boom")
+
+        with self.assertLogs("dmbot.disk_check", level="WARNING") as logged:
+            got = await look(Broken({}))
+        self.assertEqual((got.readings, got.alerts), ([], []))
+        self.assertIn("Disk check failed (RuntimeError)", logged.records[0].getMessage())
 
 
 class TheSettings(unittest.TestCase):
