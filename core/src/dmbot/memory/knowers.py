@@ -66,6 +66,7 @@ async def _view_of(w: Changes, entity_id: str) -> str:
 
 
 NOT_A_CHARACTER = "Pick characters from this campaign."
+PARTY_NOT_A_KNOWER = "The party can't know something as a group. Pick its characters instead."
 NO_SUCH_STATEMENT = "That is gone or was never here."
 BAD_CERTAINTY = "How sure someone is goes from 0 to 1."
 _COLUMNS = {
@@ -85,14 +86,16 @@ async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str,
         raise MemoryRuleError(NOT_A_CHARACTER)
     if not chosen:
         return {}
-    found = {
-        r["id"]: r["role"] == PLAYER_CHARACTER
-        for r in await w.select(
-            ENTITIES,
-            " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
-            [chosen, CONFIRMED],
-        )
-    }
+    rows = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
+        [chosen, CONFIRMED],
+    )
+    if any(r["party"] for r in rows):
+        # Never a knower (STORY_MEMORY 9b, #3954): what the party's characters know stays each
+        # one's own, so a row on the party could never be told apart from all of them knowing.
+        raise MemoryRuleError(PARTY_NOT_A_KNOWER)
+    found = {r["id"]: r["role"] == PLAYER_CHARACTER for r in rows}
     if len(found) != len(chosen):
         raise MemoryRuleError(NOT_A_CHARACTER)
     return {i: found[i] for i in chosen}
@@ -188,7 +191,7 @@ async def add_guessed(
     rows = await w.select(
         ENTITIES,
         " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s"
-        " AND role IS DISTINCT FROM %s",
+        " AND role IS DISTINCT FROM %s AND NOT party",  # (never the party: #3954)
         [sorted(wanted), CONFIRMED, PLAYER_CHARACTER],
     )
     have = {

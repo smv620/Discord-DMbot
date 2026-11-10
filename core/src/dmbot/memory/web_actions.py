@@ -1127,7 +1127,8 @@ async def _answer_waiting(
             result_id=confirmed.claim.fact_id or "",
             result_other="" if confirmed.batch is None else str(confirmed.batch),
             # a held-back connection the table stated is shown now, for the page to say (#3963 c)
-            counts="shown:1" if confirmed.shown else "",
+            # and one kept hidden beside a hidden one, for the page to point at 👁️ Reveal (#3979)
+            counts="shown:1" if confirmed.shown else "held:1" if confirmed.held else "",
         )
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)

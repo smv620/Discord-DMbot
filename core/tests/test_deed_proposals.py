@@ -173,11 +173,14 @@ class Answering(Base):
         self.assertIn(w.id, [x.id for x in await self.waiting()])
 
     async def test_a_press_refused_for_a_name_creates_no_party(self) -> None:
+        # (#3954: the party may exist already, made by the sessions; the refused press must not
+        # make one, nor change the one there is)
+        before = await self.memory.party(GUILD_A, self.c)
         await self.put((deed(doer="the party", viewers=("Nowhere",)), (DM_ID,)), session=903)
         (w,) = [x for x in await self.waiting() if x.viewers == ("Nowhere",)]
         with self.assertRaises(MemoryRuleError):
             await self.deeds.record(GUILD_A, self.c, w.id, opted_in=RECORDED, source="dm")
-        self.assertIsNone(await self.memory.party(GUILD_A, self.c))
+        self.assertEqual(await self.memory.party(GUILD_A, self.c), before)
 
     async def test_nothing_but_the_dm_records_or_dismisses(self) -> None:
         pid = await self.one()

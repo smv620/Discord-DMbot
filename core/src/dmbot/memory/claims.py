@@ -83,6 +83,7 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    live_between,
     reveal_stated_in,
 )
 from dmbot.memory.voice import (
@@ -288,6 +289,10 @@ class Confirmed:
     # A connection the story held back that this claim stated, now shown to the players (#3963 c):
     # the caller says so to the DM.
     shown: bool = False
+    # Written held back beside a connection the story already holds back between the same two
+    # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
+    # players on the website) when the players should see it.
+    held: bool = False
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -546,8 +551,10 @@ class Names:
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
     # Each character's (role, its player) by entry id, for who speaks for it (#2562)
     roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
-    # Each entry's source by id: only the party entry is told apart by it (#3176)
+    # Each entry's source by id (#3176)
     sources: Mapping[str, str] = field(default_factory=dict)
+    # The party entry's id: the `party` flag is the one marker (#3954), for the companion check
+    parties: frozenset[str] = frozenset()
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -592,7 +599,8 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         if str(e["type"]) == "character"
     }
     sources = {str(e["id"]): str(e.get("source") or "") for e in entities}
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources)
+    parties = frozenset(str(e["id"]) for e in entities if e.get("party"))
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources, parties)
 
 
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
@@ -727,6 +735,7 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
                 "type": second[1],
                 "role": names.roles.get(second[0], (None, None))[0],
                 "source": names.sources.get(second[0], ""),
+                "party": second[0] in names.parties,
             },
             EXTRACTOR,
         )
@@ -2129,7 +2138,7 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = False
+            shown = held = False
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2139,6 +2148,12 @@ class ClaimStore:
                 assert resolved is not None and not isinstance(other, str)
                 term, from_object, label = resolved
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
+                # A claim the reader could only file under the catch-all, between two entries the
+                # story already holds a connection back for, may be that connection in other
+                # words: it is written held back too, never shown beside it (#3975). The DM
+                # decides when to show it; DMbot never guesses which one it means.
+                live = await live_between(w, subject_id, object_id)
+                hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
@@ -2147,6 +2162,7 @@ class ClaimStore:
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    unrevealed=hold,
                     # whether they've met, from the reader's own words for it (#3881)
                     knows_how=knows_how.how_from(
                         claim.relationship, claim.details, a=claim.subject, b=claim.object
@@ -2155,12 +2171,19 @@ class ClaimStore:
                     else "",
                 )  # fmt: skip
                 fact_id = relation.id
-                # (the table said it: a connection the story held back is the party's now)
-                shown = not secret and await reveal_stated_in(w, relation.id)
+                if relation.id in live:
+                    # (the table said a connection the story already has: held back, it is the
+                    # party's now, #3963 c; one already shown stays as it is)
+                    shown = not secret and await reveal_stated_in(w, relation.id)
+                elif hold and not relation.unrevealed:
+                    # a twin the DM once turned down comes back as it was, shown: held back here
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                # (a secret one is the DM's own choice, and says so already)
+                held = hold and not secret and relation.id not in live
             row = await w.update(
                 CLAIMS,
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch, shown)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held)
