@@ -462,7 +462,7 @@ def traits_line(links: Sequence[RuleLink]) -> str:
 def history_line(
     lookup: CampaignLookup, entity_id: str, connections: Sequence[Relation], *, secrets: bool
 ) -> str:
-    """How an item changed hands (#4115): "📜 **How it changed hands:** Claude sold it to
+    """How an item changed hands (#4115): "🔁 **How it changed hands:** Claude sold it to
     Belleros · Belleros has it now", or "" when no holder's tie to it has ended. A secret tie is
     left out unless `secrets`, and a holder the reader may not see is never named."""
 
@@ -472,10 +472,13 @@ def history_line(
 
     ties = [r for r in connections if r.object_id == entity_id and (secrets or not r.secret)]
     steps = hand_over.history(ties, name)
-    return f"{HISTORY_HEAD} {' · '.join(steps)}" if steps else ""
+    if not steps:
+        return ""
+    steps[0] = steps[0][:1].upper() + steps[0][1:]  # ("It was stolen from Claude" leads)
+    return f"{HISTORY_HEAD} {' · '.join(steps)}"
 
 
-HISTORY_HEAD = "📜 **How it changed hands:**"
+HISTORY_HEAD = "🔁 **How it changed hands:**"  # (the question card's icon, so the two link up)
 
 
 def card_text(

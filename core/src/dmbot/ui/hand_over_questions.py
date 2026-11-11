@@ -28,7 +28,9 @@ NO = "No, not any more"
 BOTH = "Yes, both have it"
 LATER = "Not now"
 UNDO = "↩ Undo that"
-GONE = "That one has changed since. Nothing was saved."
+GONE = "The last item changed since you opened this, so nothing was saved."
+NOT_SAVED = "DMbot couldn't save that. Nothing changed. Press the button again in a moment."
+NO_CAMPAIGN = "That campaign isn't here any more. Nothing was saved."
 
 
 def the(item: str) -> str:
@@ -67,12 +69,15 @@ def done_text(asked: Asked) -> str:
 def both_text(asked: Asked) -> str:
     return (
         f"👍 OK. **{asked.older}** and **{asked.newer}** both keep **{the(asked.item)}**. "
-        "DMbot won't ask about these two again. It stays marked as one of a kind, held twice."
+        "DMbot won't ask about these two again. It's still one of a kind."
     )
 
 
 def undone_text(asked: Asked) -> str:
-    return f"↩ Undone. **{asked.older}** has **{the(asked.item)}** again."
+    return (
+        f"↩ Undone. **{asked.older}** has **{the(asked.item)}** again. DMbot will ask about it "
+        "next time you press 📜 Check the connections."
+    )
 
 
 class HandOverQuestions(_Menu):
@@ -140,7 +145,7 @@ class HandOverQuestions(_Menu):
             campaign = await campaign_for(interaction, self.campaign_id)
             memory = memory_of(interaction)
             if campaign is None or memory is None:
-                await _tell(interaction, "DMbot couldn't find that campaign. Try again.")
+                await _tell(interaction, NO_CAMPAIGN)
                 return
             if interaction.user.id not in campaign.dm_user_ids:  # on every press
                 await _tell(interaction, ONLY_DMS)
@@ -157,7 +162,7 @@ class HandOverQuestions(_Menu):
                 return
             except Exception:  # (a database error: the card stays as it was)
                 log.exception("A hand-over question could not be answered")
-                await _tell(interaction, "DMbot couldn't save that one. It stays waiting.")
+                await _tell(interaction, NOT_SAVED)
                 return
             self.answered += 1
             log.info("A hand-over question was answered (%s)", "both" if still_has else "ended")
@@ -210,7 +215,10 @@ class UndoHandOver(_Menu):
         await interaction.response.defer()
         campaign = await campaign_for(interaction, self.campaign_id)
         memory = memory_of(interaction)
-        if campaign is None or memory is None or self.batch is None:
+        if campaign is None or memory is None:
+            await _tell(interaction, "That campaign isn't here any more. Nothing was undone.")
+            return
+        if self.batch is None:
             return
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)

@@ -226,3 +226,23 @@ class TheHistoryLine(unittest.TestCase):
     def test_a_rejected_tie_is_no_history(self) -> None:
         gone = replace(_tie("a", "claude", "owns", 1, 2, "sold"), status="rejected")
         self.assertEqual(history([gone, _tie("b", "belleros", "owns", 2)], NAMES.get), [])
+
+    def test_a_hidden_buyer_is_never_replaced_by_a_later_holder(self) -> None:
+        # (ux-critic, #4115) Claude sold it to a hidden Belleros, who gave it to Dain
+        ties = [
+            _tie("a", "claude", "owns", 1, 2, "sold"),
+            _tie("b", "belleros", "owns", 2, 3, "gave"),
+            _tie("c", "dain", "owns", 3),
+        ]
+        seen = {"claude": "Claude", "dain": "Dain"}.get
+        self.assertEqual(history(ties, seen), ["Claude sold it", "Dain has it now"])
+
+    def test_a_holder_who_got_it_back_comes_last(self) -> None:
+        ties = [
+            _tie("a", "claude", "owns", 1, 2, "sold"),
+            _tie("b", "belleros", "owns", 2, 3, "sold"),
+            _tie("c", "claude", "owns", 3),
+        ]
+        self.assertEqual(
+            history(ties, NAMES.get), ["Belleros sold it to Claude", "Claude has it now"]
+        )

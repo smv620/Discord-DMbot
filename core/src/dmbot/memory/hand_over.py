@@ -205,11 +205,19 @@ def history(ties: Sequence[Relation], name: Callable[[str], str | None]) -> list
     if not any(t.to_session_at is not None for t in held):
         return []
     by_holder: dict[str, list[Relation]] = {}
-    for t in sorted(held, key=lambda t: (t.from_session_at or 0, t.created_at, t.id)):
+    for t in held:
         by_holder.setdefault(t.subject_id, []).append(t)
-    holders = [(h, n) for h, ts in by_holder.items() if (n := name(h)) is not None]
+    # In the order each holder last came to have it, so someone who got it back comes last
+    # ("Belleros sold it to Claude · Claude has it now"), never first.
+    order = sorted(
+        by_holder,
+        key=lambda h: max((t.from_session_at or 0, t.created_at, t.id) for t in by_holder[h]),
+    )
     steps: list[str] = []
-    for i, (holder, shown) in enumerate(holders):
+    for i, holder in enumerate(order):
+        shown = name(holder)
+        if shown is None:
+            continue  # (a holder the reader may not see is left out, never replaced)
         mine = by_holder[holder]
         if any(t.to_session_at is None for t in mine):
             # A theft or a loss ends what the victim held, never what they own (Supervisor's
@@ -227,7 +235,9 @@ def history(ties: Sequence[Relation], name: Callable[[str], str | None]) -> list
         last = max(t.to_session_at or 0 for t in mine)
         reasons = [t.end_reason for t in mine if t.to_session_at == last and t.end_reason]
         reason = reasons[0] if reasons else None
-        after = holders[i + 1][1] if i + 1 < len(holders) else None
+        # The next holder from the full list: when that one is hidden the step names nobody,
+        # never a later holder it did not go to.
+        after = name(order[i + 1]) if i + 1 < len(order) else None
         if reason in _WITH_NEXT and after is not None:
             steps.append(_WITH_NEXT[reason].format(a=shown, b=after))
         elif reason is not None:
