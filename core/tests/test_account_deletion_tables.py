@@ -217,6 +217,9 @@ class AccountDeletionTables(DatabaseTest):
         return int(row["n"])
 
     async def test_every_deleted_table_loses_the_persons_rows_and_keeps_the_others(self) -> None:
+        for table, column in DELETED:
+            if table in ROWS:  # (before the deletion, Alice's row is there: no vacuous pass)
+                self.assertEqual(await self.count(table, column, ALICE), 1, table)
         await accounts.delete_person(self.db, ALICE, now=NOW + 50)
         for table, column in DELETED:
             if table not in ROWS:
@@ -227,11 +230,16 @@ class AccountDeletionTables(DatabaseTest):
 
     async def rows(self, table: str, column: str, value: int) -> list[dict[str, object]]:
         async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute(f"SELECT * FROM {table} WHERE {column} = %s", (value,))
+            cur = await conn.execute(
+                f"SELECT * FROM {table} WHERE {column} = %s ORDER BY 1", (value,)
+            )
             return [dict(r) for r in await cur.fetchall()]
 
     async def test_every_zeroed_column_goes_to_zero_and_the_row_stays(self) -> None:
         alices = {table: await self.rows(table, column, ALICE) for table, column in ZEROED}
+        for table in alices:
+            if table in ROWS:  # (before the deletion, Alice's row is there: no vacuous pass)
+                self.assertEqual(len(alices[table]), 1, table)
         await accounts.delete_person(self.db, ALICE, now=NOW + 50)
         for table, column in ZEROED:
             if table not in ROWS:
