@@ -134,4 +134,10 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   warning (the count for that call is lost, never the answer).
 - **Owed before the limit (step 4):** an account move must carry `owner_credits` (as `owner_hours` is
   merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
+- **The estimate, as built** (#4005 step 2a, `credits.estimate`): `estimate(job_kind, units, allowance=,
+  used=) -> Estimate(credits, left, ask, enough)`. It is exact (never below the price times the units),
+  rounded up, and a count that is not a number or is negative is 0. The price table and the monthly
+  allowances (`CREDITS_PER_UNIT`, `CREDITS_PER_MONTH`) are high first guesses until the measured numbers and the
+  owner's allowances are in. While `ALLOWANCES_SET` is False the card leaves out the "You have N left"
+  sentence, so a made-up number is never shown. The card skips the question when `ask` is False (under 20).
 

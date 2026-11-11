@@ -10,12 +10,14 @@ import asyncio
 import importlib
 import inspect
 import unittest
+from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 from dmbot import ai, credits, entitlements
 from dmbot.ai import Reply
 from dmbot.campaigns.store import CampaignStore
 from dmbot.memory.story_plan import micro_usd
+from dmbot.plans import PlanId
 from tests.pg import DatabaseTest
 
 OWNER, OTHER = 11, 22
@@ -76,9 +78,33 @@ class Estimates(unittest.TestCase):
     def test_the_words_are_plain_and_count_only(self) -> None:
         est = credits.estimate("script", 1, allowance=9_920, used=0)
         self.assertEqual(
-            credits.estimate_words("script", est),
-            "About 120 AI credits for the script. You have 9,920 left this month.",
-        )
+            credits.estimate_words("script", est), "About 120 AI credits for the script."
+        )  # (no "left" sentence while the allowances are not the owner's numbers)
+        with patch.object(credits, "ALLOWANCES_SET", True):
+            self.assertEqual(
+                credits.estimate_words("script", est),
+                "About 120 AI credits for the script. You have 9,920 left this month.",
+            )
+
+    def test_one_credit_is_singular(self) -> None:
+        est = credits.estimate("lore", 0.025, allowance=10, used=0)
+        self.assertEqual(credits.estimate_words("lore", est), "About 1 AI credit for the lore.")
+
+    def test_the_bar_is_at_twenty_credits(self) -> None:
+        self.assertEqual(credits.estimate("lore", 0.475, allowance=0, used=0).ask, False)  # 19
+        self.assertEqual(credits.estimate("lore", 0.5, allowance=0, used=0).ask, True)  # 20
+
+    def test_a_count_that_is_not_a_number_or_is_below_zero_costs_nothing(self) -> None:
+        for bad in (-3.0, float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(credits.estimate("lore", bad, allowance=5, used=0).credits, 0, bad)
+
+    def test_the_estimate_is_never_below_the_exact_price(self) -> None:
+        for words in (1, 7, 999, 1000, 1001, 12_345, 99_999):
+            est = credits.estimate("lore", words / 1000, allowance=0, used=0).credits
+            self.assertGreaterEqual(est * 1000, words * credits.CREDITS_PER_UNIT["lore"])
+
+    def test_every_plan_has_an_allowance(self) -> None:
+        self.assertEqual(set(credits.CREDITS_PER_MONTH), set(get_args(PlanId)))
 
     def test_every_job_that_prepares_has_a_price_and_words(self) -> None:
         for kind in ("lore", "adventure", "import", "script"):
