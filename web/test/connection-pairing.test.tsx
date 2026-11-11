@@ -96,6 +96,21 @@ describe("joining two names", () => {
     add.mockRestore();
   });
 
+  it("Escape inside an alert dialog or a dialog does not cancel the join", async () => {
+    const { onPair, add } = await bannerListening();
+    for (const role of ["alertdialog", "dialog"]) {
+      const panel = document.createElement("div");
+      panel.setAttribute("role", role);
+      const button = document.createElement("button");
+      panel.appendChild(button);
+      document.body.appendChild(panel);
+      fireEvent.keyDown(button, { key: "Escape" });
+      expect(onPair).not.toHaveBeenCalled();
+      panel.remove();
+    }
+    add.mockRestore();
+  });
+
   it("no listener is left behind", async () => {
     const remove = vi.spyOn(window, "removeEventListener");
     const { onPair, add } = await bannerListening();
