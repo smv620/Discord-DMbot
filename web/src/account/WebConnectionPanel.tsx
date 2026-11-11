@@ -388,15 +388,21 @@ function Line({
               )}
               {how !== null && <LazyPanel load={() => import("./LinkKnowsHow")} what={knowsHowWords.loading} props={{ n, id: link.id, how, act }} />}
               <div class="row">
-                <button
-                  type="button"
-                  class="button secondary"
-                  aria-label={p.direction(p.arrow(a, b, shownDirection))}
-                  disabled={locked}
-                  onClick={() => onStage({ direction: NEXT[shownDirection] })}
-                >
-                  {p.arrow(a, b, shownDirection)}
-                </button>
+                <div class="stack">
+                  <span class="small">{p.directionLabel}</span>
+                  <button
+                    type="button"
+                    class="button secondary"
+                    aria-label={p.direction(p.directionSays(a, b, shownDirection))}
+                    disabled={locked}
+                    onClick={() => onStage({ direction: NEXT[shownDirection] })}
+                  >
+                    {p.arrow(a, b, shownDirection)}
+                  </button>
+                  <span class="small muted">
+                    {p.directionSays(a, b, shownDirection)} {p.directionNext}
+                  </span>
+                </div>
                 <button
                   type="button"
                   class="button secondary"

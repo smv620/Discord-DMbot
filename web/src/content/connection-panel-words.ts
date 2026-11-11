@@ -15,8 +15,12 @@ export const panelWords = {
   close: "Close",
   words: "Words",
   // The direction toggle shows the state it is in and what pressing it does; the arrow reads with the names in the panel's order.
-  direction: (state: string): string => `Direction: ${state}. Press to change it.`,
-  cannotTurn: "That family role can't be turned round. Change its words instead.",
+  directionLabel: "Direction (tap to change)",
+  directionSays: (a: string, b: string, direction: "a-b" | "b-a" | "both"): string =>
+    direction === "a-b" ? `${a} to ${b} only.` : direction === "b-a" ? `${b} to ${a} only.` : "Both ways.",
+  direction: (says: string): string => `Direction: ${says} Press to change it.`,
+  directionNext: "Tap again for the next choice.",
+  cannotTurn: "The direction of a family role like this can't change. Change its words instead.",
   reloadFirst: "The connections changed while saving. Close this panel, open it again and try the rest.",
   makeSecret: "Make secret",
   pin: "Pin as true",

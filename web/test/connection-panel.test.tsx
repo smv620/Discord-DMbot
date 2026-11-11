@@ -218,12 +218,16 @@ describe("which way a connection reads", () => {
     open(/owes a favour/);
     const toggle = () => screen.getByRole("button", { name: /^Direction: / });
     expect(toggle().textContent).toBe("Cerric → Wit");
-    expect(toggle().getAttribute("aria-label")).toBe(p.direction("Cerric → Wit"));
+    expect(toggle().getAttribute("aria-label")).toBe(p.direction("Cerric to Wit only."));
+    expect(screen.getByText(p.directionLabel)).toBeTruthy();
+    expect(screen.getByText(`Cerric to Wit only. ${p.directionNext}`)).toBeTruthy(); // (the state in words, beside the arrow)
     fireEvent.click(toggle());
     expect(toggle().textContent).toBe("Cerric ← Wit");
+    expect(screen.getByText(`Wit to Cerric only. ${p.directionNext}`)).toBeTruthy();
     expect(row(/Cerric ← Wit/).textContent).toContain("•"); // (staged: the line follows, with its dot)
     fireEvent.click(toggle());
     expect(toggle().textContent).toBe("Cerric ↔ Wit");
+    expect(screen.getByText(`Both ways. ${p.directionNext}`)).toBeTruthy();
     fireEvent.click(toggle());
     expect(toggle().textContent).toBe("Cerric → Wit");
     expect(row(/Cerric → Wit/).textContent).not.toContain("•"); // (round again: nothing differs)
