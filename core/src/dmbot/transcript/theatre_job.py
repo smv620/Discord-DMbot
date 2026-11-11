@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot import credits
 from dmbot.db import Database
 from dmbot.memory import theatre as th
 from dmbot.transcript import theatre_run as tr
@@ -54,6 +55,14 @@ def estimate_calls(lines: int, scene_size: int = th.SCENE_LINES) -> int:
 def estimate_line(lines: int, scene_size: int = th.SCENE_LINES) -> str:
     n = estimate_calls(lines, scene_size)
     return f"This will take about {n} AI call{'' if n == 1 else 's'}."
+
+
+def credit_line(imported: bool) -> str:
+    """What the script costs in AI credits, for an imported session only (#4005): its script is paid
+    with credits, while a live session's is paid by the hours and says nothing about credits."""
+    if not imported:
+        return ""
+    return credits.estimate_words("script", credits.estimate("script", 1, allowance=0, used=0))
 
 
 def stopped_text(part: int, of: int) -> str:

@@ -4,6 +4,8 @@ stand-in card. Invented names."""
 from __future__ import annotations
 
 import asyncio
+import re
+import unittest
 from typing import Any
 
 from dmbot.transcript import theatre_job as job
@@ -164,3 +166,10 @@ class TheJob(NamesTest):
         self.assertEqual(job.estimate_line(100), "This will take about 1 AI call.")
         self.assertEqual(job.estimate_line(151), "This will take about 2 AI calls.")
         self.assertEqual(job.estimate_calls(0), 1)
+
+
+class TheCreditLine(unittest.TestCase):
+    def test_credit_line_is_empty_for_a_live_session_and_plain_for_an_imported_one(self) -> None:
+        self.assertEqual(job.credit_line(False), "")
+        self.assertRegex(job.credit_line(True), r"About [\d,]+ AI credits for the script\.")
+        self.assertIsNotNone(re.search(r"\d", job.credit_line(True)))
