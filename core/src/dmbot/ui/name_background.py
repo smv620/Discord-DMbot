@@ -2722,6 +2722,7 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
     when the DM has answered names (Add all, the end of 📝 Check new names) and by the 📜 button.
     Returns whether there was anything to ask."""
     try:
+        from dmbot.ui.hand_over_questions import offer_hand_over
         from dmbot.ui.name_questions import offer_names  # (it imports this module)
         from dmbot.ui.same_person_questions import offer_same_person
         from dmbot.ui.worked_out_questions import offer_worked_out
@@ -2729,6 +2730,7 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
         asked_names = await offer_names(interaction, campaign_id)  # suggested other names first
         asked_names = await offer_worked_out(interaction, campaign_id) or asked_names
         asked_names = await offer_same_person(interaction, campaign_id) or asked_names
+        asked_names = await offer_hand_over(interaction, campaign_id) or asked_names
         view = ConnectionOffer(campaign_id)
         if not await view.load(interaction):
             return asked_names

@@ -246,6 +246,7 @@ AUDIENCE: dict[str, str] = {
             "ui.names.RecapNamesButton",
             "ui.names.ReviewButton",
             "ui.met_list.MetListButton",  # (the "Met but not named" list, #4045)
+            "ui.private_scenes_list.PrivateScenesButton",  # (#2996 rule 5)
             "ui.people_review.PeopleReviewButton",
             "ui.live_heads_up.LiveHeadsUpButton",
             "ui.recap_again.AgainButton",

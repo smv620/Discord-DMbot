@@ -176,6 +176,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # A start-up wizard draft is the person's own answers and documents: it goes in every
         # server (#3955).
         await conn.execute("SELECT dmbot_forget_wizard()")
+        # The AI credit totals are the person's Discord ID too; the ledger rows keep their numbers
+        # with the owner set to nobody (#4094).
+        await conn.execute("SELECT dmbot_forget_credits()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
