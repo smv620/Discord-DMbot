@@ -153,3 +153,66 @@ class TheAnswers(Base):
         row = await self.row(made)
         self.assertEqual((row["state"], row["error"]), ("failed", hand_over_answer.NOT_ALLOWED))
         self.assertIsNone((await self.owns(self.older)).to_session_at)
+
+
+class TheEdges(Base):
+    async def test_after_undo_it_offers_no_undo_and_a_second_is_refused(self) -> None:
+        made = await self.press("no")
+        await hand_over_answer.run_round(self.bot(), self.g)
+        await self.press("undo", undoes=made)
+        await hand_over_answer.run_round(self.bot(), self.g)
+        read = await hand_over.read_answer(self.web, self.session, self.cref, made)
+        self.assertFalse(read["undoable"])
+        with self.assertRaises(RecapError) as again:
+            await self.press("undo", undoes=made)
+        self.assertEqual(again.exception.code, "not_found")
+
+    async def test_undo_of_a_no_not_done_is_refused(self) -> None:
+        made = await self.press("no")  # (still waiting: nothing to take back)
+        async with self.db.guild(self.g) as conn:  # (and it no longer holds the question open)
+            await conn.execute("UPDATE hand_over_answers SET state = 'failed' WHERE id = %s",
+                               (made,))  # fmt: skip
+        with self.assertRaises(RecapError) as caught:
+            await self.press("undo", undoes=made)
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_an_answer_is_claimed_once_retaken_when_lost_and_never_when_old(self) -> None:
+        made = await self.press("no")
+        now = [1_800_000_000.0]
+        answers = hand_over_answer.HandOverAnswers(self.db, clock=lambda: now[0])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE hand_over_answers SET created_at = %s", (int(now[0]),))
+        got = await answers.claim_next(self.g)
+        assert got is not None and (got.id, got.tries) == (made, 1)
+        self.assertIsNone(await answers.claim_next(self.g))
+        now[0] += hand_over_answer.RETAKE_AFTER_S + 5
+        again = await answers.claim_next(self.g)
+        assert again is not None and again.tries == 2
+        self.assertFalse(await answers.end(self.g, got, ok=True))  # (the lost claim can't close it)
+        now[0] += hand_over_answer.GIVE_UP_S + 5
+        self.assertIsNone(await answers.claim_next(self.g))
+
+    async def test_a_retaken_no_whose_write_landed_ends_done(self) -> None:
+        made = await self.press("no")
+        (q,) = await self.memory.hand_over_waiting(self.g, self.one.id, source="dm")
+        await self.memory.answer_hand_over(self.g, self.one.id, q, still_has=False, source="dm")
+        async with self.db.guild(self.g) as conn:  # (as if the bot stopped before closing it)
+            await conn.execute("UPDATE hand_over_answers SET tries = 1 WHERE id = %s", (made,))
+        await hand_over_answer.run_round(self.bot(), self.g)
+        row = await self.row(made)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+
+    async def test_without_campaign_memory_nothing_is_listed_or_taken(self) -> None:
+        me = self.bot()
+        me.memory = None
+        self.assertEqual(await hand_over_answer.refresh_guild(me, self.g), 0)
+        await self.press("no")
+        self.assertEqual(await hand_over_answer.run_round(me, self.g), 0)
+
+    async def test_a_question_still_waiting_keeps_when_it_was_first_listed(self) -> None:
+        (first,) = await self.listed()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE hand_over_questions SET made_at = 5")
+        await self.refresh()
+        (again,) = await self.listed()
+        self.assertEqual((first["olderTie"], again["madeAt"]), (again["olderTie"], 5))

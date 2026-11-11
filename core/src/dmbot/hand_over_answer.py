@@ -4,7 +4,8 @@ Two jobs, both the bot's (the page never writes the story itself):
 
 - **The list** (`refresh`): the questions `MemoryStore.hand_over_waiting` gives, written into
   `hand_over_questions` for the page's door (0424). The rule lives in `memory/hand_over.py` alone,
-  so Discord and the website cannot disagree. Ids and a time only; rewritten each round.
+  so Discord and the website cannot disagree. Ids and a time only; written again every minute
+  and after every answer, keeping when each question was first listed.
 - **The answers** (`run_round`): the page queues a row in `hand_over_answers` (`no`, `both`, or
   `undo` of an earlier `no`). This round claims the oldest, checks again that the sender is still a
   DM and that the question still waits, then does exactly what the Discord card's buttons do
@@ -46,19 +47,24 @@ WORDS = (NOT_ALLOWED, GONE, TOO_LATE, CHANGED, FAILED)
 
 
 async def refresh(db: Database, guild_id: int, campaign_id: str, questions: list[Question]) -> int:
-    """Write a campaign's waiting questions for the page, in the order Discord asks them, replacing
-    what was there. Returns how many."""
+    """Write a campaign's waiting questions for the page, in the order Discord asks them: a question
+    already listed keeps when it was first listed (`made_at`, "waiting since"), one no longer
+    waiting goes. Returns how many."""
     now = int(time.time())
+    keys = [f"{q.older_relation_id}:{q.newer_relation_id}" for q in questions]
     async with db.guild(guild_id) as conn:
         await conn.execute(
-            "DELETE FROM hand_over_questions WHERE guild_id = %s AND campaign_id = %s",
-            (guild_id, campaign_id),
+            "DELETE FROM hand_over_questions WHERE guild_id = %s AND campaign_id = %s"
+            " AND older_relation_id || ':' || newer_relation_id <> ALL(%s::text[])",
+            (guild_id, campaign_id, keys),
         )
         for place, q in enumerate(questions):
             await conn.execute(
                 "INSERT INTO hand_over_questions (guild_id, campaign_id, item_id, older_id,"
                 " newer_id, predicate, older_relation_id, newer_relation_id, place, made_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, older_relation_id, newer_relation_id)"
+                " DO UPDATE SET place = EXCLUDED.place",
                 (guild_id, campaign_id, q.item_id, q.older_id, q.newer_id, q.predicate,
                  q.older_relation_id, q.newer_relation_id, place, now),
             )  # fmt: skip
@@ -68,13 +74,11 @@ async def refresh(db: Database, guild_id: int, campaign_id: str, questions: list
 async def refresh_guild(bot: Any, guild_id: int) -> int:
     """Rewrite the list for every campaign on a server; one campaign's trouble never stops the
     others. Returns how many questions wait in all."""
+    if bot.memory is None:  # (campaign memory is off: there is nothing to ask)
+        return 0
     total = 0
     for campaign in await bot.campaigns.list_campaigns(guild_id):
-        try:
-            questions = await bot.memory.hand_over_waiting(guild_id, campaign.id, source=DM)
-            total += await refresh(bot.campaigns.db, guild_id, campaign.id, questions)
-        except Exception as exc:
-            log.warning("The hand-over questions could not be listed (%s)", type(exc).__name__)
+        total += await refresh_campaign(bot, guild_id, campaign.id)
     return total
 
 
@@ -134,6 +138,16 @@ class HandOverAnswers:
             )  # fmt: skip
             return bool(cur.rowcount)
 
+    async def spent(self, guild_id: int, campaign_id: str, answer_id: str) -> None:
+        """A `no` that was undone: its change is gone, so it offers Undo no more (the doors read
+        an undoable `no` by its batch)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE hand_over_answers SET batch = NULL WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND action = 'no'",
+                (guild_id, campaign_id, answer_id),
+            )
+
     async def batch_of(self, guild_id: int, campaign_id: str, answer_id: str) -> int | None:
         """The change an earlier, done `no` made (what an `undo` takes back), or None."""
         async with self._db.guild(guild_id) as conn:
@@ -173,18 +187,22 @@ async def run_round(bot: Any, guild_id: int) -> int:
             "A website hand-over answer ended: %s %s%s",
             answer.action, word or "done", "" if held else " (lost)",
         )  # fmt: skip
-        if not word:  # (the list follows at once, not a minute later)
-            await refresh_guild_campaign(bot, guild_id, answer.campaign_id)
+        if not word and answer.action == "undo" and held:
+            # (the `no` it took back offers no Undo any more, and a second one is refused)
+            await answers.spent(guild_id, answer.campaign_id, answer.undoes or "")
+        if word in ("", GONE):  # (the list follows at once, not a minute later)
+            await refresh_campaign(bot, guild_id, answer.campaign_id)
     return 1
 
 
-async def refresh_guild_campaign(bot: Any, guild_id: int, campaign_id: str) -> None:
-    """One campaign's list, again; a failure is logged and the next round writes it."""
+async def refresh_campaign(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """One campaign's list, again; a failure is logged (0) and the next round writes it."""
     try:
         questions = await bot.memory.hand_over_waiting(guild_id, campaign_id, source=DM)
-        await refresh(bot.campaigns.db, guild_id, campaign_id, questions)
+        return await refresh(bot.campaigns.db, guild_id, campaign_id, questions)
     except Exception as exc:
         log.warning("The hand-over questions could not be listed (%s)", type(exc).__name__)
+        return 0
 
 
 async def _apply(
@@ -206,11 +224,17 @@ async def _apply(
         except TooLateToUndo:
             return TOO_LATE, None
         except MemoryRuleError:
+            if answer.tries > 1 and await _tie_open(bot, guild_id, answer):
+                return "", None  # a retaken Undo whose write landed before the close failed
             return CHANGED, None
         return "", None
     waiting = await bot.memory.hand_over_waiting(guild_id, answer.campaign_id, source=DM)
     question = _find(waiting, answer)
     if question is None:
+        if answer.tries > 1 and await _already_done(bot, guild_id, answer):
+            # a retaken answer whose write landed before the close failed: done, never "gone"
+            # (a `no`'s change is then not offered for Undo: its batch was not kept)
+            return "", None
         return GONE, None  # answered in Discord meanwhile, or a tie changed
     try:
         written = await bot.memory.answer_hand_over(
@@ -219,6 +243,39 @@ async def _apply(
     except MemoryRuleError:  # (another press got there between the look and the write)
         return GONE, None
     return "", written.batch if answer.action == "no" else None
+
+
+async def _tie(bot: Any, guild_id: int, answer: Answer) -> Any | None:
+    """The older holder's tie as it is now, or None."""
+    rels = await bot.memory.relations(guild_id, answer.campaign_id, include_secret=True)
+    return next((r for r in rels if r.id == answer.older_relation_id), None)
+
+
+async def _tie_open(bot: Any, guild_id: int, answer: Answer) -> bool:
+    tie = await _tie(bot, guild_id, answer)
+    return tie is not None and tie.to_session_at is None
+
+
+async def _already_done(bot: Any, guild_id: int, answer: Answer) -> bool:
+    """Whether what the answer asks for is already so: a `no`'s tie ended, or a `both` remembered
+    for the pair (the bot stopped between the write and closing the row)."""
+    if answer.action == "no":
+        tie = await _tie(bot, guild_id, answer)
+        return tie is not None and tie.to_session_at is not None
+    newer = await bot.memory.relations(guild_id, answer.campaign_id, include_secret=True)
+    pair = {r.subject_id for r in newer if r.id in (answer.older_relation_id,
+                                                     answer.newer_relation_id)}  # fmt: skip
+    item = {r.object_id for r in newer if r.id == answer.newer_relation_id}
+    if len(pair) != 2 or len(item) != 1:
+        return False
+    first, second = sorted(pair)
+    async with bot.campaigns.db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT 1 FROM memory_hand_over_both WHERE guild_id = %s AND campaign_id = %s"
+            " AND item_id = %s AND first_id = %s AND second_id = %s",
+            (guild_id, answer.campaign_id, next(iter(item)), first, second),
+        )
+        return await cur.fetchone() is not None
 
 
 def _find(waiting: list[Question], answer: Answer) -> Question | None:
