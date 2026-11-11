@@ -355,18 +355,18 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice,
     // Undo this upload is queued for the bot, then polled like any queued change: once, within 7 days, newest first.
     undoUpload: async (ref, source, onLook) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-undo`;
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-notice/undo`;
       const queued = (await call("POST", base, { kind: source.kind, id: source.id })) as { id: string };
       if (!queued?.id) throw new ApiError("server");
       for (let i = 0; i < NAME_POLLS; i++) {
-        let got = null as { state?: string; error?: string; took?: number; of?: number; progress?: unknown } | null;
+        let got = null as { state?: string; error?: string; undone?: number; progress?: unknown } | null;
         try {
           got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
           onLook?.(sharedOf(got?.progress as never));
         } catch (error) {
           if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
         }
-        if (got?.state === "done") return { took: Number(got.took ?? 0), of: Number(got.of ?? 0) };
+        if (got?.state === "done") return { took: Number(got.undone ?? 0) };
         if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
         if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
       }
