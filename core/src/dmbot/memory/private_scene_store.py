@@ -65,10 +65,13 @@ class PrivateScenes:
     ) -> Written:
         """Find the session's private scenes and keep them, in place of the ones an earlier run on
         it kept. `opted_in`: who is recorded in this server now; nobody else's lines are read. One
-        transaction; two runs on one session wait for each other on a lock of their own, never on
-        the session's row (a person's "Delete my transcripts" writes that row after deleting these,
-        so holding it here could deadlock). A scene found again keeps its id, so a "Not private"
-        button posted before a re-run still works."""
+        transaction; two runs on one session wait for each other on a lock of their own, and the
+        session's row is held (`FOR SHARE`) before its lines are read, so "Delete my transcripts"
+        or a DM's removal of a speaker, which lock that same row (`FOR UPDATE`) first, run wholly
+        before or wholly after: a scene citing someone whose lines were just deleted is never
+        written (#4091). One lock order everywhere: the session's row, then its lines, then what
+        cites them. A scene found again keeps its id, so a "Not private" button posted before a
+        re-run still works."""
         recorded = sorted(set(opted_in))
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
@@ -77,7 +80,7 @@ class PrivateScenes:
             )
             cur = await conn.execute(
                 "SELECT started_at FROM transcript_sessions WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s",
+                " AND campaign_id = %s AND id = %s FOR SHARE",
                 (guild_id, campaign_id, session_id),
             )
             row = await cur.fetchone()

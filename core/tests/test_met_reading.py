@@ -223,6 +223,13 @@ class Store(NamesTest):
         self.assertEqual(row["n"], 0)
         self.assertEqual(await self.memory.unnamed(GUILD, self.campaign.id), [])
 
+    async def test_a_speaker_whose_lines_went_before_the_write_is_never_cited(self) -> None:
+        # (#4091: "Delete my transcripts" committed between the read and this write)
+        await self.transcripts.delete_person(GUILD, DM_ID)
+        done = await self.met(("barbarians", 2))
+        self.assertEqual((done.made, done.gone), (0, 1))
+        self.assertEqual(await self.rows(), [])
+
     async def test_the_same_words_in_the_session_are_found_again(self) -> None:
         await self.met(("barbarians", 2))
         again = await self.met(("the Barbarians", 2))  # (a restarted read)
