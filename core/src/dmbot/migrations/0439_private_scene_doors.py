@@ -9,13 +9,14 @@ from __future__ import annotations
 # `memory_private_scenes` is isolated and the web role has no grant on it, so the page reads it
 # through a door, as the Names pages do. The list door sends the two characters' names (a merged
 # character under the name it became, followed up to six steps as `private_scene_store.roots`
-# does), the session's start, about how many minutes and how many lines: ids and times only, no
-# word of what was said (the table keeps none), and never `speaker_ids`. A row citing anyone not
-# recorded now is left out, with the same rule as `consent.still_recorded` and the met list's door
-# (0438); the caller passes the current wording's number. "Not private" is the store's own one-row
-# update (`PrivateScenes.not_private`): the bot does nothing extra when a scene is marked, so the
-# door makes the change itself, for a DM of the campaign only, and answers `gone` when the scene
-# is already marked or not there.
+# does), the session's start, how many minutes into it the scene began (so two scenes of one pair
+# can be told apart), about how many minutes it lasted (rounded as Discord's list does) and how
+# many lines: ids and times only, no word of what was said (the table keeps none), and never
+# `speaker_ids`. A row citing anyone not recorded now is left out, with the same rule as
+# `consent.still_recorded` (the met list's door uses it too); the caller passes the current
+# wording's number. "Not private" is the store's own one-row update (`PrivateScenes.not_private`):
+# the bot does nothing extra when a scene is marked, so the door makes the change itself, for a DM
+# of the campaign only, and answers `gone` when the scene is already marked or not there.
 SQL = r"""
     -- The name of the entry that stands for this one now (it, or where its merges led), or NULL.
     CREATE FUNCTION dmbot_entry_name(g BIGINT, c TEXT, eid TEXT) RETURNS TEXT
@@ -48,7 +49,8 @@ SQL = r"""
                        'first', COALESCE(dmbot_entry_name(g, c, t.first_id), ''),
                        'second', COALESCE(dmbot_entry_name(g, c, t.second_id), ''),
                        'sessionStartedAt', t.session_started_at,
-                       'minutes', GREATEST(1, ((t.to_ms - t.from_ms) / 60000)::INTEGER),
+                       'minutes', GREATEST(1, round((t.to_ms - t.from_ms) / 60000.0)::INTEGER),
+                       'into', GREATEST(0, (t.from_ms / 1000 - t.session_started_at) / 60),
                        'lines', t.line_count)
                        ORDER BY t.session_started_at DESC, t.from_ms DESC, t.id)
             FROM (

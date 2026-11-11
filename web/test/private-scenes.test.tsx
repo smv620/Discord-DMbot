@@ -17,7 +17,7 @@ vi.mock("../src/content/private-scenes-switch", () => ({
   },
 }));
 
-const zone = process.env.TZ;
+const zone = process.env.TZ; // (the component works the date out in the reader's zone; the test only checks the day it shows is that day)
 afterEach(() => {
   cleanup();
   live.on = true;
@@ -40,8 +40,8 @@ describe("the list", () => {
     expect(screen.getByRole("heading").textContent).toContain("(2)");
     expect(screen.getByText(w.lead)).toBeTruthy();
     expect(screen.getByText(w.who("Rook", "Mira Voss"))).toBeTruthy();
-    expect(screen.getByText(new RegExp(w.detail("14 Nov 2023", 12, 9).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))).toBeTruthy();
-    expect(screen.getByText(/about 1 minute · 4 lines/)).toBeTruthy();
+    expect(screen.getByText(/1h 05m in · about 12 min, 9 lines spoken/)).toBeTruthy();
+    expect(screen.getByText(/7 min in · about 1 min, 4 lines spoken/)).toBeTruthy();
   });
 });
 
@@ -49,7 +49,7 @@ describe("Not private", () => {
   it("takes the scene off the list and says so", async () => {
     const api = await open();
     const li = screen.getByText(w.who("Rook", "Mira Voss")).closest("li") as HTMLElement;
-    fireEvent.click(within(li).getByRole("button", { name: w.notPrivate }));
+    fireEvent.click(within(li).getByRole("button", { name: w.notPrivateOf("Rook", "Mira Voss") }));
     expect(await screen.findByText(w.done("Rook", "Mira Voss"))).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(w.who("Rook", "Mira Voss"))).toBeNull());
     expect(api.calls.filter((c) => c.startsWith("notPrivateScene:"))).toHaveLength(1);
@@ -61,7 +61,7 @@ describe("Not private", () => {
     // (another tab marked it first)
     await real(REF, "d".repeat(32));
     const li = screen.getByText(w.who("Rook", "Mira Voss")).closest("li") as HTMLElement;
-    fireEvent.click(within(li).getByRole("button", { name: w.notPrivate }));
+    fireEvent.click(within(li).getByRole("button", { name: w.notPrivateOf("Rook", "Mira Voss") }));
     expect(await screen.findByText(w.gone)).toBeTruthy();
     await waitFor(() => expect(screen.queryByText(w.who("Rook", "Mira Voss"))).toBeNull());
   });

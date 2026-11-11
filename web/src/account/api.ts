@@ -2105,6 +2105,8 @@ export interface PrivateScene {
   first: string;
   second: string;
   sessionStartedAt: number;
+  /** Minutes into the session the scene began. */
+  into: number;
   minutes: number;
   lines: number;
 }

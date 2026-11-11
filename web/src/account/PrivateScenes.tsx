@@ -83,11 +83,11 @@ export default function PrivateScenes({ api, campaignRef }: { api: AccountApi; c
         {list.map((s) => (
           <li key={s.id} class="stack">
             <p id={`scene-${s.id}`}>
-              <strong>{w.who(s.first, s.second)}</strong>
-              <span class="small muted"> · {w.detail(dateOf(s.sessionStartedAt), s.minutes, s.lines)}</span>
+              <strong>{w.who(s.first || w.someone, s.second || w.someone)}</strong>
+              <span class="small muted"> · {w.detail(dateOf(s.sessionStartedAt), s.into, s.minutes, s.lines)}</span>
             </p>
             <div class="row">
-              <button type="button" class="button secondary" disabled={busy} aria-describedby={`scene-${s.id}`} onClick={() => void notPrivate(s)}>
+              <button type="button" class="button secondary" disabled={busy} aria-label={w.notPrivateOf(s.first || w.someone, s.second || w.someone)} onClick={() => void notPrivate(s)}>
                 {w.notPrivate}
               </button>
             </div>

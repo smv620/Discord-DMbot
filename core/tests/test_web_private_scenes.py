@@ -27,16 +27,20 @@ class PrivateScenesDoor(Web):
         speakers: tuple[int, ...] = (ALICE.id, STRANGER),
         started: int = 1_700_000_000,
         minutes: int = 12,
+        ms: tuple[int, int] | None = None,
     ) -> str:
         sid = f"{n:032x}"
+        begin, end = (
+            ms if ms is not None else (0, minutes * 60_000)
+        )  # (ms from the session's start)
         async with self.db.guild(self.g) as conn:
             await conn.execute(
                 "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id, second_id,"
                 " session_started_at, from_ms, to_ms, line_count, speaker_ids, status, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, 1000, %s, 5, %s, 'kept', 1)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 5, %s, 'kept', 1)",
                 (
                     self.g, self.one.id, sid, self.first, self.second, started,
-                    1000 + minutes * 60_000, list(speakers),
+                    started * 1000 + begin, started * 1000 + end, list(speakers),
                 ),
             )  # fmt: skip
         return sid
@@ -60,10 +64,22 @@ class PrivateScenesDoor(Web):
                 "first": "Rook" if self.first == self.rook else "Mira Voss",
                 "second": "Mira Voss" if self.first == self.rook else "Rook",
                 "sessionStartedAt": 1_700_000_000,
+                "into": 0,
                 "minutes": 12,
                 "lines": 5,
             },
         )
+
+    async def test_the_minutes_round_as_discord_does_and_never_read_zero(self) -> None:
+        await self.scene(1, ms=(0, 90_000))  # 1.5 minutes: Discord's round() says 2
+        await self.scene(2, started=1_600_000_000, ms=(0, 10_000))  # a few seconds: at least 1
+        mins = {i["id"]: i["minutes"] for i in await self.items()}
+        self.assertEqual(sorted(mins.values()), [1, 2])
+
+    async def test_it_says_how_far_into_the_session_it_began(self) -> None:
+        await self.scene(1, ms=(125 * 60_000, 130 * 60_000))
+        (item,) = await self.items()
+        self.assertEqual(item["into"], 125)
 
     async def test_it_is_empty_before_any_scene(self) -> None:
         self.assertEqual(await self.items(), [])
@@ -140,3 +156,72 @@ class PrivateScenesDoor(Web):
         )
         (item,) = await self.items()
         self.assertIn("Rook the Bold", (item["first"], item["second"]))
+
+    async def test_a_speaker_without_discord_is_never_taken_as_stopped(self) -> None:
+        await self.scene(1, speakers=(ALICE.id, -5))
+        self.assertEqual(len(await self.items()), 1)
+
+    async def test_an_import_confirmation_counts_until_it_is_taken_back(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id,"
+                " basis, confirmed_by, confirmed_at, terms_version) VALUES"
+                " (%s, %s, %s, 'imp', 777, 'uploader_confirmed', %s, 1, 1)",
+                (self.g, self.one.id, "c" * 32, ALICE.id),
+            )
+        await self.scene(1, speakers=(ALICE.id, 777))
+        self.assertEqual(len(await self.items()), 1)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE import_consents SET removed_at = 2 WHERE guild_id = %s AND user_id = 777",
+                (self.g,),
+            )
+        self.assertEqual(await self.items(), [])
+
+    async def test_a_merge_chain_of_two_steps_shows_the_name_it_ended_as(self) -> None:
+        await self.scene(1)
+        middle = await self.add("Rook the Bold", "character", role="player_character")
+        last = await self.add("Rook of the Reach", "character", role="player_character")
+        await self.memory.merge(
+            self.g, self.one.id, middle, self.rook, source="dm", dm_said_same=True
+        )
+        await self.memory.merge(self.g, self.one.id, last, middle, source="dm", dm_said_same=True)
+        (item,) = await self.items()
+        self.assertIn("Rook of the Reach", (item["first"], item["second"]))
+
+    async def test_a_dm_of_another_campaign_cannot_list_or_mark_these(self) -> None:
+        sid = await self.scene()
+        other = await self.campaigns.create(self.g, "Other", ALICE.id)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "DELETE FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s",
+                (self.g, self.one.id),
+            )
+            await conn.execute(
+                "INSERT INTO campaign_dms (guild_id, campaign_id, user_id) VALUES (%s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (self.g, other.id, ALICE.id),
+            )
+        self.assertEqual(await self.refusal(self.items()), "not_allowed")
+        self.assertEqual(
+            await self.refusal(private_scenes.not_private(self.web, self.session, self.cref, sid)),
+            "not_allowed",
+        )
+        elsewhere = f"{self.g}.{other.id}"
+        self.assertEqual(
+            await self.refusal(private_scenes.not_private(self.web, self.session, elsewhere, sid)),
+            "gone",  # (a DM of that campaign, but the scene is not in it)
+        )
+
+    async def test_a_scene_marked_here_is_not_found_again_by_the_finder_flag(self) -> None:
+        sid = await self.scene()
+        await private_scenes.not_private(self.web, self.session, self.cref, sid)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_private_scenes WHERE guild_id = %s"
+                " AND status = 'not_private'",
+                (self.g,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)  # (the store's own mark: the finder skips it, 0419)

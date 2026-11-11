@@ -19,7 +19,7 @@ _ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 async def listed(db: Database, session: Session, ref: str) -> dict[str, Any]:
-    """`{items: [{id, first, second, sessionStartedAt, minutes, lines}]}`, newest first. A
+    """`{items: [{id, first, second, sessionStartedAt, into, minutes, lines}]}`, newest first. A
     non-DM is refused (`not_allowed`)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
@@ -41,6 +41,7 @@ async def listed(db: Database, session: Session, ref: str) -> dict[str, Any]:
                 "second": str(s["second"]),
                 "sessionStartedAt": int(s["sessionStartedAt"]),
                 "minutes": int(s["minutes"]),
+                "into": int(s["into"]),
                 "lines": int(s["lines"]),
             }
             for s in got

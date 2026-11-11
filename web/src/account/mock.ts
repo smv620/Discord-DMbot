@@ -845,8 +845,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let scenesNow: PrivateScene[] = [
-    { id: "d".repeat(32), first: "Rook", second: "Mira Voss", sessionStartedAt: 1_700_000_000, minutes: 12, lines: 9 },
-    { id: "e".repeat(32), first: "Brynn", second: "Rook", sessionStartedAt: 1_699_000_000, minutes: 1, lines: 4 },
+    { id: "d".repeat(32), first: "Rook", second: "Mira Voss", sessionStartedAt: 1_700_000_000, into: 65, minutes: 12, lines: 9 },
+    { id: "e".repeat(32), first: "Brynn", second: "Rook", sessionStartedAt: 1_699_000_000, into: 7, minutes: 1, lines: 4 },
   ];
   let matchesNow: MatchRow[] =
     scenario === "table"
