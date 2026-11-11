@@ -94,6 +94,17 @@ class PrivateSceneStore(NamesTest):
         await self.write()
         self.assertEqual(len(await self.kept()), 1)
 
+    async def test_only_a_scene_not_found_before_is_new(self) -> None:
+        await self.said((650, P1), (670, P2))
+        self.assertEqual((await self.write()).new, 1)
+        self.assertEqual((await self.write()).new, 0)  # (a re-read: the note says nothing again)
+
+    async def test_roots_follow_a_merge(self) -> None:
+        ashe = await self.pc("Ashe", P2)
+        await self.memory.merge(GUILD, self.cid, ashe, self.ash, source="dm", dm_said_same=True)
+        roots = await self.scenes.roots(GUILD, self.cid, [self.ash, self.wren])
+        self.assertEqual(roots, {self.ash: ashe, self.wren: self.wren})
+
     async def test_a_scene_found_again_keeps_its_id(self) -> None:
         await self.said((650, P1), (670, P2))
         await self.write()

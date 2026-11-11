@@ -157,12 +157,13 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id", "knows_how"),
+     "via_alias_id", "knows_how", "end_reason"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
-    # older row's role has no direction (#2457). knows_how: the story didn't say (#3881)
+    # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
+    # end_reason: an end from before #4115 has none
     defaults={
         "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
-        "knows_how": "",
+        "knows_how": "", "end_reason": None,
     },
 )  # fmt: skip
 CORRECTIONS = Table(
@@ -470,6 +471,13 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             raise MemoryRuleError(NOT_FOUND)
+        if (
+            table is RELATIONS
+            and "to_session_at" in changes
+            and changes["to_session_at"] is None
+            and before.get("end_reason") is not None
+        ):  # (a tie reopened is current again: why it once ended no longer holds, #4115)
+            changes = {"end_reason": None, **changes}
         changes = {k: v for k, v in changes.items() if before[k] != v}
         if not changes:
             return before
@@ -869,6 +877,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "decided": None,
         "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
         "knows_how": "",  # how two people know each other was not kept before #3881
+        "end_reason": None,  # why a tie ended was not kept before #4115
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
