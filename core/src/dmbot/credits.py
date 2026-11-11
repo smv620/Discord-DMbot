@@ -24,10 +24,13 @@ import logging
 import math
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import TYPE_CHECKING
+
+from psycopg import errors as pg_errors
 
 from dmbot import usage
 from dmbot.plans import PlanId
@@ -188,9 +191,37 @@ def current() -> Scope | None:
     return _current.get()
 
 
+@dataclass(frozen=True, slots=True)
+class Charge:
+    """One call's cost, ready to write. Its id is made once, so writing it again (after a timeout
+    that may or may not have landed) can never count it twice."""
+
+    spend_id: str
+    guild_id: int
+    campaign_id: str
+    job_kind: str
+    feature: str
+    credits: int
+    now_ms: int
+    scope: Scope  # (the job: it keeps who owns the campaign, found once, inside the bounded write)
+
+
+# Charges that could not be written, tried again before the next charge (a dropped count must not
+# silently undercount, #4094). Bounded: past the limit the oldest is dropped and counted in `lost`.
+MAX_WAITING = 200
+_waiting: deque[Charge] = deque()
+lost = 0  # charges dropped for good since the bot started (a count, shown in the log)
+
+
+def waiting() -> int:
+    """How many charges are waiting to be written again."""
+    return len(_waiting)
+
+
 async def record(reply: Reply, feature: str | None) -> int:
     """Charge one answered call to the job it belongs to. Returns the credits charged (0 outside a
-    job). It never raises: a failed write is one counts-only warning, and the work goes on."""
+    job, or when the write is waiting for a retry). It never raises: a failed write is one
+    counts-only warning, kept and tried again, and the work goes on."""
     scope = _current.get()
     if scope is None or _db is None:
         return 0
@@ -209,16 +240,87 @@ async def record(reply: Reply, feature: str | None) -> int:
         )
         if credits <= 0:
             return 0
-        # Shielded, so a cancelled job does not lose the count half way, and bounded, so a hung
-        # database costs one warning instead of stalling the answer.
-        await asyncio.wait_for(
-            asyncio.shield(_write(_db, scope, (feature or "-")[:40], credits)), WRITE_TIMEOUT_S
+        charge = Charge(
+            uuid.uuid4().hex,
+            scope.guild_id,
+            scope.campaign_id,
+            scope.job_kind,
+            (feature or "-")[:40],
+            credits,
+            int(_clock() * 1000),
+            scope,
         )
+        # Kept before anything is awaited, so a cancelled job cannot lose it; the flush writes
+        # everything waiting in order, this charge last, and is bounded as a whole.
+        _keep(charge)
+        await _flush(_db)
+        if any(c is charge for c in _waiting):
+            return 0  # still waiting for a retry
     except Exception as exc:  # the meter must never fail the real work
-        log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
+        log.warning("AI credits: a charge could not be made (%s)", type(exc).__name__)
         return 0
     log.info("AI credits: job=%s feature=%s credits=%d", scope.job_kind, feature or "-", credits)
     return credits
+
+
+_PERMANENT = (pg_errors.IntegrityError, pg_errors.DataError)  # a retry can never succeed
+
+
+async def _attempt(db: Database, charge: Charge) -> str:
+    """Write one charge. Shielded, so a cancelled job does not lose it half way, and bounded, so a
+    hung database costs one warning instead of stalling the answer. "ok", "retry" (the database or
+    the network: try again later) or "drop" (it can never be written: the campaign is gone or was
+    moved, a value is out of range). A write that timed out may still land; the id makes a second
+    write of it a no-op, and the flush stops at the first failure, so these do not pile up."""
+    try:
+        await asyncio.wait_for(asyncio.shield(_write(db, charge)), WRITE_TIMEOUT_S)
+    except _PERMANENT as exc:
+        log.error("AI credits: a charge can never be written (%s)", type(exc).__name__)
+        return "drop"
+    except Exception as exc:
+        log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
+        return "retry"
+    return "ok"
+
+
+def _keep(charge: Charge) -> None:
+    global lost
+    if len(_waiting) >= MAX_WAITING:
+        dropped = _waiting.popleft()
+        lost += 1
+        log.error(
+            "AI credits: a charge of %d credits was dropped, %d lost since the start",
+            dropped.credits,
+            lost,
+        )
+    _waiting.append(charge)
+
+
+async def _flush(db: Database) -> None:
+    """Write the waiting charges, oldest first, within one deadline for the whole flush. A charge is
+    taken off the list before it is written, so two calls flushing at once never write or drop the
+    same one. One that fails for a lasting reason is dropped and counted, so it cannot block the
+    ones behind it; one that fails for the moment goes back to the front and stops the flush (the
+    database is down: the next charge tries again)."""
+    global lost
+    deadline = time.monotonic() + WRITE_TIMEOUT_S
+    while _waiting and time.monotonic() < deadline:
+        charge = _waiting.popleft()
+        try:
+            outcome = await _attempt(db, charge)
+        except BaseException:  # (cancelled: it goes back, and the write is a no-op if it landed)
+            _waiting.appendleft(charge)
+            raise
+        if outcome == "retry":
+            _waiting.appendleft(charge)
+            return
+        if outcome == "drop":
+            lost += 1
+            log.error(
+                "AI credits: a charge of %d credits was dropped, %d lost since the start",
+                charge.credits,
+                lost,
+            )
 
 
 async def _owner(scope: Scope) -> int | None:
@@ -230,30 +332,38 @@ async def _owner(scope: Scope) -> int | None:
     return scope.owner
 
 
-async def _write(db: Database, scope: Scope, feature: str, credits: int) -> None:
+async def _write(db: Database, charge: Charge) -> None:
     """The ledger row and, for a paid account, its month total, in one short transaction of their
-    own, so a crash loses at most one call's count."""
-    owner = await _owner(scope)
-    now_ms = int(_clock() * 1000)
-    row = (uuid.uuid4().hex, scope.guild_id, scope.campaign_id)
-    sql = (
-        "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
-        " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    )
+    own, so a crash loses at most one call's count. Writing the same charge again does nothing."""
+    owner = await _owner(charge.scope)
     if owner is None:
         # Nobody owned the campaign yet: kept for the record, never added to anyone's month.
-        month = usage.calendar_month(now_ms // 1000).start
-        async with db.guild(scope.guild_id) as conn:
-            await conn.execute(sql, (*row, 0, scope.job_kind, feature, credits, month, now_ms))
+        month = usage.calendar_month(charge.now_ms // 1000).start
+        async with db.guild(charge.guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
+                " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, 0, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, id) DO NOTHING",
+                (
+                    charge.spend_id,
+                    charge.guild_id,
+                    charge.campaign_id,
+                    charge.job_kind,
+                    charge.feature,
+                    charge.credits,
+                    month,
+                    charge.now_ms,
+                ),
+            )
         return
     await usage.add_credits(
         db,
-        guild_id=scope.guild_id,
-        campaign_id=scope.campaign_id,
+        guild_id=charge.guild_id,
+        campaign_id=charge.campaign_id,
         owner_user_id=owner,
-        spend_id=row[0],
-        job_kind=scope.job_kind,
-        feature=feature,
-        credits=credits,
-        now_ms=now_ms,
+        spend_id=charge.spend_id,
+        job_kind=charge.job_kind,
+        feature=charge.feature,
+        credits=charge.credits,
+        now_ms=charge.now_ms,
     )
