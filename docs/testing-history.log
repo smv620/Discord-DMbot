@@ -2972,3 +2972,15 @@ SAMPLE RUN 19 (dev1, 2026-11-11, live build 527ee907; counts on #3545). One run,
 CREDITS, read-only (counts only, this campaign): import extractor 34 calls, 210 credits; import topic 29 calls, 29 credits; import name_pass 2 calls, 7 credits; lore names_background 6 calls, 18 credits; lore names_background_read 19 calls, 328 credits; script theatre 1 call, 9 credits.
 
 Session: dev1
+
+Session: dev1
+
+DEPLOY f624c4b8 (deploy 20; Supervisor's handover on #3720 naming f624c4b8dc37c529917f0628e886ba660a661a5a, CI green on every job; the owner's go in the dev1 session on 2026-11-11, after deploy 19's checks 3 and 4). Live was 527ee907 (19). Migrations 0423_hand_over_claims, 0435_link_direction and 0436_waiting_hand_over applied (0433 unused, a gap). Backups: the sample campaign by the live build (format 6, one transcript part), and pg_dumpall (3 of 3 dump sections complete, mode 600). Dry run on the copy restored from that dump: the three migrations applied, a second run applied nothing. Bot first: "Connected to 2 server(s)", 0 ERROR or Traceback lines. Then web-api: healthy, 0 errors. GIT_COMMIT on both containers is f624c4b8. The bot's start printed three warnings, none an error: .env is missing 8 settings from .env.example; .env has both AI_MODEL and AI_MODEL_FAST; "Feature list: not written (PermissionError)". Prune: oneoff-95289464 (deploy 15) removed; the kept five are deploys 20, 19, 18, 17 and 16. Build cache cleared.
+
+Checks: 1 (migrations recorded, clean start, no errors from place_nesting, pair_words or hand_over) passed. 2 (Stop recording me, a test account that agreed; claims citing it count 0) NOT DONE: it needs a Discord test account to press Stop. 3 (refused Keep log lines after a sample run) nothing to count yet: the sample run does not press Keep, so 0 refusal lines; it needs a Keep press in Discord. 4 (sample run 20) done, see below.
+
+SAMPLE RUN 20 (dev1, 2026-11-11, live build f624c4b8; counts on #3545). One run, exit 0, on a fresh sample campaign (the earlier one deleted by the run). Lore read: 4 of 4 player characters. Session import: 172 lines. AI decides: 12 careful calls, 0 failed, about $0.04. Recap kept as a draft for the owner (19 calls, about $0.45). Both documents: entries 68 of 97 found; ties 42 of 141 found, 1 waiting, 4 wrong. Lore only: entries 67 of 89; ties 17 of 126, 1 wrong. Hand-over claims from the lore and session: 0.
+
+CREDITS, read-only (counts only, this campaign): import extractor 34 calls, 208 credits; import topic 29 calls, 29 credits; import name_pass 2 calls, 7 credits; lore names_background 5 calls, 12 credits; lore names_background_read 2 calls, 394 credits; script theatre 1 call, 8 credits.
+
+Deploy 19's checks 3 and 4, on the copy and the live database (posted on #3720): check 3, account deletion on a test account with one row in each of owner_credits, owner_hours, ai_credit_spend, session_usage and name_actions: all 0 after the deletion calls, and 0 rows left in any table with a user-id column (on the copy, not live). Check 4, hand-over questions for the sample campaign: 0 questions, 0 answers on the live database.
