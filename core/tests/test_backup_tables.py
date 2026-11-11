@@ -34,7 +34,8 @@ class EveryClaimedTableComesBack(DatabaseTest):
             forget_audio=lambda g, c: None,
             consenting=cast(
                 Callable[[int], Awaitable[frozenset[int]]],
-                AsyncMock(return_value=frozenset({SPEAKER})),
+                # (4242: a private scene's second speaker, so its entries come back, #4110)
+                AsyncMock(return_value=frozenset({SPEAKER, 4242})),
             ),
         )
         self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)
@@ -236,6 +237,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 2000, 2,"
                 " ARRAY[%s::bigint, 4242], 'kept', 5)",
                 (g, c, "d" * 32, A, B, SPEAKER),
+            ),
+            "memory_private_scene_entries": (
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (g, c, "d" * 32, A),
             ),
             "memory_scenes": (
                 "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"

@@ -12,6 +12,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -74,6 +75,41 @@ def kinds_from(counts: dict[str, int]) -> list[dict[str, Any]]:
     )
 
 
+# An upload choice: `l` and 16 hex of md5(its key) (0420), or `u` and the website upload's own
+# 32-hex id, which is what the upload notice knows (#3879); the second is turned into the first
+# before the door is asked.
+SOURCE_ID = re.compile(r"^(l[0-9a-f]{16}|u[0-9a-f]{32})$")
+
+
+def _choice_id(given: str) -> str:
+    return (
+        "l" + hashlib.md5(given[1:].encode(), usedforsecurity=False).hexdigest()[:16]
+        if given[0] == "u"
+        else given
+    )
+
+
+SOURCES_MAX = 40  # most uploads ticked at once
+
+
+async def list_sources(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """`{sources: [{id, kind, label}]}`: the uploads the campaign's names were read from, newest
+    first, for the Names page's "found in" filter (#3675). A DM of the campaign only: an upload's
+    label can name a private backstory, so anyone else gets "not found"."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_sources(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return {"sources": list(got["sources"])}
+
+
 async def read_page(
     db: Database,
     session: Session,
@@ -86,6 +122,7 @@ async def read_page(
     size: int = PAGE_SIZE,
     only: str | None = None,
     unnamed: bool = False,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -103,6 +140,19 @@ async def read_page(
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        if sources:
+            if only is not None:
+                raise RecapError("bad_page")  # (two ways to pick the same names: one would be lost)
+            # Only the names found in the chosen uploads (#3675): a DM's choice, so the door gives
+            # nothing to anyone else. An empty result is "", which matches no name, never all.
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_source_ids(%s, %s, %s) AS r",
+                (guild_id, campaign_id, [_choice_id(s) for s in sources]),
+            )
+            found_ids = await cur.fetchone()
+            if found_ids is None or found_ids["r"] is None:
+                raise RecapError("not_found")
+            only = ",".join(str(i) for i in found_ids["r"])
         # "Not named yet" (#2803) is in the list, the counts and the totals only when the page asks
         # for it, so a DM's numbers are right whatever the page's switch says; the door still lets
         # only a DM of the campaign see them. Local to this transaction, like the guild.

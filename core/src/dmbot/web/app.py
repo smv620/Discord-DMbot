@@ -53,6 +53,7 @@ from dmbot.web import (
     feedback,
     game_masters,
     graph_cleanup,
+    hand_over,
     handover_accept,
     handover_offer,
     house_file,
@@ -1994,6 +1995,7 @@ def create_app(
         page: str = "1",
         size: str = str(all_names.PAGE_SIZE),
         unnamed: str = "",
+        sources: str = "",
     ) -> dict[str, Any]:
         """A page of the campaign's names for the All names page (#2294). `unnamed=1` asks for the
         people the story never named too (#2803; a DM's list only). A DM gets everything; a
@@ -2006,6 +2008,11 @@ def create_app(
             # pages, and must not reach int() (which would raise a 500).
             number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
             wanted = int(size) if re.fullmatch(r"[0-9]{1,4}", size) else 0  # (0 is refused)
+            chosen = [s for s in sources.split(",") if s]
+            if len(chosen) > all_names.SOURCES_MAX or not all(
+                all_names.SOURCE_ID.match(s) for s in chosen
+            ):
+                raise RecapError("bad_page")  # (an upload choice the page never offers)
             return await all_names.read_page(
                 db,
                 session,
@@ -2016,7 +2023,19 @@ def create_app(
                 page=number,
                 size=wanted,
                 unnamed=unnamed == "1",
+                sources=chosen or None,
             )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/name-sources")
+    async def me_campaign_name_sources(ref: str, signed: Signed) -> dict[str, Any]:
+        """The uploads the campaign's names were read from, for the Names page's "found in"
+        filter (#3675). A DM only: an upload's label can name a private backstory."""
+        session, _token = signed
+        try:
+            return await all_names.list_sources(db, session, ref)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -3488,6 +3507,42 @@ def create_app(
         session, _token = signed
         try:
             return await trait_offers.read_answer(db, session, ref, answer_id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # "Does Claude still have it?": a one-of-a-kind item two characters have (#4122). DMs only.
+    @app.get("/me/campaigns/{ref}/hand-over-questions")
+    async def me_hand_over_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The questions waiting: the item, who had it first, who has it now."""
+        session, _token = signed
+        try:
+            return await hand_over.waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/hand-over-questions/answer")
+    async def me_hand_over_answer(ref: str, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Queue `no`, `both` or `undo` (with `undoes`) for one question, named by `olderTie` and
+        `newerTie`; answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await hand_over.answer(
+                db, session, ref, body.get("olderTie"), body.get("newerTie"), body.get("answer"),
+                body.get("undoes"),
+            )  # fmt: skip
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/campaigns/{ref}/hand-over-questions/answer/{answer_id}")
+    async def me_hand_over_answer_state(ref: str, answer_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one answer stands: the state, the error word, whether Undo is offered, the wait."""
+        session, _token = signed
+        try:
+            return await hand_over.read_answer(db, session, ref, answer_id)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

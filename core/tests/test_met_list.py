@@ -56,6 +56,22 @@ class Words(unittest.TestCase):
         )
 
 
+class TheMessage(unittest.TestCase):
+    """#4106: the list keeps one row a line and fits Discord's limit."""
+
+    def test_a_full_list_keeps_its_lines_and_fits(self) -> None:
+        rows = [MetRow(f"{n:032x}", "s", 1_700_000_000, "w" * 90, 2, (), ()) for n in range(25)]
+        text = met_list.list_text("A note.\n\n", rows, 40)
+        self.assertLessEqual(len(text), met_list.MESSAGE_LIMIT)
+        self.assertIn("\n• **", text)
+        self.assertTrue(text.endswith("pick them in the menu below."))
+
+    def test_a_short_list_keeps_its_lines(self) -> None:
+        row = MetRow("m" * 32, "s", 1_700_000_000, "barbarians", 2, (), ())
+        text = met_list.list_text("", [row], 1)
+        self.assertIn("\n\n• **barbarians (2)** · met on 14 Nov 2023", text)
+
+
 class TheList(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()

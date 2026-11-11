@@ -25,9 +25,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import roles
-from dmbot.memory.importance_rank import DEMOTED, LEVEL_NAMES, PLAYER, READING, REVEALED
+from dmbot.memory.importance_rank import (
+    DEMOTED,
+    LEVEL_NAMES,
+    PLAYER,
+    PRIVATE_SCENE,
+    READING,
+    REVEALED,
+)
 
-PROMPT_VERSION = "importance-1"
+PROMPT_VERSION = "importance-3"  # (3: the private-scene line; its floor is on read, #4110)
 ITEMS_PER_CALL = (
     60  # Supervisor's ruling: 60 per call; the rest go in a later call, inside the limit
 )
@@ -75,6 +82,10 @@ class Item:
     player: bool = False
     dm_rank: bool = False  # the DM corrected its rank last: a reading never overwrites that
     group: tuple[str, ...] = ()  # the names merged into it (their stored roles are its own)
+    # Each private scene it was said in (#2996 rule 5), as its two player characters ("Ash and
+    # Wren"): "always matters, always". The floor (at least Recurring) is worked out on read
+    # (`importance_rank.floor`, #4110); this line lets the reading rank it higher when it should.
+    private_with: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,9 +118,11 @@ def _tag(text: str) -> str:
     return text.replace("<", "‹").replace(">", "›")
 
 
-def system(added: Mapping[str, str]) -> str:  # (added: code -> its stored label)
+def system(added: Mapping[str, str], *, private: bool = False) -> str:  # (code -> its label)
     """The instructions: the levels, the roles (seeded, and the campaign's own as code: label),
-    the rules and the answer's shape. `added`: the campaign's own codes and their labels."""
+    the rules and the answer's shape. `added`: the campaign's own codes and their labels.
+    `private`: some entry was said in a private scene between two player characters (#2996 rule
+    5), so the rule for those is given (only then: other calls are unchanged)."""
     seeded = "\n".join(
         f"- {r.code}: {r.description} (not: {r.not_this})"
         for r in roles.SEEDED_ROLES
@@ -130,7 +143,14 @@ def system(added: Mapping[str, str]) -> str:  # (added: code -> its stored label
         '- reason: "reading" for an ordinary assessment, "revealed" when the story revealed '
         'what the entry really is, "demoted" when it turned out to matter less.\n'
         "- Keep the current rank when nothing in this session changes it: leave rank out.\n"
-        "- roles: what the entry IS in the story, several at once, only codes from the lists "
+        + (
+            '- An entry with a "private scene:" line was spoken of while two player characters '
+            "were alone together. That always matters: it is never below 2 (Recurring) whatever "
+            "you answer, so give a rank only when the story shows it matters more.\n"
+            if private
+            else ""
+        )
+        + "- roles: what the entry IS in the story, several at once, only codes from the lists "
         "below. ended_roles: a role the story shows it no longer holds; never leave a role out to "
         "end it. Never give a player character a role or a rank.\n"
         f"- new_roles: at most {NEW_ROLES_MAX}, only when no listed role fits an entry; each with "
@@ -158,6 +178,8 @@ def message(items: Sequence[Item]) -> str:
             f"connections: {i.connections}",
         ]
         lines += [f"this session: {_tag(link)}" for link in i.links[:LINKS_MAX]]
+        # (names only: what was said there is in the quotes, as for any line)
+        lines += [f"private scene: {_tag(pair)}" for pair in i.private_with[:LINKS_MAX]]
         if i.notes:
             lines.append(f"notes (the DM's side): {_tag(i.notes[:NOTES_CHARS])}")
         lines += [f"said: {_tag(q[:QUOTE_CHARS])}" for q in i.quotes[:QUOTES_MAX]]
@@ -227,6 +249,10 @@ def parse(
             out.lost["bad_rank"] += 1
             continue
         reason = raw.get("reason", READING)
+        # (the private-scene floor is worked out on read, #4110: never a stored reason, so an
+        # answer that names it reads as an ordinary assessment)
+        if reason == PRIVATE_SCENE and item.private_with:
+            reason = READING
         if reason not in READING_REASONS:
             out.lost["bad_reason"] += 1
             continue

@@ -32,6 +32,8 @@ READERS = {
     + ": the roles current, confirmed connections show, for the DM's why; never for a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
+    "memory/hand_over.py": DM_ONLY + ": current confirmed owns and carries of a one-of-a-kind "
+    "item, for the DM's private question (#4115); ends a tie only on the DM's answer",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
     "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
@@ -75,6 +77,9 @@ READERS = {
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
     "memory/_changes.py": "the change log and the row writers",
     "campaigns/tables.py": "the list of tables a campaign owns",
+    "devtools/sample_run/counts.py": CONFIRMED_ONLY
+    + ": dev1's sample report (#3545); counts confirmed secret connections by source, prints "
+    "numbers only (no name, id or word), nothing reaches a player",
     "devtools/movers_check.py": CONFIRMED_ONLY
     + ": dev1's read-only command (#3363); one SELECT of confirmed, current place ties, prints "
     "counts only (no name, id or word), nothing reaches a player",
