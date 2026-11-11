@@ -179,6 +179,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The AI credit totals are the person's Discord ID too; the ledger rows keep their numbers
         # with the owner set to nobody (#4094).
         await conn.execute("SELECT dmbot_forget_credits()")
+        # The person's own requests and records go; authorship and transcripts are the campaign's
+        # (#4141).
+        await conn.execute("SELECT dmbot_forget_person()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
