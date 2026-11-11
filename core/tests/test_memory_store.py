@@ -280,6 +280,12 @@ class Isolation(MemoryTest):
                 " 5)",
                 (GUILD_A, self.c, "d" * 32, min(a, b), max(a, b), DM),
             )
+            # and the entries said in it (#4110): ids only
+            await conn.execute(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (GUILD_A, self.c, "d" * 32, a),
+            )
         # and the session a waiting name was made in (#4043): a time and an id only
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(

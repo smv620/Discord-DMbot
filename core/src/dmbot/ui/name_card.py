@@ -275,12 +275,18 @@ class Row:
     )
 
 
+USED_TO_HAVE = "used to have"  # an ended owns or carries, in the DM's edit menus (#4115)
+USED_TO_HAVE_BACK = "used to be with"
+
+
 def _rows(
     lookup: CampaignLookup,
     entity_id: str,
     connections: list[Relation],
     secrets: bool,
     standing: Mapping[tuple[str, str], int] | None = None,
+    *,
+    history: bool = False,
 ) -> list[Row]:
     """The connections the card shows, in its order: those that read the same together, in the
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
@@ -291,6 +297,12 @@ def _rows(
     guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
+            continue
+        ended_holding = r.predicate in hand_over.HELD and r.to_session_at is not None
+        if ended_holding and not history:
+            # (an item sold or stolen is no longer had (#4115): the item's own card tells it in
+            # its "How it changed hands" line, never as a holding now, on any card or Show all.
+            # The DM's edit menus pass `history`: a wrong step must stay fixable)
             continue
         if not secrets and r.predicate in OLD_FEELINGS:
             r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
@@ -327,6 +339,8 @@ def _rows(
                 )
             )
         )
+        if ended_holding:  # (in the DM's edit menu, as what it was: never a holding now)
+            words = USED_TO_HAVE if ahead else USED_TO_HAVE_BACK
         after = (
             ""
             if ahead or r.predicate != "located_in"
@@ -1295,6 +1309,7 @@ class NameCard(_Menu):
             secrets,
             # (the menu reads the card's words, the DM's Reputation included, #3642)
             await _dm_standing(memory, campaign, self.entity_id, secrets),
+            history=secrets,  # (the DM can still fix an ended holding, #4115)
         )
         self.stop()
         back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""
