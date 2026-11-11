@@ -34,7 +34,7 @@ import discord
 from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory.name_documents import DocumentError
+from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, MAX_PDF_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house, house_ai, house_file, house_file_sync, house_reader
 from dmbot.rules.house_file_sync import Applied, Item
@@ -93,9 +93,15 @@ TOO_MANY_READS = (
     f"This server has reached today's limit for reading files ({HOUSE_AI_READS_PER_DAY}). Try "
     "again tomorrow, or use a file in DMbot's numbered list, which has no limit."
 )
-TOO_BIG = "That file is too big. Send just the house-rules part (up to 10 MB). Nothing was changed."
+_MB = 1024 * 1024
+# The words name the limits in force, so a changed limit changes them (#4068).
+TOO_BIG = (
+    f"That file is too big. Send just the house-rules part (up to {MAX_DOCUMENT_BYTES // _MB} MB)."
+    " Nothing was changed."
+)
 TOO_BIG_PDF = (
-    "That PDF is too big. Send just the house-rules part (up to 100 MB). Nothing was changed."
+    f"That PDF is too big. Send just the house-rules part (up to {MAX_PDF_BYTES // _MB} MB)."
+    " Nothing was changed."
 )
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
 DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
