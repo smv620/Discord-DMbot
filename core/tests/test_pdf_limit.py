@@ -17,6 +17,7 @@ from dmbot.memory.name_documents import (
     text_of,
     too_big_words,
 )
+from dmbot.rules import house_reader
 from dmbot.web import wizard_check
 from tests.test_adventure import pdf
 
@@ -30,6 +31,15 @@ class TheLimit(unittest.TestCase):
         for name in ("notes.docx", "names.txt", "sheet.xlsx", "page.html", "rules.csv"):
             self.assertEqual(max_bytes_for(name), MAX_DOCUMENT_BYTES, name)
         self.assertEqual((MAX_DOCUMENT_BYTES // MB, MAX_PDF_BYTES // MB), (10, 100))
+
+    def test_a_csv_over_the_limit_says_the_limit_in_force(self) -> None:
+        # (the limit is patched to 3 MB, so a hand-written "10 MB" would not pass)
+        with patch("dmbot.memory.name_documents.max_bytes_for", return_value=3 * MB):
+            expected = too_big_words("rules.csv")
+            with self.assertRaises(DocumentError) as caught:
+                house_reader.house_text_of("rules.csv", b"x" * (MAX_DOCUMENT_BYTES + 1))
+        self.assertEqual(str(caught.exception), expected)
+        self.assertIn("up to 3 MB", str(caught.exception))
 
     def test_the_words_name_the_limit_that_applies(self) -> None:
         self.assertIn("up to 100 MB", too_big_words("book.pdf"))
