@@ -796,7 +796,9 @@ async def _link_undo(
     Discord's Undo button does. Only a batch this DM's own done edit of this campaign made (read
     again here, as the door checked it before; a made-up number must never reach `undo`, which would
     undo any change). `gone`: already undone or no longer remembered; `changed`: something done
-    since is in the way; `too_late`: past the store's limit."""
+    since is in the way; `too_late`: past the store's limit. The queue keeps a row about an hour
+    (the door prunes older ones), so in practice the page's Undo lasts about that long and then says
+    `gone`; a retried edit that finds its work already done carries no batch, so offers no Undo."""
     if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
         return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
     batch = int(a.target_id)

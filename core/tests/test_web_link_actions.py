@@ -190,7 +190,7 @@ class TheUndo(Editing):
         batch = (await self.poll(added))["batch"]
         with self.assertRaises(RecapError) as caught:
             await relationships.queue_link_undo(self.web, self.player, self.cref, str(batch))
-        self.assertIn(caught.exception.code, ("not_allowed", "not_found"))  # (not a DM)
+        self.assertEqual(caught.exception.code, "not_allowed")  # (a player is no DM)
         other_ref = f"{self.g}.{self.two.id}"  # (another campaign)
         with self.assertRaises(RecapError):
             await relationships.queue_link_undo(self.web, self.session, other_ref, str(batch))
@@ -198,6 +198,37 @@ class TheUndo(Editing):
             with self.assertRaises(RecapError, msg=bad):
                 await relationships.queue_link_undo(self.web, self.session, self.cref, bad)
         self.assertEqual(await self.actions.claim_next(self.g), None)  # (nothing was queued)
+
+    async def test_a_store_that_says_too_late_is_told_to_the_page(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        undone = await self.undo(batch)
+        with patch.object(
+            type(self.memory), "undo", side_effect=TooLateToUndo("Undo only works for a day.")
+        ):
+            self.assertEqual([o.error for o in await self.apply_all()], ["too_late"])
+        self.assertEqual((await self.poll(undone))["error"], "too_late")
+
+    async def test_the_bot_refuses_a_batch_no_link_edit_of_this_dm_made_even_if_queued(
+        self,
+    ) -> None:
+        """A forged row that skipped the door: the bot's own check refuses it before `undo`."""
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        for forged in (batch + 1, 7):  # (a batch no edit of hers made)
+            action = wa.Action(
+                id="e" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+                action="link-undo", kind="", target_id=str(forged), text="", flag=False,
+                claimed_at=1,
+            )  # fmt: skip
+            outcome = await wa.apply(self.memory, self.g, {ALICE.id}, action, actions=self.actions)
+            self.assertEqual(outcome.error, "gone", forged)
+        data = await self.memory.relations(self.g, self.one.id, entity_id=self.hall)
+        self.assertTrue([r for r in data if r.predicate == "member_of"])  # (nothing was undone)
 
     async def test_an_edit_made_since_says_changed(self) -> None:
         added = await self.add_link(self.mira, self.hall, "Is a Member of")
@@ -209,8 +240,7 @@ class TheUndo(Editing):
         self.assertEqual((await self.poll(gone))["state"], "done")
         await self.undo(batch)
         errors = [o.error for o in await self.apply_all()]
-        self.assertIn(errors[0], ("changed", "gone"))  # (the store refuses: the connection ended)
-        self.assertNotEqual(errors[0], "")
+        self.assertEqual(errors, ["changed"])  # (the store refuses: the connection ended since)
 
 
 class TheEdits(Editing):
