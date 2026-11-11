@@ -146,6 +146,36 @@ class AccountDeletion(DatabaseTest):
             cur = await conn.execute("DELETE FROM owner_hours WHERE owner_user_id = %s", (ALICE,))
             self.assertEqual(cur.rowcount, 0)  # (only the forget function may delete them)
 
+    async def test_another_servers_minutes_cannot_be_reached_through_the_forget_policies(
+        self,
+    ) -> None:
+        entitlements.configure_free_users(())
+        await self.add_hours(ALICE, GUILD_A, self.a1.id, 100, 30)
+        async with self.db.guild(GUILD_B) as conn:  # (an ordinary query in the other server)
+            cur = await conn.execute("SELECT count(*) AS n FROM session_usage")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
+            cur = await conn.execute("UPDATE session_usage SET owner_user_id = 0")
+            self.assertEqual(cur.rowcount, 0)
+            cur = await conn.execute("DELETE FROM session_usage")
+            self.assertEqual(cur.rowcount, 0)
+        async with self.db.guild(GUILD_A) as conn:  # (and the row is still there)
+            cur = await conn.execute("SELECT owner_user_id, minutes FROM session_usage")
+            self.assertEqual(
+                [(r["owner_user_id"], r["minutes"]) for r in await cur.fetchall()], [(ALICE, 30)]
+            )
+
+    async def test_forgetting_hours_leaves_the_setting_as_it_was_and_is_harmless_with_none(
+        self,
+    ) -> None:
+        async with self.db.user(ALICE) as conn:
+            await conn.execute("SELECT dmbot_forget_hours()")  # (no rows at all)
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS s")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIn(row["s"], (None, ""))
+
     async def test_a_delete_outside_the_forget_function_removes_nothing(self) -> None:
         entitlements.configure_free_users(())
         await usage.add_credits(

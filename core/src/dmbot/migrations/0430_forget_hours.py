@@ -9,7 +9,8 @@ from __future__ import annotations
 # `owner_hours.owner_user_id` and `session_usage.owner_user_id` are the person's Discord ID, and
 # neither was touched by account deletion. The month totals go. A campaign's `session_usage` rows
 # stay (the campaign's own record of how long it was listened to) with the owner set to 0, which
-# already means "nobody owned the campaign yet" (0032): those minutes are never billed to anyone.
+# already means "nobody owned the campaign yet" (0032): those minutes are never billed to anyone,
+# also not to whoever takes the campaign on later. That is on purpose.
 # If the session already has a row for owner 0 the minutes are added to it (the key is the session
 # and the owner, so two rows would collide).
 # The policies that allow this are for the function's owner only and open only while the function
@@ -63,6 +64,7 @@ SQL = r"""
             DO UPDATE SET minutes = session_usage.minutes + EXCLUDED.minutes,
                           updated_at = GREATEST(session_usage.updated_at, EXCLUDED.updated_at);
         DELETE FROM session_usage WHERE owner_user_id = dmbot_current_user();
+        -- (an error rolls the setting back with the transaction, so only success restores it)
         PERFORM set_config('dmbot.owner_sync', before, true);
     END
     $fn$;
