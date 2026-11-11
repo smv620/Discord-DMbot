@@ -493,8 +493,8 @@ async def still_recorded(
     campaign's imported sessions, as `recorded_in` says) an import confirmation not taken back
     and no "no" on record. A speaker without Discord (a negative number) is never in `consent`,
     so a missing row never reads as a stop for them: they are kept, and a DM's removal of one
-    deletes their lines instead (#4091). Callers pass only people their own read already allowed,
-    so this only ever narrows."""
+    deletes their lines instead (#4091). It only ever removes people: a caller keeps what it already
+    allowed and drops whoever this leaves out."""
     ids = sorted(set(user_ids))
     kept = {u for u in ids if u < 0}
     asked = [u for u in ids if u > 0]

@@ -46,6 +46,19 @@ class TheSecondForget(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await DMBot.withdraw_consent(self.fake(order), 5, 7))  # type: ignore[arg-type]
         self.assertEqual(order, ["forget", "revoke", "forget"])
 
+    async def test_a_failing_revoke_skips_the_second_forget_and_is_raised(self) -> None:
+        order: list[str] = []
+        fake = self.fake(order)
+
+        async def revoke(*_a: object) -> bool:
+            order.append("revoke")
+            raise RuntimeError("not saved")
+
+        fake.consent.revoke = revoke
+        with patch("dmbot.bot.ClaimStore", self.claims(order)), self.assertRaises(RuntimeError):
+            await DMBot.withdraw_consent(fake, 5, 7)  # type: ignore[arg-type]
+        self.assertEqual(order, ["forget", "revoke"])  # (no row went: nothing more to catch)
+
     async def test_a_failing_second_forget_never_fails_the_stop_and_logs_only_the_type(
         self,
     ) -> None:

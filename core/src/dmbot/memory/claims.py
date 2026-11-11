@@ -100,6 +100,7 @@ from dmbot.memory.voice import (
     voice,
 )
 from dmbot.names import not_names
+from dmbot.session_locks import lock_sessions_of
 from dmbot.word_end import at_word_end
 
 logger = logging.getLogger(__name__)
@@ -1951,13 +1952,11 @@ class ClaimStore:
         from dmbot.memory import deed_proposals, met_store, private_scene_store, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
-            # (the same statement "Delete my transcripts" and a speaker's removal lock with)
-            await conn.execute(
-                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id IN (SELECT"
-                " session_id FROM transcript_lines WHERE guild_id = %s AND user_id = %s)"
-                " ORDER BY id FOR UPDATE",
-                (guild_id, guild_id, user_id),
-            )
+            # (the one lock order "Delete my transcripts" and a speaker's removal use too). It is
+            # held for the whole forget, so a line save in a session this person spoke in waits
+            # for it (at most the stop's timeout, nothing lost): taking it later instead would put
+            # the campaign locks below before it, the reverse of "Delete my transcripts"' order
+            await lock_sessions_of(conn, guild_id, user_id)
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)

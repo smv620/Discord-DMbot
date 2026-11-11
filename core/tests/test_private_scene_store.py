@@ -139,7 +139,9 @@ class PrivateSceneStore(NamesTest):
                 forgetting.cancel()
                 raise
         await asyncio.wait_for(forgetting, 10)
-        await self.write()  # (a writer that starts now finds the forget done)
+        # (a writer that starts now finds the forget done; P2's consent row is still there, so it
+        # keeps the scene, and the second pass below is what takes it)
+        self.assertEqual((await self.write()).kept, 1)
         await ClaimStore(self.memory).forget_speaker(GUILD, P2)  # (the second pass, after it)
         self.assertEqual(await self.all_rows(), [])
 
