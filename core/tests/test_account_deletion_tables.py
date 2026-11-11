@@ -39,8 +39,9 @@ ALREADY_COVERED = frozenset(
 # server, so Alice's and Bob's rows are written as finished (outside that index). Some ids are
 # identity columns Postgres generates, so they are not set; recap style rows take their position
 # from the Discord ID so each person's row is distinct.
-# Each row takes :g (the server), :c (the campaign), :u (the person's Discord ID) and :k (a
-# 32-hex id unique to that person). Every required column is set; the rest take their defaults.
+# Each row takes %(g)s (the server), %(c)s (the campaign), %(u)s (the person's Discord ID) and
+# %(k)s (a 32-hex id unique to that person). Every required column is set; the rest take
+# their defaults.
 ROWS: dict[str, str] = {
     "name_actions": (
         "INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action,"
@@ -161,7 +162,7 @@ ROWS: dict[str, str] = {
 }
 
 # The second PR of #4162 covers these (parent rows: a rule set, a document, a transcript session;
-# and recap_jobs). Empty in that PR, which asserts it.
+# and recap_jobs). That PR empties this set and checks it is empty.
 NOT_YET: frozenset[str] = frozenset(
     {
         "rule_set_editors",  # covered in the second PR of #4162
@@ -250,3 +251,5 @@ class AccountDeletionTables(DatabaseTest):
         forgotten = {t for t, _ in DELETED} | {t for t, _ in ZEROED}
         self.assertEqual(forgotten, set(ROWS) | set(NOT_YET) | set(ALREADY_COVERED))
         self.assertFalse(set(ROWS) & set(NOT_YET))
+        self.assertFalse(set(ROWS) & ALREADY_COVERED)
+        self.assertFalse(set(NOT_YET) & ALREADY_COVERED)
