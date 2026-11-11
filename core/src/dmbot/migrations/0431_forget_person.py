@@ -16,6 +16,13 @@ from __future__ import annotations
 # ids and times only so a person who signs up again is not given a second free trial or messaged
 # twice (0064 and 0065); the campaign's record of what was said or decided (authorship, to follow
 # in 0432); the transcripts' speakers and consent (the owner's call).
+# Not here: `transcript_respells`, whose `user_id` is the speaker whose line was respelled (its Undo
+# log), which is the campaign's transcript record (rule 4, the owner's call).
+# A row can be deleted while the bot is working on it; the worker's later `UPDATE ... WHERE id` then
+# matches nothing, which it already treats as "taken back". `lore_uploads` carries who confirmed the
+# right to the text, but the same confirmation is recorded in `shared_confirmations` (kept, below)
+# before the text is read, so the record is not lost.
+# `accounts.delete_person` is the only caller and calls it before it deletes the `web_users` row.
 # `shared_confirmations` is the campaign's record of who confirmed the right to use a text (the IP
 # rule: who and when), so it stays with the ID set to 0, "someone who has left".
 #
@@ -38,14 +45,14 @@ DELETED: tuple[tuple[str, str], ...] = (
     ("lore_uploads", "user_id"),
     ("web_backups", "user_id"),
     ("recap_requests", "user_id"),
-    ("transcript_respells", "user_id"),
     ("web_peeks", "user_id"),
     ("member_directory", "user_id"),
     ("npc_notes", "user_id"),
     ("question_notices", "user_id"),
     ("rule_set_editors", "user_id"),
 )
-# (table, column) set to 0
+# (table, column) set to 0. The UPDATE needs the read policy to show rows already at 0, because
+# Postgres checks the new row of an UPDATE against the SELECT policies too.
 ZEROED: tuple[tuple[str, str], ...] = (("shared_confirmations", "user_id"),)
 
 # Every policy is for the function's owner only (`TO current_user`) and open only while the function
