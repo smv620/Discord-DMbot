@@ -4,7 +4,7 @@ ownerless, nothing of anyone else's changes, and a DM can take one on, which sto
 
 from __future__ import annotations
 
-from dmbot import entitlements, plans
+from dmbot import entitlements, plans, usage
 from dmbot.campaigns import CampaignStore
 from dmbot.web import accounts
 from tests.pg import DatabaseTest
@@ -54,6 +54,36 @@ class AccountDeletion(DatabaseTest):
         # The cap table follows (the trigger), so a deleted account holds no slots.
         self.assertEqual(await self.owned(ALICE), 0)
         self.assertEqual(await self.owned(BOB), 1)
+
+    async def test_the_discord_id_goes_out_of_the_ai_credits_and_the_ledger_keeps_its_numbers(
+        self,
+    ) -> None:
+        entitlements.configure_free_users(())  # (so the credits are added to the account's month)
+        for owner, campaign, guild, spend in (
+            (ALICE, self.a1, GUILD_A, "a" * 32),
+            (ALICE, self.a2, GUILD_B, "b" * 32),
+            (BOB, self.b1, GUILD_A, "c" * 32),
+        ):
+            await usage.add_credits(
+                self.db, guild_id=guild, campaign_id=campaign.id, owner_user_id=owner,
+                spend_id=spend, job_kind="lore", feature="names", credits=10,
+                now_ms=NOW * 1000,
+            )  # fmt: skip
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for person, want in ((ALICE, 0), (BOB, 10)):
+            async with self.db.user(person) as conn:
+                cur = await conn.execute("SELECT COALESCE(sum(credits), 0) AS n FROM owner_credits")
+                row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(int(row["n"]), want, person)  # (Bob's month is untouched)
+        for guild in (GUILD_A, GUILD_B):
+            async with self.db.guild(guild) as conn:
+                cur = await conn.execute(
+                    "SELECT owner_user_id, credits FROM ai_credit_spend ORDER BY owner_user_id"
+                )
+                rows = [(r["owner_user_id"], r["credits"]) for r in await cur.fetchall()]
+            # (Alice's rows are kept, for what the campaign cost, with nobody as owner)
+            self.assertEqual(rows, [(0, 10), (BOB, 10)] if guild == GUILD_A else [(0, 10)])
 
     async def test_deleting_twice_or_with_no_campaigns_is_harmless(self) -> None:
         await accounts.delete_person(self.db, ALICE, now=NOW + 5)

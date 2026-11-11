@@ -134,9 +134,10 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   warning (the count for that call is lost, never the answer).
 - **Owed before the limit (step 4):** an account move must carry `owner_credits` (as `owner_hours` is
   merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
-- **Account move** (#4094, migration 0423): a trigger on the one update the move makes to
+- **Account move** (#4094, migration 0425): a trigger on the one update the move makes to
   `web_users.user_id` carries `owner_credits` to the new account (the new account's own, a Try It's,
-  are dropped, as its hours are) and changes the ledger rows' owner. **Account deletion** removes
-  `web_users` only and leaves `owner_hours` where it is; `owner_credits` is left the same way: numbers
-  only, no name, no Discord ID once the account row is gone.
-
+  are dropped, as its hours are) and changes the ledger rows' owner. **Account deletion** calls
+  `dmbot_forget_credits` (like the wizard's forget): the person's `owner_credits` rows are deleted and
+  their ledger rows keep their numbers with `owner_user_id` set to 0 ("nobody"), because
+  `owner_user_id` is a Discord ID. The policies that allow it are open only while that function runs
+  (`dmbot.owner_sync = 'forget_credits'`), so no ordinary query sees another server's rows through them.
