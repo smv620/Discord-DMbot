@@ -21,16 +21,19 @@ import asyncio
 import contextlib
 import contextvars
 import logging
+import math
 import time
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import TYPE_CHECKING
 
 from psycopg import errors as pg_errors
 
 from dmbot import usage
+from dmbot.plans import PlanId
 
 if TYPE_CHECKING:
     from dmbot.ai import Reply
@@ -57,6 +60,87 @@ PREPARING_JOBS: tuple[tuple[str, str], ...] = (
 )
 
 OwnerOf = Callable[[int, str], Awaitable[int | None]]
+
+# ---- the estimate (#4005, step 2) ----------------------------------------------------------
+# What a job will cost, told to the DM before it starts. Pure: no database, no AI.
+#
+# `CREDITS_PER_UNIT` is a deliberately HIGH first guess, one table in one place, so an estimate
+# comes out above the real charge and never below it. It is tuned from the ledger's own numbers (the
+# estimate and the charge are logged side by side, counts only), like the AI answer limits were
+# (#2596). A unit is what the DM gave: a thousand words of lore or of an adventure, a line of an
+# imported session (its count is `transcript lines`), a session for a script.
+CREDITS_PER_UNIT: dict[str, int] = {
+    "lore": 40,  # per 1,000 words
+    "adventure": 60,  # per 1,000 words (a careful read, so dearer than names)
+    "import": 4,  # per line of the imported session
+    "script": 120,  # per script (one imported session)
+}
+# The words the DM sees for what is counted, by job kind.
+UNIT_WORDS: dict[str, str] = {
+    "lore": "for the lore",
+    "adventure": "for the adventure",
+    "import": "for the session",
+    "script": "for the script",
+}
+# Below this the DM is not asked (a few credits is not worth a question).
+ESTIMATE_BAR = 20
+# The monthly allowance, in credits, by plan id (`plans.PlanId`). HIGH ON PURPOSE until the owner
+# sets the numbers (#4005, "Owner, what this needs from you"): nothing is refused yet, and a
+# number that is too small would be a refusal.
+CREDITS_PER_MONTH: dict[PlanId, int] = {
+    "try-it": 10_000_000,
+    "table": 10_000_000,
+    "two-tables": 10_000_000,
+    "guild": 10_000_000,
+    "pro": 10_000_000,
+}
+
+
+# False until the owner has set the allowances above: a made-up number must not be shown to a DM, so
+# the "You have N left" sentence is left out while it is False (the first card is `estimate_words`).
+ALLOWANCES_SET = False
+
+
+@dataclass(frozen=True, slots=True)
+class Estimate:
+    credits: int  # what the job is expected to cost, never below the real charge
+    left: int  # what the month has left before it (never below 0)
+    ask: bool  # worth a question (over the bar)
+    enough: bool  # the month has at least that much left
+
+
+def units_of(job_kind: str, *, words: int = 0, lines: int = 0, items: int = 1) -> float:
+    """The units a job is counted in, from what the DM gave: thousands of words for lore and an
+    adventure, lines for an imported session, one for each script and for any other kind."""
+    if job_kind in ("lore", "adventure"):
+        return max(0, words) / 1000
+    if job_kind == "import":
+        return float(max(0, lines))
+    return float(max(0, items))
+
+
+def estimate(job_kind: str, units: float, *, allowance: int, used: int) -> Estimate:
+    """What a job costs, and where the month stands, in credits. Worked out exactly (never lower
+    than the price times the units) and rounded up, and a job kind with no price is priced like the
+    dearest, so an estimate is never low. A count that is not a number, or is negative, is 0."""
+    per_unit = CREDITS_PER_UNIT.get(job_kind, max(CREDITS_PER_UNIT.values()))
+    # (from the number as written, 0.2 and not its binary neighbour, so 0.2 units of 40 is 8)
+    count = Fraction(str(units)) if math.isfinite(units) and units > 0 else Fraction(0)
+    credits = math.ceil(count * per_unit)
+    left = max(0, allowance - max(0, used))
+    return Estimate(credits, left, credits >= ESTIMATE_BAR, credits <= left)
+
+
+def estimate_words(job_kind: str, est: Estimate) -> str:
+    """The sentence on the card, plain words: "About 120 AI credits for the script. You have 9,800
+    left this month." The second sentence waits until the owner has set the allowances. Counts
+    only. The caller skips the card when `est.ask` is False."""
+    what = UNIT_WORDS.get(job_kind, "")
+    unit = "credit" if est.credits == 1 else "credits"
+    words = f"About {est.credits:,} AI {unit}{(' ' + what) if what else ''}."
+    if ALLOWANCES_SET:
+        words += f" You have {est.left:,} left this month."
+    return words
 
 
 def of_micro(micro_usd: int) -> int:
