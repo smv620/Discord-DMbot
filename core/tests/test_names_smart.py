@@ -455,7 +455,7 @@ class ThePrivacy(Smart):
         self.assertNotIn("Auril", await self.text_of(self.mira))
 
     async def test_a_connection_that_ended_is_left_out(self) -> None:
-        # (#4115: Mira sold what she owned; the text says what holds now)
+        # (#4115: an ended tie of any kind is left out; the text says what holds now)
         await self.link("ally_of", self.mira, self.auril)
         self.assertIn("Auril", await self.text_of(self.mira))
         await self.sql(

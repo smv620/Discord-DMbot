@@ -301,7 +301,11 @@ class TheCardRows(unittest.TestCase):
             names=(), guarded=frozenset(),
         )  # fmt: skip
         sold = replace(_tie("a", "claude", "owns", 1, 2, "sold"), object_id="brand")
-        kept = replace(_tie("b", "claude", "carries", 1), object_id="cloak")
-        kept_kept = replace(_tie("c", "claude", "located_in", 1, 2), object_id="cloak")
-        rows = _rows(lookup, "claude", [sold, kept, kept_kept], True)
-        self.assertEqual(sorted(r.other for r in rows), ["Grey Cloak", "Grey Cloak"])
+        held = replace(_tie("b", "claude", "carries", 1), object_id="cloak")
+        ended_place = replace(_tie("c", "claude", "located_in", 1, 2), object_id="cloak")
+        rows = _rows(lookup, "claude", [sold, held, ended_place], True)
+        self.assertNotIn("Frost Brand", [r.other for r in rows])
+        self.assertIn(("carries", "Grey Cloak"), [(r.words, r.other) for r in rows])
+        # the DM's edit menus still reach it, as what it was (a wrong step stays fixable)
+        menu = _rows(lookup, "claude", [sold], True, history=True)
+        self.assertEqual([(r.words, r.other) for r in menu], [("used to have", "Frost Brand")])
