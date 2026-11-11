@@ -319,7 +319,7 @@ class Backups(HomebrewTest):
             {**row, "kind": "dragon"},
             {**row, "name": "  Spaced   out"},  # not in its cleaned form
             {**row, "players_may_know": "yes"},
-            {**row, "by": "0"},
+            {**row, "by": "-1"},
             {**row, "updated_at": row["created_at"] - 1},
             {k: v for k, v in row.items() if k != "text"},
             {**row, "extra": 1},
