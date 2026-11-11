@@ -158,6 +158,7 @@ FILES: dict[str, str] = {
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
     "memory/evidence.py": NOT_DRAWN + " (evidence ids)",
     "memory/forget_readings.py": BUMPS,
+    "memory/hand_over.py": INSIDE_WRITE + ' (the DM\'s "Yes, both have it", #4115)',
     "memory/heard_backup.py": NOT_DRAWN,
     "memory/importance_backup.py": NOT_DRAWN + " (the importance rank)",
     "memory/importance_rank.py": NOT_DRAWN + " (the importance rank)",

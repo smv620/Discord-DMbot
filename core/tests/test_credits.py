@@ -10,10 +10,14 @@ import asyncio
 import importlib
 import inspect
 import unittest
+<<<<<<< HEAD
 from typing import get_args
+=======
+from typing import Any, cast
+>>>>>>> origin/development
 from unittest.mock import AsyncMock, patch
 
-from dmbot import ai, credits, entitlements
+from dmbot import ai, credits, entitlements, usage
 from dmbot.ai import Reply
 from dmbot.campaigns.store import CampaignStore
 from dmbot.memory.story_plan import micro_usd
@@ -143,6 +147,9 @@ class Ledger(DatabaseTest):
             return owners.get(campaign_id)
 
         credits.configure(self.db, owner_of, lambda: NOW)
+        credits._waiting.clear()
+        self.addCleanup(credits._waiting.clear)
+        credits.lost = 0
 
     async def rows(self, guild: int) -> list[dict[str, object]]:
         async with self.db.guild(guild) as conn:
@@ -255,6 +262,80 @@ class Ledger(DatabaseTest):
             [r.getMessage() for r in logged.records],
             ["AI credits: a charge could not be written (TimeoutError)"],
         )
+
+    async def test_a_charge_that_failed_is_written_before_the_next_one(self) -> None:
+        good = credits._owner_of
+        credits.configure(self.db, AsyncMock(side_effect=OSError("down")), lambda: NOW)
+        with credits.preparing(GUILD_A, self.a.id, "lore"):
+            with self.assertLogs("dmbot.credits", level="WARNING"):
+                self.assertEqual(await credits.record(reply(), "names"), 0)
+            self.assertEqual(credits.waiting(), 1)
+            self.assertEqual(await self.rows(GUILD_A), [])
+            credits.configure(self.db, good, lambda: NOW)  # (the database is back)
+            second = await credits.record(reply(2000, 800), "names")
+        first = credits.of_micro(micro_usd(MODEL, 1000, 500))
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(
+            sorted(r["credits"] for r in await self.rows(GUILD_A)), sorted([first, second])
+        )
+        self.assertEqual(await self.month_total(OWNER), first + second)
+
+    async def test_the_same_charge_written_twice_is_counted_once(self) -> None:
+        for _ in range(2):  # (a retry after a timeout that had in fact landed)
+            await usage.add_credits(
+                self.db, guild_id=GUILD_A, campaign_id=self.a.id, owner_user_id=OWNER,
+                spend_id="a" * 32, job_kind="lore", feature="names", credits=7,
+                now_ms=int(NOW * 1000),
+            )  # fmt: skip
+        self.assertEqual(len(await self.rows(GUILD_A)), 1)
+        self.assertEqual(await self.month_total(OWNER), 7)
+
+    async def test_past_the_limit_the_oldest_waiting_charge_is_dropped_and_counted(self) -> None:
+        credits.configure(self.db, AsyncMock(side_effect=OSError("down")), lambda: NOW)
+        with (
+            patch.object(credits, "MAX_WAITING", 2),
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="WARNING"),
+        ):
+            for _ in range(3):
+                await credits.record(reply(), "names")
+        self.assertEqual((credits.waiting(), credits.lost), (2, 1))
+
+    def waiting_charge(self, campaign_id: str, spend_id: str, owner: int | None = OWNER) -> Any:
+        scope = credits.Scope(GUILD_A, campaign_id, "lore", owner=owner, owner_known=True)
+        return credits.Charge(
+            spend_id, GUILD_A, campaign_id, "lore", "names", 5, int(NOW * 1000), scope
+        )
+
+    async def test_two_calls_flushing_at_once_write_every_waiting_charge_once(self) -> None:
+        ids = [f"{n:032x}" for n in range(1, 5)]
+        for spend_id in ids:
+            credits._waiting.append(self.waiting_charge(self.a.id, spend_id))
+
+        async def charge() -> int:
+            with credits.preparing(GUILD_A, self.a.id, "lore"):
+                return await credits.record(reply(), "names")
+
+        await asyncio.gather(charge(), charge(), charge())
+        self.assertEqual(credits.waiting(), 0)
+        rows = await self.rows(GUILD_A)
+        self.assertEqual(len(rows), 4 + 3)  # (each waiting one once, and the three new ones)
+        self.assertEqual(await self.month_total(OWNER), sum(cast(int, r["credits"]) for r in rows))
+
+    async def test_a_charge_that_can_never_be_written_does_not_block_the_ones_behind_it(
+        self,
+    ) -> None:
+        credits._waiting.append(self.waiting_charge("f" * 32, "a" * 32))  # (no such campaign)
+        credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
+        with (
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="ERROR") as logged,
+        ):
+            await credits.record(reply(), "names")
+        self.assertEqual(credits.lost, 1)
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(len(await self.rows(GUILD_A)), 2)  # (the good one and the new one)
+        self.assertIn("can never be written (ForeignKeyViolation)", logged.output[0])
 
     async def test_each_servers_rows_are_its_own(self) -> None:
         with credits.preparing(GUILD_B, self.b.id, "lore"):
