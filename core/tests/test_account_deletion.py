@@ -371,9 +371,9 @@ class AccountDeletion(DatabaseTest):
                     " WHERE con.conrelid = %s::regclass AND con.contype = 'c' AND a.attname = %s",
                     (table, column),
                 )
-                for row in await cur.fetchall():
+                for check in await cur.fetchall():
                     # (no check left that refuses 0: "> 0" became ">= 0")
-                    self.assertNotRegex(row["d"], r"(?<![>=<])> 0", (table, column))
+                    self.assertNotRegex(check["d"], r"(?<![>=<])> 0", (table, column))
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM pg_policies WHERE schemaname = current_schema()"
                     " AND tablename = %s AND policyname LIKE 'forget_author_%%'",

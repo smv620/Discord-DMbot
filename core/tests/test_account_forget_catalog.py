@@ -16,9 +16,11 @@ from tests.pg import DatabaseTest
 # What counts as a column that holds a person's Discord ID.
 PERSON_COLUMN = r"(user|_by$|^by_|speaker|owner|member|player|author|discord)"
 
+Rules = dict[str, tuple[str, ...] | None]
+
 # Each rule maps a table to None (every person column of the table) or to the columns it covers.
 # Their own forget function (credits, hours, wizard, mail, history, grants) or a cascade:
-ELSEWHERE = {
+ELSEWHERE: Rules = {
     t: None
     for t in (
         "access_grants", "account_discord_ids", "account_id_history", "account_link_history",
@@ -29,14 +31,15 @@ ELSEWHERE = {
         "installs",
     )
 }  # fmt: skip
-BY_DESIGN = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
+BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
     "improvement_opt_outs": None,
     "trial_extensions": None,
     "try_it_used": None,
     "email_unsubscribed": None,  # the unsubscribe list is kept so nobody is emailed again
     "payment_events": None,  # the payment record is kept (the delete_person docstring)
 }
-TRANSCRIPTS = {  # the campaign's transcripts, speakers and consent: the owner's call (rule 4)
+# The campaign's transcripts, speakers and consent: the owner's call (rule 4):
+TRANSCRIPTS: Rules = {
     t: None
     for t in (
         "campaign_speakers", "consent", "consent_refusals", "import_consents", "import_plays",
@@ -57,11 +60,11 @@ TRANSCRIPTS.update(
         "web_line_fixes": ("speaker",),
     }
 )
-NOT_A_PERSON = {  # matched by name only
+NOT_A_PERSON: Rules = {  # matched by name only
     "game_clocks": None,  # channel and message ids
     "campaigns": ("owner_left_at", "owner_missing_since"),  # times
 }
-UNREVIEWED = {  # not yet decided: the list for Supervisor on #4141 (columns not yet audited)
+UNREVIEWED: Rules = {  # not yet decided: the list for Supervisor on #4141 (columns not yet audited)
     "access_log": None, "account_moves": None, "active_sessions": None, "adventure_reads": None,
     "campaign_dms": None, "campaign_handover_offers": None,
     "house_rule_wins": None, "house_rules_file": None, "lore_uploads": ("rights_by",),
@@ -75,7 +78,7 @@ UNREVIEWED = {  # not yet decided: the list for Supervisor on #4141 (columns not
 }  # fmt: skip
 
 
-def _covers(rules: dict[str, tuple[str, ...] | None], table: str, column: str) -> bool:
+def _covers(rules: Rules, table: str, column: str) -> bool:
     if table not in rules:
         return False
     only = rules[table]
