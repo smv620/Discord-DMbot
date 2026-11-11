@@ -14,6 +14,15 @@ export const panelWords = {
   open: (line: string): string => `Open: ${line}`,
   close: "Close",
   words: "Words",
+  // The direction toggle shows the state it is in and what pressing it does; the arrow reads with the names in the panel's order.
+  directionLabel: "Direction (tap to change)",
+  directionSays: (a: string, b: string, direction: "a-b" | "b-a" | "both"): string =>
+    direction === "a-b" ? `${a} to ${b} only.` : direction === "b-a" ? `${b} to ${a} only.` : "Both ways.",
+  direction: (says: string): string => `Direction: ${says} Press to change it.`,
+  directionNext: "Tap again for the next choice.",
+  cannotBoth: "That connection can't read both ways. Change its words instead.",
+  cannotTurn: "That connection can't read the other way round. Change its words instead.",
+  reloadFirst: "The connections changed while saving. Close this panel, open it again and try the rest.",
   makeSecret: "Make secret",
   pin: "Pin as true",
   remove: "Remove",

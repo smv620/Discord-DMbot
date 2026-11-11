@@ -21,6 +21,7 @@ import {
   type IconChoice,
   type NameChange,
   type NameRow,
+  type WebEdge,
   type WebGraph,
   type WebNode,
   type WebLinkChange,
@@ -509,10 +510,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
   /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
    * failure, a network failure, a busy server, being signed out, is worded as it always is. */
-  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>): Promise<string | null> {
+  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>, onEdge?: (edge: WebEdge | { removed: true }) => void): Promise<string | null> {
     if (!ref || !api.changeWebLink) return words.errorFallback;
     try {
-      await api.changeWebLink(ref, change);
+      const drawn = await api.changeWebLink(ref, change); // (not inside the optional call: it would never run without a listener)
+      onEdge?.(drawn); // the edge the answer drew: a change that writes a connection anew gives it a new id
     } catch (error) {
       const said = (error instanceof ApiError && own?.[error.kind]) || refusal(error);
       if (said === null) {
