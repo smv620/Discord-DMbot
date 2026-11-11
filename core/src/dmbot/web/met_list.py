@@ -64,7 +64,7 @@ def _arguments(body: object) -> tuple[str, str, str]:
     if name is not None:
         raise RecapError("bad_action")
     if action == "met-join":
-        if not isinstance(target, str) or not _ID.match(target):
+        if not isinstance(target, str) or not _ID.fullmatch(target):
             raise RecapError("bad_target")
         return action, target, ""
     if target is not None:
@@ -78,7 +78,7 @@ async def queue(db: Database, session: Session, ref: str, met_id: str, body: obj
     `bad_name`, `bad_target` (the entry to join is not a confirmed name) and `too_soon`."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    if not _ID.match(met_id):
+    if not _ID.fullmatch(met_id):
         raise RecapError("not_found")
     action, target, text = _arguments(body)
     async with db.user(session.user_id, session=session.id_hash) as conn:

@@ -13,7 +13,9 @@ from __future__ import annotations
 # row under the current wording, or an import confirmation not taken back with no "no" on record; a
 # speaker without Discord, a negative number, is never taken as stopped). It sends the words, the
 # count and the session's date, and never `line_ms` or `speaker_ids`. The caller passes the current
-# wording's number (`terms`), as the waiting list's door does.
+# wording's number (`terms`), as the waiting list's door does (the wording is code, not data, so it
+# is not written into SQL). A queued answer for a row the re-check hides is let through: the bot
+# reads who is recorded again when it applies it and refuses (`gone`), and nothing leaks.
 #
 # The queue door is read back from the database as it is (many migrations have changed it) and each
 # anchor must be found the exact number of times, so a drift stops the migration instead of widening

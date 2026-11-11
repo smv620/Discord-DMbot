@@ -139,3 +139,109 @@ class MetListDoor(Web):
             ),
             "not_allowed",
         )
+
+    async def spoke(self, *speakers: int) -> None:
+        """Lines for these speakers in the session (a row citing one with none is not kept)."""
+        await TranscriptStore(self.db).add_lines(
+            self.g,
+            self.sid,
+            [Line(LINE_MS + 5_000 + n, u, "Hm.", "x") for n, u in enumerate(speakers)],
+        )
+
+    async def test_a_speaker_without_discord_is_never_taken_as_stopped(self) -> None:
+        await self.spoke(-5)
+        await self.met_row("sled dogs", speakers=(-5,))
+        self.assertEqual([i["what"] for i in await self.items()], ["sled dogs"])
+
+    async def test_an_import_confirmation_counts_until_it_is_taken_back(self) -> None:
+        await self.spoke(777)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id,"
+                " basis, confirmed_by, confirmed_at, terms_version) VALUES"
+                " (%s, %s, %s, 'imp', 777, 'uploader_confirmed', %s, 1, 1)",
+                (self.g, self.one.id, "c" * 32, ALICE.id),
+            )
+        await self.met_row("wolves", speakers=(777,))  # (the writer reads it too, #4153)
+        self.assertEqual([i["what"] for i in await self.items()], ["wolves"])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE import_consents SET removed_at = 2 WHERE guild_id = %s AND user_id = 777",
+                (self.g,),
+            )
+        self.assertEqual(await self.items(), [])
+
+    async def test_another_campaigns_row_is_neither_listed_nor_answerable(self) -> None:
+        other = await self.campaigns.create(self.g, "Other", ALICE.id)
+        elsewhere = f"{self.g}.{other.id}"
+        await self.met_row("barbarians")
+        got = await met_list.listed(self.web, self.session, elsewhere)
+        self.assertEqual(got["items"], [])
+        met = (await self.items())[0]["id"]
+        self.assertEqual(
+            await self.refusal(
+                met_list.queue(self.web, self.session, elsewhere, met, {"action": "remove"})
+            ),
+            "not_found",
+        )
+
+    async def test_the_queued_row_holds_the_met_row_the_name_and_the_target(self) -> None:
+        met = await self.met_row("barbarians")
+        queued = await met_list.queue(
+            self.web, self.session, self.cref, met, {"action": "join", "target": self.mira}
+        )
+        named = await met_list.queue(
+            self.web, self.session, self.cref, met, {"action": "name", "name": "The  Red Axes"}
+        )
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id, entity_id, action, target_id, text, flag FROM name_actions"
+                " WHERE guild_id = %s ORDER BY created_at, action",
+                (self.g,),
+            )
+            rows = {r["id"]: r for r in await cur.fetchall()}
+        self.assertEqual(
+            (rows[queued]["entity_id"], rows[queued]["action"], rows[queued]["target_id"]),
+            (met, "met-join", self.mira),
+        )
+        self.assertEqual(
+            (rows[named]["action"], rows[named]["text"], rows[named]["flag"]),
+            ("met-name", "The Red Axes", False),
+        )
+
+    async def test_the_door_itself_refuses_what_does_not_fit_an_action(self) -> None:
+        met = await self.met_row("barbarians")
+
+        async def door(action: str, target: str | None, text: str, flag: bool = False) -> str:
+            async with self.db.user(self.session.user_id, session=self.session.id_hash) as conn:
+                from dmbot.web.recaps import _scoped
+
+                await _scoped(conn, self.g)
+                cur = await conn.execute(
+                    "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                    (self.g, self.one.id, met, action, "", target, text, flag),
+                )
+                found = await cur.fetchone()
+                assert found is not None
+                return str(found["r"]["status"])
+
+        self.assertEqual(await door("met-name", self.mira, "Axes"), "bad_text")
+        self.assertEqual(await door("met-name", None, ""), "bad_text")
+        self.assertEqual(await door("met-remove", None, "x"), "bad_text")
+        self.assertEqual(await door("met-join", None, ""), "bad_text")
+        self.assertEqual(await door("met-remove", None, "", True), "bad_text")
+        self.assertEqual(await door("remove", None, ""), "needs_confirm")  # (the old rules stand)
+
+    async def test_the_list_is_newest_session_first(self) -> None:
+        transcripts = TranscriptStore(self.db)
+        later = await transcripts.open_session(self.g, self.one.id, 1_700_100_000)
+        await transcripts.add_lines(self.g, later, [Line(LINE_MS, ALICE.id, "A wolf.", "x")])
+        await self.met_row("barbarians")
+        await self.met.add(
+            self.g,
+            self.one.id,
+            later,
+            [("a wolf", 1, (LINE_MS,), (ALICE.id,))],
+            session_started_at=1_700_100_000,
+        )
+        self.assertEqual([i["what"] for i in await self.items()], ["a wolf", "barbarians"])
