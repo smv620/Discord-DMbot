@@ -15099,7 +15099,8 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
-    campaigns.register_section(PrivateScenesSection())  # private scenes (#2996 rule 5)
+    # private scenes (#2996 rule 5); their entries only for who is recorded where it lands (#4110)
+    campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)
