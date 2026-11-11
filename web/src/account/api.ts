@@ -1760,6 +1760,9 @@ export interface WebNode {
   revealed?: boolean;
   /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
   page?: boolean;
+  /** How an item changed hands (#4122; core graph_view): "Claude sold it to Belleros · Belleros has it now", in the API's words, only
+   * from connections this viewer knows and only when one has ended. Absent otherwise. */
+  history?: string;
   /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
    * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
   quests?: { id: string; name: string; links: number }[];
