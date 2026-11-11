@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-11 UTC by dev1 (after deploy 18)
+Last updated: 2026-11-11 UTC by dev1 (after deploy 19)
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at 9636c6e1 (deploy 18: migrations 0422_tie_end_reason and 0426_entity_parts_current). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 18 exit 0 (counts on #3545); recap kept as a draft. Found in the sample: a Keep on one waiting connection is refused with no reason in the log (#4161, for CloudDev). Full entry: docs/testing-history.log.
+core + web-api at 527ee907 (deploy 19: migrations 0421, 0424, 0425, 0427 to 0432 and 0434). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 19 exit 0 (counts on #3545); recap kept as a draft. Found in the sample: a Keep on one waiting connection is refused with no reason in the log (#4161, for CloudDev). Full entry: docs/testing-history.log.
 READY TO DEPLOY
 ------------------------------------------------------------------------------
 Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all of them run together, in order. Nothing to deploy yet.
