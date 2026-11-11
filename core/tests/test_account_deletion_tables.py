@@ -1,4 +1,4 @@
-"""Every table account deletion changes is tested with real rows (#4162, first PR): one row for
+"""Every table account deletion changes is tested with real rows (#4162): one row for
 Alice and one for Bob in each, then the deletion. Alice's rows go from the DELETED tables and her
 person column goes to 0 in the ZEROED ones; Bob's rows stay untouched. The lists come from the
 migrations themselves, so a table added to a forget function fails the completeness test until it
@@ -275,6 +275,11 @@ class AccountDeletionTables(DatabaseTest):
                 " added_at) VALUES (%s, %s, %s, %s, %s, 1)",
                 (GUILD_A, alice_campaign, f"{ALICE:032x}", BOB, ALICE),
             )
+            cur = await conn.execute(
+                "SELECT added_by FROM rule_set_editors WHERE campaign_id = %s AND user_id = %s",
+                (alice_campaign, BOB),
+            )
+            self.assertEqual([r["added_by"] for r in await cur.fetchall()], [ALICE])
         await accounts.delete_person(self.db, ALICE, now=NOW + 50)
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
