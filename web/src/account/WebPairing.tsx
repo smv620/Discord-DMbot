@@ -13,7 +13,11 @@ export default function WebPairing({ kind, name, onPair, id }: { kind: "banner" 
   useEffect(() => {
     if (kind !== "banner") return;
     const escape = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") latest.current(id);
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // In full screen, Escape leaves full screen (the map's own key); a text box or a dialog keeps its Escape for itself.
+      if (document.querySelector(".web-map.web-full")) return;
+      if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable="true"], [role="alertdialog"]')) return;
+      latest.current(id);
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);

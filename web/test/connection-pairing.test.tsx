@@ -74,6 +74,28 @@ describe("joining two names", () => {
     add.mockRestore();
   });
 
+  it("a full-screen Escape leaves full screen and does not cancel the join", async () => {
+    const { onPair, add } = await bannerListening();
+    const map = document.querySelector(".web-map")!;
+    map.classList.add("web-full");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onPair).not.toHaveBeenCalled();
+    map.classList.remove("web-full"); // a positive control: out of full screen, Escape cancels
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onPair).toHaveBeenCalledWith("m");
+    add.mockRestore();
+  });
+
+  it("Escape in a text box does not cancel the join", async () => {
+    const { onPair, add } = await bannerListening();
+    const box = document.createElement("input");
+    document.body.appendChild(box);
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(onPair).not.toHaveBeenCalled();
+    box.remove();
+    add.mockRestore();
+  });
+
   it("no listener is left behind", async () => {
     const remove = vi.spyOn(window, "removeEventListener");
     const { onPair, add } = await bannerListening();
