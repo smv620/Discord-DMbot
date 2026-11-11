@@ -4,10 +4,11 @@ stand-in card. Invented names."""
 from __future__ import annotations
 
 import asyncio
-import re
 import unittest
 from typing import Any
+from unittest.mock import patch
 
+from dmbot import credits
 from dmbot.transcript import theatre_job as job
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -172,4 +173,7 @@ class TheCreditLine(unittest.TestCase):
     def test_credit_line_is_empty_for_a_live_session_and_plain_for_an_imported_one(self) -> None:
         self.assertEqual(job.credit_line(False), "")
         self.assertRegex(job.credit_line(True), r"About [\d,]+ AI credits for the script\.")
-        self.assertIsNotNone(re.search(r"\d", job.credit_line(True)))
+
+    def test_the_balance_is_never_named_in_the_question_even_with_allowances_set(self) -> None:
+        with patch.object(credits, "ALLOWANCES_SET", True):
+            self.assertNotIn("left", job.credit_line(True))

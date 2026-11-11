@@ -194,7 +194,12 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
 
 class TheCreditWords(unittest.IsolatedAsyncioTestCase):
     def test_the_question_names_the_credits_only_for_an_imported_session(self) -> None:
-        self.assertNotIn("credit", tb.ask_text(300))
+        live = (
+            '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
+            f"means, in brackets.\n{job.estimate_line(300)} {job.PRIVATE_NOTE}\n"
+            "Nothing is used until you press the button."
+        )
+        self.assertEqual(tb.ask_text(300), live)  # the live question is unchanged
         self.assertEqual(tb.ask_text(300), tb.ask_text(300, imported=False))
         imported = tb.ask_text(300, imported=True)
         self.assertIn(job.credit_line(True), imported)
@@ -215,6 +220,7 @@ class TheCreditWords(unittest.IsolatedAsyncioTestCase):
             said = str(interaction.followup.send.await_args.args[0])
             self.assertIn(tb.OLD_QUESTION, said)
             self.assertEqual(job.credit_line(True) in said, names)
+            check.assert_awaited_with(GUILD, SESSION)
 
     def bot_with(self, check: Any) -> Any:
         me = bot(lines=300)

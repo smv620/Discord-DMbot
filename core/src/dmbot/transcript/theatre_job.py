@@ -62,7 +62,11 @@ def credit_line(imported: bool) -> str:
     with credits, while a live session's is paid by the hours and says nothing about credits."""
     if not imported:
         return ""
-    return credits.estimate_words("script", credits.estimate("script", 1, allowance=0, used=0))
+    # The cost only: the "left this month" sentence needs the DM's own allowance, which this
+    # question does not hold, so it is never built here (a made-up balance would be shown).
+    est = credits.estimate("script", 1, allowance=0, used=0)
+    unit = "credit" if est.credits == 1 else "credits"
+    return f"About {est.credits:,} AI {unit} for the script."
 
 
 def stopped_text(part: int, of: int) -> str:

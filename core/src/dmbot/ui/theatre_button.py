@@ -185,6 +185,7 @@ async def press_old(interaction: discord.Interaction, guild_id: int, session_id:
         store = bot.transcripts
         imported = store is not None and await store.is_import(guild_id, session_id)
     except Exception:  # a failed read must not stop the question: it just names no credits
+        log.warning("Script: could not tell if the session was imported")
         imported = False
     await _tell(
         interaction,
