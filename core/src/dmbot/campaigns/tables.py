@@ -109,6 +109,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
     "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
     "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",
+    "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
+    "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
+    "answer to a question, like name_not_same: a restored campaign may ask it once more",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
