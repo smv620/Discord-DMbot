@@ -986,7 +986,14 @@ async def _read_background(
             f"{k}={n}"
             for k, n in sorted(read.stats.dropped.items())
             # (kept lines, corrected or widened: logged as drops they are not, #3780)
-            if k not in ("quote_widened", "quote_reach", "feeling_demoted")
+            if k
+            not in (
+                "quote_widened",
+                "quote_reach",
+                "feeling_demoted",
+                "hand_over_dropped",
+                "hand_over_added",
+            )
             and not k.startswith("kind_")
         )
         or "nothing",
@@ -2305,6 +2312,18 @@ async def queue_links(
                 npc_guesses=dict(
                     (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})
                 ),
+                # who had the item before and how it moved (#4115): a name DMbot has, or none
+                # (one fitted to `owns` for a group or a pet that took it is no theft any more: a
+                # thief only has it, so that hand-over is dropped and the line kept plain)
+                hand_over_from=(
+                    prev := (
+                        entry(c.from_holder)
+                        if c.change and not (how != c.how and c.change in bg.TAKEN)
+                        else None
+                    )
+                    or ""
+                ),
+                hand_over=c.change if prev else "",
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
@@ -2491,7 +2510,13 @@ async def count_changes(
     try:
         waiting = await store.waiting(campaign.guild_id, campaign.id)
         mine = [w for w in waiting if (w.subject_id, w.predicate, w.object_id) in keys]
-        return len(await keep.changes_among(memory, campaign.guild_id, campaign.id, mine))
+        found = await keep.changes_among(memory, campaign.guild_id, campaign.id, mine)
+        # (a hand-over's ties are someone else's: its card is a Keep, not a Change, #4115)
+        return sum(
+            1
+            for (a, _, b), old in found.items()
+            if any({r.subject_id, r.object_id} == {a, b} for r in old)
+        )
     except Exception:
         log.exception("Couldn't count the changed connections")
         return 0
@@ -2744,6 +2769,39 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
         return False
 
 
+# A lore connection that says an item changed hands (#4115, through the ux-critic): the one it came
+# from in brackets after the claim, then what ✅ Keep does to them. "{a}" is who had it before.
+HAND_OVER_SAID = {
+    "sold": " ({a} sold it)",
+    "gave": " ({a} gave it)",
+    "traded": " ({a} traded it)",
+    "stolen": " (taken from {a})",
+    "lost": " ({a} lost it)",
+}
+HAND_OVER_KEEP = {
+    "sale": "✅ Keep also means **{a}** no longer has it.\n",
+    # (a theft or a loss never changes who owns it, whoever that is)
+    "taken": "✅ Keep also means **{a}** no longer has it with them. Who owns it doesn't change.\n",
+    # (kept unseen, it never changes what the players see of the one before)
+    "waits": "Players don't know this yet, so to them **{a}** still has it. Once they do, you can "
+    "change that on the item's name card.\n",
+}
+SECRET_NOTE = "🤫 Keep as secret hides it from players."
+# (🤫 keeps it hidden, and a hidden keep leaves what the players see of the one before as it is)
+HAND_OVER_SECRET = "🤫 Keep as secret hides it from players. **{a}** stays as they know them."
+
+
+def hand_over_lines(c: Waiting, waits: bool = False, ends: bool = True) -> tuple[str, str]:
+    """The bracket after a hand-over's claim and the line saying what keeping it ends ("" when
+    the one before holds nothing of it now: keeping it ends nothing). Pure."""
+    a = _md(c.hand_over_name[:40])
+    said = HAND_OVER_SAID.get(c.hand_over, "").format(a=a)
+    if not ends:
+        return said, ""
+    kind = "waits" if waits else "taken" if c.hand_over in ("stolen", "lost") else "sale"
+    return said, HAND_OVER_KEEP[kind].format(a=a)
+
+
 class ConnectionOffer(_Menu):
     """Keep each connection the DM's text states, one by one: ✅ Keep, 🤫 Keep as secret, ❌ No,
     or leave out the rest. They wait in the campaign's `backstory_links` until then, so a restart
@@ -2766,6 +2824,7 @@ class ConnectionOffer(_Menu):
         self.characters: dict[str, str] = {}  # player characters (id -> name), for the default
         # the waiting connections that change one the campaign has (key -> what they would end)
         self.changes: dict[tuple[str, str, str], list[Relation]] = {}
+        self.shown_ids: set[str] = set()  # entries the players see, read for a hand-over (#4115)
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
         self.keep = _Button(
@@ -2793,6 +2852,8 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         ready = [w for w in waiting if w.ready]
         self.changes = await keep.changes_among(memory, campaign.guild_id, campaign.id, ready)
+        if any(w.hand_over for w in ready):  # (what the players see decides a hand-over's line)
+            self.shown_ids = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
         return ready
 
     @staticmethod
@@ -2800,10 +2861,13 @@ class ConnectionOffer(_Menu):
         """What Keep all keeps (#2650): the ready connections from the same upload as the first
         card, an old one (queued before uploads had names, upload "") counting as an upload of
         its own, so a labelled backstory is never kept unseen and neither is an old one. One DMbot
-        inferred is never among them (#2959 item 5): it waits for its own ✅ Keep."""
+        inferred is never among them (#2959 item 5), nor a hand-over (#4115: it ends what someone
+        else holds): each waits for its own ✅ Keep."""
         if not ready:
             return []
-        return [w for w in ready if w.upload == ready[0].upload and not w.inferred]
+        return [
+            w for w in ready if w.upload == ready[0].upload and not w.inferred and not w.hand_over
+        ]
 
     def _set(self, ready: list[Waiting]) -> None:
         mine = self._this_upload(ready)
@@ -2814,7 +2878,9 @@ class ConnectionOffer(_Menu):
         self.total = max(self.total, self.kept + self.left_out + self.left)
         self.current = ready[0] if ready else None
         self.keep.disabled = bool(self.current and self.current.secret)
-        self.keep.label = "✅ Change it" if self.current and self._old(self.current) else "✅ Keep"
+        self.keep.label = (
+            "✅ Change it" if self.current and self._pair_old(self.current) else "✅ Keep"
+        )
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -2826,6 +2892,24 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _hand_over_waits(self, c: Waiting) -> bool:
+        """Whether keeping this hand-over leaves the one before's part as it is for now: what is
+        kept waits to be said at the table (or is secret) and their part is one the players see,
+        which a hidden tie never ends (#4115, `keep.end_replaced`)."""
+        hidden = c.secret or keep.kept_unrevealed(c, c.secret, self.shown_ids)
+        return hidden and self._hand_over_seen(c)
+
+    def _hand_over_seen(self, c: Waiting) -> bool:
+        """Whether a tie the hand-over would end is one the players can see."""
+        return any(not (r.secret or r.unrevealed) for r in keep.hand_over_ties(c, self._old(c)))
+
+    def _pair_old(self, c: Waiting) -> list[Relation]:
+        """What this card changes between its own two names ("Now: … / Your text: …"); a
+        hand-over's ties are the other holder's, told on their own line (#4115)."""
+        return [
+            r for r in self._old(c) if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}
+        ]
+
     def _reads(self, r: Relation) -> str:
         """How a held connection reads here ("ally of", "knows (hostile)")."""
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
@@ -2833,13 +2917,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def _change_line(self, c: Waiting, how: str) -> str:
+    def _change_line(self, c: Waiting, how: str, bracket: str = "") -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
         the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(self._reads(r) for r in self._old(c))
+        old = ", ".join(self._reads(r) for r in self._pair_old(c))
         return (
             f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
-            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**\n"
+            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**{bracket}\n"
             "✅ Change it swaps the old one for this. Nothing changes until you press it.\n"
         )
 
@@ -2858,7 +2942,7 @@ class ConnectionOffer(_Menu):
         note = (
             "It uses a secret name, so players won't see it. Only 🤫 Keep as secret works."
             if c.secret
-            else "🤫 Keep as secret hides it from players."
+            else SECRET_NOTE
         )
         who = self.characters.get(c.known_by)
         if who is not None:
@@ -2868,11 +2952,19 @@ class ConnectionOffer(_Menu):
                 if not c.secret
                 else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
             )
-        if self._old(c):
+        waits = self._hand_over_waits(c)
+        ends = bool(keep.hand_over_ties(c, self._old(c))) if c.hand_over else False
+        handed = hand_over_lines(c, waits, ends) if c.hand_over else ("", "")
+        if c.hand_over and not waits and not c.secret and self._hand_over_seen(c):
+            note = HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + note.removeprefix(
+                SECRET_NOTE
+            )
+        note = handed[1] + note
+        if self._pair_old(c):
             return (
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
-                + self._change_line(c, how)
+                + self._change_line(c, how, handed[0])
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + inferred_line(c.inferred)
@@ -2881,7 +2973,7 @@ class ConnectionOffer(_Menu):
             )
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
-            f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
+            f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + inferred_line(c.inferred)
@@ -2892,7 +2984,9 @@ class ConnectionOffer(_Menu):
     def _scope(self, c: Waiting) -> str:
         """Which connections ✅ Keep all keeps, when the card is from a named upload (#2650)."""
         mine = (
-            [w for w in self.shown if w.upload == c.upload and not w.inferred] if c.upload else []
+            [w for w in self.shown if w.upload == c.upload and not w.inferred and not w.hand_over]
+            if c.upload
+            else []
         )
         if len(mine) < 2:
             return ""
@@ -2901,12 +2995,17 @@ class ConnectionOffer(_Menu):
         # becomes of the rest and why (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3"):
         # another file's are never kept unseen, and one DMbot guessed waits for its own Keep.
         guessed = sum(1 for w in self.shown if w.inferred)
-        elsewhere = sum(1 for w in self.shown if not w.inferred and w.upload != c.upload)
+        moved = sum(1 for w in self.shown if w.hand_over and not w.inferred)
+        elsewhere = sum(
+            1 for w in self.shown if not w.inferred and not w.hand_over and w.upload != c.upload
+        )
         left = []
         if elsewhere:
             left.append(f"{elsewhere} from {'another file' if elsewhere == 1 else 'other files'}")
         if guessed:
             left.append(f"{guessed} guessed by DMbot")
+        if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
+            left.append(f"{moved} where an item changes hands")
         if not left:
             return f"\n✅ Keep all keeps the {keeps}."
         decide = " and ".join(left)
@@ -2972,7 +3071,11 @@ class ConnectionOffer(_Menu):
             ended: list[int | None] = []
             try:
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
-                await keep.end_replaced(memory, campaign.guild_id, campaign.id, old, start, ended)
+                await keep.end_replaced(
+                    memory, campaign.guild_id, campaign.id, old, start, ended, link=c,
+                    hidden=secret or c.secret
+                    or keep.kept_unrevealed(c, secret or c.secret, shown),
+                )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
