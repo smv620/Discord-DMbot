@@ -8,6 +8,7 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { CONNECTION_PANEL_LIVE } from "../content/connection-panel-switch";
 import { HAND_OVER_LIVE } from "../content/hand-over-switch";
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
@@ -126,6 +127,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
   const [line, setLine] = useState<{ a: string; b: string } | null>(null);
+  // The redesigned connection panel asks before the page leaves it with edits unsaved (#4155): it registers here while it has some.
+  const leaveGuard = useRef<((leave: () => void) => boolean) | null>(null);
+  const goOn = (leave: () => void): void => {
+    if (!leaveGuard.current?.(leave)) leave();
+  };
   // A private message's "Open on the website" can name one line, as `?item=<idA>.<idB>` (#3663): its panel is opened once the
   // graph is here, or the page says it has been answered (or is not drawn any more).
   const wantedLine = useRef(((item) => (item === null ? null : pairFromItem(item)))(currentItem()));
@@ -812,9 +818,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               center={center}
               refId={ref}
               selected={line}
-              onCenter={(id) => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); }}
-              onLine={(a, b) => setLine({ a, b })}
-              onNodePick={() => setLine(null)}
+              onCenter={(id) => goOn(() => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); })}
+              onLine={(a, b) => goOn(() => setLine({ a, b }))}
+              onNodePick={() => goOn(() => setLine(null))}
               look={look}
               onIcon={seeing ? undefined : chooseIcon}
               iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
@@ -828,9 +834,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {chosen && (
                 <LazyPanel
                   key={`${chosen.a}|${chosen.b}`}
-                  load={() => import("./WebLinePanel")}
+                  load={() => (CONNECTION_PANEL_LIVE ? import("./WebConnectionPanel") : import("./WebLinePanel"))}
                   what="the connections"
-                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null) }}
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard }}
                 />
               )}
             </WebMap>
