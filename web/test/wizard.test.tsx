@@ -227,6 +227,14 @@ describe("the wizard", () => {
     expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(before);
   });
 
+  it("the too-big words name the real limits and no Google Drive", () => {
+    const words = w.docs.unreadable["too_big"]!;
+    expect(words).toContain("50 MB");
+    expect(words).toContain("10 MB");
+    expect(words).toContain("Discord");
+    expect(words).not.toContain("Drive");
+  });
+
   it("a link is not offered in the first release", async () => {
     await start();
     for (let to = 2; to <= 4; to++) await next(to);
