@@ -10,11 +10,7 @@ import asyncio
 import importlib
 import inspect
 import unittest
-<<<<<<< HEAD
-from typing import get_args
-=======
-from typing import Any, cast
->>>>>>> origin/development
+from typing import Any, cast, get_args
 from unittest.mock import AsyncMock, patch
 
 from dmbot import ai, credits, entitlements, usage
@@ -106,6 +102,17 @@ class Estimates(unittest.TestCase):
         for words in (1, 7, 999, 1000, 1001, 12_345, 99_999):
             est = credits.estimate("lore", words / 1000, allowance=0, used=0).credits
             self.assertGreaterEqual(est * 1000, words * credits.CREDITS_PER_UNIT["lore"])
+
+    def test_a_lore_text_is_estimated_from_the_models_prices_in_credits(self) -> None:
+        from dmbot.memory.background import estimate_cents
+
+        for chars in (0, 100, 10_000, 200_000):
+            est = credits.lore_estimate(chars)
+            self.assertEqual(est.credits, estimate_cents(chars) * 10)
+        self.assertGreater(
+            credits.lore_estimate(200_000).credits, credits.lore_estimate(10_000).credits
+        )
+        self.assertGreaterEqual(credits.lore_estimate(0).credits, 10)  # (never free)
 
     def test_every_plan_has_an_allowance(self) -> None:
         self.assertEqual(set(credits.CREDITS_PER_MONTH), set(get_args(PlanId)))
