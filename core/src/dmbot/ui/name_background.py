@@ -3004,10 +3004,11 @@ class ConnectionOffer(_Menu):
                     refusal_words(exc, c.subject, c.object),
                     c.predicate,
                 )
+                # (the card says what to do, not the rule's own words: those are for the log)
                 await _tell(
                     interaction,
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
-                )  # (what to do, not the rule's own words: those are for the log)
+                )
                 return
             made = kept.value[0]
             # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred

@@ -146,3 +146,18 @@ class RefusalWords(unittest.TestCase):
         self.assertNotIn("\n", got)
         self.assertEqual(len(got), 120)
         self.assertTrue(got.startswith("a b xxx"))
+
+    def test_regex_characters_overlapping_and_short_names_are_safe(self) -> None:
+        from dmbot.logs import refusal_words
+
+        exc = ValueError("A.B (x)+ and A.B (x)+ Prime meet; e is here")
+        got = refusal_words(exc, "A.B (x)+", "A.B (x)+ Prime", "e")
+        # (the longest name wins where one holds another, and "e" never reaches into "[name]")
+        self.assertEqual(got, "[name] and [name] m[name][name]t; [name] is h[name]r[name]")
+
+    def test_names_match_whatever_their_spacing_and_an_empty_message_is_empty(self) -> None:
+        from dmbot.logs import refusal_words
+
+        got = refusal_words(ValueError("Maera  Voss is one"), "Maera Voss ")
+        self.assertEqual(got, "[name] is one")
+        self.assertEqual(refusal_words(ValueError(""), "x"), "")

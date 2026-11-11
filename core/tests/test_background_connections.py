@@ -621,6 +621,28 @@ class ThePath(NamesTest):
         self.assertEqual(await self.relations(), [])  # (nothing was kept)
         self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
 
+    async def test_a_real_refusal_of_a_travels_with_names_its_rule_in_words_the_log_can_hold(
+        self,
+    ) -> None:
+        """The rule behind #4161's likely case: a companion link whose second end is no player
+        character or party is refused by the store, whatever a card offered."""
+        from dmbot.logs import refusal_words
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        first, second = sorted(ids)[:2]
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, ids[first], "travels_with", ids[second],
+                source=DM_SOURCE, confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        words = refusal_words(caught.exception, first, second)
+        self.assertRegex(words, r"travels with|companion")
+        self.assertNotIn(first, words)
+
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
         for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):

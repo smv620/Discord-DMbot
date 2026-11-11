@@ -45,7 +45,7 @@ async def none_of_these(
             role=(q.detail or q.predicate)[: unnamed_mod.MAX_ROLE],
         )
     except MemoryRuleError as exc:
-        log.info("A 'none of these' answer was refused: %s", refusal_words(exc, q.word))
+        log.info("A 'none of these' answer was refused: %s", refusal_words(exc, q.word, q.detail))
         return COULD_NOT_KEEP
     batch = added.batch if added.created else None  # (an entry that was already there stays)
     result = ""
