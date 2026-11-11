@@ -125,3 +125,28 @@ class LibraryLevels(unittest.TestCase):
             pass
         self.assertIsNone(_guild.get())
         self.assertIsNone(_campaign.get())
+
+
+class LoggableRefusals(unittest.TestCase):
+    """The memory rules' refusals that may be logged are fixed sentences, nothing else (#4161)."""
+
+    def test_every_listed_sentence_is_a_plain_fixed_string(self) -> None:
+        from dmbot.memory.store import LOGGABLE_REFUSALS
+
+        self.assertGreaterEqual(len(LOGGABLE_REFUSALS), 10)
+        self.assertEqual(len(set(LOGGABLE_REFUSALS)), len(LOGGABLE_REFUSALS))
+        for sentence in LOGGABLE_REFUSALS:
+            self.assertIsInstance(sentence, str)
+            self.assertTrue(sentence.strip())
+            self.assertFalse({"{", "}", "%"} & set(sentence), sentence)  # (no template to fill)
+
+    def test_a_listed_sentence_is_logged_as_it_is_and_any_other_is_unlisted(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET, refusal_for_log
+
+        self.assertEqual(refusal_for_log(MemoryRuleError(COMPANION_TARGET)), COMPANION_TARGET)
+        for text in ("Cerric can't go from alive to dead.", COMPANION_TARGET + " Cerric.", ""):
+            self.assertEqual(
+                refusal_for_log(MemoryRuleError(text)), "unlisted rule (MemoryRuleError)", text
+            )
+        self.assertEqual(refusal_for_log(ValueError("x")), "unlisted rule (ValueError)")

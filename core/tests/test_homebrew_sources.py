@@ -441,7 +441,7 @@ class Backups(SourcesTest):
             {**rows["Lamp"], "source": "other"},
             {**rows["Lamp"], "page": page},  # a typed entry with a page
             {**rows["Lamp"], "credit": {"kind": "user", "text": None, "domain": None}},
-            {**rows["Lamp"], "added_by": "0"},
+            {**rows["Lamp"], "added_by": "-1"},
             {**rows[link.name], "page": {**page, "url": "http://example.com/x"}},
             {**rows[link.name], "page": {**page, "domain": "evil.com"}},
             {**rows[link.name], "page": {**page, "text": "Other words."}},
@@ -462,7 +462,7 @@ class Backups(SourcesTest):
                 await self.campaigns.import_backup(GUILD_B, damaged, PLAYER)
         approvals = [
             [{"domain": "WWW.dndbeyond.com", "by": "7", "at": 1}],
-            [{"domain": "dndbeyond.com", "by": "0", "at": 1}],
+            [{"domain": "dndbeyond.com", "by": "-1", "at": 1}],
             [{"domain": "dndbeyond.com", "by": "7", "at": -1}],
             [{"domain": "dndbeyond.com", "by": "7", "at": 1, "extra": 1}],
             [{"domain": "a.com", "by": "7", "at": 1}, {"domain": "a.com", "by": "7", "at": 2}],

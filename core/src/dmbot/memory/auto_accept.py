@@ -173,8 +173,9 @@ async def accept_connections(
         for w in await links.waiting(guild, campaign, symmetric=symmetric)
         if upload is None or w.upload == upload
     ]
-    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5)
-    ready = [w for w in every if w.ready and not w.inferred]
+    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5;
+    # nor a hand-over, which ends what someone else holds, #4115)
+    ready = [w for w in every if w.ready and not w.inferred and not w.hand_over]
     tally.waiting[CONNECTIONS] += len(every) - len(ready)
     if dry_run:
         tally.accepted[CONNECTIONS] += len(ready)

@@ -125,6 +125,7 @@ from dmbot.memory.models import (
     DETAIL_MAX,
     DID,
     DM,
+    END_REASONS,
     ENDED,
     FACT_STATUSES,
     FIX,
@@ -321,6 +322,14 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 PARTY_NAME = "The party"
 # (`web_actions` matches this text to give the website its own refusal word: reword both together.)
 NAMES_NOT_SHOWN = "Show both names to the players first, then this connection."
+ONLY_DM_SAYS = "Only the DM can say that."
+TWO_ENTRIES = "A relationship needs two different entries."
+SAY_WHO_PLAYS = "Say who plays a character on the character itself."
+DESCRIBED_AS = "Say who they are described as."
+WORD_TOO_LONG = "That relationship word is too long."
+COMPANION_NOT_NPC = "Only a character who is not a player character travels with the party."
+COMPANION_PARTY_SOURCE = "Only the DM or a session can say who travels with the party."
+COMPANION_TARGET = "A companion travels with a player character or with the party."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
@@ -329,6 +338,35 @@ MERGE_LED_TO_LOOP = (
     "These two can't be joined yet: one led to something that led to the other, and joining them "
     "would make a loop. Take away one of those “led to” links first."
 )
+
+# The refusals of `add_relation` and `add_unnamed` that may be written to the log (#4161): fixed
+# sentences with no name, alias, role or detail in them, defined above (or `_changes.NOT_FOUND`).
+# Anything else, a message built from a value, is logged as "unlisted rule" and its class: logs hold
+# ids and codes, never a campaign's words (CLAUDE.md). A new fixed sentence these two paths raise is
+# added here; one built from a value never is.
+LOGGABLE_REFUSALS: tuple[str, ...] = (
+    NOT_FOUND,
+    ONLY_DM_SAYS,
+    TWO_ENTRIES,
+    SAY_WHO_PLAYS,
+    DESCRIBED_AS,
+    WORD_TOO_LONG,
+    COMPANION_NOT_NPC,
+    COMPANION_PARTY_SOURCE,
+    COMPANION_TARGET,
+    LED_TO_KINDS,
+    LED_TO_CONFIRM,
+    LED_TO_LOOP,
+)
+
+
+def refusal_for_log(exc: BaseException) -> str:
+    """A rule's refusal in words the log may hold: its own sentence if it is one of
+    `LOGGABLE_REFUSALS`, otherwise "unlisted rule (ClassName)" and nothing of its text."""
+    text = str(exc)
+    return text if text in LOGGABLE_REFUSALS else f"unlisted rule ({type(exc).__name__})"
+
+
 DUE_MAX = 120  # letters in a promise's due note
 THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
 STANDING_VIEWERS = ("character", "faction", "place")
@@ -1057,7 +1095,7 @@ class MemoryStore:
         """Say whether only one of this item exists (Heartseeker, not a longbow): the DM's
         call. Switching it on flags a unique item that two are already carrying."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             current = await _entity_row(w, entity_id)
@@ -1782,10 +1820,10 @@ class MemoryStore:
         Written as the extractor, so it is a proposal under the DM-confirmed rule."""
         word = unnamed_mod.tidy(what)
         if not word:
-            raise MemoryRuleError("Say who they are described as.")
+            raise MemoryRuleError(DESCRIBED_AS)
         role = (role or "").strip() or None
         if role is not None and len(role) > unnamed_mod.MAX_ROLE:
-            raise MemoryRuleError("That relationship word is too long.")
+            raise MemoryRuleError(WORD_TOO_LONG)
         if len(details) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, "extractor") as w:
@@ -1953,7 +1991,7 @@ class MemoryStore:
         named (#3431): it becomes an unnamed person, shown as "unnamed - the woman", and the
         DM can give them a name later. Only for an entry `described_entries` offers; one undo."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             row = await _entity_row(w, entity_id)
             aliases = await w.select(ALIASES, " AND entity_id = %s", [entity_id])
@@ -1991,7 +2029,7 @@ class MemoryStore:
         is the DM's alone like a clue only some know; off ("Players know it now"), everyone
         sees it. Not a clue's audience (`set_audience_limited`), which has its own rules."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if hidden and (
@@ -2086,7 +2124,7 @@ class MemoryStore:
         """The DM's switch "Only some people know this". Turned on only with at least one
         person listed, because a limited clue nobody is listed for would warn about everyone."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, clue_id)
             if current["type"] != CLUE:
@@ -2109,7 +2147,7 @@ class MemoryStore:
         """The DM says a character knows this clue: a confirmed, dated `knows` fact. It works
         for any clue; the switch decides whether anyone is warned."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             return Written(
                 await self.add_knower_in(w, clue_id, character_id, from_session_at),
@@ -2142,7 +2180,7 @@ class MemoryStore:
         connection, and Undo works). Returns the clue and whether the switch turned itself off
         because nobody is left."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             clue = await _entity_row(w, clue_id)
             facts = await w.select(
@@ -2200,7 +2238,7 @@ class MemoryStore:
         know this one yet" (#2321), theirs to say. `session_started_at`: the session a name scan
         found it in, recorded for the split-party check (#4043)."""
         if hidden_from_players and source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         check_named(type, name)
         type, role = resolve_kind(type, role)
         if hidden_from_players and (role == PLAYER_CHARACTER or played_by is not None):
@@ -3485,7 +3523,7 @@ class MemoryStore:
         DM has already decided: it shows when its name is confirmed and goes with it if the name
         is turned down."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if current["status"] != PROPOSED:
@@ -3501,7 +3539,7 @@ class MemoryStore:
         """The DM's "They're a group" (#3383, part 2): no group is known, so the DM names it. The
         group is made (confirmed, the DM's), then everything `join_group` does. One change."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         name = clean_text(name)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
@@ -5388,7 +5426,7 @@ class MemoryStore:
         source = made_by or w.source
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         _check_choice(status, LIVE, "relation status")
         check_status_change(None, status, source)
         _check_confidence(confidence)
@@ -5399,12 +5437,12 @@ class MemoryStore:
         if not all(is_id(m) for m in mention_ids):
             raise ValueError("Bad mention ID")
         if subject_id == object_id:
-            raise MemoryRuleError("A relationship needs two different entries.")
+            raise MemoryRuleError(TWO_ENTRIES)
         onto = await _load_ontology(w)
         pred = onto.active_predicate(predicate)
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
-            raise MemoryRuleError("Say who plays a character on the character itself.")
+            raise MemoryRuleError(SAY_WHO_PLAYS)
         if pred.key == TRAVELS_WITH:
             await _check_travels_with(w, source, subject_id, object_id)
         if pred.key == threads_mod.LED_TO:
@@ -5582,10 +5620,12 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool | None = None,
         unrevealed: bool | None = None,
+        end_reason: str | None = None,
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
         fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
-        to players on a connection (#2404): both its ends must be shown to the players first."""
+        to players on a connection (#2404): both its ends must be shown to the players first.
+        `end_reason` (#4115): why an `owns` or `carries` ends, given with `to_session_at`."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
@@ -5603,7 +5643,7 @@ class MemoryStore:
                 changes["secret"] = secret
             if unrevealed is not None and unrevealed != current["unrevealed"]:
                 if source != DM:
-                    raise MemoryRuleError("Only the DM can say that.")
+                    raise MemoryRuleError(ONLY_DM_SAYS)
                 if not unrevealed:
                     ends = await w.select(
                         ENTITIES,
@@ -5626,6 +5666,12 @@ class MemoryStore:
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
+            if end_reason is not None:
+                if to_session_at is None or end_reason not in END_REASONS:
+                    raise ValueError("An end reason goes with an end.")
+                if current["predicate"] not in hand_over_mod.HELD:
+                    raise MemoryRuleError("Only owning or holding something ends with a reason.")
+                changes["end_reason"] = end_reason
             if (
                 current["predicate"] == threads_mod.LED_TO
                 and changes.get("status") == CONFIRMED
@@ -7578,14 +7624,14 @@ def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: 
     session reader) can never point at it: it can only name the player character. The party is
     the entry with the `party` flag, the one marker (#3954)."""
     if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
-        return "Only a character who is not a player character travels with the party."
+        return COMPANION_NOT_NPC
     if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
         return None
     if target["type"] == "faction" and target["party"]:
         if source in (DM, "extractor"):
             return None
-        return "Only the DM or a session can say who travels with the party."
-    return "A companion travels with a player character or with the party."
+        return COMPANION_PARTY_SOURCE
+    return COMPANION_TARGET
 
 
 async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:

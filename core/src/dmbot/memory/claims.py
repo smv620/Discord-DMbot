@@ -100,6 +100,7 @@ from dmbot.memory.voice import (
     voice,
 )
 from dmbot.names import not_names
+from dmbot.session_locks import lock_sessions_of
 from dmbot.word_end import at_word_end
 
 logger = logging.getLogger(__name__)
@@ -1937,12 +1938,25 @@ class ClaimStore:
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
         words produced goes with what it made. Returns how many claims, readings, deeds, reveals,
-        scenes, beings met in play and private scenes went."""
+        scenes, beings met in play and private scenes went.
+
+        Lock order (#4153): first every session row this person has lines in, `FOR UPDATE`, in id
+        order, then the rows that cite them. The after-session writers (`PrivateScenes.
+        write_session`, `MetStore.add`) hold one session's row and re-read who is recorded under
+        it, and never take a second session's row while holding one; so a writer that is mid-write
+        finishes first and this deletes what it wrote, and one that starts after this sees the stop
+        once the consent row is gone. Run again after the consent row is deleted (`withdraw_consent`
+        does), it catches the one writer that re-read just before that delete."""
 
         # (imported here: they need this module's names)
         from dmbot.memory import deed_proposals, met_store, private_scene_store, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
+            # (the one lock order "Delete my transcripts" and a speaker's removal use too). It is
+            # held for the whole forget, so a line save in a session this person spoke in waits
+            # for it (at most the stop's timeout, nothing lost): taking it later instead would put
+            # the campaign locks below before it, the reverse of "Delete my transcripts"' order
+            await lock_sessions_of(conn, guild_id, user_id)
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)

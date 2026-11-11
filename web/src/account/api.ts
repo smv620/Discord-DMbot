@@ -1862,6 +1862,9 @@ export interface WebLink {
   /** The characters that know it, when `who` is "some". */
   knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
+  /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
+   * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
+  pairWords?: string;
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
   /** How it reads from the second name when that differs ("has as a member"); null or missing
@@ -1993,6 +1996,9 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // Which way a connection reads (#4154, core #4166), relative to the edge's own two names. Turning one round writes it anew, so its id
+  // changes: take the link from the answer's edge. Both ways, or back to one way, keeps the id.
+  | { action: "direction"; id: string; direction: "a-b" | "b-a" | "both" }
   // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
   | { action: "feeling"; id: string; feeling: string }
   // How the two people of a `knows` connection know each other (#3882, core #3889): "met", "aware" or "" (not said).
@@ -2000,7 +2006,12 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
-  | { action: "remove"; id: string; confirm: true };
+  | { action: "remove"; id: string; confirm: true }
+  // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
+  | { action: "undo"; id: string; batch: number };
+
+/** What a connection edit gave back: the edge as it now stands, and the `batch` that made the change (for Undo). */
+export type WebLinkResult = (WebEdge | { removed: true }) & { batch?: number | null };
 
 /** Words DMbot stopped asking about (#3577, core 0360): the table's own words and the DM's answer, "never" or "later" (Not now). */
 export interface KindOffer {
@@ -2195,6 +2206,8 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
+  /** The change batch a connection edit made, for its Undo (core #4156). */
+  batch?: number | null;
   /** An Undo of a name fix: how many lines were put back (#2645). */
   putBack?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
@@ -2320,6 +2333,10 @@ export interface WaitingBackstory {
   waitingOn: string[];
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
+  /** An item that changed hands (#4122): how it moved (sold, gave, traded, stolen, lost), who had it before, or "" for none. */
+  handOver?: "" | "sold" | "gave" | "traded" | "stolen" | "lost";
+  handOverFrom?: string;
+  handOverName?: string | null;
 }
 export interface WaitingWhich {
   id: string;
@@ -2973,7 +2990,7 @@ export interface AccountApi {
    * `{ removed: true }` when the last connection between two names went. */
   /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
   setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
-  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
+  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebLinkResult>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
