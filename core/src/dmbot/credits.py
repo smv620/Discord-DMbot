@@ -23,6 +23,7 @@ import contextvars
 import logging
 import time
 import uuid
+from collections import deque
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -104,9 +105,37 @@ def current() -> Scope | None:
     return _current.get()
 
 
+@dataclass(frozen=True, slots=True)
+class Charge:
+    """One call's cost, ready to write. Its id is made once, so writing it again (after a timeout
+    that may or may not have landed) can never count it twice."""
+
+    spend_id: str
+    guild_id: int
+    campaign_id: str
+    job_kind: str
+    feature: str
+    credits: int
+    now_ms: int
+    scope: Scope  # (the job: it keeps who owns the campaign, found once, inside the bounded write)
+
+
+# Charges that could not be written, tried again before the next charge (a dropped count must not
+# silently undercount, #4094). Bounded: past the limit the oldest is dropped and counted in `lost`.
+MAX_WAITING = 200
+_waiting: deque[Charge] = deque()
+lost = 0  # charges dropped for good since the bot started (a count, shown in the log)
+
+
+def waiting() -> int:
+    """How many charges are waiting to be written again."""
+    return len(_waiting)
+
+
 async def record(reply: Reply, feature: str | None) -> int:
     """Charge one answered call to the job it belongs to. Returns the credits charged (0 outside a
-    job). It never raises: a failed write is one counts-only warning, and the work goes on."""
+    job). It never raises: a failed write is one counts-only warning, kept and tried again before
+    the next charge, and the work goes on."""
     scope = _current.get()
     if scope is None or _db is None:
         return 0
@@ -125,16 +154,57 @@ async def record(reply: Reply, feature: str | None) -> int:
         )
         if credits <= 0:
             return 0
-        # Shielded, so a cancelled job does not lose the count half way, and bounded, so a hung
-        # database costs one warning instead of stalling the answer.
-        await asyncio.wait_for(
-            asyncio.shield(_write(_db, scope, (feature or "-")[:40], credits)), WRITE_TIMEOUT_S
+        await _flush(_db)  # (what an earlier failure left, first, so the order is kept)
+        charge = Charge(
+            uuid.uuid4().hex,
+            scope.guild_id,
+            scope.campaign_id,
+            scope.job_kind,
+            (feature or "-")[:40],
+            credits,
+            int(_clock() * 1000),
+            scope,
         )
+        if not await _attempt(_db, charge):
+            _keep(charge)
+            return 0
     except Exception as exc:  # the meter must never fail the real work
-        log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
+        log.warning("AI credits: a charge could not be made (%s)", type(exc).__name__)
         return 0
     log.info("AI credits: job=%s feature=%s credits=%d", scope.job_kind, feature or "-", credits)
     return credits
+
+
+async def _attempt(db: Database, charge: Charge) -> bool:
+    """Write one charge. Shielded, so a cancelled job does not lose it half way, and bounded, so a
+    hung database costs one warning instead of stalling the answer. False when it did not land."""
+    try:
+        await asyncio.wait_for(asyncio.shield(_write(db, charge)), WRITE_TIMEOUT_S)
+    except Exception as exc:
+        log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
+        return False
+    return True
+
+
+def _keep(charge: Charge) -> None:
+    global lost
+    if len(_waiting) >= MAX_WAITING:
+        _waiting.popleft()
+        lost += 1
+        log.error("AI credits: a charge was dropped, %d lost since the start", lost)
+    _waiting.append(charge)
+
+
+async def _flush(db: Database) -> None:
+    """Try the waiting charges again, oldest first, and stop at the first that still fails (the
+    database is still down: the next charge tries again). A charge that landed after its timeout
+    is written once only (the same id)."""
+    while _waiting:
+        charge = _waiting[0]
+        if not await _attempt(db, charge):
+            return
+        _waiting.popleft()
+        log.info("AI credits: a waiting charge was written, %d still waiting", len(_waiting))
 
 
 async def _owner(scope: Scope) -> int | None:
@@ -146,30 +216,38 @@ async def _owner(scope: Scope) -> int | None:
     return scope.owner
 
 
-async def _write(db: Database, scope: Scope, feature: str, credits: int) -> None:
+async def _write(db: Database, charge: Charge) -> None:
     """The ledger row and, for a paid account, its month total, in one short transaction of their
-    own, so a crash loses at most one call's count."""
-    owner = await _owner(scope)
-    now_ms = int(_clock() * 1000)
-    row = (uuid.uuid4().hex, scope.guild_id, scope.campaign_id)
-    sql = (
-        "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
-        " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-    )
+    own, so a crash loses at most one call's count. Writing the same charge again does nothing."""
+    owner = await _owner(charge.scope)
     if owner is None:
         # Nobody owned the campaign yet: kept for the record, never added to anyone's month.
-        month = usage.calendar_month(now_ms // 1000).start
-        async with db.guild(scope.guild_id) as conn:
-            await conn.execute(sql, (*row, 0, scope.job_kind, feature, credits, month, now_ms))
+        month = usage.calendar_month(charge.now_ms // 1000).start
+        async with db.guild(charge.guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
+                " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, 0, %s, %s, %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, id) DO NOTHING",
+                (
+                    charge.spend_id,
+                    charge.guild_id,
+                    charge.campaign_id,
+                    charge.job_kind,
+                    charge.feature,
+                    charge.credits,
+                    month,
+                    charge.now_ms,
+                ),
+            )
         return
     await usage.add_credits(
         db,
-        guild_id=scope.guild_id,
-        campaign_id=scope.campaign_id,
+        guild_id=charge.guild_id,
+        campaign_id=charge.campaign_id,
         owner_user_id=owner,
-        spend_id=row[0],
-        job_kind=scope.job_kind,
-        feature=feature,
-        credits=credits,
-        now_ms=now_ms,
+        spend_id=charge.spend_id,
+        job_kind=charge.job_kind,
+        feature=charge.feature,
+        credits=charge.credits,
+        now_ms=charge.now_ms,
     )

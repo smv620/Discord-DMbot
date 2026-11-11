@@ -134,4 +134,10 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   warning (the count for that call is lost, never the answer).
 - **Owed before the limit (step 4):** an account move must carry `owner_credits` (as `owner_hours` is
   merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
+- **A charge that could not be written is kept and tried again** (#4094): it waits in a bounded list
+  (200) and is written before the next charge. Each charge has its own id, made once, and the write
+  ignores an id it already has, so a write that landed after its timeout is never counted twice. Past
+  the limit the oldest is dropped and counted (`credits.lost`, in the log), so an outage shows as a
+  number and not as silence. The list is in memory, so a restart during an outage loses it; step 4
+  (the limit) must treat `lost` above zero as "the month may read low".
 
