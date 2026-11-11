@@ -39,12 +39,16 @@ OLD_QUESTION = "That question is from before the script button changed. Here it 
 ALREADY_MADE = "A script was already made for this session."
 
 
-def ask_text(lines: int) -> str:
+def ask_text(lines: int, imported: bool = False) -> str:
     """The question: what it makes, what it costs and who can read it, so the button is the one
-    and only "yes" (a second confirm after the press was the same question twice)."""
+    and only "yes" (a second confirm after the press was the same question twice). An imported
+    session's script also names its cost in AI credits (#4005)."""
+    cost = job.estimate_line(lines)
+    if imported:
+        cost = f"{cost} {job.credit_line(True)}"
     return (
         '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
-        f"means, in brackets.\n{job.estimate_line(lines)} {job.PRIVATE_NOTE}\n"
+        f"means, in brackets.\n{cost} {job.PRIVATE_NOTE}\n"
         "Nothing is used until you press the button."
     )
 
@@ -109,7 +113,7 @@ class OldScriptButton(
 def ask_for(guild_id: int, session_id: str, lines: int) -> Ask:
     """The question for the DM's private message after a session (`lines`: how many it has, for
     the cost it names)."""
-    text = ask_text(lines)
+    text = ask_text(lines, imported=False)  # (a live session's: imported ones never get this one)
     return Ask(
         SCRIPT,
         text,
@@ -176,7 +180,18 @@ async def press_old(interaction: discord.Interaction, guild_id: int, session_id:
         return
     view = discord.ui.View(timeout=None)
     view.add_item(ScriptButton(guild_id, session_id))
-    await _tell(interaction, f"{OLD_QUESTION}\n\n{ask_text(session.lines)}", view=view)
+    bot = _bot(interaction)
+    try:
+        store = bot.transcripts
+        imported = store is not None and await store.is_import(guild_id, session_id)
+    except Exception:  # a failed read must not stop the question: it just names no credits
+        log.warning("Script: could not tell if the session was imported")
+        imported = False
+    await _tell(
+        interaction,
+        f"{OLD_QUESTION}\n\n{ask_text(session.lines, imported=imported)}",
+        view=view,
+    )
 
 
 def _plain_name(bot: Any, guild_id: int, user_id: int) -> str | None:

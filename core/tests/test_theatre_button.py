@@ -192,6 +192,43 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         self.assertIn(tb.ALREADY_MADE, self.said(interaction))
 
 
+class TheCreditWords(unittest.IsolatedAsyncioTestCase):
+    def test_the_question_names_the_credits_only_for_an_imported_session(self) -> None:
+        live = (
+            '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
+            f"means, in brackets.\n{job.estimate_line(300)} {job.PRIVATE_NOTE}\n"
+            "Nothing is used until you press the button."
+        )
+        self.assertEqual(tb.ask_text(300), live)  # the live question is unchanged
+        self.assertEqual(tb.ask_text(300), tb.ask_text(300, imported=False))
+        imported = tb.ask_text(300, imported=True)
+        self.assertIn(job.credit_line(True), imported)
+        self.assertIn(job.estimate_line(300), imported)
+
+    async def test_the_old_question_for_an_imported_session_names_the_credits(self) -> None:
+        for check, names in (
+            (AsyncMock(return_value=True), True),
+            (AsyncMock(return_value=False), False),
+            # a failed read: still asked, with no credits
+            (AsyncMock(side_effect=OSError("down")), False),
+        ):
+            me = self.bot_with(check)
+            interaction = pressed(me, DM)
+            with patch.object(tb, "TheatreRuns") as runs:
+                runs.return_value.state = AsyncMock(return_value=None)
+                await tb.OldScriptButton(GUILD, SESSION).callback(interaction)
+            said = str(interaction.followup.send.await_args.args[0])
+            self.assertIn(tb.OLD_QUESTION, said)
+            self.assertEqual(job.credit_line(True) in said, names)
+            check.assert_awaited_with(GUILD, SESSION)
+
+    def bot_with(self, check: Any) -> Any:
+        me = bot(lines=300)
+        me.campaigns.db = object()
+        me.transcripts.is_import = check
+        return me
+
+
 class TheRun(unittest.IsolatedAsyncioTestCase):
     def bot(self, **kw: Any) -> Any:
         me = bot(**kw)
