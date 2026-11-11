@@ -4,7 +4,7 @@
 // its Undo, Yes both, Not now, "already answered" and every failure said plainly, DM only, and the real client against core's
 // routes. Run against the pretend API (a campaign ref ending `.handover` has two questions).
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi } from "../src/account/api";
 import HandOverQuestions from "../src/account/HandOverQuestions";
@@ -113,9 +113,65 @@ describe("when an answer cannot be saved", () => {
 });
 
 describe("DM only", () => {
-  it("a player gets the plain failure, never the questions", async () => {
-    open(".handover.web-player");
+  it("a player is shown nothing at all, not an error", async () => {
+    const api = mockApi("table");
+    const ref = `100.cmp${(n += 1)}.handover.web-player`;
+    const { container } = render(<HandOverQuestions api={api} campaignRef={ref} id="q" />);
+    await waitFor(() => expect(api.calls).toContain(`handOverQuestions:${ref}`));
+    await waitFor(() => expect(container.textContent).toBe(""));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("a server that cannot be reached still says so", async () => {
+    const api = mockApi("table");
+    api.handOverQuestions = async () => {
+      throw new ApiError("server");
+    };
+    render(<HandOverQuestions api={api} campaignRef="100.cmpS.handover" id="q" />);
     expect(await screen.findByText(w.failed)).toBeTruthy();
+  });
+});
+
+describe("pressing", () => {
+  it("a second press while one is being saved sends only one answer", async () => {
+    const api = mockApi("table");
+    let finish: (v: { answerId: string; undoable: boolean }) => void = () => {};
+    api.answerHandOver = () => new Promise((r) => (finish = r));
+    render(<HandOverQuestions api={api} campaignRef="100.cmpD.handover" id="q" />);
+    const button = await screen.findByRole("button", { name: w.no });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: w.both }));
+    finish({ answerId: "x", undoable: true });
+    await waitFor(() => expect(screen.queryByText(w.saving)).toBeNull());
+    expect(api.calls.filter((c) => c.startsWith("handOverQuestions")).length).toBeGreaterThan(0);
+  });
+
+  it("an answered question does not stay up when the re-read fails", async () => {
+    const api = mockApi("table");
+    let reads = 0;
+    const read = api.handOverQuestions!;
+    api.handOverQuestions = async (ref) => {
+      if ((reads += 1) > 1) throw new ApiError("server");
+      return read(ref);
+    };
+    api.answerHandOver = async () => ({ answerId: "x", undoable: false });
+    render(<HandOverQuestions api={api} campaignRef="100.cmpR.handover" id="q" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.both }));
+    expect(await screen.findByText("You said Okra has the Lantern of Ash now. It's one of a kind.")).toBeTruthy();
+    expect(screen.queryByText("You said Belleros has the Frost Brand now. It's one of a kind.")).toBeNull();
+  });
+
+  it("a first answer that fails with too-late or changed does not talk about undoing", async () => {
+    const api = mockApi("table");
+    api.answerHandOver = async () => {
+      const failure = new ApiError("server");
+      failure.note = "too-late";
+      throw failure;
+    };
+    render(<HandOverQuestions api={api} campaignRef="100.cmpL.handover" id="q" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.no }));
+    expect(await screen.findByText(w.couldNot)).toBeTruthy();
+    expect(screen.queryByText(w.tooLate)).toBeNull();
   });
 });
 
@@ -149,6 +205,25 @@ describe("the real client against core's routes", () => {
     expect(got).toEqual({ answerId: ID, undoable: true });
     expect(seen[1]).toBe(`POST /me/campaigns/1.cmp1/hand-over-questions/answer {"olderTie":"${TIES.olderTie}","newerTie":"${TIES.newerTie}","answer":"no"}`);
     expect(seen[2]).toBe(`GET /me/campaigns/1.cmp1/hand-over-questions/answer/${ID}`);
+  });
+
+  it("an answer that never finishes ends as still waiting, and five failed polls end as a server error", async () => {
+    await import("../src/account/api-names");
+    vi.useFakeTimers();
+    try {
+      const poll = Array.from({ length: 200 }, () => ({ body: { state: "working" } }));
+      const { api: slow } = net([{ status: 202, body: { id: ID } }, ...poll]);
+      const first = slow.answerHandOver!("1.cmp1", TIES, "both").catch((e) => e as ApiError);
+      await vi.runAllTimersAsync();
+      expect(((await first) as ApiError).kind).toBe("still-waiting");
+      const broken = Array.from({ length: 6 }, () => ({ status: 500, body: {} }));
+      const { api: down } = net([{ status: 202, body: { id: ID } }, ...broken]);
+      const second = down.answerHandOver!("1.cmp1", TIES, "both").catch((e) => e as ApiError);
+      await vi.runAllTimersAsync();
+      expect(((await second) as ApiError).kind).toBe("server");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends the answer to take back with an undo, and keeps the bot's word for a failure", async () => {

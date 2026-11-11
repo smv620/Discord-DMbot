@@ -13,6 +13,7 @@ export const handOverWords = {
   no: "No, not any more",
   both: "Yes, both have it",
   notNow: "Not now",
+  notNowMeans: "Not now hides this until you reload the page.",
   undo: "↩ Undo that",
   saving: "Saving your answer",
   waiting: (n: number): string => `${n} waiting`,
@@ -21,13 +22,12 @@ export const handOverWords = {
   bothKept: (older: string, newer: string, item: string): string =>
     `OK. ${older} and ${newer} both keep ${the(item)}. DMbot won't ask about these two again. It's still one of a kind.`,
   undone: (older: string, item: string): string => `Undone. ${older} has ${the(item)} again.`,
-  gone: "Already answered, maybe in Discord, or it changed. Showing what is left.",
+  gone: "Already answered, maybe in Discord. Showing what is left.",
   notAllowed: "Only a DM of the campaign can answer this.",
   tooLate: "This can't be undone any more.",
-  changed: "Something done since is in the way, so it can't be undone.",
+  changed: "You've changed something since, so this can't be undone.",
   couldNot: "DMbot couldn't save that answer. Try again in a minute.",
   stillWorking: "DMbot is still working on your answer. Reload in a minute to see where it stands.",
-  tooSoon: "That was too many answers at once. Wait a minute and try again.",
 } as const;
 
 /** The question in plain lines (Discord's `card_text`, without the markup). */

@@ -10,15 +10,17 @@ import { ApiError, type AccountApi, type HandOverQuestion } from "./api";
 import SavingWait from "./SavingWait";
 
 /** The plain line for how an answer ended: the bot's own word in `note` (`gone`, `not-allowed`, `too-late`, `changed`, `failed`, `lost`). */
-function sayFailure(error: unknown): string {
+function sayFailure(error: unknown, undoing = false): string {
   if (!(error instanceof ApiError)) return w.couldNot;
   if (error.kind === "still-waiting") return w.stillWorking;
   if (error.kind === "gone" || error.note === "gone") return w.gone;
   if (error.kind === "not-allowed" || error.note === "not-allowed") return w.notAllowed;
-  if (error.note === "too-late") return w.tooLate;
-  if (error.note === "changed") return w.changed;
+  if (undoing && error.note === "too-late") return w.tooLate; // (only an Undo can be too late or in the way)
+  if (undoing && error.note === "changed") return w.changed;
   return w.couldNot; // (failed, lost, anything else: try again in a minute)
 }
+
+const key = (q: HandOverQuestion): string => `${q.olderTie}:${q.newerTie}`;
 
 export default function HandOverQuestions({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id: string }) {
   const [list, setList] = useState<HandOverQuestion[] | null>(null);
@@ -27,6 +29,8 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
   const [skipped, setSkipped] = useState<Set<string>>(new Set()); // "Not now": hidden on this page until it is reloaded
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [notYours, setNotYours] = useState(false); // not a DM of the campaign: the card is simply not there
+  const looks = useRef(0); // the newest read wins: reads that overlap cannot land out of order
   const flight = useRef(false);
   const live = useRef(true);
   useEffect(() => {
@@ -36,11 +40,14 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
 
   async function read(): Promise<void> {
     if (!api.handOverQuestions) return;
+    const mine = (looks.current += 1);
     try {
       const got = await api.handOverQuestions(campaignRef);
-      if (live.current) (setList(got), setFailed(false));
-    } catch {
-      if (live.current) setFailed(true);
+      if (live.current && mine === looks.current) (setList(got), setFailed(false));
+    } catch (error) {
+      if (!live.current || mine !== looks.current) return;
+      if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "not-allowed")) setNotYours(true);
+      else setFailed(true);
     }
   }
   useEffect(() => {
@@ -64,6 +71,8 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
       if (live.current) setSaid({ ok: false, text: sayFailure(error) });
     } finally {
       await read(); // (what shows is always the API's own)
+      // If that read failed, the answered question must not stay up to be pressed again.
+      if (live.current) setList((was) => (was ? was.filter((x) => key(x) !== key(q)) : was));
       flight.current = false;
       if (live.current) setBusy(false);
     }
@@ -79,7 +88,7 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
       await api.answerHandOver(campaignRef, q, "undo", answerId);
       if (live.current) (setSaid({ ok: true, text: w.undone(q.olderName, q.itemName) }), setUndo(null));
     } catch (error) {
-      if (live.current) (setSaid({ ok: false, text: sayFailure(error) }), setUndo(null));
+      if (live.current) (setSaid({ ok: false, text: sayFailure(error, true) }), setUndo(null));
     } finally {
       await read();
       flight.current = false;
@@ -87,9 +96,9 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
     }
   }
 
+  if (notYours) return <></>; // (a player or a manager is told nothing: the list is the DM's)
   if (failed && !list) return <p class="warn" role="alert">{w.failed}</p>;
   if (!list) return <p class="muted" role="status">{w.loading}</p>;
-  const key = (q: HandOverQuestion): string => `${q.olderTie}:${q.newerTie}`;
   const open = list.filter((q) => !skipped.has(key(q)));
   const q = open[0];
   // Nothing waits and nothing was just said: the panel has nothing to add.
@@ -121,7 +130,7 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
             <strong>{card.ask}</strong>
           </p>
           <p class="small">
-            {w.no}: {card.noMeans} {w.both}: {card.bothMeans}
+            {w.no}: {card.noMeans} {w.both}: {card.bothMeans} {w.notNowMeans}
           </p>
           <div class="row">
             <button type="button" class="button" disabled={busy} onClick={() => void answer(q, "no")}>
