@@ -6,10 +6,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
-import MetList from "../src/account/MetList";
+import MetList, { dateOf } from "../src/account/MetList";
 import { metWords as w } from "../src/content/met-list-words";
 
-afterEach(cleanup);
+const zone = process.env.TZ;
+afterEach(() => {
+  cleanup();
+  if (zone === undefined) delete process.env.TZ;
+  else process.env.TZ = zone;
+});
 const REF = "100.cmp1";
 
 async function open() {
@@ -21,8 +26,20 @@ async function open() {
 const item = (what: string) => screen.getByText(what).closest("li") as HTMLElement;
 const sent = (api: ReturnType<typeof mockApi>) => api.calls.filter((c) => c.startsWith("answerMet:")).map((c) => c.split(":").slice(2).join(":"));
 
+describe("the date", () => {
+  it("is the session's day where the reader is, not in UTC", () => {
+    // 14 Nov 2023, 22:13 UTC
+    process.env.TZ = "UTC";
+    expect(dateOf(1_700_000_000)).toBe("14 Nov 2023");
+    process.env.TZ = "Pacific/Auckland"; // (already the 15th there)
+    expect(dateOf(1_700_000_000)).toBe("15 Nov 2023");
+    expect(dateOf(null)).toBe("");
+  });
+});
+
 describe("the list", () => {
   it("shows each one as Discord does, with the session's date", async () => {
+    process.env.TZ = "UTC";
     await open();
     expect(screen.getByRole("heading").textContent).toContain("(3)");
     expect(screen.getByText(w.label("barbarians", 2))).toBeTruthy();

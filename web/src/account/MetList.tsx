@@ -14,8 +14,9 @@ import { kindStyle } from "./webKinds";
 /** Only a person or a group can be joined to (core refuses a place or a thing). */
 const joinable = (n: NameRow): boolean => ["npc", "player_character", "group"].includes(kindStyle(n.kind));
 
-const dateOf = (at: number | null): string =>
-  at === null ? "" : new Date(at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+/** The session's date in the reader's own time zone, as Discord shows it (#4147). */
+export const dateOf = (at: number | null): string =>
+  at === null ? "" : new Date(at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 type Open = { id: string; mode: "name" | "same" } | null;
 type Same = { id: string; name: string; entry: string | null } | null; // a name the campaign already has, and the entry it is (when it can be found)
