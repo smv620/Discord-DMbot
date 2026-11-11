@@ -110,6 +110,9 @@ STORE = {
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
+    "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
+    "_replace_relation_in": DM_ONLY
+    + ": new words or a turn: the connection written anew, the old one ended (#4154)",
     "_recheck_companions": DM_ONLY
     + ": a merge or a change of kind refuses a companion link left invalid",
     "_let_go_of_anchored": DM_ONLY
