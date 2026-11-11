@@ -2691,18 +2691,20 @@ HAND_OVER_SAID = {
     "lost": " ({a} lost it)",
 }
 HAND_OVER_KEEP = {
-    "sale": "✅ Keep also makes **{a}**'s part history.\n",
-    "taken": "✅ Keep also means **{a}** no longer has it with them. **{a}** still owns it.\n",
+    "sale": "✅ Keep also means **{a}** no longer has it.\n",
+    "taken": "✅ Keep also means **{a}** no longer has it with them, but still owns it.\n",
     # (kept unseen, it never changes what the players see of the one before: slice 1's question
     # comes once the players learn it)
-    "waits": "**{a}**'s part stays as the players know it for now. Once they learn this, DMbot "
-    "asks you about it.\n",
+    "waits": "Players don't know this yet, so to them **{a}** still has it. When they find out, "
+    "DMbot asks you if **{a}** still has it.\n",
 }
+# (🤫 keeps it hidden, and a hidden keep leaves what the players see of the one before as it is)
+HAND_OVER_SECRET = "🤫 Keep as secret hides it from players. **{a}** stays as they know them."
 
 
 def hand_over_lines(c: Waiting, waits: bool = False) -> tuple[str, str]:
     """The bracket after a hand-over's claim and the line saying what keeping it ends. Pure."""
-    a = _md(c.hand_over_name)
+    a = _md(c.hand_over_name[:40])
     said = HAND_OVER_SAID.get(c.hand_over, "").format(a=a)
     kind = "waits" if waits else "taken" if c.hand_over in ("stolen", "lost") else "sale"
     return said, HAND_OVER_KEEP[kind].format(a=a)
@@ -2800,8 +2802,11 @@ class ConnectionOffer(_Menu):
         kept waits to be said at the table (or is secret) and their part is one the players see,
         which a hidden tie never ends (#4115, `keep.end_replaced`)."""
         hidden = c.secret or keep.kept_unrevealed(c, c.secret, self.shown_ids)
-        seen = [r for r in keep.hand_over_ties(c, self._old(c)) if not (r.secret or r.unrevealed)]
-        return hidden and bool(seen)
+        return hidden and self._hand_over_seen(c)
+
+    def _hand_over_seen(self, c: Waiting) -> bool:
+        """Whether a tie the hand-over would end is one the players can see."""
+        return any(not (r.secret or r.unrevealed) for r in keep.hand_over_ties(c, self._old(c)))
 
     def _pair_old(self, c: Waiting) -> list[Relation]:
         """What this card changes between its own two names ("Now: … / Your text: …"); a
@@ -2817,13 +2822,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def _change_line(self, c: Waiting, how: str) -> str:
+    def _change_line(self, c: Waiting, how: str, bracket: str = "") -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
         the old connection is ended, not deleted (#3021)."""
         old = ", ".join(self._reads(r) for r in self._pair_old(c))
         return (
             f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
-            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**\n"
+            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**{bracket}\n"
             "✅ Change it swaps the old one for this. Nothing changes until you press it.\n"
         )
 
@@ -2852,13 +2857,18 @@ class ConnectionOffer(_Menu):
                 if not c.secret
                 else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
             )
-        handed = hand_over_lines(c, self._hand_over_waits(c)) if c.hand_over else ("", "")
+        waits = self._hand_over_waits(c)
+        handed = hand_over_lines(c, waits) if c.hand_over else ("", "")
+        if c.hand_over and not waits and not c.secret and self._hand_over_seen(c):
+            note = HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + note.removeprefix(
+                "🤫 Keep as secret hides it from players."
+            )
         note = handed[1] + note
         if self._pair_old(c):
             return (
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
-                + self._change_line(c, how)
+                + self._change_line(c, how, handed[0])
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + inferred_line(c.inferred)
