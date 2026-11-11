@@ -4424,6 +4424,25 @@ say it in plain words. *Not done:* the warnings are private messages to the DMs,
 DM screen as #1059 asked: the retention job has no Discord channel to post to, and a private
 message reaches the same people and keeps DM-screen content out of any shared place.
 
+*What else deleting an account clears (Supervisor's ruling, 2026-11-11, #4141; the pattern of
+migrations 0425 credits, 0430 hours, 0431 here, and 0432 planned for authorship):* a table that holds a person's Discord ID has
+one rule, and a new table with such a column is put on it when it is added. The forget functions
+(`dmbot_forget_credits`, `dmbot_forget_hours`, `dmbot_forget_person`, ...) are called from
+`accounts.delete_person`, run with their owner's rights, and open their policies only while they
+run (`dmbot.owner_sync`, its own value for each), so no ordinary query sees another server's rows
+through them. `dmbot_forget_person` has a test that every table it names exists with its policies.
+
+| Rule | What it covers | What happens |
+|---|---|---|
+| 1. The person's own requests and records | the website's action queues (name, setting, rule, report, restore, line, recap-style, house-file, picture, script, trait, upload-undo and hand-over answers, lore uploads, backups, recap requests, peeks), `member_directory` (the bot may add the name again if the person is still seen in the server), `npc_notes`, `question_notices`, `rule_set_editors`; the credits and hours totals have their own functions (0425, 0430) | **Deleted.** |
+| 1b. The campaign's own record of a confirmation | `shared_confirmations` (who confirmed the right to use a text, and when: the IP rule) | **Kept, ID set to 0** ("someone who has left"). |
+| 2. Protects the person | `improvement_opt_outs` | **Kept.** Deleting it would quietly turn their data back on if their Discord account were ever seen again. |
+| 2b. Anti-abuse records, ids and times only | `try_it_used`, `trial_extensions`, `sent_emails`, `email_unsubscribed` | **Kept** so a person who signs up again gets no second free trial and no repeated email (0064, 0065). A one-way keyed hash instead of the ID is a follow-up if the owner wants the ID gone from them too. |
+| 3. The campaign's record of what was said or decided | authorship (`created_by`, `dm_user_id`, `requested_by`, `imported_by`, `added_by`) of house rules, rule sets, homebrew, adventure text, recap style and must-haves, recap jobs and holds, speaker removals | **Record kept, ID set to 0** (planned, 0432). Shared rulesets keep the set, published by nobody. |
+| 4. Speakers and consent in a campaign's transcripts | transcripts, `memory_heard`, theatre lines, `transcript_respells` (the Undo log of a respelling), the said-as tables, import consent and plays, `channel_people`, transcript suggestions and waiting name questions | **No change until the owner decides.** Erasing a person from transcripts has its own path (`transcript_erasures`). |
+| 5. Campaign ownership | `owner_campaigns` | Cleared by `dmbot_orphan_owned_campaigns` (a test checks a deleted account holds no slots). |
+
+
 **D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
 Each player links their own sheet, privately: the consent message gains a "Link my
 character" button that opens a form for the link, and the DM's "Add a player's
