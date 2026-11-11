@@ -127,37 +127,26 @@ class LibraryLevels(unittest.TestCase):
         self.assertIsNone(_campaign.get())
 
 
-class RefusalWords(unittest.TestCase):
-    """Why a rule refused something, for the log, with the entries' names left out (#4161)."""
+class LoggableRefusals(unittest.TestCase):
+    """The memory rules' refusals that may be logged are fixed sentences, nothing else (#4161)."""
 
-    def test_the_rules_sentence_stays_and_the_names_go(self) -> None:
-        from dmbot.logs import refusal_words
+    def test_every_listed_sentence_is_a_plain_fixed_string(self) -> None:
+        from dmbot.memory.store import LOGGABLE_REFUSALS
 
-        exc = ValueError(
-            "Only Cerric Vanya'elen travels with Okthandom Korran when cerric vanya'elen is a PC."
-        )
-        got = refusal_words(exc, "Cerric Vanya'elen", "Okthandom Korran")
-        self.assertEqual(got, "Only [name] travels with [name] when [name] is a PC.")
+        self.assertGreaterEqual(len(LOGGABLE_REFUSALS), 10)
+        self.assertEqual(len(set(LOGGABLE_REFUSALS)), len(LOGGABLE_REFUSALS))
+        for sentence in LOGGABLE_REFUSALS:
+            self.assertIsInstance(sentence, str)
+            self.assertTrue(sentence.strip())
+            self.assertFalse({"{", "}", "%"} & set(sentence), sentence)  # (no template to fill)
 
-    def test_it_is_one_short_line(self) -> None:
-        from dmbot.logs import refusal_words
+    def test_a_listed_sentence_is_logged_as_it_is_and_any_other_is_unlisted(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET, refusal_for_log
 
-        got = refusal_words(ValueError("a\n  b\t" + "x" * 500), "")
-        self.assertNotIn("\n", got)
-        self.assertEqual(len(got), 120)
-        self.assertTrue(got.startswith("a b xxx"))
-
-    def test_regex_characters_overlapping_and_short_names_are_safe(self) -> None:
-        from dmbot.logs import refusal_words
-
-        exc = ValueError("A.B (x)+ and A.B (x)+ Prime meet; e is here")
-        got = refusal_words(exc, "A.B (x)+", "A.B (x)+ Prime", "e")
-        # (the longest name wins where one holds another, and "e" never reaches into "[name]")
-        self.assertEqual(got, "[name] and [name] m[name][name]t; [name] is h[name]r[name]")
-
-    def test_names_match_whatever_their_spacing_and_an_empty_message_is_empty(self) -> None:
-        from dmbot.logs import refusal_words
-
-        got = refusal_words(ValueError("Maera  Voss is one"), "Maera Voss ")
-        self.assertEqual(got, "[name] is one")
-        self.assertEqual(refusal_words(ValueError(""), "x"), "")
+        self.assertEqual(refusal_for_log(MemoryRuleError(COMPANION_TARGET)), COMPANION_TARGET)
+        for text in ("Cerric can't go from alive to dead.", COMPANION_TARGET + " Cerric.", ""):
+            self.assertEqual(
+                refusal_for_log(MemoryRuleError(text)), "unlisted rule (MemoryRuleError)", text
+            )
+        self.assertEqual(refusal_for_log(ValueError("x")), "unlisted rule (ValueError)")

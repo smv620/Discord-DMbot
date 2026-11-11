@@ -591,44 +591,52 @@ class ThePath(NamesTest):
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
-    async def test_a_refused_keep_logs_why_without_the_names(
+    async def test_a_refused_keep_logs_the_fixed_rule_sentence_and_never_a_names_words(
         self,
     ) -> None:
-        """#4161: "couldn't keep that one" left nothing to go on. The rule's own sentence is in the
-        log with the card's two names left out; the card still says only what to do."""
+        """#4161: "couldn't keep that one" left nothing to go on. A refusal that is one of the fixed
+        rule sentences is logged as it is; any other message (one built from a value) is logged as
+        "unlisted rule" and its class. The card still says only what to do."""
         from unittest.mock import patch
 
         from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET
 
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
         card = view.current
-        reason = f"A companion travels with a player character. {card.subject} is not one."
-        press = self.it()
-        with (
-            patch.object(type(self.memory), "add_relation", side_effect=MemoryRuleError(reason)),
-            self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
+        built = f"{card.subject} is not one of {card.object}'s friends."
+        for raised, logged_as in (
+            (COMPANION_TARGET, COMPANION_TARGET),
+            (built, "unlisted rule (MemoryRuleError)"),
         ):
-            await self.button(view, "✅ Keep").callback(press)
-        said = press.followup.send.await_args.args[0]
-        self.assertIn("couldn't keep that one", said)
-        self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
-        line = next(m for m in logged.output if "was refused" in m)
-        self.assertIn("A companion travels with a player character. [name] is not one.", line)
-        self.assertNotIn(card.subject, line)  # (the log never has the names)
-        self.assertNotIn(card.object, line)
+            press = self.it()
+            with (
+                patch.object(
+                    type(self.memory), "add_relation", side_effect=MemoryRuleError(raised)
+                ),
+                self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
+            ):
+                await self.button(view, "✅ Keep").callback(press)
+            line = next(m for m in logged.output if "was refused" in m)
+            self.assertIn(logged_as, line)
+            self.assertNotIn(card.subject, line)  # (the log never has the names)
+            self.assertNotIn(card.object, line)
+            said = press.followup.send.await_args.args[0]
+            self.assertIn("couldn't keep that one", said)
+            self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
         self.assertEqual(await self.relations(), [])  # (nothing was kept)
         self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
 
-    async def test_a_real_refusal_of_a_travels_with_names_its_rule_in_words_the_log_can_hold(
+    async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
         self,
     ) -> None:
-        """The rule behind #4161's likely case: a companion link whose second end is no player
-        character or party is refused by the store, whatever a card offered."""
-        from dmbot.logs import refusal_words
+        """The rule behind #4161's likely case, through the real store: its sentence is on the
+        allowlist, so the log can say it."""
         from dmbot.memory.models import DM as DM_SOURCE
         from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET, refusal_for_log
 
         await self.read()
         await self.confirm_all()
@@ -639,9 +647,7 @@ class ThePath(NamesTest):
                 GUILD, self.campaign.id, ids[first], "travels_with", ids[second],
                 source=DM_SOURCE, confidence=1.0, status=CONFIRMED,
             )  # fmt: skip
-        words = refusal_words(caught.exception, first, second)
-        self.assertRegex(words, r"travels with|companion")
-        self.assertNotIn(first, words)
+        self.assertEqual(refusal_for_log(caught.exception), COMPANION_TARGET)
 
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact

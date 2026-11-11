@@ -5,8 +5,7 @@ can be filtered by server or campaign. Set them for a block of work with
 `log_context(guild_id=..., campaign_id=...)`; the shard is worked out from the server.
 
 Privacy: logs hold IDs only. Never log player names, display names, message or
-transcript text, tokens, or keys (CLAUDE.md). The one exception is a memory rule's own refusal
-sentence with the entries' names taken out (`refusal_words`).
+transcript text, tokens, or keys (CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -31,23 +30,6 @@ _campaign: ContextVar[str | None] = ContextVar("dmbot_campaign_id", default=None
 
 # Fields a caller may also pass with `extra={...}`.
 CONTEXT_FIELDS = ("shard_id", "guild_id", "campaign_id")
-
-
-def refusal_words(exc: BaseException, *names: str) -> str:
-    """Why a rule refused something, for the log (#4161): its own message with any of `names` (the
-    entries the card was about) replaced by "[name]" in one pass, whitespace squeezed and cut to 120
-    characters. A refusal logged without its reason cannot be diagnosed. This is safe only where
-    the rule's message is a fixed sentence: it holds for `add_relation` (the Keep) and
-    `add_unnamed` (the "none of these" answer), the two callers; do not use it for a rule whose
-    message interpolates campaign words (the ontology's state changes do) without checking."""
-    words = " ".join(str(exc).split())
-    cleaned = sorted({" ".join(n.split()) for n in names if n and n.strip()}, key=len, reverse=True)
-    if cleaned:
-        # (one pass, longest first: a short name can never match inside an earlier "[name]")
-        words = re.sub(
-            "|".join(re.escape(n) for n in cleaned), "[name]", words, flags=re.IGNORECASE
-        )
-    return words[:120]
 
 
 @contextmanager
