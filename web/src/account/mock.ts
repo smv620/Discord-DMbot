@@ -71,7 +71,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { CleanupView, ImportClock, TraitOffer, NameAnswerResult, NameGroupHint } from "./api";
+import type { CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -716,6 +716,13 @@ function pretendReadings(): Reading[] {
 }
 
 /** The pretend lineage and class questions (#3946): a lineage that changes one, and a class that adds one. */
+function pretendHandOvers(): HandOverQuestion[] {
+  return [
+    { item: "a".repeat(32), itemName: "Frost Brand", older: "b".repeat(32), olderName: "Claude", newer: "c".repeat(32), newerName: "Belleros", predicate: "owns", olderTie: "d".repeat(32), newerTie: "e".repeat(32), madeAt: 1_800_000_000 },
+    { item: "f".repeat(32), itemName: "the Lantern of Ash", older: "1".repeat(32), olderName: "Mira Voss", newer: "2".repeat(32), newerName: "Okra", predicate: "carries", olderTie: "3".repeat(32), newerTie: "4".repeat(32), madeAt: 1_800_000_100 },
+  ];
+}
+
 function pretendTraitOffers(): TraitOffer[] {
   return [
     { entity: "e1", who: "Torvin", kind: "species", name: "Dwarf", key: "dwarf", known: true, edition: "2024", current: "Human", classes: [], upload: "Notes, 9 Nov", quote: "Torvin Ashgrove is a dwarf of the northern holds." },
@@ -818,6 +825,7 @@ function mockSourcesOf(id: string): string[] {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
+  const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
   const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -2875,6 +2883,50 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const got = { took: 60, of: 62 + 48 };
       undoneUploads.set(source.id, got);
       return got;
+    },
+    // The hand-over question (#4122). A campaign ref ending `.handover` has two; `.handover-gone` says an answer was already given
+    // meanwhile; `-fail` cannot be saved; `-late` and `-changed` cannot undo; `-notallowed` is refused. Only a game master sees them.
+    async handOverQuestions(ref): Promise<HandOverQuestion[]> {
+      calls.push(`handOverQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      return structuredClone((handOverState[ref] ??= { list: /\.handover/.test(ref) ? pretendHandOvers() : [], no: new Map() }).list);
+    },
+    async answerHandOver(ref, question, answer, undoes, onLook) {
+      calls.push(`answerHandOver:${ref}:${question.olderTie}:${answer}${undoes ? `:${undoes}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      onLook?.({ waits: null, progress: null });
+      if (/\.handover-fail/.test(ref)) throw new ApiError("server");
+      const state = (handOverState[ref] ??= { list: pretendHandOvers(), no: new Map() });
+      if (/\.handover-notallowed/.test(ref)) {
+        const refused = new ApiError("not-allowed");
+        refused.note = "not-allowed";
+        throw refused;
+      }
+      if (answer === "undo") {
+        const back = undoes ? state.no.get(undoes) : undefined;
+        if (/\.handover-late/.test(ref) || /\.handover-changed/.test(ref)) {
+          const failure = new ApiError("server");
+          failure.note = /late/.test(ref) ? "too-late" : "changed";
+          throw failure;
+        }
+        if (!back) throw new ApiError("gone");
+        state.no.delete(undoes!);
+        state.list.unshift(back);
+        return { answerId: undoes!, undoable: false };
+      }
+      const at = state.list.findIndex((q) => q.olderTie === question.olderTie && q.newerTie === question.newerTie);
+      if (at < 0 || /\.handover-gone/.test(ref)) {
+        if (at >= 0) state.list.splice(at, 1);
+        throw new ApiError("gone");
+      }
+      const [gone] = state.list.splice(at, 1);
+      const id = `a${at}${question.olderTie.slice(0, 4)}`.padEnd(32, "0");
+      if (answer === "no") state.no.set(id, gone!);
+      return { answerId: id, undoable: answer === "no" };
     },
     // The lineage and class questions (#3946). A campaign ref ending `.traits` has one of each; `.traits-gone` says an answer was
     // already given meanwhile; `.traits-fail` cannot be saved. Only a game master sees them.

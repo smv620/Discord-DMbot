@@ -84,6 +84,15 @@ class NameSources(Listing):
         )
         self.assertEqual(await self.names_from("up3"), ["Mira Voss"])
 
+    async def test_an_upload_can_be_asked_for_by_its_own_website_id(self) -> None:
+        """The notice knows the lore upload's 32-hex id, not the hashed choice (#3879)."""
+        key = "ab" * 16
+        await self.memory.record_name_sources(
+            self.g, self.one.id, [self.sword], upload_key=key, label="A new upload"
+        )
+        got = await self.page(sources=["u" + key])
+        self.assertEqual([n["name"] for n in got["names"]], ["Dawnbreaker"])
+
     async def test_no_filter_still_lists_every_name(self) -> None:
         self.assertEqual((await self.page())["total"], 3)
 
@@ -172,6 +181,13 @@ class OverHttp(Listing):
 
     async def test_a_choice_the_page_never_offers_is_refused(self) -> None:
         url = f"/me/campaigns/{self.cref}/all-names"
-        for bad in ("up1", "s3", "l123", choice("up1") + ",x", ",".join([choice("up1")] * 41)):
+        for bad in (
+            "up1",
+            "s3",
+            "l123",
+            "u12",
+            choice("up1") + ",x",
+            ",".join([choice("up1")] * 41),
+        ):
             got = await self.client.get(url, params={"sources": bad})
             self.assertEqual((got.status_code, got.json()), (400, {"error": "bad_page"}), bad)
