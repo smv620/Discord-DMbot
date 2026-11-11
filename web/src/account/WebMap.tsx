@@ -874,6 +874,8 @@ export default function WebMap({
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>
           ) : (
+            <>
+            {onJump && canEdit && <p class="small muted">{pairingWords.tapHint}</p>}
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
@@ -889,12 +891,14 @@ export default function WebMap({
                 </li>
               ))}
             </ul>
+            </>
           )}
           {onPair && canEdit && (
             <button type="button" class="button secondary" onClick={() => onPair(detail.id)}>
               {pairingWords.connectTo}
             </button>
           )}
+          {onPair && canEdit && <p class="small muted">{pairingWords.ctrlHint}</p>}
           <button
             type="button"
             class="button secondary"
