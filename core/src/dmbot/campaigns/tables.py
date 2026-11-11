@@ -43,7 +43,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
     "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
     "memory_reveal_proposals": ("memory_reveal_proposals",),  # who learned what (#2996)
-    "memory_private_scenes": ("memory_private_scenes",),  # private scenes (#2996 rule 5)
+    # private scenes (#2996 rule 5) and the entries said in each (#4110)
+    "memory_private_scenes": ("memory_private_scenes", "memory_private_scene_entries"),
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
     "house_rules": ("house_rules",),
@@ -109,6 +110,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
     "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
     "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",
+    "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
+    "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
+    "answer to a question, like name_not_same: a restored campaign may ask it once more",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
@@ -203,6 +207,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
     "upload_undos": _WAIT,  # a press of Undo this upload: ids and counts, gone in a day (#3879)
     "trait_answers": _WAIT,  # a Yes or No on a lineage or class question, gone in a day (#3946)
+    "hand_over_answers": _WAIT,  # a "Does Claude still have it?" answer, gone in a day (#4122)
+    "hand_over_questions": 'the bot\'s list of "Does Claude still have it?" questions for the '
+    "website (#4122): ids and a time, written again every minute from the campaign's connections",
     "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,

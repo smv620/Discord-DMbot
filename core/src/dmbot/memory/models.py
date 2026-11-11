@@ -442,6 +442,9 @@ class Alias:
 # in its own column, lowest first. It only moves up (aware → met), except by the DM.
 KNOWS_AWARE, KNOWS_MET = "aware", "met"
 KNOWS_HOWS = ("", KNOWS_AWARE, KNOWS_MET)
+# How an item changed hands (#4115): why a holder's `owns` or `carries` ended. Fixed words, shown
+# as history ("sold it to Belleros"); None is "used to have it".
+END_REASONS = ("sold", "gave", "traded", "stolen", "lost")
 
 
 def knows_rank(how: str | None) -> int:
@@ -481,6 +484,9 @@ class Relation:
     # tale, a vision) or "" (the story doesn't say, shown as plain "knows"). Between two people
     # only. It only moves up, except by the DM.
     knows_how: str = ""
+    # Why an `owns` or `carries` ended (#4115): one of END_REASONS, or None when the story didn't
+    # say. Only on an ended tie.
+    end_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,12 +10,14 @@ import asyncio
 import importlib
 import inspect
 import unittest
+from typing import Any, cast, get_args
 from unittest.mock import AsyncMock, patch
 
-from dmbot import ai, credits, entitlements
+from dmbot import ai, credits, entitlements, usage
 from dmbot.ai import Reply
 from dmbot.campaigns.store import CampaignStore
 from dmbot.memory.story_plan import micro_usd
+from dmbot.plans import PlanId
 from tests.pg import DatabaseTest
 
 OWNER, OTHER = 11, 22
@@ -44,11 +46,80 @@ class Conversion(unittest.TestCase):
         self.assertEqual(credits.of_micro(-5), 0)
 
 
+class Estimates(unittest.TestCase):
+    def test_lore_is_counted_in_thousands_of_words_and_an_import_in_lines(self) -> None:
+        self.assertEqual(credits.units_of("lore", words=2500), 2.5)
+        self.assertEqual(credits.units_of("adventure", words=500), 0.5)
+        self.assertEqual(credits.units_of("import", lines=172), 172.0)
+        self.assertEqual(credits.units_of("script"), 1.0)
+        self.assertEqual(credits.units_of("lore", words=-5), 0.0)
+
+    def test_an_estimate_is_rounded_up_and_says_where_the_month_stands(self) -> None:
+        est = credits.estimate("lore", 2.5, allowance=1000, used=300)
+        self.assertEqual((est.credits, est.left), (100, 700))
+        self.assertEqual((est.ask, est.enough), (True, True))
+        self.assertEqual(credits.estimate("lore", 0.0125, allowance=10, used=0).credits, 1)
+
+    def test_a_small_job_is_not_worth_a_question_and_a_big_one_may_not_fit(self) -> None:
+        small = credits.estimate("lore", 0.2, allowance=100, used=0)
+        self.assertEqual((small.credits, small.ask), (8, False))
+        big = credits.estimate("import", 200, allowance=100, used=40)
+        self.assertEqual((big.credits, big.left, big.enough), (800, 60, False))
+
+    def test_a_month_over_its_allowance_has_nothing_left_not_less(
+        self,
+    ) -> None:
+        self.assertEqual(credits.estimate("script", 1, allowance=100, used=250).left, 0)
+
+    def test_a_job_with_no_price_is_priced_like_the_dearest(self) -> None:
+        dearest = max(credits.CREDITS_PER_UNIT.values())
+        self.assertEqual(credits.estimate("something new", 1, allowance=0, used=0).credits, dearest)
+
+    def test_the_words_are_plain_and_count_only(self) -> None:
+        est = credits.estimate("script", 1, allowance=9_920, used=0)
+        self.assertEqual(
+            credits.estimate_words("script", est), "About 120 AI credits for the script."
+        )  # (no "left" sentence while the allowances are not the owner's numbers)
+        with patch.object(credits, "ALLOWANCES_SET", True):
+            self.assertEqual(
+                credits.estimate_words("script", est),
+                "About 120 AI credits for the script. You have 9,920 left this month.",
+            )
+
+    def test_one_credit_is_singular(self) -> None:
+        est = credits.estimate("lore", 0.025, allowance=10, used=0)
+        self.assertEqual(credits.estimate_words("lore", est), "About 1 AI credit for the lore.")
+
+    def test_the_bar_is_at_twenty_credits(self) -> None:
+        self.assertEqual(credits.estimate("lore", 0.475, allowance=0, used=0).ask, False)  # 19
+        self.assertEqual(credits.estimate("lore", 0.5, allowance=0, used=0).ask, True)  # 20
+
+    def test_a_count_that_is_not_a_number_or_is_below_zero_costs_nothing(self) -> None:
+        for bad in (-3.0, float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(credits.estimate("lore", bad, allowance=5, used=0).credits, 0, bad)
+
+    def test_the_estimate_is_never_below_the_exact_price(self) -> None:
+        for words in (1, 7, 999, 1000, 1001, 12_345, 99_999):
+            est = credits.estimate("lore", words / 1000, allowance=0, used=0).credits
+            self.assertGreaterEqual(est * 1000, words * credits.CREDITS_PER_UNIT["lore"])
+
+    def test_every_plan_has_an_allowance(self) -> None:
+        self.assertEqual(set(credits.CREDITS_PER_MONTH), set(get_args(PlanId)))
+
+    def test_every_job_that_prepares_has_a_price_and_words(self) -> None:
+        for kind in ("lore", "adventure", "import", "script"):
+            self.assertIn(kind, credits.CREDITS_PER_UNIT)
+            self.assertIn(kind, credits.UNIT_WORDS)
+
+    def test_the_first_allowances_are_high_so_nothing_can_be_refused_by_them(self) -> None:
+        self.assertGreaterEqual(min(credits.CREDITS_PER_MONTH.values()), 1_000_000)
+
+
 class EveryPreparingJobOpensTheScope(unittest.TestCase):
     """A new job that forgets `credits.preparing` would be free, so the list is checked."""
 
     def test_each_listed_job_opens_a_scope(self) -> None:
-        self.assertGreaterEqual(len(credits.PREPARING_JOBS), 4)
+        self.assertGreaterEqual(len(credits.PREPARING_JOBS), 6)
         for module, dotted in credits.PREPARING_JOBS:
             target = importlib.import_module(module)
             for part in dotted.split("."):
@@ -72,6 +143,9 @@ class Ledger(DatabaseTest):
             return owners.get(campaign_id)
 
         credits.configure(self.db, owner_of, lambda: NOW)
+        credits._waiting.clear()
+        self.addCleanup(credits._waiting.clear)
+        credits.lost = 0
 
     async def rows(self, guild: int) -> list[dict[str, object]]:
         async with self.db.guild(guild) as conn:
@@ -184,6 +258,80 @@ class Ledger(DatabaseTest):
             [r.getMessage() for r in logged.records],
             ["AI credits: a charge could not be written (TimeoutError)"],
         )
+
+    async def test_a_charge_that_failed_is_written_before_the_next_one(self) -> None:
+        good = credits._owner_of
+        credits.configure(self.db, AsyncMock(side_effect=OSError("down")), lambda: NOW)
+        with credits.preparing(GUILD_A, self.a.id, "lore"):
+            with self.assertLogs("dmbot.credits", level="WARNING"):
+                self.assertEqual(await credits.record(reply(), "names"), 0)
+            self.assertEqual(credits.waiting(), 1)
+            self.assertEqual(await self.rows(GUILD_A), [])
+            credits.configure(self.db, good, lambda: NOW)  # (the database is back)
+            second = await credits.record(reply(2000, 800), "names")
+        first = credits.of_micro(micro_usd(MODEL, 1000, 500))
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(
+            sorted(r["credits"] for r in await self.rows(GUILD_A)), sorted([first, second])
+        )
+        self.assertEqual(await self.month_total(OWNER), first + second)
+
+    async def test_the_same_charge_written_twice_is_counted_once(self) -> None:
+        for _ in range(2):  # (a retry after a timeout that had in fact landed)
+            await usage.add_credits(
+                self.db, guild_id=GUILD_A, campaign_id=self.a.id, owner_user_id=OWNER,
+                spend_id="a" * 32, job_kind="lore", feature="names", credits=7,
+                now_ms=int(NOW * 1000),
+            )  # fmt: skip
+        self.assertEqual(len(await self.rows(GUILD_A)), 1)
+        self.assertEqual(await self.month_total(OWNER), 7)
+
+    async def test_past_the_limit_the_oldest_waiting_charge_is_dropped_and_counted(self) -> None:
+        credits.configure(self.db, AsyncMock(side_effect=OSError("down")), lambda: NOW)
+        with (
+            patch.object(credits, "MAX_WAITING", 2),
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="WARNING"),
+        ):
+            for _ in range(3):
+                await credits.record(reply(), "names")
+        self.assertEqual((credits.waiting(), credits.lost), (2, 1))
+
+    def waiting_charge(self, campaign_id: str, spend_id: str, owner: int | None = OWNER) -> Any:
+        scope = credits.Scope(GUILD_A, campaign_id, "lore", owner=owner, owner_known=True)
+        return credits.Charge(
+            spend_id, GUILD_A, campaign_id, "lore", "names", 5, int(NOW * 1000), scope
+        )
+
+    async def test_two_calls_flushing_at_once_write_every_waiting_charge_once(self) -> None:
+        ids = [f"{n:032x}" for n in range(1, 5)]
+        for spend_id in ids:
+            credits._waiting.append(self.waiting_charge(self.a.id, spend_id))
+
+        async def charge() -> int:
+            with credits.preparing(GUILD_A, self.a.id, "lore"):
+                return await credits.record(reply(), "names")
+
+        await asyncio.gather(charge(), charge(), charge())
+        self.assertEqual(credits.waiting(), 0)
+        rows = await self.rows(GUILD_A)
+        self.assertEqual(len(rows), 4 + 3)  # (each waiting one once, and the three new ones)
+        self.assertEqual(await self.month_total(OWNER), sum(cast(int, r["credits"]) for r in rows))
+
+    async def test_a_charge_that_can_never_be_written_does_not_block_the_ones_behind_it(
+        self,
+    ) -> None:
+        credits._waiting.append(self.waiting_charge("f" * 32, "a" * 32))  # (no such campaign)
+        credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
+        with (
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="ERROR") as logged,
+        ):
+            await credits.record(reply(), "names")
+        self.assertEqual(credits.lost, 1)
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(len(await self.rows(GUILD_A)), 2)  # (the good one and the new one)
+        self.assertIn("can never be written (ForeignKeyViolation)", logged.output[0])
 
     async def test_each_servers_rows_are_its_own(self) -> None:
         with credits.preparing(GUILD_B, self.b.id, "lore"):
