@@ -75,6 +75,9 @@ READERS = {
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
     "memory/_changes.py": "the change log and the row writers",
     "campaigns/tables.py": "the list of tables a campaign owns",
+    "devtools/sample_run/counts.py": CONFIRMED_ONLY
+    + ": dev1's sample report (#3545); counts confirmed secret connections by source, prints "
+    "numbers only (no name, id or word), nothing reaches a player",
     "devtools/movers_check.py": CONFIRMED_ONLY
     + ": dev1's read-only command (#3363); one SELECT of confirmed, current place ties, prints "
     "counts only (no name, id or word), nothing reaches a player",
