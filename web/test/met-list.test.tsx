@@ -85,7 +85,8 @@ describe("the answers", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: w.noDifferent }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: w.noDifferent }));
     await waitFor(() => expect(screen.queryByText(w.exists("Mira Voss", "a wolf"))).toBeNull());
-    expect(screen.getByText(w.different)).toBeTruthy();
+    expect(screen.getByText(w.different)).toBeTruthy(); // (as guidance, not as a success)
+    expect(screen.getByText(w.different).getAttribute("role")).toBeNull();
     expect(screen.getByLabelText(w.nameLabel("a wolf"))).toBeTruthy(); // (the name question is back, for them to try another)
   });
 
@@ -112,5 +113,15 @@ describe("the answers", () => {
     api.metList = async () => [];
     fireEvent.click(within(item("a wolf")).getByRole("button", { name: w.remove }));
     await screen.findByText(w.removed("a wolf"));
+  });
+
+  it("a name the campaign has that cannot be found by its exact name sends the DM to Same as…", async () => {
+    await open();
+    fireEvent.click(within(item("a wolf")).getByRole("button", { name: w.give }));
+    fireEvent.input(screen.getByLabelText(w.nameLabel("a wolf")), { target: { value: "Mira" } });
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    expect(await screen.findByText(w.useSame)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.yesSame })).toBeNull();
+    await waitFor(() => expect((screen.getAllByRole("button", { name: w.same }).at(-1) as HTMLButtonElement).disabled).toBe(false));
   });
 });

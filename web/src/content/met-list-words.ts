@@ -19,6 +19,7 @@ export const metWords = {
   cancel: "Cancel",
   // The name is one the campaign already has.
   exists: (name: string, what: string): string => `${name} is already a name in your campaign. Is ${what} the same one?`,
+  useSame: "Use Same as… to pick the name they already have.",
   yesSame: "Yes, the same one",
   noDifferent: "No, different",
   different: "Then give them a different name, so the two aren't mixed up.",

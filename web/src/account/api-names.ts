@@ -212,9 +212,17 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/met/${encodeURIComponent(id)}`, answer)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
-        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
-      );
+      // (the bot's word "met_waiting" has no kind in the shared map, which would cost the first download bytes: it is read off the answer here)
+      let word = "";
+      try {
+        await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+          word = look.error ?? "";
+          onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) });
+        });
+      } catch (error) {
+        if (word === "met_waiting") throw new ApiError("met-waiting");
+        throw error;
+      }
     },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,

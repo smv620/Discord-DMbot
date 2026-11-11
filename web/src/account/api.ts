@@ -2096,8 +2096,6 @@ export interface SmartNamesAnswer {
   capped?: boolean;
 }
 
-/** One match DMbot made by itself that the DM has not answered (#3602). Names, the change's number and
- * when only: never a line of the transcript. */
 /** One being the party met that nobody named (#4084, core 0437): `count` 1 is one being, 0 is "several". */
 export interface MetItem {
   id: string;
@@ -2109,6 +2107,8 @@ export interface MetItem {
 /** The DM's answer to one of them: a name for it, the name it is already (an entry id), or take it off the list. */
 export type MetAnswer = { action: "name"; name: string } | { action: "join"; target: string } | { action: "remove" };
 
+/** One match DMbot made by itself that the DM has not answered (#3602). Names, the change's number and
+ * when only: never a line of the transcript. */
 export interface MatchRow {
   /** The change's number, in digits: what an answer is queued by. */
   batch: string;
@@ -3362,7 +3362,6 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   lookup_failed: "lookup-failed",
   bot_player: "bot-player",
   exists: "name-exists",
-  met_waiting: "met-waiting",
   needs_confirm: "needs-confirm",
   bad_page: "bad-page",
   not_ending: "not-ending",
