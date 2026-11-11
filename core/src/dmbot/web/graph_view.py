@@ -15,12 +15,14 @@ characters. The DM's own full graph is not this: it comes straight from the grap
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
-from dmbot.memory import gate
+from dmbot.memory import gate, hand_over
 from dmbot.memory.link_words import for_reader
+from dmbot.memory.models import CONFIRMED
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
@@ -125,6 +127,12 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         }
         for i, name in shown.items()
     }
+    if not src.get(
+        "limited", False
+    ):  # (a source cut at its limits may lack a holder: no line then)
+        for item, line in _histories(src["links"], seen, viewer, shown).items():
+            if item in nodes:
+                nodes[item]["history"] = line
     guard = _name_guard(kn, seen, shown)
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
@@ -175,6 +183,55 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         bool(src["isDm"]) or src["visibility"] in ("peek", "open"),
         bool(src.get("limited", False)),
     )
+
+
+def _histories(
+    links: Sequence[dict[str, Any]],
+    seen: gate.Visible,
+    viewer: gate.Viewer,
+    shown: Mapping[str, str],
+) -> dict[str, str]:
+    """How each item changed hands (#4122, the web half of #4115): item id -> "Claude sold it to
+    Belleros · Belleros has it now", from the item's confirmed `owns` and `carries` ties, the ended
+    ones included. The words are `memory/hand_over.history`'s, the same as Discord's name card.
+    Only a tie this viewer knows counts (a secret one only for the DM), and a holder the viewer is
+    not shown is left out and never replaced. Absent for an item no holder has let go of."""
+    by_item: dict[str, list[Any]] = {}
+    for link in links:
+        if link["predicate"] not in hand_over.HELD or link["plan"]:
+            continue
+        known = seen.knows(gate.CONNECTION, str(link["id"]))
+        if not known or not (viewer.dm or not link["secret"]):
+            continue
+        by_item.setdefault(str(link["b"]), []).append(tie_of(link))
+    out: dict[str, str] = {}
+    for item, ties in by_item.items():
+        line = history_line(ties, shown.get)
+        if line:
+            out[item] = line
+    return out
+
+
+def history_line(ties: Sequence[Any], name: Callable[[str], str | None]) -> str:
+    """One item's line, "Claude sold it to Belleros · Belleros has it now", or "" when no holder has
+    let go of it. The steps are `memory/hand_over.history`'s; the first starts with a capital
+    ("It was stolen from Claude" leads)."""
+    steps = hand_over.history(ties, name)
+    if not steps:
+        return ""
+    steps[0] = steps[0][:1].upper() + steps[0][1:]
+    return " · ".join(steps)
+
+
+def tie_of(row: Mapping[str, Any]) -> SimpleNamespace:
+    """A connection as `hand_over.history` reads it, from a door's row (`id`, `a` the holder, `b`
+    the item, `predicate`, `at`, `from_at`, `to_at`, `end_reason`); every one is confirmed."""
+    return SimpleNamespace(
+        id=str(row["id"]), predicate=row["predicate"], status=CONFIRMED,
+        subject_id=str(row["a"]), object_id=str(row["b"]),
+        from_session_at=row.get("from_at"), to_session_at=row.get("to_at"),
+        created_at=int(row["at"]), end_reason=row.get("end_reason"),
+    )  # fmt: skip
 
 
 def _name_guard(kn: dict[str, Any], seen: gate.Visible, shown: Mapping[str, str]) -> gate.NameGuard:
