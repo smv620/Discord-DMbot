@@ -25,6 +25,7 @@ EVERY_ACTION = (
     "told-add", "told-remove",  # "Tell a character" (#3542)
     "clock-set", "clock-skip",  # the import clock offer (#3199)
     "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
+    "link-direction",  # A → B, B → A or A ↔ B (#4154)
 )  # fmt: skip
 
 

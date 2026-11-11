@@ -36,11 +36,14 @@ from dmbot.memory.link_words import (
     KIN,
     KNOWS_HOW_BACK,
     OLD_FEELINGS,
+    ONE_WAY_BACK,
     back_after,
     back_words,
     campaign_back,
     connection_words,
+    for_reader,
     link_words,
+    pair_words,
     reads_both_ways,
 )
 from dmbot.memory.lookup import CampaignLookup
@@ -203,11 +206,18 @@ def _safe(r: Relation, guard: NameGuard) -> Relation:
 
 
 def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> str | None:
-    """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
+    """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone. One that reads both
+    ways says it of the two together, "Cerric and Wit are rivals" (#4154: `pair_words`, the same
+    words as the website's)."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    words = fact_words(_safe(r, _guard(lookup)), subject.type, feeling=feeling)
+    shown = _safe(r, _guard(lookup))
+    if reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways):
+        predicate, detail = for_reader(shown.predicate, shown.detail, feeling=feeling)
+        words = pair_words(predicate, _md(detail), r.knows_how if predicate == "knows" else None)
+        return f"{subject.name} and {obj.name} {words}"
+    words = fact_words(shown, subject.type, feeling=feeling)
     return f"{subject.name} {words} {obj.name}"
 
 
@@ -308,7 +318,9 @@ def _rows(
             r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
-        ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
+        ahead = r.subject_id == entity_id or reads_both_ways(
+            r.predicate, r.detail, r.directional, r.both_ways
+        )
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
@@ -328,11 +340,19 @@ def _rows(
                 if shown.predicate == FALLBACK_PREDICATE and shown.detail
                 else (
                     (
-                        back_words(r.predicate, r.detail, r.directional, subject_kind)
+                        back_words(
+                            r.predicate,
+                            r.detail,
+                            r.directional,
+                            subject_kind,
+                            both_ways=r.both_ways,
+                        )
                         or "is connected to"
                     )
                     if r.predicate in ("kin_of", "located_in")
-                    else (KNOWS_HOW_BACK.get(r.knows_how) if r.predicate == "knows" else None)
+                    # a two-way kind the DM made one-way: "is seen as a rival by" (#4154)
+                    else (ONE_WAY_BACK.get(r.predicate) if r.both_ways is False else None)
+                    or (KNOWS_HOW_BACK.get(r.knows_how) if r.predicate == "knows" else None)
                     or CARD_BACK.get(r.predicate)  # (whether they met reads back too, #3881)
                     or campaign_back(r.predicate)
                     or "is connected to"

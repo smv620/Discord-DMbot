@@ -77,6 +77,10 @@ FEELING_TEXT = "feeling:"
 # through `MemoryStore.set_knows_how`. The door's allowed-actions list holds it (WebDev's
 # migration).
 KNOWS_HOW_ACTION = "link-knows-how"
+# Which way a connection reads, the DM's choice (#4154): `text` "a-b" (from the pair's first name
+# by id, the edge's `a` on the page), "b-a", or "both"
+DIRECTION_ACTION = "link-direction"
+DIRECTIONS = ("a-b", "b-a", "both")
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -1059,6 +1063,14 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 first=other_end if swapped else entity_id,
                 dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
+        elif a.action == DIRECTION_ACTION:
+            # the page names the two ends as its edge does, by id order (`relationships.edges_from`)
+            if a.text not in DIRECTIONS:
+                return _failed(BAD_TARGET)
+            low, high = sorted((link.subject_id, link.object_id))
+            reads_from = None if a.text == "both" else (low if a.text == "a-b" else high)
+            await memory.set_direction(guild_id, cid, link.id, reads_from, source=DM)
+            # (a retried job finds it already so: the store writes nothing)
         elif a.action == KNOWS_HOW_ACTION:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).

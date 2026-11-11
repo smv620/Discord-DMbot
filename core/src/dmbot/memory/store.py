@@ -47,6 +47,7 @@ from dmbot.memory import (
     kind_offers,
     knowers,
     lineage,
+    link_words,
     merge_restore,
     notify,
     report_fixed,
@@ -220,6 +221,11 @@ TRAVELS_WITH = "travels_with"  # a companion goes along with a player character 
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
 # How two people know each other is a `knows` thing only (#3881).
+# A connection's direction set by the DM (#4154), refused in plain words
+ROLE_ONE_WAY = "That family role is true of one name only, so it can't read both ways."
+ROLE_CANT_TURN = "That family role can't be turned round. Change its words instead."
+TWIN_THE_OTHER_WAY = "That connection already exists the other way round."
+DIRECTION_DM_ONLY = "Only the DM can change which way a connection reads."
 KNOWS_HOW_ONLY = (
     "That connection isn't about two people knowing each other any more."
     " Open the name card again to see it."
@@ -378,7 +384,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
-        r.get("end_reason"),
+        r.get("end_reason"), r.get("both_ways"),
     )  # fmt: skip
 
 
@@ -406,6 +412,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "via_alias_id": rel.via_alias_id,
         "knows_how": rel.knows_how,
         "end_reason": rel.end_reason,
+        "both_ways": rel.both_ways,
     }
 
 
@@ -5506,6 +5513,58 @@ class MemoryStore:
                 )  # fmt: skip
             return Written(_relation(row), w.batch)
 
+    async def set_direction(
+        self, guild_id: int, campaign_id: str, relation_id: str, first: str | None, *, source: str
+    ) -> Written[Relation]:
+        """Which way one connection reads, the DM's choice (#4154): `first` the name it reads from
+        (A → B), or None for both ways (A ↔ B). One change, so one Undo puts it back.
+
+        Both ways is the row's own `both_ways` mark, stored only where it differs from its kind's
+        default (`link_words.BOTH_WAYS`), so a kind's default can still change for every row that
+        never had one. Turning it round swaps the two names in place, never an end and a new row:
+        it corrects how it was written, not something that happened in the story (so no "used to"
+        line), and the connection keeps its id and with it its pin, who knows it, its beliefs and
+        its evidence. A family role turns round to the other name's neutral role ("niece" to "aunt
+        or uncle": `kin.opposite`); one with none, or a one-way role made two-way, is refused, and
+        so is a turn onto a twin that already reads the other way. The direction it already has
+        writes nothing (an empty batch)."""
+        if source != DM:
+            raise MemoryRuleError(DIRECTION_DM_ONLY)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None or current["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            predicate, detail = str(current["predicate"]), str(current["detail"] or "")
+            subject, other = str(current["subject_id"]), str(current["object_id"])
+            role = kin.role_of(detail) if predicate == link_words.KIN else None
+            one_way_role = (
+                bool(current["directional"]) and role is not None and kin.directional(role)
+            )
+            default = predicate in link_words.BOTH_WAYS
+            changes: dict[str, Any] = {}
+            if first is None:
+                if one_way_role:
+                    raise MemoryRuleError(ROLE_ONE_WAY)
+                mark = None if default else True
+            else:
+                if first not in (subject, other):
+                    raise MemoryRuleError(NOT_FOUND)
+                # (a one-way family role already reads one way by its role: its mark stays)
+                mark = current["both_ways"] if one_way_role else (False if default else None)
+                if first != subject:
+                    changes.update({"subject_id": other, "object_id": subject})
+                    if one_way_role:
+                        turned = kin.opposite(role or "")
+                        if turned is None:
+                            raise MemoryRuleError(ROLE_CANT_TURN)
+                        # (a role whose opposite is mutual, "sister" to "sibling", has no side)
+                        changes.update({"detail": turned, "directional": kin.directional(turned)})
+                    await _no_twin_the_other_way(w, current, changes.get("detail", detail))
+            if current["both_ways"] != mark:
+                changes["both_ways"] = mark
+            row = await w.update(RELATIONS, relation_id, changes) if changes else current
+            return Written(_relation(row), w.batch)
+
     async def update_relation(
         self,
         guild_id: int,
@@ -7817,6 +7876,21 @@ async def _met_back(
             and knows_rank(r.knows_how) < knows_rank(KNOWS_MET)
         ):
             await w.update(RELATIONS, r.id, {"knows_how": KNOWS_MET})
+
+
+async def _no_twin_the_other_way(w: Scope, current: dict[str, Any], detail: str) -> None:
+    """Refuse turning a connection round onto one that already reads that way (#4154): the same
+    kind and words from the other name, still kept. Two would say the same thing twice."""
+    for r in await _relations_touching(w, str(current["object_id"])):
+        if (
+            r.id != current["id"]
+            and r.status in (CONFIRMED, PROPOSED)
+            and r.to_session_at is None
+            and (r.subject_id, r.object_id) == (current["object_id"], current["subject_id"])
+            and r.predicate == current["predicate"]
+            and r.detail.casefold() == detail.casefold()
+        ):
+            raise MemoryRuleError(TWIN_THE_OTHER_WAY)
 
 
 async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
