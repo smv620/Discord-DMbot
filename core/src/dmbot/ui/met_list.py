@@ -87,10 +87,15 @@ def label(row: MetRow) -> str:
     return f"{row.what}{many}"
 
 
-def when(row: MetRow) -> str:
-    """When they were met, as a date. Pure."""
+def when(row: MetRow, *, menu: bool = False) -> str:
+    """When they were met. In a message, Discord's own date (`<t:…:d>`), which each reader sees in
+    their own time zone: a US evening session is never the next day (#4104). A menu's option text
+    can't show one, so it keeps the date (UTC), and the message above it carries the real one.
+    Pure."""
     if row.session_started_at is None:
         return "met in play"
+    if not menu:
+        return f"met on <t:{row.session_started_at}:d>"
     day = datetime.fromtimestamp(row.session_started_at, UTC)
     return f"met on {day.day} {day:%b %Y}"
 
@@ -188,7 +193,7 @@ class MetList(BackOnly):
                 discord.SelectOption(
                     label=logic.shorten(label(r), logic.OPTION_LABEL_MAX),
                     value=r.id,
-                    description=logic.shorten(when(r), 100),
+                    description=logic.shorten(when(r, menu=True), 100),
                 )
                 for r in rows[:SHOWN_MAX]
             ],
