@@ -330,7 +330,7 @@ def offer_text(
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
     a session goes against it."""
-    cents = bg.estimate_cents(len(upload.text))
+    cost = credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
     how = (
         "📌 **100% truth.** Connections you keep are pinned, and DMbot tells you privately if a "
         "session goes against one."
@@ -338,8 +338,8 @@ def offer_text(
         else "**May change in play.** (Default)"
     )
     return (
-        f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
-        "allowance. Nothing is added until you say yes.\n"
+        f"📜 **Find the names in {_md(upload.label)}?** {cost} Nothing is added until you say "
+        "yes.\n"
         "DMbot's AI suggests names and the connections your text states, each with its line. "
         "You check each one.\n\n"
         f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
