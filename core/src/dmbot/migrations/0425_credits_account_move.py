@@ -60,10 +60,13 @@ SQL = r"""
     -- the owner set to 0, "nobody". The ledger is opened to the function's owner only while the
     -- function runs (its own setting, as the history forget does), so no ordinary query of the bot
     -- can see another server's rows through these policies.
-    CREATE POLICY forget_own ON owner_credits FOR DELETE
-        USING (owner_user_id = dmbot_current_user());
     DO $do$
     BEGIN
+        EXECUTE format(
+            'CREATE POLICY forget_own ON owner_credits FOR DELETE TO %I
+                USING (dmbot_owner_sync() = ''forget_credits''
+                       AND owner_user_id = dmbot_current_user())',
+            current_user);
         EXECUTE format(
             'CREATE POLICY forget_read ON ai_credit_spend FOR SELECT TO %I
                 USING (dmbot_owner_sync() = ''forget_credits''
@@ -86,8 +89,8 @@ SQL = r"""
         IF dmbot_current_user() IS NULL THEN
             RETURN;
         END IF;
-        DELETE FROM owner_credits WHERE owner_user_id = dmbot_current_user();
         PERFORM set_config('dmbot.owner_sync', 'forget_credits', true);
+        DELETE FROM owner_credits WHERE owner_user_id = dmbot_current_user();
         UPDATE ai_credit_spend SET owner_user_id = 0 WHERE owner_user_id = dmbot_current_user();
         PERFORM set_config('dmbot.owner_sync', before, true);
     END

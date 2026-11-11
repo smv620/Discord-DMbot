@@ -85,6 +85,18 @@ class AccountDeletion(DatabaseTest):
             # (Alice's rows are kept, for what the campaign cost, with nobody as owner)
             self.assertEqual(rows, [(0, 10), (BOB, 10)] if guild == GUILD_A else [(0, 10)])
 
+    async def test_a_delete_outside_the_forget_function_removes_nothing(self) -> None:
+        entitlements.configure_free_users(())
+        await usage.add_credits(
+            self.db, guild_id=GUILD_A, campaign_id=self.a1.id, owner_user_id=ALICE,
+            spend_id="d" * 32, job_kind="lore", feature="names", credits=10, now_ms=NOW * 1000,
+        )  # fmt: skip
+        async with self.db.user(ALICE) as conn:
+            cur = await conn.execute("DELETE FROM owner_credits WHERE owner_user_id = %s", (ALICE,))
+            self.assertEqual(cur.rowcount, 0)  # (only the forget function may delete them)
+            cur = await conn.execute("SELECT credits FROM owner_credits")
+            self.assertEqual([r["credits"] for r in await cur.fetchall()], [10])
+
     async def test_deleting_twice_or_with_no_campaigns_is_harmless(self) -> None:
         await accounts.delete_person(self.db, ALICE, now=NOW + 5)
         await accounts.delete_person(self.db, ALICE, now=NOW + 99)  # nothing left to orphan
