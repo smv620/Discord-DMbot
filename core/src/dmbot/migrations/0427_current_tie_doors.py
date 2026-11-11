@@ -17,19 +17,22 @@ from __future__ import annotations
 # again with every setting it had. A filter not found exactly as many times as expected stops the
 # migration rather than passing silently. Readers that mean history on purpose (the as-of reader,
 # who-knows, merges, Undo, backups, the same-person evidence: a guard who once worked the gate is
-# still evidence of who he is) stay as they are.
+# still evidence of who he is) stay as they are, and so does the order of the name dropdown (only
+# an order: a place someone left still makes them likelier to be meant). A speaker's `plays` in a
+# transcript (0412) is one label for the whole transcript and keeps an ended one as a fallback;
+# putting current ones first there is #4134's follow-up.
 SQL = r"""
     DO $$
     DECLARE
         def text;
         fresh text;
         added CONSTANT text := ' AND r.to_session_at IS NULL';
+        added_z CONSTANT text := ' AND z.to_session_at IS NULL';
     BEGIN
         def := pg_get_functiondef('dmbot_web_which_info(bigint, text, text[])'::regprocedure);
         fresh := replace(def, 'z.campaign_id = c AND z.status = ''confirmed''',
-                         'z.campaign_id = c AND z.status = ''confirmed'''
-                         || ' AND z.to_session_at IS NULL');
-        IF length(fresh) - length(def) <> length(' AND z.to_session_at IS NULL') THEN
+                         'z.campaign_id = c AND z.status = ''confirmed''' || added_z);
+        IF length(fresh) - length(def) <> length(added_z) THEN
             RAISE EXCEPTION 'dmbot_web_which_info: its tie filter was not found exactly once';
         END IF;
         EXECUTE fresh;

@@ -181,9 +181,13 @@ class OnTheDoor(WithChecks):
         await self.memory.update_relation(
             GUILD, self.one.id, made.value[0].id, source="dm", to_session_at=5
         )
+        bryn = await self.known("Bryn", "character")
+        await self.memory.add_relation(
+            GUILD, self.one.id, woman, "knows", bryn, source="dm", confidence=1.0, status=CONFIRMED
+        )  # (newer, and still holds: the oldest tie that holds is the one named)
         await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=woman))
         got = await web.read_answers(self.web, self.session, self.ref, [name])
-        self.assertNotIn("Mira", got[name][0]["label"])
+        self.assertEqual(got[name][0]["label"], "a.k.a. the woman, with Bryn")
 
     async def test_the_page_gets_every_field_it_expects_and_a_card_with_nothing_said(self) -> None:
         name = await self.suggest("Vale")

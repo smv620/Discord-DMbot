@@ -3442,7 +3442,8 @@ class MemoryStore:
             for a in aliases:
                 by_key.setdefault(str(a["key"]), str(a["entity_id"]))  # (as `_join_group_in`)
             ids = {p: by_key.get(lookup_key(p)) for p in parts}
-            # Only what is plain to everyone and a fact: a secret or guessed membership, or a group
+            # Only what is plain to everyone, a fact and current: a secret, guessed or ended
+            # membership, or a group
             # hidden from the players or unnamed, never gives a hint, so the hint can't spoil what
             # the question would show or state a guess as true (the door rule, #3417).
             member_rows = await scope.select(
@@ -4140,9 +4141,10 @@ class MemoryStore:
     async def tag_ties(
         self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
     ) -> dict[str, list[tags_mod.TagTie]]:
-        """Each entry's confirmed ties as `tags.tag_for` reads them, for the DM's private questions
-        (#3431, #3447): the other end's shown name, whether the entry is the subject, whether the
-        tie is secret. DM-only by its caller; a tie to an entry that is not live is left out."""
+        """Each entry's confirmed, current ties as `tags.tag_for` reads them, for the DM's private
+        questions (#3431, #3447; current: #4134): the other end's shown name, whether the entry is
+        the subject, whether the tie is secret. DM-only by its caller; a tie to an entry that is not
+        live is left out."""
         wanted = sorted(set(entity_ids))
         if not wanted:
             return {}
