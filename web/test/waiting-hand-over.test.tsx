@@ -5,6 +5,7 @@
 import { cleanup, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { WaitingBackstory } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
 import { handBracket, handKeepInDiscord } from "../src/content/hand-over-words";
@@ -14,7 +15,7 @@ afterEach(() => {
   cleanup();
 });
 
-const row = (over: object = {}) => ({
+const row = (over: Partial<WaitingBackstory> = {}): WaitingBackstory => ({
   id: "b1",
   subject: "Belleros",
   object: "the Frost Brand",
@@ -26,7 +27,7 @@ const row = (over: object = {}) => ({
   ...over,
 });
 
-async function show(over: object, more: object[] = []) {
+async function show(over: Partial<WaitingBackstory>, more: WaitingBackstory[] = []) {
   const api = mockApi("table");
   const real = api.webWaiting!.bind(api);
   api.webWaiting = async (ref) => {
