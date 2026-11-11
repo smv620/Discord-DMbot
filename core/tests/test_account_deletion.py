@@ -85,6 +85,67 @@ class AccountDeletion(DatabaseTest):
             # (Alice's rows are kept, for what the campaign cost, with nobody as owner)
             self.assertEqual(rows, [(0, 10), (BOB, 10)] if guild == GUILD_A else [(0, 10)])
 
+    async def add_hours(
+        self, user: int, guild: int, campaign: str, started: int, minutes: int
+    ) -> None:
+        await usage.add_minutes(
+            self.db, guild_id=guild, campaign_id=campaign, owner_user_id=user,
+            session_started_at=started, minutes=minutes, now=NOW,
+        )  # fmt: skip
+
+    async def test_the_discord_id_goes_out_of_the_hours_and_the_minutes_stay_with_nobody(
+        self,
+    ) -> None:
+        entitlements.configure_free_users(())
+        await self.add_hours(ALICE, GUILD_A, self.a1.id, 100, 30)
+        await self.add_hours(ALICE, GUILD_B, self.a2.id, 200, 45)
+        await self.add_hours(BOB, GUILD_A, self.b1.id, 300, 12)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for person, want in ((ALICE, 0), (BOB, 12)):
+            async with self.db.user(person) as conn:
+                cur = await conn.execute("SELECT COALESCE(sum(minutes), 0) AS n FROM owner_hours")
+                row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(int(row["n"]), want, person)  # (Bob's hours are untouched)
+        for guild, want_rows in (
+            (GUILD_A, [(0, 30), (BOB, 12)]),
+            (GUILD_B, [(0, 45)]),
+        ):
+            async with self.db.guild(guild) as conn:
+                cur = await conn.execute(
+                    "SELECT owner_user_id, minutes FROM session_usage ORDER BY owner_user_id"
+                )
+                rows = [(r["owner_user_id"], r["minutes"]) for r in await cur.fetchall()]
+            # (the campaign keeps its minutes with nobody as owner; no other server's rows show)
+            self.assertEqual(rows, want_rows, guild)
+
+    async def test_minutes_for_a_session_that_already_has_a_nobody_row_are_added_to_it(
+        self,
+    ) -> None:
+        entitlements.configure_free_users(())
+        async with self.db.guild(GUILD_A) as conn:  # (minutes from before anyone owned it)
+            await conn.execute(
+                "INSERT INTO session_usage (guild_id, campaign_id, session_started_at,"
+                " owner_user_id, minutes, updated_at) VALUES (%s, %s, 100, 0, 5, %s)",
+                (GUILD_A, self.a1.id, NOW),
+            )
+        await self.add_hours(ALICE, GUILD_A, self.a1.id, 100, 30)  # (the same session, later)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT owner_user_id, minutes FROM session_usage WHERE campaign_id = %s",
+                (self.a1.id,),
+            )
+            rows = [(r["owner_user_id"], r["minutes"]) for r in await cur.fetchall()]
+        self.assertEqual(rows, [(0, 35)])
+
+    async def test_a_delete_of_hours_outside_the_forget_function_removes_nothing(self) -> None:
+        entitlements.configure_free_users(())
+        await self.add_hours(ALICE, GUILD_A, self.a1.id, 100, 30)
+        async with self.db.user(ALICE) as conn:
+            cur = await conn.execute("DELETE FROM owner_hours WHERE owner_user_id = %s", (ALICE,))
+            self.assertEqual(cur.rowcount, 0)  # (only the forget function may delete them)
+
     async def test_a_delete_outside_the_forget_function_removes_nothing(self) -> None:
         entitlements.configure_free_users(())
         await usage.add_credits(
