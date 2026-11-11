@@ -38,4 +38,11 @@ export const panelWords = {
   // The reason comes first, then what is still there and what to do (the reason is the bot's or the page's own plain line).
   notSaved: (reason: string): string => `Not saved: ${reason} Your changes are still here. Press Save changes to try again.`,
   partlySaved: (done: number, of: number, reason: string): string => `Saved ${done} of ${of}. Not saved: ${reason} The rest are still here. Press Save changes to try again.`,
+  // Taking a save back (core #4156): one press puts back what the last save changed, as long as nothing has been done since.
+  undoSave: "↩ Undo this save",
+  undoing: "Putting it back…",
+  undone: "Put back.",
+  undoLate: "That was too long ago to put back.",
+  undoGone: "DMbot can't find that change any more, so it can't be put back.",
+  undoChanged: "Something has changed since, so it can't be put back.",
 } as const;
