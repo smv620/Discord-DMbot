@@ -20,7 +20,7 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, evidence, notify, sheets
+from dmbot.memory import beliefs, evidence, notify, place_levels, sheets
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -165,6 +165,8 @@ _CHOICES: dict[str, Sequence[str]] = {
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
     "end_reason": END_REASONS,
+    "place_level": place_levels.LEVELS,
+    "place_level_from": place_levels.FROM,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -192,6 +194,7 @@ _NULLABLE = {
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
     "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
+    "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
 }  # fmt: skip
 
 
@@ -643,6 +646,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_anchor": None,
                 "unnamed_role": None,
                 "unnamed_what": None,
+                "place_level": None,  # from before #4173: no place had a size
+                "place_level_from": None,
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
@@ -1005,6 +1010,14 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
     kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
     if any(
         r["unique_item"] is not None and not onto.is_a(r["type"], "item") for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
+    # only a place has a size (#4173), as the store says
+    if any(
+        (r.get("place_level") is not None and not onto.is_a(r["type"], "place"))
+        # a size and who said it come together (#4173)
+        or (r.get("place_level") is None) != (r.get("place_level_from") is None)
+        for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
     if any(r["audience_limited"] and r["type"] != "clue" for r in by_tag["entity"]):

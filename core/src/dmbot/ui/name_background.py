@@ -35,6 +35,7 @@ from dmbot.memory import (
     lore_pc_names,
     lore_read,
     picture_read,
+    place_levels,
     pronouns,
     traits_read,
     who_ask,
@@ -1553,6 +1554,9 @@ async def store(
                 # it; a spoilers upload, a smart guess and a backstory never fill it
                 players_text=item.about if known and fold_secret else "",
                 traits=tuple((traits or {}).get(name_key(item.name), ())),
+                # how big a place is, from its name or the words beside it (#4173 slice 1): the
+                # store keeps it only for a place, and no word means no level, never a guess
+                place_level=place_levels.read_level(item.name, item.quote, item.about, text),
             )
         )
         items.append(item)
@@ -1580,6 +1584,13 @@ async def store(
                 )
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
+    places = [n for n, e in zip(names, written.value, strict=False) if e and n.type == "place"]
+    if places:  # (counts only; level_unknown shows the words the fixed list misses, #4173)
+        log.info(
+            "Places read: %d with a size, level_unknown=%d",
+            sum(1 for n in places if n.place_level),
+            sum(1 for n in places if not n.place_level),
+        )
     return stored
 
 

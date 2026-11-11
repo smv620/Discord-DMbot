@@ -238,6 +238,7 @@ class NewName:
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
+    place_level: str | None = None  # how big a place is, as the reader found it (#4173)
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
@@ -340,6 +341,16 @@ class Entity:
     # view of the lists of who knows what, #2995). None: not asked (a hand-made entry in a test, or
     # a campaign with no player character yet, or an entry still only suggested): the flags answer.
     seen_by_party: bool | None = None
+    # How big a place is (#4173): one of `place_levels.LEVELS`, or None when nobody knows. A place
+    # only. `place_level_from` says who said it ("read": DMbot, from the lore's words; "dm": the
+    # DM), so a size the DM never checked is shown as DMbot's read, never as a fact.
+    place_level: str | None = None
+    place_level_from: str | None = None
+
+    @property
+    def place_level_read(self) -> bool:
+        """Is the size DMbot's own read, not yet the DM's word?"""
+        return self.place_level is not None and self.place_level_from != "dm"
 
     @property
     def unseen_by_players(self) -> bool:
