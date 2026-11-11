@@ -22,6 +22,8 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import reputation_words
+from dmbot.memory.models import END_REASONS as HAND_OVERS
+from dmbot.memory.models import is_id
 from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
@@ -76,6 +78,9 @@ class NewLink:
     # DMbot's guess of which NPCs and groups know it (#2959 slice 3): entry id to certainty, below
     # 1.0, written as knowers only once it is kept. Empty when DMBOT_STORY_NPC_GUESS is off.
     npc_guesses: Mapping[str, float] = field(default_factory=dict)
+    # A hand-over (#4115): who had the item before (an entry id) and how it moved, or "" for none.
+    hand_over_from: str = ""
+    hand_over: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +148,24 @@ class Waiting:
     inferred: str = ""  # why DMbot inferred it (#2959 item 5), else "": only ever kept by a press
     # DMbot's guess of which NPCs and groups know it, entry id to certainty (#2959 slice 3)
     npc_guesses: Mapping[str, float] = field(default_factory=dict)
+    # A hand-over (#4115): who had the item before (entry id, then their name as it is now) and
+    # how it moved (`background.HAND_OVERS`). "" for none. Keeping it ends what they held.
+    hand_over_from: str = ""
+    hand_over_name: str = ""
+    hand_over: str = ""
+
+
+def _hand_over(link: NewLink) -> tuple[str, str]:
+    """A queued link's hand-over as stored: both or neither (the table's CHECK), and only on an
+    `owns` or `carries` from an entry id."""
+    if (
+        link.hand_over in HAND_OVERS
+        and is_id(link.hand_over_from)
+        and link.predicate in ("owns", "carries")
+        and link.hand_over_from not in (link.subject_id, link.object_id)
+    ):
+        return link.hand_over_from, link.hand_over
+    return "", ""
 
 
 MAX_GUESSES = 3  # NPCs and groups guessed to know one connection (#2959 slice 3)
@@ -198,14 +221,15 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
-                    " known_by, world, inferred_reason, npc_guesses) VALUES (%s, %s, %s, %s, %s,"
-                    " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " known_by, world, inferred_reason, npc_guesses, hand_over_from, hand_over)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s)"
                     " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
                      int(link.world), link.inferred[:INFERRED_MAX],
-                     Jsonb(_guesses(link.npc_guesses))),
+                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link)),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth and not link.inferred:
@@ -426,7 +450,8 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses"
+                " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses,"
+                " hand_over_from, hand_over"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -439,7 +464,7 @@ class BackstoryLinks:
                 conn,
                 guild_id,
                 campaign_id,
-                {r[k] for r in rows for k in ("subject_id", "object_id")},
+                {r[k] for r in rows for k in ("subject_id", "object_id", "hand_over_from") if r[k]},
             )
             known = await self._known(conn, guild_id, campaign_id, set(entities))
             out: list[Waiting] = []
@@ -470,6 +495,17 @@ class BackstoryLinks:
                 if moved:  # it follows the merge: the same connection, on the name that stayed
                     move.append((a, predicate, b, r))
                 ready = entities[a]["status"] == "confirmed" == entities[b]["status"]
+                # who had it before, followed through a merge as the ends are; one that is gone,
+                # turned down or became an end leaves the plain connection (#4115)
+                prev = self._end(entities, str(r["hand_over_from"])) if r["hand_over"] else None
+                if prev is not None and (
+                    prev in (a, b)
+                    or entities[prev]["status"] == "rejected"
+                    or predicate not in ("owns", "carries")
+                ):
+                    prev = None
+                if prev is not None:  # (asked once that one is a confirmed name too)
+                    ready = ready and entities[prev]["status"] == "confirmed"
                 # A clue only some people know makes it secret. A name merely not shown to the
                 # players yet (#2321; every new name starts so, #2404) does not: a backstory
                 # connection is kept unrevealed instead, and cannot be shown before both names are.
@@ -481,7 +517,9 @@ class BackstoryLinks:
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
                         str(r["known_by"]), int(r["world"]), str(r["inferred_reason"]),
-                        _guesses(r["npc_guesses"]),
+                        _guesses(r["npc_guesses"]), prev or "",
+                        str(entities[prev]["name"]) if prev else "",
+                        str(r["hand_over"]) if prev else "",
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -491,14 +529,15 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told, decided, known_by, world, inferred_reason, npc_guesses)"
+                    " told, decided, known_by, world, inferred_reason, npc_guesses,"
+                    " hand_over_from, hand_over)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s)"
+                    " %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
                      r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"],
-                     Jsonb(_guesses(r["npc_guesses"]))),
+                     Jsonb(_guesses(r["npc_guesses"])), r["hand_over_from"], r["hand_over"]),
                 )  # fmt: skip
         return out
 

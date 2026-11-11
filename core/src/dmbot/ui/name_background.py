@@ -2239,6 +2239,9 @@ async def queue_links(
                 npc_guesses=dict(
                     (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})
                 ),
+                # who had the item before and how it moved (#4115): a name DMbot has, or none
+                hand_over_from=(prev := (entry(c.from_holder) if c.change else None) or ""),
+                hand_over=c.change if prev else "",
             )
         )
     if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
@@ -2678,6 +2681,33 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
         return False
 
 
+# A lore connection that says an item changed hands (#4115, through the ux-critic): the one it came
+# from in brackets after the claim, then what ✅ Keep does to them. "{a}" is who had it before.
+HAND_OVER_SAID = {
+    "sold": " ({a} sold it)",
+    "gave": " ({a} gave it)",
+    "traded": " ({a} traded it)",
+    "stolen": " (taken from {a})",
+    "lost": " ({a} lost it)",
+}
+HAND_OVER_KEEP = {
+    "sale": "✅ Keep also makes **{a}**'s part history.\n",
+    "taken": "✅ Keep also means **{a}** no longer has it with them. **{a}** still owns it.\n",
+    # (kept unseen, it never changes what the players see of the one before: slice 1's question
+    # comes once the players learn it)
+    "waits": "**{a}**'s part stays as the players know it for now. Once they learn this, DMbot "
+    "asks you about it.\n",
+}
+
+
+def hand_over_lines(c: Waiting, waits: bool = False) -> tuple[str, str]:
+    """The bracket after a hand-over's claim and the line saying what keeping it ends. Pure."""
+    a = _md(c.hand_over_name)
+    said = HAND_OVER_SAID.get(c.hand_over, "").format(a=a)
+    kind = "waits" if waits else "taken" if c.hand_over in ("stolen", "lost") else "sale"
+    return said, HAND_OVER_KEEP[kind].format(a=a)
+
+
 class ConnectionOffer(_Menu):
     """Keep each connection the DM's text states, one by one: ✅ Keep, 🤫 Keep as secret, ❌ No,
     or leave out the rest. They wait in the campaign's `backstory_links` until then, so a restart
@@ -2700,6 +2730,7 @@ class ConnectionOffer(_Menu):
         self.characters: dict[str, str] = {}  # player characters (id -> name), for the default
         # the waiting connections that change one the campaign has (key -> what they would end)
         self.changes: dict[tuple[str, str, str], list[Relation]] = {}
+        self.shown_ids: set[str] = set()  # entries the players see, read for a hand-over (#4115)
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
         self.keep = _Button(
@@ -2727,6 +2758,8 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         ready = [w for w in waiting if w.ready]
         self.changes = await keep.changes_among(memory, campaign.guild_id, campaign.id, ready)
+        if any(w.hand_over for w in ready):  # (what the players see decides a hand-over's line)
+            self.shown_ids = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
         return ready
 
     @staticmethod
@@ -2748,7 +2781,9 @@ class ConnectionOffer(_Menu):
         self.total = max(self.total, self.kept + self.left_out + self.left)
         self.current = ready[0] if ready else None
         self.keep.disabled = bool(self.current and self.current.secret)
-        self.keep.label = "✅ Change it" if self.current and self._old(self.current) else "✅ Keep"
+        self.keep.label = (
+            "✅ Change it" if self.current and self._pair_old(self.current) else "✅ Keep"
+        )
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -2760,6 +2795,21 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _hand_over_waits(self, c: Waiting) -> bool:
+        """Whether keeping this hand-over leaves the one before's part as it is for now: what is
+        kept waits to be said at the table (or is secret) and their part is one the players see,
+        which a hidden tie never ends (#4115, `keep.end_replaced`)."""
+        hidden = c.secret or keep.kept_unrevealed(c, c.secret, self.shown_ids)
+        seen = [r for r in keep.hand_over_ties(c, self._old(c)) if not (r.secret or r.unrevealed)]
+        return hidden and bool(seen)
+
+    def _pair_old(self, c: Waiting) -> list[Relation]:
+        """What this card changes between its own two names ("Now: … / Your text: …"); a
+        hand-over's ties are the other holder's, told on their own line (#4115)."""
+        return [
+            r for r in self._old(c) if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}
+        ]
+
     def _reads(self, r: Relation) -> str:
         """How a held connection reads here ("ally of", "knows (hostile)")."""
         plain = self.words.get(r.predicate, r.predicate.replace("_", " "))
@@ -2770,7 +2820,7 @@ class ConnectionOffer(_Menu):
     def _change_line(self, c: Waiting, how: str) -> str:
         """What is there now, then what the text says. Nothing changes until the DM says yes, and
         the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(self._reads(r) for r in self._old(c))
+        old = ", ".join(self._reads(r) for r in self._pair_old(c))
         return (
             f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
             f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**\n"
@@ -2802,7 +2852,9 @@ class ConnectionOffer(_Menu):
                 if not c.secret
                 else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
             )
-        if self._old(c):
+        handed = hand_over_lines(c, self._hand_over_waits(c)) if c.hand_over else ("", "")
+        note = handed[1] + note
+        if self._pair_old(c):
             return (
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
@@ -2815,7 +2867,7 @@ class ConnectionOffer(_Menu):
             )
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
-            f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
+            f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + inferred_line(c.inferred)
@@ -2906,7 +2958,11 @@ class ConnectionOffer(_Menu):
             ended: list[int | None] = []
             try:
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
-                await keep.end_replaced(memory, campaign.guild_id, campaign.id, old, start, ended)
+                await keep.end_replaced(
+                    memory, campaign.guild_id, campaign.id, old, start, ended, link=c,
+                    hidden=secret or c.secret
+                    or keep.kept_unrevealed(c, secret or c.secret, shown),
+                )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,

@@ -124,6 +124,7 @@ from dmbot.memory.models import (
     DETAIL_MAX,
     DID,
     DM,
+    END_REASONS,
     ENDED,
     FACT_STATUSES,
     FIX,
@@ -5512,10 +5513,12 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool | None = None,
         unrevealed: bool | None = None,
+        end_reason: str | None = None,
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
         fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
-        to players on a connection (#2404): both its ends must be shown to the players first."""
+        to players on a connection (#2404): both its ends must be shown to the players first.
+        `end_reason` (#4115): why an `owns` or `carries` ends, given with `to_session_at`."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
@@ -5556,6 +5559,12 @@ class MemoryStore:
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
+            if end_reason is not None:
+                if to_session_at is None or end_reason not in END_REASONS:
+                    raise ValueError("An end reason goes with an end.")
+                if current["predicate"] not in hand_over_mod.HELD:
+                    raise MemoryRuleError("Only owning or holding something ends with a reason.")
+                changes["end_reason"] = end_reason
             if (
                 current["predicate"] == threads_mod.LED_TO
                 and changes.get("status") == CONFIRMED
