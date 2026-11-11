@@ -276,7 +276,7 @@ class Row:
 
 
 USED_TO_HAVE = "used to have"  # an ended owns or carries, in the DM's edit menus (#4115)
-USED_TO_HAVE_BACK = "was had by"
+USED_TO_HAVE_BACK = "used to be with"
 
 
 def _rows(
