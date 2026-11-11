@@ -229,6 +229,7 @@ describe("the wizard", () => {
 
   it("the too-big words name the real limits and no Google Drive", () => {
     const words = w.docs.unreadable["too_big"]!;
+    expect(words).toBe("This file is too big. A PDF can be up to 50 MB and other files up to 10 MB. For a bigger PDF, add it in Discord.");
     expect(words).toContain("50 MB");
     expect(words).toContain("10 MB");
     expect(words).toContain("Discord");
