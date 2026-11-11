@@ -44,6 +44,51 @@ class Conversion(unittest.TestCase):
         self.assertEqual(credits.of_micro(-5), 0)
 
 
+class Estimates(unittest.TestCase):
+    def test_lore_is_counted_in_thousands_of_words_and_an_import_in_lines(self) -> None:
+        self.assertEqual(credits.units_of("lore", words=2500), 2.5)
+        self.assertEqual(credits.units_of("adventure", words=500), 0.5)
+        self.assertEqual(credits.units_of("import", lines=172), 172.0)
+        self.assertEqual(credits.units_of("script"), 1.0)
+        self.assertEqual(credits.units_of("lore", words=-5), 0.0)
+
+    def test_an_estimate_is_rounded_up_and_says_where_the_month_stands(self) -> None:
+        est = credits.estimate("lore", 2.5, allowance=1000, used=300)
+        self.assertEqual((est.credits, est.left), (100, 700))
+        self.assertEqual((est.ask, est.enough), (True, True))
+        self.assertEqual(credits.estimate("lore", 0.0125, allowance=10, used=0).credits, 1)
+
+    def test_a_small_job_is_not_worth_a_question_and_a_big_one_may_not_fit(self) -> None:
+        small = credits.estimate("lore", 0.2, allowance=100, used=0)
+        self.assertEqual((small.credits, small.ask), (8, False))
+        big = credits.estimate("import", 200, allowance=100, used=40)
+        self.assertEqual((big.credits, big.left, big.enough), (800, 60, False))
+
+    def test_a_month_over_its_allowance_has_nothing_left_not_less(
+        self,
+    ) -> None:
+        self.assertEqual(credits.estimate("script", 1, allowance=100, used=250).left, 0)
+
+    def test_a_job_with_no_price_is_priced_like_the_dearest(self) -> None:
+        dearest = max(credits.CREDITS_PER_UNIT.values())
+        self.assertEqual(credits.estimate("something new", 1, allowance=0, used=0).credits, dearest)
+
+    def test_the_words_are_plain_and_count_only(self) -> None:
+        est = credits.estimate("script", 1, allowance=9_920, used=0)
+        self.assertEqual(
+            credits.estimate_words("script", est),
+            "About 120 AI credits for the script. You have 9,920 left this month.",
+        )
+
+    def test_every_job_that_prepares_has_a_price_and_words(self) -> None:
+        for kind in ("lore", "adventure", "import", "script"):
+            self.assertIn(kind, credits.CREDITS_PER_UNIT)
+            self.assertIn(kind, credits.UNIT_WORDS)
+
+    def test_the_first_allowances_are_high_so_nothing_can_be_refused_by_them(self) -> None:
+        self.assertGreaterEqual(min(credits.CREDITS_PER_MONTH.values()), 1_000_000)
+
+
 class EveryPreparingJobOpensTheScope(unittest.TestCase):
     """A new job that forgets `credits.preparing` would be free, so the list is checked."""
 
