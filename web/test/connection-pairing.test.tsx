@@ -49,6 +49,31 @@ describe("joining two names", () => {
     expect(onPair).toHaveBeenCalledWith("m");
   });
 
+  it("Escape cancels a pending join", async () => {
+    const { onPair } = draw({ pairFrom: "m" });
+    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50)); // the banner's listener is added after its first paint
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onPair).toHaveBeenCalledWith("m");
+  });
+
+  it("another key does nothing", async () => {
+    const { onPair } = draw({ pairFrom: "m" });
+    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    fireEvent.keyDown(window, { key: "a" });
+    expect(onPair).not.toHaveBeenCalled();
+  });
+
+  it("no listener is left behind", async () => {
+    const { onPair } = draw({ pairFrom: "m" });
+    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    cleanup();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onPair).not.toHaveBeenCalled();
+  });
+
   it("with a first name picked, a plain tap is the second, and the banner says so", async () => {
     const { onPair } = draw({ pairFrom: "m" });
     expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
