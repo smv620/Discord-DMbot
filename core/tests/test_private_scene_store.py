@@ -8,12 +8,14 @@ import asyncio
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
+from dmbot.consent import still_recorded
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.private_scene_store import Kept, PrivateScenes, forget_speaker, keep_recorded
 from dmbot.memory.private_scenes_backup import PrivateScenesSection
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
+from tests.agreed import agree
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 P1, P2, P3 = 7001, 7002, 7003
@@ -29,6 +31,7 @@ def ms(seconds_in: int) -> int:
 class PrivateSceneStore(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM, P1, P2, P3)  # (the writer re-reads it, #4153)
         self.cid = self.campaign.id
         self.scenes = PrivateScenes(self.db)
         self.transcripts = TranscriptStore(self.db)
@@ -107,6 +110,45 @@ class PrivateSceneStore(NamesTest):
         written = await asyncio.wait_for(writing, 10)
         self.assertEqual(written.kept, 0)
         self.assertEqual(await self.all_rows(), [])
+
+    async def test_a_writer_that_read_agreed_before_a_stop_cites_nobody_who_stopped(self) -> None:
+        """#4153: the writer's list came before the stop (it still holds P2); the consent row went
+        before the write, so the writer's own re-read under the row leaves P2 out."""
+        await self.said((650, P1), (670, P2))
+        async with self.db.guild(GUILD) as conn:  # (as `consent.revoke` does)
+            await conn.execute("DELETE FROM consent WHERE guild_id = %s AND user_id = %s",
+                               (GUILD, P2))  # fmt: skip
+        self.assertEqual((await self.write({P1, P2, DM})).kept, 0)
+        self.assertEqual(await self.all_rows(), [])
+
+    async def test_the_forget_waits_for_a_writer_holding_the_session(self) -> None:
+        """#4153's lock order: "Stop recording me" takes the rows of the sessions the person
+        spoke in first, so a writer mid-write (holding one, `FOR SHARE`) finishes first, and the
+        forget then deletes what it wrote."""
+        await self.said((650, P1), (670, P2))
+        async with self.db.guild(GUILD) as conn:  # (the writer, holding the row mid-way)
+            await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND id = %s FOR SHARE",
+                (GUILD, self.sid),
+            )
+            forgetting = asyncio.create_task(ClaimStore(self.memory).forget_speaker(GUILD, P2))
+            try:
+                await asyncio.sleep(0.3)
+                self.assertFalse(forgetting.done())  # (it waits for the writer)
+            except BaseException:
+                forgetting.cancel()
+                raise
+        await asyncio.wait_for(forgetting, 10)
+        # (a writer that starts now finds the forget done; P2's consent row is still there, so it
+        # keeps the scene, and the second pass below is what takes it)
+        self.assertEqual((await self.write()).kept, 1)
+        await ClaimStore(self.memory).forget_speaker(GUILD, P2)  # (the second pass, after it)
+        self.assertEqual(await self.all_rows(), [])
+
+    async def test_a_speaker_without_discord_is_never_read_as_stopped(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            kept = await still_recorded(conn, GUILD, self.cid, [-5, P1, 999_999])
+        self.assertEqual(kept, frozenset({-5, P1}))  # (999999 never agreed: left out)
 
     async def test_nothing_while_the_party_is_together(self) -> None:
         await self.said((100, P1), (110, P2))

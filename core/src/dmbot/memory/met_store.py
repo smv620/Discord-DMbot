@@ -19,6 +19,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.consent import still_recorded
 from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.models import name_key, new_id
@@ -130,6 +131,9 @@ class MetStore:
                 (guild_id, session_id),
             )
             present = {int(r["user_id"]) for r in await cur.fetchall()}
+            # and still recorded (#4153): who agreed was read before this write began, and a
+            # "Stop recording me" since then deletes no lines, so it is asked again here
+            present = set(await still_recorded(conn, guild_id, campaign_id, present))
             for word, count, line_ms, speakers in met:
                 if not set(speakers) <= present:
                     out.gone += 1
