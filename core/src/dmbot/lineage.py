@@ -166,6 +166,8 @@ NOT_STAMPED: dict[str, str] = {
             "said_as_listens",
             "script_makes",
             "trait_answers",
+            "hand_over_answers",
+            "hand_over_questions",
             "upload_undos",
             "web_backup_parts",
             "web_backups",
