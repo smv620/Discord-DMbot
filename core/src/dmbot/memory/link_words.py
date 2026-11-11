@@ -61,6 +61,31 @@ CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
 # feels about another is the DM's Reputation, so a non-DM reads plain "knows" (#3611, #3610).
 OLD_FEELINGS = frozenset({"ally_of", "enemy_of"})
 BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of"})
+# How a two-way connection reads with both names first ("Cerric and Wit are rivals", #4154): the
+# one table Discord and the website take it from. A kind not here, made two-way by the DM, reads
+# "are connected (“<its one-way words>”)" (`pair_words`), never "A and B: is sworn to".
+PAIR_WORDS = {
+    "rival_of": "are rivals",
+    "ally_of": "are friends or allies",
+    "enemy_of": "are enemies",
+    "kin_of": "are family",
+    "knows": "know each other",
+    "travels_with": "travel together",
+    FALLBACK_PREDICATE: "are connected",
+}
+# A kind that reads both ways by default, made one-way by the DM (#4154), read from its second
+# name: "Wit is seen as a rival by Cerric". Family with no role is family from either side.
+ONE_WAY_BACK = {
+    "rival_of": "is seen as a rival by",
+    "ally_of": "is seen as a friend or ally by",
+    "enemy_of": "is seen as an enemy by",
+    "kin_of": "is family of",
+}
+# A role true of both names, said of the two together ("are cousins")
+KIN_PAIR_WORDS = {"sibling": "are siblings", "spouse": "are married", "cousin": "are cousins"}
+# How two people know each other (#3881), said of the two: "aware" (only heard of each other) never
+# claims they met
+KNOWS_PAIR_WORDS = {"met": "have met", "aware": "know of each other"}
 
 
 def for_reader(predicate: str, detail: str, *, feeling: bool) -> tuple[str, str]:
@@ -83,12 +108,31 @@ KIN = "kin_of"
 CORE_KEYS = frozenset(p.key for p in CORE_PREDICATES)
 
 
-def reads_both_ways(predicate: str, detail: str = "", directional: bool = False) -> bool:
-    """Does the connection read the same from either name? Not a family connection whose role
-    the DM gave a direction: "niece" is true of one name only (#2457)."""
-    return predicate in BOTH_WAYS and not (
-        predicate == KIN and directional and kin.directional(detail)
-    )
+def reads_both_ways(
+    predicate: str, detail: str = "", directional: bool = False, both_ways: bool | None = None
+) -> bool:
+    """Does the connection read the same from either name? `both_ways` is the DM's own direction
+    for it (#4154; None: its kind's default, `BOTH_WAYS`). Never a family connection whose role
+    the DM gave a direction: "niece" is true of one name only (#2457), whatever the mark says."""
+    if predicate == KIN and directional and kin.directional(detail):
+        return False
+    return predicate in BOTH_WAYS if both_ways is None else both_ways
+
+
+def pair_words(predicate: str, detail: str = "", knows_how: str | None = None) -> str:
+    """How a two-way connection reads with both names first: "are rivals" in "Cerric and Wit are
+    rivals" (#4154). The catch-all with the table's own words, and any other kind the DM made
+    two-way, says it is a connection and quotes its one-way words: "are connected (“sworn on the
+    ashes of”)". Only for a connection `reads_both_ways`; one-way lines keep `link_words`."""
+    if predicate == KIN and (role := kin.role_of(detail)) in KIN_PAIR_WORDS:
+        return KIN_PAIR_WORDS[role]
+    if predicate == "knows" and knows_how:
+        return KNOWS_PAIR_WORDS.get(knows_how, PAIR_WORDS["knows"])
+    if predicate == FALLBACK_PREDICATE and detail:
+        return f"{PAIR_WORDS[FALLBACK_PREDICATE]} ({quoted(detail)})"
+    if predicate in PAIR_WORDS:
+        return PAIR_WORDS[predicate]
+    return f"{PAIR_WORDS[FALLBACK_PREDICATE]} ({quoted(connection_words(predicate))})"
 
 
 _KNOWS_FEELING = re.compile(r"knows\s*\(\s*([^()]+?)\s*\)", re.IGNORECASE)
@@ -208,10 +252,18 @@ def back_words(
     subject_kind: str = "",
     *,
     knows_how: str | None = None,
+    both_ways: bool | None = None,
 ) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
     niece". None for one that reads the same either way, or has no fixed reading back.
-    `knows_how` (#3881): two people who met read "has met" from either side."""
+    `knows_how` (#3881): two people who met read "has met" from either side. `both_ways` (#4154):
+    a two-way kind the DM made one-way reads `ONE_WAY_BACK` ("is seen as a rival by")."""
+    if (
+        both_ways is False
+        and predicate in ONE_WAY_BACK
+        and not (predicate == KIN and directional and kin.directional(detail))
+    ):
+        return ONE_WAY_BACK[predicate]
     if predicate == "knows" and knows_how:
         return KNOWS_HOW_BACK.get(knows_how) or CONNECTION_BACK.get(predicate)
     if predicate == "located_in":
