@@ -3448,7 +3448,8 @@ class MemoryStore:
             member_rows = await scope.select(
                 RELATIONS,
                 " AND predicate = 'member_of' AND status = 'confirmed'"
-                " AND NOT secret AND NOT unrevealed",
+                " AND NOT secret AND NOT unrevealed"
+                " AND to_session_at IS NULL",  # (a group they left is no hint now, #4134)
             )
             groups = [
                 e
@@ -4148,7 +4149,9 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             rows = await scope.select(
                 RELATIONS,
-                " AND status = 'confirmed' AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+                " AND status = 'confirmed' AND (subject_id = ANY(%s) OR object_id = ANY(%s))"
+                # (a tag says who they are now: "in Termalaine" is never a town they left, #4134)
+                " AND to_session_at IS NULL",
                 [wanted, wanted],
             )
             ends = sorted({str(r[k]) for r in rows for k in ("subject_id", "object_id")})

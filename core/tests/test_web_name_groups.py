@@ -113,6 +113,16 @@ class TheDatabaseHalf(WithChecks):
     async def person(self, name: str) -> str:
         return await self.known(name, "character")
 
+    async def test_a_group_they_left_is_not_carried(self) -> None:
+        # (#4134: the door's members read current memberships only)
+        brannoch = await self.person("Brannoch")
+        await self.person("Veshla")
+        await self.group("The Ashen Circle", brannoch)
+        await self.sql("UPDATE memory_relations SET to_session_at = 5")
+        listed = await self.suggest("Brannoch and Veshla")
+        cards = {c["id"]: c for c in (await self.listed())["names"]}
+        self.assertFalse(cards[listed].get("groups"))
+
     async def test_a_list_name_carries_its_groups_and_other_names_carry_none(self) -> None:
         brannoch, veshla = await self.person("Brannoch"), await self.person("Veshla")
         duo = await self.group("The Ashen Circle", brannoch)
