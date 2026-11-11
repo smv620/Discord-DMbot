@@ -1,25 +1,17 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // A waiting connection that means an item changed hands (#4122): the bracket after it ("Claude sold it", the words of Discord's
-// card), and no Keep here until the page can show what keeping it ends: it says to keep it in Discord. Off with HAND_OVER_LIVE.
+// card), and no Keep here until the page can show what keeping it ends: it says to keep it in Discord. Shown whenever the door sends the fields (no switch).
 import { cleanup, render, screen } from "@testing-library/preact";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
 import { handBracket, handKeepInDiscord } from "../src/content/hand-over-words";
 import { waitingWords as w } from "../src/content/web-waiting";
 
-const live = vi.hoisted(() => ({ on: true }));
-vi.mock("../src/content/hand-over-switch", () => ({
-  get HAND_OVER_LIVE() {
-    return live.on;
-  },
-}));
-
 afterEach(() => {
   cleanup();
-  live.on = true;
 });
 
 const row = (over: object = {}) => ({
@@ -88,19 +80,6 @@ describe("a waiting hand-over", () => {
       handOver: "sold",
       handOverFrom: "a".repeat(32),
       handOverName: null,
-    });
-    expect(
-      await screen.findByText("Belleros owns the Frost Brand"),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
-  });
-
-  it("changes nothing while the switch is off", async () => {
-    live.on = false;
-    await show({
-      handOver: "sold",
-      handOverFrom: "a".repeat(32),
-      handOverName: "Claude",
     });
     expect(
       await screen.findByText("Belleros owns the Frost Brand"),
