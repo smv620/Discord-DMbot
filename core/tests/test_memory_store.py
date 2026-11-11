@@ -306,6 +306,14 @@ class Isolation(MemoryTest):
                 " 'barbarians', 'barbarian', 2, ARRAY[1000::bigint], ARRAY[%s::bigint], 5)",
                 (GUILD_A, self.c, "f" * 32, DM),
             )
+        # and the DM's "Yes, both have it" about a one-of-a-kind item (#4115): ids only
+        brand = await self.add("Frost Brand", type="item")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_hand_over_both (guild_id, campaign_id, item_id, first_id,"
+                " second_id, created_at) VALUES (%s, %s, %s, %s, %s, 5)",
+                (GUILD_A, self.c, brand, min(a, b), max(a, b)),
+            )
         # and which upload a name was read from (#3675): an id and a label only
         await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only

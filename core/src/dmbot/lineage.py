@@ -69,6 +69,7 @@ STAMPED_MEMORY = (
     "memory_name_sources", "memory_name_sessions",
     "memory_npc_guesses", "memory_trait_offers", "memory_met", "memory_private_scenes",
     "memory_private_scene_entries",
+    "memory_hand_over_both",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
