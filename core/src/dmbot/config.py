@@ -127,10 +127,9 @@ class Settings:
     # 2026-11-10).
     private_scenes_on: bool = False
     # Names read from an upload's pictures (#4003): the words the picture reading gives go through
-    # the lore reader too, each name checked against the document's own. Off until the picture
-    # reading (CloudDev-lead's half) and the slice that shows the DM the names it holds back (Names
-    # to check, with the picture's link) are built, and dev1 has checked a sample: until then a
-    # held name is only counted.
+    # the lore reader too, each name checked against the document's own; one it can't resolve waits
+    # in Names to check, its note saying so. Off until the picture reading (CloudDev-lead's half) is
+    # built and dev1 has checked a sample.
     picture_names_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.

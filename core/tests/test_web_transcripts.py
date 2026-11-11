@@ -642,6 +642,38 @@ class Characters(Transcripts):
             )
         self.assertNotIn(5005, await self.chars(self.carol))
 
+    async def test_a_plays_link_that_ended_never_beats_one_that_holds(self) -> None:
+        # (#4137: Player 5 played Vex, and now plays Ash; Vex's link was written later and ended)
+        g, c = THURSDAY.id, self.one.id
+        made = {}
+        for name in ("Ash", "Vex"):
+            made[name] = (
+                await self.memory.add_entity(
+                    g, c, type="character", name=name, source=DM_SOURCE, status="confirmed"
+                )
+            ).value.id
+        async with self.db.guild(g) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by) VALUES (%s, %s, %s, 'person', 'Player 5',"
+                " '', 'confirmed', 'dm', 0, %s)",
+                (g, c, "d" * 32, 5005),
+            )
+            for rid, who, at, ended in (("a" * 32, made["Ash"], 5, None),
+                                        ("b" * 32, made["Vex"], 9, 10)):  # fmt: skip
+                await conn.execute(
+                    "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id,"
+                    " predicate, object_id, detail, confidence, status, source, mention_ids,"
+                    " secret, created_at, to_session_at) VALUES (%s, %s, %s, %s, 'plays', %s, '',"
+                    " 1, 'confirmed', 'dm', '{}', FALSE, %s, %s)",
+                    (g, c, rid, "d" * 32, who, at, ended),
+                )
+        self.assertEqual((await self.chars(self.carol))[5005], "Ash")
+        async with self.db.guild(g) as conn:  # (playing no one now: the old one is the fallback)
+            await conn.execute("UPDATE memory_relations SET to_session_at = 6 WHERE id = %s",
+                               ("a" * 32,))  # fmt: skip
+        self.assertEqual((await self.chars(self.carol))[5005], "Vex")
+
     async def test_it_agrees_with_the_bots_own_rule_for_ordinary_data(self) -> None:
         lookup = await LookupCache(self.memory).get(THURSDAY.id, self.one.id)
         theirs = {u: n for u, n in cleaner.characters(lookup).items() if u != ALICE.id}
