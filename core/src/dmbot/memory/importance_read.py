@@ -25,9 +25,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import roles
-from dmbot.memory.importance_rank import DEMOTED, LEVEL_NAMES, PLAYER, READING, REVEALED
+from dmbot.memory.importance_rank import (
+    DEMOTED,
+    LEVEL_NAMES,
+    PLAYER,
+    PRIVATE_SCENE,
+    READING,
+    RECURRING,
+    REVEALED,
+)
 
-PROMPT_VERSION = "importance-1"
+PROMPT_VERSION = "importance-2"  # (2: the private-scene rule, #2996 rule 5, when an item has one)
 ITEMS_PER_CALL = (
     60  # Supervisor's ruling: 60 per call; the rest go in a later call, inside the limit
 )
@@ -75,6 +83,10 @@ class Item:
     player: bool = False
     dm_rank: bool = False  # the DM corrected its rank last: a reading never overwrites that
     group: tuple[str, ...] = ()  # the names merged into it (their stored roles are its own)
+    # Each private scene it was said in (#2996 rule 5), as its two player characters ("Ash and
+    # Wren"): "always matters, always", so it ranks at least Recurring (`parse` holds that floor
+    # in code, whatever the answer says or leaves out).
+    private_with: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +112,7 @@ class Answer:
     verdicts: list[Verdict] = field(default_factory=list)
     new_codes: list[NewCode] = field(default_factory=list)
     lost: Counter[str] = field(default_factory=Counter)
+    raised: int = 0  # verdicts the private-scene floor set to Recurring (#2996 rule 5)
 
 
 def _tag(text: str) -> str:
@@ -107,9 +120,11 @@ def _tag(text: str) -> str:
     return text.replace("<", "‹").replace(">", "›")
 
 
-def system(added: Mapping[str, str]) -> str:  # (added: code -> its stored label)
+def system(added: Mapping[str, str], *, private: bool = False) -> str:  # (code -> its label)
     """The instructions: the levels, the roles (seeded, and the campaign's own as code: label),
-    the rules and the answer's shape. `added`: the campaign's own codes and their labels."""
+    the rules and the answer's shape. `added`: the campaign's own codes and their labels.
+    `private`: some entry was said in a private scene between two player characters (#2996 rule
+    5), so the rule for those is given (only then: other calls are unchanged)."""
     seeded = "\n".join(
         f"- {r.code}: {r.description} (not: {r.not_this})"
         for r in roles.SEEDED_ROLES
@@ -130,7 +145,14 @@ def system(added: Mapping[str, str]) -> str:  # (added: code -> its stored label
         '- reason: "reading" for an ordinary assessment, "revealed" when the story revealed '
         'what the entry really is, "demoted" when it turned out to matter less.\n'
         "- Keep the current rank when nothing in this session changes it: leave rank out.\n"
-        "- roles: what the entry IS in the story, several at once, only codes from the lists "
+        + (
+            '- An entry with a "private scene:" line was spoken of while two player characters '
+            "were alone together. That always matters: rank it at least 2 (Recurring), higher if "
+            'the story shows more, with reason "private_scene" when that is why.\n'
+            if private
+            else ""
+        )
+        + "- roles: what the entry IS in the story, several at once, only codes from the lists "
         "below. ended_roles: a role the story shows it no longer holds; never leave a role out to "
         "end it. Never give a player character a role or a rank.\n"
         f"- new_roles: at most {NEW_ROLES_MAX}, only when no listed role fits an entry; each with "
@@ -158,6 +180,8 @@ def message(items: Sequence[Item]) -> str:
             f"connections: {i.connections}",
         ]
         lines += [f"this session: {_tag(link)}" for link in i.links[:LINKS_MAX]]
+        # (names only: what was said there is in the quotes, as for any line)
+        lines += [f"private scene: {_tag(pair)}" for pair in i.private_with[:LINKS_MAX]]
         if i.notes:
             lines.append(f"notes (the DM's side): {_tag(i.notes[:NOTES_CHARS])}")
         lines += [f"said: {_tag(q[:QUOTE_CHARS])}" for q in i.quotes[:QUOTES_MAX]]
@@ -227,7 +251,8 @@ def parse(
             out.lost["bad_rank"] += 1
             continue
         reason = raw.get("reason", READING)
-        if reason not in READING_REASONS:
+        # ("private_scene" only for an entry said in one)
+        if reason not in READING_REASONS and not (reason == PRIVATE_SCENE and item.private_with):
             out.lost["bad_reason"] += 1
             continue
         held = _strs(raw.get("roles") or [])
@@ -238,12 +263,33 @@ def parse(
         if rank is not None and item.dm_rank:
             out.lost["rank_kept_by_dm"] += 1  # (its roles are still read)
             rank = None
+        if (
+            item.private_with
+            and not item.dm_rank
+            and (item.rank if rank is None else rank) < RECURRING
+        ):
+            # "always matters, always" (the owner, #2996 rule 5): held in code, not left to the AI
+            rank, reason = RECURRING, PRIVATE_SCENE
+            out.raised += 1
         good = tuple(c for c in held if c in known and c != roles.COMMONER)
         out.lost["unknown_role"] += len(held) - len(good)
         stop = tuple(c for c in ended if c in known and c not in item.dm_roles and c not in good)
         out.lost["role_kept_by_dm"] += sum(c in item.dm_roles for c in ended)
         out.verdicts.append(Verdict(item.entity_id, rank, str(reason), good, stop))
     out.lost["entry_left_out"] += len(by_number) - len(seen)
+    # The floor for an entry said in a private scene whatever the answer did with it: left out, or
+    # refused for a bad rank, reason or roles (the owner's "always", #2996 rule 5).
+    given = {v.entity_id for v in out.verdicts}
+    for item in items:
+        if (
+            item.private_with
+            and item.entity_id not in given
+            and not item.player
+            and not item.dm_rank
+            and item.rank < RECURRING
+        ):
+            out.verdicts.append(Verdict(item.entity_id, RECURRING, PRIVATE_SCENE))
+            out.raised += 1
     return out
 
 
