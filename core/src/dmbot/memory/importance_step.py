@@ -66,7 +66,6 @@ class Report:
     codes_matched: int = 0  # new roles that meant one the campaign has: that one was used
     match_failed: int = 0  # the match couldn't be asked: the new roles were added as before
     dropped_for_consent: int = 0
-    private_raised: int = 0  # verdicts the private-scene floor set at Recurring (#2996 rule 5)
     unsent: int = 0  # entries not read this time: the call limit, or the run stopped
     stopped: str = ""
     lost: Counter[str] = field(default_factory=Counter)
@@ -79,11 +78,6 @@ class Report:
             f"{self.codes_matched} matched to one held, {self.match_failed} match(es) failed, "
             f"{self.calls} call(s), {self.failed} failed, {self.split} split, "
             f"{self.dropped_for_consent} dropped for consent, {self.unsent} not read"
-            + (
-                f", private-scene floor applied {self.private_raised}"
-                if self.private_raised
-                else ""
-            )
             + (f", stopped: {self.stopped}" if self.stopped else "")
             + (f"; refused: {lost}" if lost else "")
         )
@@ -103,9 +97,10 @@ async def gather(
 ) -> tuple[list[ir.Item], dict[str, str], dict[str, str]]:
     """The items for the entries this session touched (heard in it, or in a connection it
     confirmed), busiest first, the campaign's role codes (code -> source) and the labels of its
-    own (code -> label). `private` (DMBOT_PRIVATE_SCENES, #2996 rule 5): an entry mentioned in a
-    line inside one of the session's private scenes carries that scene's two player characters
-    (`Item.private_with`); a scene citing someone not recorded now is left out."""
+    own (code -> label). `private` (DMBOT_PRIVATE_SCENES, #2996 rule 5): an entry said in one of
+    the session's kept private scenes (`memory_private_scene_entries`, #4110) carries that scene's
+    two player characters (`Item.private_with`); a scene citing someone not recorded now is left
+    out."""
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
             "SELECT id, type, name, description, role, status, merged_into FROM memory_entities"
@@ -147,16 +142,21 @@ async def gather(
             (guild_id, campaign_id),
         )
         newest = await cur.fetchall()
-        scenes: list[tuple[int, int, str, str, frozenset[int]]] = []
+        # The entries said in this session's kept private scenes, by one of their two (#4110: found
+        # by the store when the scene was kept), each with its scene's two and their ids.
+        in_scenes: list[tuple[str, str, str, frozenset[int]]] = []
         if private:
             cur = await conn.execute(
-                "SELECT from_ms, to_ms, first_id, second_id, speaker_ids FROM memory_private_scenes"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = %s"
-                " AND status = 'kept' AND speaker_ids <@ %s::bigint[]",
+                "SELECT x.entity_id, s.first_id, s.second_id, s.speaker_ids"
+                " FROM memory_private_scene_entries x JOIN memory_private_scenes s"
+                " ON s.guild_id = x.guild_id AND s.campaign_id = x.campaign_id"
+                " AND s.id = x.scene_id"
+                " WHERE x.guild_id = %s AND x.campaign_id = %s AND s.session_started_at = %s"
+                " AND s.status = 'kept' AND s.speaker_ids <@ %s::bigint[]",
                 (guild_id, campaign_id, session_started_at, sorted(set(agreed))),
             )
-            scenes = [
-                (int(r["from_ms"]), int(r["to_ms"]), str(r["first_id"]), str(r["second_id"]),
+            in_scenes = [
+                (str(r["entity_id"]), str(r["first_id"]), str(r["second_id"]),
                  frozenset(int(u) for u in r["speaker_ids"]))
                 for r in await cur.fetchall()
             ]  # fmt: skip
@@ -204,22 +204,16 @@ async def gather(
         quotes: list[str] = []
         speakers: set[int] = set()
         private_with: set[str] = set()
+        # (a scene's two are this item's speakers too: re-checked against consent after the call)
+        for entity_id, a, b, said_by in in_scenes:
+            if ended.get(entity_id) == eid:
+                private_with.add(" and ".join(sorted(_name(entities, ended, x) for x in (a, b))))
+                speakers.update(said_by)
         for ref, at in await mentions(eid):
-            if len(quotes) >= ir.QUOTES_MAX and not scenes:
+            if len(quotes) >= ir.QUOTES_MAX:
                 break
             pointer = parse_ref(ref)
             if at != session_started_at or pointer is None or pointer[0] != session_id:
-                continue
-            # Said inside a private scene, by one of its two (a line of another group, or the
-            # DM's, spoken in the same minutes is in no scene: `private_scenes.find`). Their ids
-            # are this item's speakers too, so it is re-checked against consent after the call.
-            for from_ms, to_ms, a, b, said_by in scenes:
-                if from_ms <= pointer[1] <= to_ms and pointer[2] in said_by:
-                    private_with.add(
-                        " and ".join(sorted(_name(entities, ended, x) for x in (a, b)))
-                    )
-                    speakers.update(said_by)
-            if len(quotes) >= ir.QUOTES_MAX:
                 continue
             around = await transcripts.around(guild_id, session_id, pointer[1], pointer[2], agreed)
             if around is not None:
@@ -340,7 +334,6 @@ async def run(
                 report.lost["unreadable"] += 1
             continue
         report.lost.update(got.lost)
-        report.private_raised += got.raised
         try:
             still = set(await consenting())  # asked again after the answer
         except Exception as exc:  # can't know who is recorded now: write none of this part

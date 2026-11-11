@@ -131,7 +131,7 @@ class EveryPreparingJobOpensTheScope(unittest.TestCase):
     """A new job that forgets `credits.preparing` would be free, so the list is checked."""
 
     def test_each_listed_job_opens_a_scope(self) -> None:
-        self.assertGreaterEqual(len(credits.PREPARING_JOBS), 4)
+        self.assertGreaterEqual(len(credits.PREPARING_JOBS), 6)
         for module, dotted in credits.PREPARING_JOBS:
             target = importlib.import_module(module)
             for part in dotted.split("."):

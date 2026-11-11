@@ -9,7 +9,7 @@ import re
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.transcript import theatre_job as job
@@ -27,7 +27,8 @@ def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
         transcripts=SimpleNamespace(
             session=AsyncMock(
                 return_value=SimpleNamespace(lines=lines, campaign_id="c" * 32, number=2)
-            )
+            ),
+            is_import=AsyncMock(return_value=False),  # (a live session: its script is not metered)
         ),
         campaigns=SimpleNamespace(
             get=AsyncMock(
@@ -85,7 +86,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         return me
 
     async def test_one_press_by_a_dm_answers_first_then_starts_the_script(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot(lines=300)
         interaction = pressed(me, DM)
@@ -107,7 +107,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(tb, "Confirm"))  # no second "are you sure?" step
 
     async def test_a_press_after_the_script_is_made_spends_nothing_and_says_so(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot()
         interaction = pressed(me, DM)
@@ -122,7 +121,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"/account/transcripts/{GUILD}.{'c' * 32}/2", self.said(interaction))
 
     async def test_a_failed_earlier_run_may_be_tried_again(self) -> None:
-        from unittest.mock import patch
 
         interaction = pressed(self.bot(), DM)
         with (
@@ -134,7 +132,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         made.assert_awaited_once()
 
     async def test_a_player_is_refused_even_when_the_screen_shows_the_button(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot()
         interaction = pressed(me, PLAYER)
@@ -159,7 +156,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     async def test_a_question_from_before_this_change_starts_nothing_and_offers_the_new_one(
         self,
     ) -> None:
-        from unittest.mock import patch
 
         interaction = pressed(self.bot(lines=300), DM)
         old = tb.OldScriptButton(GUILD, SESSION)
@@ -180,7 +176,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     async def test_the_old_button_makes_the_same_checks_and_never_re_offers_a_made_script(
         self,
     ) -> None:
-        from unittest.mock import patch
 
         for me, user, words in (
             (self.bot(), PLAYER, tb.ONLY_DMS),
@@ -221,7 +216,6 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         return c
 
     async def go(self, c: Any, outcome: job.Outcome) -> tuple[job.Outcome, Any]:
-        from unittest.mock import patch
 
         async def fake(*a: Any, **kw: Any) -> job.Outcome:
             if outcome.text and outcome.started:
@@ -240,6 +234,42 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["known"], ["Kell"])
         self.assertEqual(kw["agreed"], {DM})
         self.assertEqual(kw["link"], f"https://x.test/account/transcripts/{GUILD}.{'c' * 32}/2")
+
+    async def test_an_imported_sessions_script_is_metered_and_a_live_ones_is_not(self) -> None:
+        from dmbot import credits
+
+        seen: list[Any] = []
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            seen.append(credits.current())
+            return job.Outcome("Script ready", started=True, ok=True)
+
+        for imported in (False, True):
+            me = self.bot()
+            me.transcripts.is_import = AsyncMock(return_value=imported)
+            seen.clear()
+            with patch.object(job, "make_script", AsyncMock(side_effect=fake)):
+                await tb.run(self.card(me), GUILD, SESSION)
+            self.assertEqual(
+                [s.job_kind if s else None for s in seen], ["script" if imported else None]
+            )
+        self.assertIsNone(credits.current())
+
+    async def test_a_failed_import_check_still_makes_the_script_unmetered(self) -> None:
+        from dmbot import credits
+
+        seen: list[Any] = []
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            seen.append(credits.current())
+            return job.Outcome("Script ready", started=True, ok=True)
+
+        me = self.bot()
+        me.transcripts.is_import = AsyncMock(side_effect=OSError("down"))
+        with patch.object(job, "make_script", AsyncMock(side_effect=fake)):
+            got = await tb.run(self.card(me), GUILD, SESSION)
+        self.assertEqual(seen, [None])
+        self.assertTrue(got.ok)
 
     async def test_the_switch_and_the_plan_are_checked_again_when_it_is_confirmed(self) -> None:
         for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):
