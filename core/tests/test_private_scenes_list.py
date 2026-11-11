@@ -21,7 +21,12 @@ NAMES = {WREN: "Wren", ASH: "Ash"}
 
 class Words(unittest.TestCase):
     def test_the_words(self) -> None:
-        self.assertEqual(psl.when(SCENE), "14 Nov 2023 · 10 min in · about 12 min, 9 lines spoken")
+        self.assertEqual(
+            psl.when(SCENE), "<t:1700000000:d> · 10 min in · about 12 min, 9 lines spoken"
+        )  # (Discord's own date, in the reader's time zone, #4104)
+        self.assertEqual(
+            psl.when(SCENE, menu=True), "14 Nov 2023 · 10 min in · about 12 min, 9 lines spoken"
+        )
         self.assertEqual(psl.pair(NAMES, SCENE), "Ash and Wren")
         self.assertIn("1 private scene:", psl.notice(1))
         self.assertIn("3 private scenes", psl.notice(3))

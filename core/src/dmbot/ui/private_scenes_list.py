@@ -59,16 +59,19 @@ def notice(kept: int) -> str:
     )
 
 
-def when(scene: Kept) -> str:
+def when(scene: Kept, *, menu: bool = False) -> str:
     """The scene's date, how far into the session it began, how long and how many lines (so two
-    scenes of the same two in one session can be told apart). Pure."""
+    scenes of the same two in one session can be told apart). The date is Discord's own in a
+    message (`<t:…:d>`, each reader's own time zone, #4104); a menu's option text can't show one,
+    so it keeps the date (UTC) and the message above carries the real one. Pure."""
     day = datetime.fromtimestamp(scene.session_started_at, UTC)
+    date = f"{day.day} {day:%b %Y}" if menu else f"<t:{scene.session_started_at}:d>"
     minutes = max(1, round((scene.to_ms - scene.from_ms) / 60_000))
     into = max(0, (scene.from_ms // 1000 - scene.session_started_at) // 60)
     hours, mins = divmod(into, 60)
     began = f"{hours}h {mins:02d}m in" if hours else f"{mins} min in"
     lines = "1 line" if scene.line_count == 1 else f"{scene.line_count} lines"
-    return f"{day.day} {day:%b %Y} · {began} · about {minutes} min, {lines} spoken"
+    return f"{date} · {began} · about {minutes} min, {lines} spoken"
 
 
 async def _for_dm(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
@@ -165,7 +168,7 @@ class SceneList(_Menu):
                 discord.SelectOption(
                     label=logic.shorten(pair(names, s, " & "), logic.OPTION_LABEL_MAX),
                     value=s.id,
-                    description=logic.shorten(when(s), 100),
+                    description=logic.shorten(when(s, menu=True), 100),
                 )
                 for s in scenes[:SHOWN_MAX]
             ],

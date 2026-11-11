@@ -30,7 +30,10 @@ class Words(unittest.TestCase):
         self.assertEqual(met_list.label(row), "barbarians (2)")
         self.assertEqual(met_list.label(MetRow("m", "s", None, "a wolf", 1, (), ())), "a wolf")
         self.assertIn("(several)", met_list.label(MetRow("m", "s", None, "rats", 0, (), ())))
-        self.assertEqual(met_list.when(row), "met on 14 Nov 2023")
+        # (a message shows Discord's own date, in the reader's time zone; a menu keeps the date,
+        # #4104)
+        self.assertEqual(met_list.when(row), "met on <t:1700000000:d>")
+        self.assertEqual(met_list.when(row, menu=True), "met on 14 Nov 2023")
         self.assertEqual(met_list.count_text(3), "👣 Met but not named (3)")
         self.assertIn("99+", met_list.count_text(120))
         self.assertIn("2 creatures or people", met_list.notice(2))
@@ -69,7 +72,7 @@ class TheMessage(unittest.TestCase):
     def test_a_short_list_keeps_its_lines(self) -> None:
         row = MetRow("m" * 32, "s", 1_700_000_000, "barbarians", 2, (), ())
         text = met_list.list_text("", [row], 1)
-        self.assertIn("\n\n• **barbarians (2)** · met on 14 Nov 2023", text)
+        self.assertIn("\n\n• **barbarians (2)** · met on <t:1700000000:d>", text)
 
 
 class TheList(NamesTest):
