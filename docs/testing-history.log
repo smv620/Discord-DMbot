@@ -2944,3 +2944,13 @@ Session: dev1
 OWNER CHECK (deploy 16, the owner on the website, 2026-11-11): the sample recap draft kept on the sample campaign shows on the website and works for review.
 
 Session: dev1
+
+DEPLOY cfddcda3 (deploy 17; Supervisor's handover on #3720 naming cfddcda33c973fb034665bd0f956a4ae250b991f instead of ce716ba9, whose CI never ran; the owner's go in the dev1 session). Live was 7db2efd0 (16). Migrations 0418_ai_credit_ledger, 0419_private_scenes and 0420_name_source_doors. Switches stay off (DMBOT_MET_UNNAMED, DMBOT_PRIVATE_SCENES, DMBOT_PICTURE_NAMES, RECAP_CACHE, the wizard). No .env change. Backups: a campaign backup of the sample campaign by the live build (format 6), and a full pg_dumpall to ~/db-backups/dmbot-pre-cfddcda3-<UTC stamp>.sql (about 2.7 MB, mode 600, 3 of 3 dump sections complete). Dry run on the copy restored from that dump: the 17 image applied 0418, 0419 and 0420 when it opened the copy, and a second run applied nothing. Order: the bot first, then web-api after the bot connected. Start-up: connected to 2 servers with 0 ERROR lines; 0418 to 0420 applied; web-api healthy; GIT_COMMIT on both containers cfddcda33. Pruning: removed the 12c-era image and the test images; one mistake: the deploy 15 rollback image (03e9527c) was removed by a manual rmi, not by the rule. Not rebuilt yet; the rollback set is 7db2efd0, 95289464 and 62d84025 (and 5336b031 is older than five). Live now: core and web-api both on cfddcda33.
+
+Clean-up: the owner asked to clear old backups. 54 database backups older than the five newest were deleted from ~/db-backups (about 95 MB, on the root disk; /data was not the cause). Kept the five newest.
+
+SAMPLE RUN 17 (dev1, 2026-11-11, live build cfddcda33; counts on #3545). One run, exit 0. Lore read: 4 of 4 player characters, 23 AI calls. Session import: 172 lines, 29 AI calls. AI decides: 15 careful calls, 11,554 tokens in, 2,357 out, about $0.05. Recap (no audio) kept as a draft on the sample campaign: 15 calls, spend $0.398. ERROR lines in the core log since the restart: 0. Disk check: none logged (/data at 30%).
+
+CREDITS, read-only (counts only): the sample campaign has 89 rows and 578 credits: import extractor 34 rows, import name_pass 2, import topic 29, lore names_background 6, lore names_background_read 18. The owner has no owner_credits row (free server), and the owner's spend rows total 578, equal to the campaign total.
+
+Session: dev1
