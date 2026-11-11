@@ -28,6 +28,8 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from psycopg import errors as pg_errors
+
 from dmbot import usage
 
 if TYPE_CHECKING:
@@ -134,8 +136,8 @@ def waiting() -> int:
 
 async def record(reply: Reply, feature: str | None) -> int:
     """Charge one answered call to the job it belongs to. Returns the credits charged (0 outside a
-    job). It never raises: a failed write is one counts-only warning, kept and tried again before
-    the next charge, and the work goes on."""
+    job, or when the write is waiting for a retry). It never raises: a failed write is one
+    counts-only warning, kept and tried again, and the work goes on."""
     scope = _current.get()
     if scope is None or _db is None:
         return 0
@@ -154,7 +156,6 @@ async def record(reply: Reply, feature: str | None) -> int:
         )
         if credits <= 0:
             return 0
-        await _flush(_db)  # (what an earlier failure left, first, so the order is kept)
         charge = Charge(
             uuid.uuid4().hex,
             scope.guild_id,
@@ -165,9 +166,12 @@ async def record(reply: Reply, feature: str | None) -> int:
             int(_clock() * 1000),
             scope,
         )
-        if not await _attempt(_db, charge):
-            _keep(charge)
-            return 0
+        # Kept before anything is awaited, so a cancelled job cannot lose it; the flush writes
+        # everything waiting in order, this charge last, and is bounded as a whole.
+        _keep(charge)
+        await _flush(_db)
+        if any(c is charge for c in _waiting):
+            return 0  # still waiting for a retry
     except Exception as exc:  # the meter must never fail the real work
         log.warning("AI credits: a charge could not be made (%s)", type(exc).__name__)
         return 0
@@ -175,36 +179,64 @@ async def record(reply: Reply, feature: str | None) -> int:
     return credits
 
 
-async def _attempt(db: Database, charge: Charge) -> bool:
+_PERMANENT = (pg_errors.IntegrityError, pg_errors.DataError)  # a retry can never succeed
+
+
+async def _attempt(db: Database, charge: Charge) -> str:
     """Write one charge. Shielded, so a cancelled job does not lose it half way, and bounded, so a
-    hung database costs one warning instead of stalling the answer. False when it did not land."""
+    hung database costs one warning instead of stalling the answer. "ok", "retry" (the database or
+    the network: try again later) or "drop" (it can never be written: the campaign is gone or was
+    moved, a value is out of range). A write that timed out may still land; the id makes a second
+    write of it a no-op, and the flush stops at the first failure, so these do not pile up."""
     try:
         await asyncio.wait_for(asyncio.shield(_write(db, charge)), WRITE_TIMEOUT_S)
+    except _PERMANENT as exc:
+        log.error("AI credits: a charge can never be written (%s)", type(exc).__name__)
+        return "drop"
     except Exception as exc:
         log.warning("AI credits: a charge could not be written (%s)", type(exc).__name__)
-        return False
-    return True
+        return "retry"
+    return "ok"
 
 
 def _keep(charge: Charge) -> None:
     global lost
     if len(_waiting) >= MAX_WAITING:
-        _waiting.popleft()
+        dropped = _waiting.popleft()
         lost += 1
-        log.error("AI credits: a charge was dropped, %d lost since the start", lost)
+        log.error(
+            "AI credits: a charge of %d credits was dropped, %d lost since the start",
+            dropped.credits,
+            lost,
+        )
     _waiting.append(charge)
 
 
 async def _flush(db: Database) -> None:
-    """Try the waiting charges again, oldest first, and stop at the first that still fails (the
-    database is still down: the next charge tries again). A charge that landed after its timeout
-    is written once only (the same id)."""
-    while _waiting:
-        charge = _waiting[0]
-        if not await _attempt(db, charge):
+    """Write the waiting charges, oldest first, within one deadline for the whole flush. A charge is
+    taken off the list before it is written, so two calls flushing at once never write or drop the
+    same one. One that fails for a lasting reason is dropped and counted, so it cannot block the
+    ones behind it; one that fails for the moment goes back to the front and stops the flush (the
+    database is down: the next charge tries again)."""
+    global lost
+    deadline = time.monotonic() + WRITE_TIMEOUT_S
+    while _waiting and time.monotonic() < deadline:
+        charge = _waiting.popleft()
+        try:
+            outcome = await _attempt(db, charge)
+        except BaseException:  # (cancelled: it goes back, and the write is a no-op if it landed)
+            _waiting.appendleft(charge)
+            raise
+        if outcome == "retry":
+            _waiting.appendleft(charge)
             return
-        _waiting.popleft()
-        log.info("AI credits: a waiting charge was written, %d still waiting", len(_waiting))
+        if outcome == "drop":
+            lost += 1
+            log.error(
+                "AI credits: a charge of %d credits was dropped, %d lost since the start",
+                charge.credits,
+                lost,
+            )
 
 
 async def _owner(scope: Scope) -> int | None:

@@ -136,8 +136,9 @@ before it starts, in Discord and on the website, when `N` is over a few credits 
   merged by `0068_moves`), and account deletion must purge it; both are filed as an issue.
 - **A charge that could not be written is kept and tried again** (#4094): it waits in a bounded list
   (200) and is written before the next charge. Each charge has its own id, made once, and the write
-  ignores an id it already has, so a write that landed after its timeout is never counted twice. Past
-  the limit the oldest is dropped and counted (`credits.lost`, in the log), so an outage shows as a
+  ignores an id it already has, so a write that landed after its timeout is never counted twice. A charge that can never be written (the campaign is gone) is dropped and counted at once, so it cannot
+  block the ones behind it, and one flush has a single deadline. Past
+  the limit the oldest is dropped and counted (`credits.lost`, in the log, with the credits it held), so an outage shows as a
   number and not as silence. The list is in memory, so a restart during an outage loses it; step 4
   (the limit) must treat `lost` above zero as "the month may read low".
 

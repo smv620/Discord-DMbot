@@ -10,6 +10,7 @@ import asyncio
 import importlib
 import inspect
 import unittest
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot import ai, credits, entitlements, usage
@@ -225,6 +226,42 @@ class Ledger(DatabaseTest):
             for _ in range(3):
                 await credits.record(reply(), "names")
         self.assertEqual((credits.waiting(), credits.lost), (2, 1))
+
+    def waiting_charge(self, campaign_id: str, spend_id: str, owner: int | None = OWNER) -> Any:
+        scope = credits.Scope(GUILD_A, campaign_id, "lore", owner=owner, owner_known=True)
+        return credits.Charge(
+            spend_id, GUILD_A, campaign_id, "lore", "names", 5, int(NOW * 1000), scope
+        )
+
+    async def test_two_calls_flushing_at_once_write_every_waiting_charge_once(self) -> None:
+        ids = [f"{n:032x}" for n in range(1, 5)]
+        for spend_id in ids:
+            credits._waiting.append(self.waiting_charge(self.a.id, spend_id))
+
+        async def charge() -> int:
+            with credits.preparing(GUILD_A, self.a.id, "lore"):
+                return await credits.record(reply(), "names")
+
+        await asyncio.gather(charge(), charge(), charge())
+        self.assertEqual(credits.waiting(), 0)
+        rows = await self.rows(GUILD_A)
+        self.assertEqual(len(rows), 4 + 3)  # (each waiting one once, and the three new ones)
+        self.assertEqual(await self.month_total(OWNER), sum(cast(int, r["credits"]) for r in rows))
+
+    async def test_a_charge_that_can_never_be_written_does_not_block_the_ones_behind_it(
+        self,
+    ) -> None:
+        credits._waiting.append(self.waiting_charge("f" * 32, "a" * 32))  # (no such campaign)
+        credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
+        with (
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="ERROR") as logged,
+        ):
+            await credits.record(reply(), "names")
+        self.assertEqual(credits.lost, 1)
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(len(await self.rows(GUILD_A)), 2)  # (the good one and the new one)
+        self.assertIn("can never be written (ForeignKeyViolation)", logged.output[0])
 
     async def test_each_servers_rows_are_its_own(self) -> None:
         with credits.preparing(GUILD_B, self.b.id, "lore"):
