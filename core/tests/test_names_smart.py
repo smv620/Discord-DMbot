@@ -454,6 +454,17 @@ class ThePrivacy(Smart):
         await self.alias(self.auril, "Auril", secret=True)  # (its own spelling is the secret)
         self.assertNotIn("Auril", await self.text_of(self.mira))
 
+    async def test_a_connection_that_ended_is_left_out(self) -> None:
+        # (#4115: Mira sold what she owned; the text says what holds now)
+        await self.link("ally_of", self.mira, self.auril)
+        self.assertIn("Auril", await self.text_of(self.mira))
+        await self.sql(
+            "UPDATE memory_relations SET to_session_at = 5"
+            " WHERE (subject_id, object_id) IN ((%s, %s), (%s, %s))",
+            self.mira, self.auril, self.auril, self.mira,
+        )  # fmt: skip
+        self.assertNotIn("Auril", await self.text_of(self.mira))
+
     async def test_a_public_connection_still_reads(self) -> None:
         self.assertIn("Brannoc", await self.text_of(self.mira))
 

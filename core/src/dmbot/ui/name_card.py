@@ -292,6 +292,10 @@ def _rows(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.predicate in hand_over.HELD and r.to_session_at is not None:
+            # (an item sold or stolen is no longer had (#4115): the item's own card tells it in
+            # its "How it changed hands" line, never as a holding now, on any card or Show all)
+            continue
         if not secrets and r.predicate in OLD_FEELINGS:
             r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":

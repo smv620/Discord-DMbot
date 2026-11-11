@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from typing import Any
 
 from psycopg import errors
 
@@ -278,3 +279,29 @@ class TheHistoryLine(unittest.TestCase):
             _tie("c", "belleros", "carries", 2),
         ]
         self.assertEqual(history(ties, NAMES.get), ["Claude still owns it", "Belleros has it now"])
+
+
+class TheCardRows(unittest.TestCase):
+    """Slice 3 (#4115): an ended `owns` or `carries` is never a holding now on any name card."""
+
+    def test_an_ended_holding_leaves_the_card_and_a_current_one_stays(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.ui.name_card import _rows
+
+        def entity(eid: str, name: str, kind: str) -> Any:
+            return SimpleNamespace(id=eid, name=name, type=kind, status=CONFIRMED)
+
+        lookup: Any = SimpleNamespace(
+            entities={
+                "claude": entity("claude", "Claude", "character"),
+                "brand": entity("brand", "Frost Brand", "item"),
+                "cloak": entity("cloak", "Grey Cloak", "item"),
+            },
+            names=(), guarded=frozenset(),
+        )  # fmt: skip
+        sold = replace(_tie("a", "claude", "owns", 1, 2, "sold"), object_id="brand")
+        kept = replace(_tie("b", "claude", "carries", 1), object_id="cloak")
+        kept_kept = replace(_tie("c", "claude", "located_in", 1, 2), object_id="cloak")
+        rows = _rows(lookup, "claude", [sold, kept, kept_kept], True)
+        self.assertEqual(sorted(r.other for r in rows), ["Grey Cloak", "Grey Cloak"])
