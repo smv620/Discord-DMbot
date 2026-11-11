@@ -16,6 +16,7 @@ import type {
   NameSource,
   KindOffer,
   MatchRow,
+  MetItem,
   NamesPage,
   PlaceSpelling,
   ToldName,
@@ -200,6 +201,16 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     answerMatch: async (ref, batch, answer, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/all-names-matches/${encodeURIComponent(batch)}/${answer}`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
+      );
+    },
+    // "Met but not named" (#4084): the list, and each answer queued for the bot (202 {answer}) and read where every name action's is.
+    metList: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/met`)) as { items: MetItem[] }).items,
+    answerMet: async (ref, id, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/met/${encodeURIComponent(id)}`, answer)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
