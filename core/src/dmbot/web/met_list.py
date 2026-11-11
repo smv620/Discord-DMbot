@@ -1,6 +1,6 @@
 """The website's "Met but not named" list (#4084, the web half of #4045): the creatures and people
 the party met at the table that nobody named, for the DM only. One database door
-(`dmbot_web_met_list`, 0437) lists them after the consent re-check; the DM's three answers (give
+(`dmbot_web_met_list`, 0438) lists them after the consent re-check; the DM's three answers (give
 them a name, say they are a name the campaign has, remove) are queued for the bot on the
 name-action queue, and the page polls `all_names.read_action`. Only the words, the count and the
 session's date leave here: never a line's time or who spoke it."""
