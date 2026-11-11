@@ -2936,3 +2936,11 @@ DEPLOY 16 CHECKS (dev1, 2026-11-10; the handover's list):
 - Not yet done: the PDF memory measure (#4001) with an 80 to 100 MB file (the owner's file, not provided).
 
 Session: dev1
+
+OWNER CHECK (deploy 16, the owner in Discord, 2026-11-10): a PDF with pictures and text was uploaded as campaign lore in the names menu, and the upload was accepted and worked. Not recorded: its size, whether it had picture-only pages, and whether the picture-only note appeared. Those are still to be confirmed for the deploy 16 check.
+
+Session: dev1
+
+OWNER CHECK (deploy 16, the owner on the website, 2026-11-11): the sample recap draft kept on the sample campaign shows on the website and works for review.
+
+Session: dev1
