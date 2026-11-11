@@ -92,6 +92,35 @@ class Moves(DatabaseTest):
     async def code(self) -> str:
         return await self.moves.make_code(OLD)
 
+    async def test_every_month_of_credits_arrives_and_a_third_account_is_untouched(self) -> None:
+        for user, month, credits in ((OLD, 0, 5), (OLD, 1, 6), (NEW, 2, 9), (THIRD, 0, 3)):
+            async with self.db.meter(GUILD_A, user) as conn:
+                await conn.execute(
+                    "INSERT INTO owner_credits (owner_user_id, month_start, credits)"
+                    " VALUES (%s, %s, %s)",
+                    (user, month, credits),
+                )
+        await self.moves.move(OLD, NEW, await self.code())
+        for user, want in ((NEW, [5, 6]), (THIRD, [3]), (OLD, [])):  # (NEW's own month is gone)
+            async with self.db.user(user) as conn:
+                cur = await conn.execute(
+                    "SELECT credits FROM owner_credits WHERE owner_user_id = %s"
+                    " ORDER BY month_start",
+                    (user,),
+                )
+                self.assertEqual([r["credits"] for r in await cur.fetchall()], want, user)
+
+    async def test_a_refused_move_leaves_the_credits_where_they_were(self) -> None:
+        await self.add_credits(OLD, 40)
+        with self.assertRaises(MoveError):
+            await self.moves.move(OLD, NEW, "not the code")
+        self.assertEqual(
+            await self.scalar(
+                "SELECT sum(credits) FROM owner_credits WHERE owner_user_id = %s", OLD, person=OLD
+            ),
+            40,
+        )
+
     async def test_the_ai_credits_move_with_the_account(self) -> None:
         # (the new account's own credits, like its own hours, are dropped: the plan's are kept)
         await self.add_credits(OLD, 40)

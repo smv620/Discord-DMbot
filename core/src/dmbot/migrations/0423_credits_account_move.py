@@ -12,7 +12,9 @@ from __future__ import annotations
 # of the ID), so it opens the two tables to itself the way the move door does (`move_all`, for the
 # function's owner only, only while the move's setting is on).
 # As for the hours: the new account's own credits (a Try It's) are dropped, not added to the paid
-# plan's, and the old account's month totals move over. The ledger rows only change owner.
+# plan's, and the old account's month totals move over. The ledger rows only change owner, so the
+# new account's own earlier rows stay in the ledger under it (the ledger can then add up to more
+# than the month total, on purpose: nothing recomputes a total from the ledger).
 SQL = r"""
     DO $do$
     DECLARE
@@ -33,6 +35,7 @@ SQL = r"""
         AS $fn$
     BEGIN
         DELETE FROM owner_credits WHERE owner_user_id = NEW.user_id;
+        -- (the ON CONFLICT is a safety net only: the new account's rows are gone just above)
         INSERT INTO owner_credits (owner_user_id, month_start, credits)
             SELECT NEW.user_id, month_start, credits FROM owner_credits
              WHERE owner_user_id = OLD.user_id
