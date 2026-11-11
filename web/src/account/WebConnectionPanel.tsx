@@ -14,7 +14,7 @@ import { knowsHowOf, knowsHowWords } from "../content/knows-how-words";
 import { panelWords as p } from "../content/connection-panel-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import { webPage as words } from "../content/web-words";
-import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget } from "./api";
+import { type AccountApi, type WebEdge, type WebLinkChange, type WebLinkResult, type WebRevealTarget } from "./api";
 import LazyPanel from "./LazyPanel";
 import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
@@ -107,6 +107,8 @@ export default function ConnectionPanel({
   const saveFlight = useRef(false);
   const stopped = useRef(false); // Discard or Leave while a save is on its way: the rest of it is not sent
   const [problem, setProblem] = useState<string | null>(null);
+  const [undoable, setUndoable] = useState<number[]>([]); // the changes the last save made, oldest first, for ↩ Undo
+  const [undoing, setUndoing] = useState(false);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -153,6 +155,7 @@ export default function ConnectionPanel({
     saveFlight.current = true;
     setSaving(true);
     setProblem(null);
+    setUndoable([]);
     const plan = pending.flatMap((l) => changesOf(l, staged[l.id])).sort((x, y) => (ORDER[x.action] ?? 9) - (ORDER[y.action] ?? 9));
     let done = 0;
     stopped.current = false;
@@ -166,7 +169,7 @@ export default function ConnectionPanel({
         if (live.current) setStep({ done, of: plan.length });
         const sentTo = "id" in change ? (now.get(change.id) ?? change.id) : "";
         const sent = "id" in change ? { ...change, id: sentTo } : change;
-        let drawn: WebEdge | { removed: true } | null = null;
+        let drawn = null as WebLinkResult | null; // (set by the listener below)
         const refused = await act(sent, p.saved, change.action === "direction" ? { "bad-target": change.direction === "both" ? p.cannotBoth : p.cannotTurn } : undefined, (got) => (drawn = got));
         if (refused !== null) {
           // (a refusal with no words, being signed out, says nothing more)
@@ -174,6 +177,8 @@ export default function ConnectionPanel({
           return;
         }
         done += 1;
+        const made = drawn?.batch;
+        if (typeof made === "number" && live.current) setUndoable((was) => [...was, made]);
         // What is saved is no longer waiting; what still is follows the connection to its new id.
         let lost = false;
         if ("id" in change && drawn !== null) {
@@ -200,6 +205,30 @@ export default function ConnectionPanel({
     } finally {
       saveFlight.current = false;
       if (live.current) (setSaving(false), setStep(null));
+    }
+  }
+
+  /** Puts back the last save, newest change first; it stops at the first one that cannot be put back and says why. A change that cannot be
+   * put back blocks every older one behind it, so they are given up together (pressing again could only fail the same way). */
+  async function undo(): Promise<void> {
+    if (undoing || saving || dirty || undoable.length === 0) return;
+    setUndoing(true);
+    setProblem(null);
+    let left = [...undoable];
+    for (const batch of [...undoable].reverse()) {
+      // (the route's path wants a link id but core ignores it, so a fixed one cannot vanish between two undos)
+      const refused = await act({ action: "undo", id: "0".repeat(32), batch }, p.undone, { "undo-late": p.undoLate, changed: p.undoChanged, "not-found": p.undoGone });
+      if (refused !== null) {
+        if (live.current && refused !== "") setProblem(refused);
+        left = [];
+        break;
+      }
+      left = left.filter((x) => x !== batch);
+    }
+    if (live.current) {
+      setUndoable(left);
+      setUndoing(false);
+      box.current?.focus(); // (the button goes with the last undo, so the keyboard keeps its place)
     }
   }
 
@@ -244,6 +273,13 @@ export default function ConnectionPanel({
           </button>
           {adding && <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />}
         </div>
+      )}
+      {canEdit && undoable.length > 0 && !dirty && (
+        <p class="row">
+          <button type="button" class="button secondary" disabled={undoing || saving} aria-busy={undoing} onClick={() => void undo()}>
+            {undoing ? p.undoing : p.undoSave}
+          </button>
+        </p>
       )}
       {edge.links.length === 0 ? (
         <p class="muted">{p.none}</p>

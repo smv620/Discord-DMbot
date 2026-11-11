@@ -2006,7 +2006,12 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
-  | { action: "remove"; id: string; confirm: true };
+  | { action: "remove"; id: string; confirm: true }
+  // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
+  | { action: "undo"; id: string; batch: number };
+
+/** What a connection edit gave back: the edge as it now stands, and the `batch` that made the change (for Undo). */
+export type WebLinkResult = (WebEdge | { removed: true }) & { batch?: number | null };
 
 /** Words DMbot stopped asking about (#3577, core 0360): the table's own words and the DM's answer, "never" or "later" (Not now). */
 export interface KindOffer {
@@ -2201,6 +2206,8 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
+  /** The change batch a connection edit made, for its Undo (core #4156). */
+  batch?: number | null;
   /** An Undo of a name fix: how many lines were put back (#2645). */
   putBack?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
@@ -2983,7 +2990,7 @@ export interface AccountApi {
    * `{ removed: true }` when the last connection between two names went. */
   /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
   setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
-  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
+  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebLinkResult>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;

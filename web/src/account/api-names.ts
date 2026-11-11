@@ -528,7 +528,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
-      return got.removed || !got.edge ? { removed: true } : got.edge;
+      // The change's batch rides along only when the bot made one (an edit that changed nothing has none).
+      const made = typeof got.batch === "number" ? { batch: got.batch } : {};
+      return got.removed || !got.edge ? { removed: true, ...made } : { ...got.edge, ...made };
     },
   };
 }

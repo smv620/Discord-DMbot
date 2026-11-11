@@ -1007,6 +1007,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // What each connection edit changed, for Undo (the numbers only go up).
+  let lastBatch = 0;
+  const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
@@ -2344,57 +2347,73 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
-      const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
-        return found[0] ?? { removed: true };
-      };
-      if (change.action === "add") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
-        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
-        return edgeOf(change.a, change.b);
+      // Each edit is a batch that Undo can take back while nothing has been done since (core #4156): the snapshot is what it put back.
+      if (change.action === "undo") {
+        const kept = linkBatches.get(change.batch);
+        if (!kept) throw new ApiError("not-found");
+        if (change.batch !== Math.max(...linkBatches.keys())) throw new ApiError("changed");
+        state.links.splice(0, state.links.length, ...kept.map((l) => ({ ...l })));
+        linkBatches.delete(change.batch);
+        return { removed: true, batch: null };
       }
-      const link = state.links.find((l) => l.id === change.id);
-      if (!link) throw new ApiError("not-found");
-      if (change.action === "words") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        link.words = change.words.trim();
-      } else if (change.action === "direction") {
-        // Both ways or one way keeps the id; turning a one-way connection round writes it anew, with a new id (core #4166).
-        if (change.direction === link.direction) return edgeOf(link.a, link.b);
-        if (link.direction === "both" || change.direction === "both") link.direction = change.direction;
-        else {
-          [link.a, link.b] = [link.b, link.a];
-          link.id = `l${state.nextLink++}`;
+      const before = state.links.map((l) => ({ ...l }));
+      const edit = (): WebEdge | { removed: true } => {
+        const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
+          const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
+          return found[0] ?? { removed: true };
+        };
+        if (change.action === "add") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
+          state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
+          return edgeOf(change.a, change.b);
         }
-      } else if (change.action === "secret") {
-        link.secret = change.secret;
-      } else if (change.action === "pin") {
-        link.pinned = change.pinned;
-      } else if (change.action === "feeling") {
-        // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
-        if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
-        link.words = `knows (${change.feeling})`;
-      } else if (change.action === "knows-how") {
-        // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
-        if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
-        link.words = withKnowsHow(link.words, change.how);
-      } else if (change.action === "who") {
-        // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
-        const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
-        linkWho.set(
-          link.id,
-          change.who === "dm"
-            ? { who: "dm", knownBy: [] }
-            : change.who === "everyone"
-              ? { who: "all", knownBy: [] }
-              : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
-        );
-      } else {
-        if (change.confirm !== true) throw new ApiError("needs-confirm");
-        state.links.splice(state.links.indexOf(link), 1);
-      }
-      return edgeOf(link.a, link.b);
+        const link = state.links.find((l) => l.id === change.id);
+        if (!link) throw new ApiError("not-found");
+        if (change.action === "words") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          link.words = change.words.trim();
+        } else if (change.action === "direction") {
+          // Both ways or one way keeps the id; turning a one-way connection round writes it anew, with a new id (core #4166).
+          if (change.direction === link.direction) return edgeOf(link.a, link.b);
+          if (link.direction === "both" || change.direction === "both") link.direction = change.direction;
+          else {
+            [link.a, link.b] = [link.b, link.a];
+            link.id = `l${state.nextLink++}`;
+          }
+        } else if (change.action === "secret") {
+          link.secret = change.secret;
+        } else if (change.action === "pin") {
+          link.pinned = change.pinned;
+        } else if (change.action === "feeling") {
+          // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
+          if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
+          link.words = `knows (${change.feeling})`;
+        } else if (change.action === "knows-how") {
+          // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
+          if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
+          link.words = withKnowsHow(link.words, change.how);
+        } else if (change.action === "who") {
+          // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
+          const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
+          linkWho.set(
+            link.id,
+            change.who === "dm"
+              ? { who: "dm", knownBy: [] }
+              : change.who === "everyone"
+                ? { who: "all", knownBy: [] }
+                : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+          );
+        } else {
+          if (change.confirm !== true) throw new ApiError("needs-confirm");
+          state.links.splice(state.links.indexOf(link), 1);
+        }
+        return edgeOf(link.a, link.b);
+      };
+      const drawn = edit();
+      const batch = ++lastBatch;
+      linkBatches.set(batch, before);
+      return { ...drawn, batch };
     },
     async recapStyle(ref): Promise<RecapStyle> {
       calls.push(`recapStyle:${ref}`);
