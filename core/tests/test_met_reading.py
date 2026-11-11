@@ -126,6 +126,17 @@ class Keeping:
         return MetAdded(made=len(met))
 
 
+class Gone(Keeping):
+    """A met store whose every speaker's lines went before the write (#4091)."""
+
+    async def add(
+        self, guild_id: int, campaign_id: str, session_id: str,
+        met: Sequence[tuple[str, int, Sequence[int], Sequence[int]]],
+        *, session_started_at: int | None,
+    ) -> MetAdded:  # fmt: skip
+        return MetAdded(gone=len(met))
+
+
 LINE_MS = 1_700_000_001_000
 
 DOGS = {"what": "sled dogs", "count": 7, "lines": [1]}
@@ -154,6 +165,13 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
                           met_store=Keeping(), session_id="s")  # fmt: skip
         self.assertEqual(report.met_cut, 1)
         self.assertIn("1 cut short", report.line().split("met:")[1])
+
+    async def test_a_speaker_gone_before_the_write_is_counted(self) -> None:
+        lines = [line(1, DM, "The sled dogs pull hard."), *dm_session(10)[1:]]
+        report = await go(MetAnswer([DOGS]), Kept(), lines, met=True, met_store=Gone(),
+                          session_id="s")  # fmt: skip
+        self.assertEqual((report.met_gone, report.met_made), (1, 0))
+        self.assertIn("1 speaker gone", report.line().split("met:")[1])
 
     async def test_a_players_line_is_refused(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()

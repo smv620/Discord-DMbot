@@ -69,9 +69,10 @@ class PrivateScenes:
         session's row is held (`FOR SHARE`) before its lines are read, so "Delete my transcripts"
         or a DM's removal of a speaker, which lock that same row (`FOR UPDATE`) first, run wholly
         before or wholly after: a scene citing someone whose lines were just deleted is never
-        written (#4091). One lock order everywhere: the session's row, then its lines, then what
-        cites them. A scene found again keeps its id, so a "Not private" button posted before a
-        re-run still works."""
+        written (#4091). The order is this run's own advisory lock, then the session's row, then
+        its lines, then what cites them; the transcript deletions take the row first too, and never
+        the advisory lock. A scene found again keeps its id, so a "Not private" button posted
+        before a re-run still works."""
         recorded = sorted(set(opted_in))
         async with self._db.guild(guild_id) as conn:
             await conn.execute(

@@ -122,6 +122,8 @@ class MetStore:
             # read the encounters came from was minutes ago (an AI call), and "Delete my
             # transcripts" or a DM's removal of a speaker locks this same row before it deletes
             # their lines and the rows citing them, so a row citing someone gone is never written.
+            # By speaker, on purpose: the deletions this guards against take every line of that
+            # person in the session, so "has none left" is the exact test (#4091).
             cur = await conn.execute(
                 "SELECT DISTINCT user_id FROM transcript_lines WHERE guild_id = %s"
                 " AND session_id = %s",

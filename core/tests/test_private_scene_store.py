@@ -4,6 +4,7 @@ consent path. Needs Postgres (skipped without it); invented names and numbers.""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
@@ -87,8 +88,6 @@ class PrivateSceneStore(NamesTest):
     async def test_a_deletion_holding_the_session_runs_wholly_before_the_write(self) -> None:
         """#4091: the write waits on the session's row, which a deletion locks first, so it never
         cites someone whose lines the deletion took (one lock order: the row, then the lines)."""
-        import asyncio
-
         await self.said((650, P1), (670, P2))
         async with self.db.guild(GUILD) as conn:  # (the deletion, holding the row mid-way)
             await conn.execute(
@@ -96,8 +95,12 @@ class PrivateSceneStore(NamesTest):
                 (GUILD, self.sid),
             )
             writing = asyncio.create_task(self.write())
-            await asyncio.sleep(0.3)
-            self.assertFalse(writing.done())  # (it waits for the row)
+            try:
+                await asyncio.sleep(0.3)
+                self.assertFalse(writing.done())  # (it waits for the row)
+            except BaseException:
+                writing.cancel()  # (never left running against an open transaction)
+                raise
             await conn.execute(
                 "DELETE FROM transcript_lines WHERE guild_id = %s AND user_id = %s", (GUILD, P2)
             )
