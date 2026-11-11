@@ -20,6 +20,7 @@ export const panelWords = {
     direction === "a-b" ? `${a} to ${b} only.` : direction === "b-a" ? `${b} to ${a} only.` : "Both ways.",
   direction: (says: string): string => `Direction: ${says} Press to change it.`,
   directionNext: "Tap again for the next choice.",
+  cannotBoth: "A family role like this reads one way only. Change its words instead.",
   cannotTurn: "The direction of a family role like this can't change. Change its words instead.",
   reloadFirst: "The connections changed while saving. Close this panel, open it again and try the rest.",
   makeSecret: "Make secret",

@@ -42,6 +42,14 @@ export function changesOf(link: Link, staged: Staged | undefined): WebLinkChange
   return out;
 }
 
+/** Moves what is staged on one connection to its new id (it was written anew). */
+function moveStage(was: Record<string, Staged>, from: string, to: string): Record<string, Staged> {
+  if (from === to || was[from] === undefined) return was;
+  const next = { ...was, [to]: { ...was[to], ...was[from] } };
+  delete next[from];
+  return next;
+}
+
 /** Saved in this order: what keeps a connection's id (secret, pin) first, then the two that write it anew (words, direction). */
 const ORDER: Record<string, number> = { secret: 0, pin: 1, words: 2, direction: 3 };
 
@@ -159,24 +167,33 @@ export default function ConnectionPanel({
         const sentTo = "id" in change ? (now.get(change.id) ?? change.id) : "";
         const sent = "id" in change ? { ...change, id: sentTo } : change;
         let drawn: WebEdge | { removed: true } | null = null;
-        const refused = await act(sent, p.saved, change.action === "direction" ? { "bad-target": p.cannotTurn } : undefined, (got) => (drawn = got));
+        const refused = await act(sent, p.saved, change.action === "direction" ? { "bad-target": change.direction === "both" ? p.cannotBoth : p.cannotTurn } : undefined, (got) => (drawn = got));
         if (refused !== null) {
           // (a refusal with no words, being signed out, says nothing more)
           if (live.current && refused !== "") setProblem(done > 0 ? p.partlySaved(done, plan.length, refused) : p.notSaved(refused));
           return;
         }
         done += 1;
-        if ("id" in change && drawn !== null && "links" in (drawn as WebEdge)) {
-          const links = (drawn as WebEdge).links;
+        // What is saved is no longer waiting; what still is follows the connection to its new id.
+        let lost = false;
+        if ("id" in change && drawn !== null) {
+          const rewrites = change.action === "words" || change.action === "direction";
+          const links = "links" in (drawn as WebEdge) ? (drawn as WebEdge).links : [];
           const fresh = links.filter((l) => !known.has(l.id));
           known = new Set(links.map((l) => l.id));
           if (fresh.length === 1) now.set(change.id, fresh[0]!.id);
-          else if (fresh.length > 1) {
-            if (live.current) setProblem(p.reloadFirst);
-            return;
-          }
+          // (written anew but no new link, or several: the next change would go to the wrong one or to none)
+          else if (rewrites && !links.some((l) => l.id === sentTo)) lost = true;
+          else if (fresh.length > 1) lost = true;
         }
-        if (live.current) setStaged((was) => without(was, change)); // (what is saved is no longer waiting)
+        const moved = now.get("id" in change ? change.id : "");
+        if (live.current) {
+          setStaged((was) => without(moved && "id" in change ? moveStage(was, change.id, moved) : was, moved && "id" in change ? { ...change, id: moved } : change));
+        }
+        if (lost) {
+          if (live.current) setProblem(p.partlySaved(done, plan.length, p.reloadFirst));
+          return;
+        }
       }
     } catch {
       if (live.current) setProblem(words.errorFallback);

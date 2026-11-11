@@ -2,6 +2,7 @@
 // @vitest-environment happy-dom
 // The redesigned connection panel (#4155): a compact list with the add button on top, a line opened at a time, edits staged until
 // Save, a dot where something is unsaved, and a question before leaving with changes pending. A player gets the same list, read-only.
+import { useState } from "preact/hooks";
 import { act as rendered, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -263,6 +264,99 @@ describe("which way a connection reads", () => {
       { action: "words", id: "l1", words: "are friends" },
       { action: "direction", id: "l9", direction: "a-b" },
     ]);
+  });
+});
+
+/** The panel as the page holds it: the edge is state, and each change is answered with the edge as the API would draw it. */
+function Live({ answer }: { answer: (c: WebLinkChange, edge: WebEdge) => { edge: WebEdge; refuse?: string } }) {
+  const [edge, setEdge] = useState<WebEdge>(EDGE);
+  const act = async (c: WebLinkChange, _ok: string, _own?: unknown, onEdge?: (e: WebEdge) => void): Promise<string | null> => {
+    const got = answer(c, edge);
+    if (got.refuse) return got.refuse;
+    setEdge(got.edge);
+    onEdge?.(got.edge);
+    return null;
+  };
+  return (
+    <ConnectionPanel edge={edge} nameOf={(id) => names[id] ?? id} kindOf={() => "npc"} canEdit act={act as never} reveal={async () => null} revealing={new Set()} api={mockApi("table")} refId="r" onClose={() => {}} />
+  );
+}
+const withLinks = (edge: WebEdge, links: WebEdge["links"]): WebEdge => ({ ...edge, links });
+const stageWordsAndDirection = () => {
+  open(/are rivals/);
+  fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Direction: / }));
+  fireEvent.click(screen.getByRole("button", { name: p.save }));
+};
+
+describe("a save that writes a connection anew", () => {
+  it("keeps what is still waiting, on the new id, when a later change is refused", async () => {
+    render(
+      <Live
+        answer={(c, edge) =>
+          c.action === "words" ? { edge: withLinks(edge, [link("l9", { words: "friends", rawWords: "friends" }), edge.links[1]!]) } : { edge, refuse: "The bot said no." }
+        }
+      />,
+    );
+    stageWordsAndDirection();
+    expect((await screen.findByRole("alert")).textContent).toBe(p.partlySaved(1, 2, "The bot said no."));
+    expect(screen.getByRole("button", { name: p.save })).toBeTruthy(); // (the direction is still staged, on l9)
+    expect(row(/friends/).textContent).toContain("•");
+  });
+
+  it("stops and says how far it got when the answer shows more than one new connection", async () => {
+    const calls: WebLinkChange[] = [];
+    render(
+      <Live
+        answer={(c, edge) => {
+          calls.push(c);
+          return { edge: withLinks(edge, [link("n1"), link("n2"), edge.links[1]!]) };
+        }}
+      />,
+    );
+    stageWordsAndDirection();
+    expect((await screen.findByRole("alert")).textContent).toBe(p.partlySaved(1, 2, p.reloadFirst));
+    expect(calls).toHaveLength(1); // (the direction was not sent to a guess)
+  });
+
+  it("stops when the connection is gone and no new one shows (it was merged into another)", async () => {
+    render(<Live answer={(_c, edge) => ({ edge: withLinks(edge, [edge.links[1]!]) })} />);
+    stageWordsAndDirection();
+    expect((await screen.findByRole("alert")).textContent).toBe(p.partlySaved(1, 2, p.reloadFirst));
+  });
+
+  it("goes on when the id was kept", async () => {
+    const calls: WebLinkChange[] = [];
+    render(
+      <Live
+        answer={(c, edge) => {
+          calls.push(c);
+          return { edge };
+        }}
+      />,
+    );
+    stageWordsAndDirection();
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls.map((c) => ("id" in c ? c.id : ""))).toEqual(["l1", "l1"]);
+  });
+
+  it("says a family role that cannot read both ways reads one way only", async () => {
+    const { act } = show({ act: (async (c: WebLinkChange, _ok: string, own?: Record<string, string>) => (c.action === "direction" ? (own?.["bad-target"] ?? "no") : null)) as never });
+    open(/owes a favour/);
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / })); // → b-a
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / })); // → both
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    expect((await screen.findByRole("alert")).textContent).toContain(p.cannotBoth);
+    expect(act.mock.calls[0]![0]).toEqual({ action: "direction", id: "l2", direction: "both" });
+  });
+
+  it("a two-way line shows the pair words only when it is saved two-way, and the plain words when staged", () => {
+    show();
+    open(/owes a favour/);
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / }));
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / })); // → both, not saved
+    expect(row(/Cerric ↔ Wit · owes a favour to/)).toBeTruthy();
+    expect(screen.queryByText(/are connected/)).toBeNull();
   });
 });
 
