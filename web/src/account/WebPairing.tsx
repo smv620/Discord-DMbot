@@ -1,20 +1,23 @@
 /** @jsxImportSource preact */
 // The parts of joining two names that only show when it is on (#4155): the "Joining X" banner, and the "Connect to another name" button
 // with its Ctrl/⌘ hint. A separate file so the Story Graph page's first download stays within its budget.
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 
 import { pairingWords as w } from "../content/connection-pairing-words";
 
 export default function WebPairing({ kind, name, onPair, id }: { kind: "banner" | "button"; name: string; onPair: (id: string) => void; id: string }) {
   // While the banner is up, Escape cancels the pending join, as Cancel does. The listener is only there for the banner, and goes when it does.
+  // The latest onPair is read through a ref, so the page's new callback on each render does not re-add the listener.
+  const latest = useRef(onPair);
+  latest.current = onPair;
   useEffect(() => {
     if (kind !== "banner") return;
     const escape = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") onPair(id);
+      if (e.key === "Escape") latest.current(id);
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, [kind, id, onPair]);
+  }, [kind, id]);
   if (kind === "banner")
     return (
       <p class="web-side note" role="status">

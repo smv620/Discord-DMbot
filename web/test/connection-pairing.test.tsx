@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // Joining two names on the map (#4155, part 3): Ctrl/⌘+click the first, then any tap on the second; the "Connect to…" button for
 // a phone; and a connection in a name's panel opening its pair. The map only reports the picks; the page decides what opens.
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
@@ -49,29 +49,41 @@ describe("joining two names", () => {
     expect(onPair).toHaveBeenCalledWith("m");
   });
 
-  it("Escape cancels a pending join", async () => {
-    const { onPair } = draw({ pairFrom: "m" });
+  // The banner's listener is added in an effect, after its first paint: wait until it is on the window before pressing a key.
+  async function bannerListening() {
+    const add = vi.spyOn(window, "addEventListener");
+    const draws = draw({ pairFrom: "m" });
     expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 50)); // the banner's listener is added after its first paint
+    await waitFor(() => expect(add.mock.calls.some(([type]) => type === "keydown")).toBe(true));
+    return { ...draws, add };
+  }
+
+  it("Escape cancels a pending join", async () => {
+    const { onPair, add } = await bannerListening();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onPair).toHaveBeenCalledWith("m");
+    add.mockRestore();
   });
 
   it("another key does nothing", async () => {
-    const { onPair } = draw({ pairFrom: "m" });
-    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 50));
+    const { onPair, add } = await bannerListening();
     fireEvent.keyDown(window, { key: "a" });
     expect(onPair).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" }); // a positive control: the listener is there
+    expect(onPair).toHaveBeenCalledWith("m");
+    add.mockRestore();
   });
 
   it("no listener is left behind", async () => {
-    const { onPair } = draw({ pairFrom: "m" });
-    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 50));
+    const remove = vi.spyOn(window, "removeEventListener");
+    const { onPair, add } = await bannerListening();
+    const handler = add.mock.calls.find(([type]) => type === "keydown")![1];
     cleanup();
+    expect(remove).toHaveBeenCalledWith("keydown", handler);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onPair).not.toHaveBeenCalled();
+    add.mockRestore();
+    remove.mockRestore();
   });
 
   it("with a first name picked, a plain tap is the second, and the banner says so", async () => {
