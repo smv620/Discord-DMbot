@@ -1003,6 +1003,18 @@ WAITING_QUEUE = {
 }
 
 
+async def queue_link_undo(db: Database, session: Session, ref: str, batch: str) -> str:
+    """Queue the Undo of one connection edit (#4156), by the change number its answer carried. The
+    door checks the caller is a DM of the campaign and that the batch is one their own done
+    connection edit made there (`not_found` otherwise); the bot checks again and may say `gone`,
+    `changed` or `too_late`. Nothing is written until then."""
+    if not (batch.isascii() and batch.isdigit()) or len(batch) > 12:
+        raise RecapError("not_found")
+    return await _queue(
+        db, session, ref, entity=None, action="link-undo", target=batch, text="", flag=False
+    )
+
+
 async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue the DM's answer to one waiting connection, or Keep all. DM only (the door checks), and
     the bot applies the very calls the DM screen's buttons make. Returns the answer's id.
@@ -1144,11 +1156,17 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         around = await read_web(db, session, ref, center=got["resultId"], hops=1)
         pair = sorted((got["resultId"], got["resultOther"]))
         edge = next((e for e in around["edges"] if [e["a"], e["b"]] == pair), None)
+    if got["action"] == "link-undo":
+        # the page's ↩ Undo of one of its edits (#4156): it only needs to know it went back
+        return {"state": got["state"], "error": got["error"], "undone": got["state"] == "done"}
+    batches = got.get("resultBatches") or []
     return {
         "state": got["state"],
         "error": got["error"],
         "edge": edge,
         "removed": got["state"] == "done" and edge is None,
+        # the change this edit made, for the page's ↩ Undo (#4156); absent when it changed nothing
+        "batch": int(batches[0]) if got["state"] == "done" and batches else None,
     }
 
 

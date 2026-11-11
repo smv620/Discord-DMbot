@@ -319,3 +319,22 @@ class TheDiscordMenu(unittest.TestCase):
         turned = direction_choices(niece, "Mira", "Aldric", said)
         self.assertEqual([o.value for o in turned], ["c1", "w1"])  # (no both ways for a niece)
         self.assertEqual(turned[1].description, "w1 niece c1 None")  # (the role keeps its word)
+
+
+class TheDirectionsUndo(Editing):
+    """#4156's Undo takes back a direction change, a turn included (written anew, one batch)."""
+
+    async def test_a_turn_from_the_website_is_undone_whole(self) -> None:
+        rid = self.links["mira-rook"]
+        answer = await self.edit(rid, action="direction", direction="b-a")
+        await self.apply_all()
+        polled = await self.poll(answer)
+        self.assertIsNotNone(polled["batch"])
+        undo = await relationships.queue_link_undo(
+            self.web, self.session, self.cref, str(polled["batch"])
+        )
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertTrue((await self.poll(undo))["undone"])
+        stored = await self.memory.relation(self.g, self.one.id, rid)
+        assert stored is not None
+        self.assertEqual((stored.status, stored.both_ways), ("confirmed", None))

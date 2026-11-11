@@ -1,4 +1,4 @@
-"""0433_link_direction
+"""0435_link_direction
 
 A connection's direction, set by the DM: A → B, B → A or A ↔ B (#4154).
 """
@@ -15,22 +15,24 @@ from __future__ import annotations
 # never a flag, on a confirmed connection like the other link edits). The action list and the door
 # are read back as they are, the one addition made at each place, and each place must be found
 # the exact number of times, so a drift stops the migration instead of changing the wrong line
-# (as 0372 and 0400 do). The two graph doors carry the column on each connection, so a viewer is
+# (as 0372 and 0400 do). It runs after 0434_link_undo and extends the lists as that one leaves
+# them. The two graph doors carry the column on each connection, so a viewer is
 # told it only for a connection the door or the gate already shows them.
 _DOOR_SWAPS = (
     # the actions the door takes
     (
         "'merge-many', 'remove',\n                'link-add', 'link-words', 'link-secret',"
-        " 'link-remove', 'link-pin',",
+        " 'link-remove', 'link-pin', 'link-undo',",
         "'merge-many', 'remove',\n                'link-add', 'link-words', 'link-secret',"
-        " 'link-remove', 'link-pin', 'link-direction',",
+        " 'link-remove', 'link-pin', 'link-undo', 'link-direction',",
         1,
     ),
     # the ones that name a connection as their target (and only they do)
     (
-        "'confirm-undo', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',",
         "'confirm-undo', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',"
-        " 'link-direction',",
+        " 'link-undo',",
+        "'confirm-undo', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',"
+        " 'link-undo', 'link-direction',",
         2,
     ),
     # its text is one of the three directions, and it carries no flag
