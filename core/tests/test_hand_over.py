@@ -29,6 +29,7 @@ class TheQuestion(ConfirmedMemoryTest):
     async def tie(self, who: str, pred: str, at: int, item: str | None = None) -> str:
         made = await self.relate(who, pred, item or self.brand, status=CONFIRMED,
                                  from_session_at=at)  # fmt: skip
+        self.now += 1  # (the next tie is written a second later: ties never draw on the clock)
         return str(made.value[0].id)
 
     async def waiting(self) -> list[hand_over.Question]:
