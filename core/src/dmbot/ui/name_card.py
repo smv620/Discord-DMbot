@@ -26,7 +26,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import kin, link_edits, name_edits, tags
+from dmbot.memory import hand_over, kin, link_edits, name_edits, tags
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -275,12 +275,18 @@ class Row:
     )
 
 
+USED_TO_HAVE = "used to have"  # an ended owns or carries, in the DM's edit menus (#4115)
+USED_TO_HAVE_BACK = "used to be with"
+
+
 def _rows(
     lookup: CampaignLookup,
     entity_id: str,
     connections: list[Relation],
     secrets: bool,
     standing: Mapping[tuple[str, str], int] | None = None,
+    *,
+    history: bool = False,
 ) -> list[Row]:
     """The connections the card shows, in its order: those that read the same together, in the
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
@@ -291,6 +297,12 @@ def _rows(
     guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
+            continue
+        ended_holding = r.predicate in hand_over.HELD and r.to_session_at is not None
+        if ended_holding and not history:
+            # (an item sold or stolen is no longer had (#4115): the item's own card tells it in
+            # its "How it changed hands" line, never as a holding now, on any card or Show all.
+            # The DM's edit menus pass `history`: a wrong step must stay fixable)
             continue
         if not secrets and r.predicate in OLD_FEELINGS:
             r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
@@ -327,6 +339,8 @@ def _rows(
                 )
             )
         )
+        if ended_holding:  # (in the DM's edit menu, as what it was: never a holding now)
+            words = USED_TO_HAVE if ahead else USED_TO_HAVE_BACK
         after = (
             ""
             if ahead or r.predicate != "located_in"
@@ -459,6 +473,28 @@ def traits_line(links: Sequence[RuleLink]) -> str:
     return "\n🧬 " + " · ".join(parts) if parts else ""
 
 
+def history_line(
+    lookup: CampaignLookup, entity_id: str, connections: Sequence[Relation], *, secrets: bool
+) -> str:
+    """How an item changed hands (#4115): "🔁 **How it changed hands:** Claude sold it to
+    Belleros · Belleros has it now", or "" when no holder's tie to it has ended. A secret tie is
+    left out unless `secrets`, and a holder the reader may not see is never named."""
+
+    def name(holder: str) -> str | None:
+        e = lookup.entities.get(holder)
+        return _md(e.name) if e is not None and e.status == CONFIRMED else None
+
+    ties = [r for r in connections if r.object_id == entity_id and (secrets or not r.secret)]
+    steps = hand_over.history(ties, name)
+    if not steps:
+        return ""
+    steps[0] = steps[0][:1].upper() + steps[0][1:]  # ("It was stolen from Claude" leads)
+    return f"{HISTORY_HEAD} {' · '.join(steps)}"
+
+
+HISTORY_HEAD = "🔁 **How it changed hands:**"  # (the question card's icon, so the two link up)
+
+
 def card_text(
     lookup: CampaignLookup,
     entity_id: str,
@@ -506,8 +542,21 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
-    if (entity.type == ITEM if item is None else item) and entity.is_unique:
+    is_item = entity.type == ITEM if item is None else item
+    if is_item and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
+    steps = history_line(lookup, entity_id, connections, secrets=secrets) if is_item else ""
+    if steps:  # (the ended ties it tells are not listed again as connections below)
+        lines.append(steps)
+        connections = [
+            r
+            for r in connections
+            if not (
+                r.predicate in hand_over.HELD
+                and r.object_id == entity_id
+                and r.to_session_at is not None
+            )
+        ]
     if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
         lines.extend(thread_lines)
     if book_line and secrets:  # who this is in the DM's adventure: the DM's alone (#1715)
@@ -1260,6 +1309,7 @@ class NameCard(_Menu):
             secrets,
             # (the menu reads the card's words, the DM's Reputation included, #3642)
             await _dm_standing(memory, campaign, self.entity_id, secrets),
+            history=secrets,  # (the DM can still fix an ended holding, #4115)
         )
         self.stop()
         back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""
