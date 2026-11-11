@@ -7,7 +7,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
-import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES } from "../src/account/wizard-api";
+import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES, WizardError } from "../src/account/wizard-api";
+import { problemWords } from "../src/account/wizard-problems";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
 
@@ -234,6 +235,13 @@ describe("the wizard", () => {
     expect(words).toContain("10 MB");
     expect(words).toContain("Discord");
     expect(words).not.toContain("Drive");
+  });
+
+  it("doc_too_big shows its own text words, not the file-size ones", () => {
+    const text = problemWords(new WizardError("doc_too_big"));
+    expect(text).toBe(w.docs.unreadable["doc_too_big"]);
+    expect(text).not.toBe(w.docs.unreadable["too_big"]);
+    expect(text).not.toContain("MB");
   });
 
   it("a link is not offered in the first release", async () => {
