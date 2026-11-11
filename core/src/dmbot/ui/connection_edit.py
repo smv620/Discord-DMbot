@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import link_edits
+from dmbot.memory import kin, link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
@@ -131,20 +131,37 @@ async def website(interaction: discord.Interaction, campaign_id: str) -> None:
 # Which way a connection reads, the DM's choice (#4154): the same three as the website's toggle.
 DIRECTION_PLACEHOLDER = "Which way does it read?"
 BOTH = "both"  # (the other two values are the id of the name it reads from)
+BOTH_LABEL = "Both ways ↔"
 
 
-def direction_choices(r: Relation, first: str, second: str) -> list[discord.SelectOption]:
-    """ "Cerric → Wit", "Wit → Cerric", "Cerric ↔ Wit", the one it reads now chosen."""
+def direction_choices(
+    r: Relation, first: str, second: str, said: Callable[[Relation], str]
+) -> list[discord.SelectOption]:
+    """ "Cerric → Wit", "Wit → Cerric", "Both ways ↔", the one it reads now chosen. A chosen menu
+    never shows its placeholder, so each choice's second line is the sentence it would give
+    (`said`: "Cerric is a rival of Wit"). Names are cut to a menu's name length first, so both ends
+    and the arrow always show. A family role true of one name only ("niece") keeps its word and
+    has no both-ways choice once it has a direction: the arrow says who holds the role."""
+    a, b = logic.name_label(first), logic.name_label(second)
+    role = kin.role_of(r.detail) if r.predicate == "kin_of" else None
+    one_way_role = role is not None and kin.directional(role)
+    one_way = {"both_ways": False} if not one_way_role else {"directional": True}
+    turned = dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id, **one_way)
     both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways)
+    choices = [
+        (f"{a} → {b}", r.subject_id, not both, said(dataclasses.replace(r, **one_way))),
+        (f"{b} → {a}", r.object_id, False, said(turned)),
+    ]
+    if not (one_way_role and r.directional):
+        choices.append((BOTH_LABEL, BOTH, both, said(dataclasses.replace(r, both_ways=True))))
     return [
         discord.SelectOption(
-            label=logic.shorten(label, logic.OPTION_LABEL_MAX), value=value, default=now
+            label=logic.shorten(label, logic.OPTION_LABEL_MAX),
+            value=value,
+            default=now,
+            description=logic.shorten(line, logic.DESCRIPTION_MAX) if line else None,
         )
-        for label, value, now in (
-            (f"{first} → {second}", r.subject_id, not both),
-            (f"{second} → {first}", r.object_id, False),
-            (f"{first} ↔ {second}", BOTH, both),
-        )
+        for label, value, now, line in choices
     ]
 
 
@@ -322,7 +339,12 @@ class OneConnection(_Menu):
             self.direction = _Select(
                 self._direction_picked,
                 placeholder=DIRECTION_PLACEHOLDER,
-                options=direction_choices(r, subject.name, other.name),
+                options=direction_choices(
+                    r,
+                    subject.name,
+                    other.name,
+                    lambda x: sentence(found.names, x, feeling=True) or "",
+                ),
                 row=4,
             )
             self.add_item(self.direction)

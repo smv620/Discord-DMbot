@@ -150,7 +150,9 @@ def edges_from(
                 "back": f"is linked ({quoted(str(row['detail']))}) to"
                 if own
                 else back_words(
-                    str(row["predicate"]),
+                    # (as this reader is shown it: a non-DM never reads an old friend or enemy
+                    # line's feeling, not even from the other end, #3611)
+                    for_reader(str(row["predicate"]), "", feeling=is_dm)[0],
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,

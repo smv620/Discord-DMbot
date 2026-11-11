@@ -222,9 +222,7 @@ PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
-ROLE_ONE_WAY = "That family role is true of one name only, so it can't read both ways."
-ROLE_CANT_TURN = "That family role can't be turned round. Change its words instead."
-TWIN_THE_OTHER_WAY = "That connection already exists the other way round."
+ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
 DIRECTION_DM_ONLY = "Only the DM can change which way a connection reads."
 KNOWS_HOW_ONLY = (
     "That connection isn't about two people knowing each other any more."
@@ -5375,6 +5373,7 @@ class MemoryStore:
         keep_flags: bool = False,
         by_hand: bool = False,
         knows_how: str = "",
+        both_ways: bool | None = None,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -5384,7 +5383,8 @@ class MemoryStore:
         `made_by`: the source to record when it is not the write's own (a guess a player voiced is
         the extractor's, whoever pressed the button). `knows_how` (#3881): on a `knows` only, how
         the two know each other ("met", "aware" or ""); restating a known one only ever moves it up,
-        and "met" moves the other's existing `knows` back up too."""
+        and "met" moves the other's existing `knows` back up too. `both_ways` (#4154): the DM's
+        direction for a new row (None: its kind's default), which also decides its stored order."""
         source = made_by or w.source
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
@@ -5428,7 +5428,7 @@ class MemoryStore:
             and pred.key == "kin_of"
             and kin.role_of(detail)
         )
-        s, o = ordered(pred, subject_id, object_id, detail, directional)
+        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways)
         # A disguise is hidden by nature (#3091): a NEW one is made secret however it is made, and
         # the DM reveals it with the connection's own switch. One that already exists keeps the
         # DM's choice (the upgrade below reads the caller's `secret`).
@@ -5439,6 +5439,7 @@ class MemoryStore:
             pred.version, unrevealed, directional, (decided or None),
             # (between two people only: a character "knows" a place or a secret, never "met" it)
             knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
+            both_ways=both_ways,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -5521,13 +5522,15 @@ class MemoryStore:
 
         Both ways is the row's own `both_ways` mark, stored only where it differs from its kind's
         default (`link_words.BOTH_WAYS`), so a kind's default can still change for every row that
-        never had one. Turning it round swaps the two names in place, never an end and a new row:
-        it corrects how it was written, not something that happened in the story (so no "used to"
-        line), and the connection keeps its id and with it its pin, who knows it, its beliefs and
-        its evidence. A family role turns round to the other name's neutral role ("niece" to "aunt
-        or uncle": `kin.opposite`); one with none, or a one-way role made two-way, is refused, and
-        so is a turn onto a twin that already reads the other way. The direction it already has
-        writes nothing (an empty batch)."""
+        never had one. Turning it round is the words change's own path (Supervisor's ruling): the
+        connection is written anew the other way, through every check a new connection gets (the
+        kinds of names each end may be, the travel and "led to" rules, flags), keeping who sees it
+        and what is believed of it, and the old one is ended as a correction (rejected, never a
+        "used to" line). A twin that already reads that way takes over, as for new words. A
+        family role turns round with its names: "Mira is the niece of Aldric" turned is "Aldric
+        is the niece of Mira", the correction a DM makes when it was written the wrong way round,
+        never a guessed opposite. A role true of one name only can't read both ways. The direction
+        it already has writes nothing (an empty batch)."""
         if source != DM:
             raise MemoryRuleError(DIRECTION_DM_ONLY)
         async with self._write(guild_id, campaign_id, source) as w:
@@ -5537,33 +5540,36 @@ class MemoryStore:
             predicate, detail = str(current["predicate"]), str(current["detail"] or "")
             subject, other = str(current["subject_id"]), str(current["object_id"])
             role = kin.role_of(detail) if predicate == link_words.KIN else None
-            one_way_role = (
-                bool(current["directional"]) and role is not None and kin.directional(role)
-            )
-            default = predicate in link_words.BOTH_WAYS
-            changes: dict[str, Any] = {}
+            one_way_role = role is not None and kin.directional(role)
+            directional = bool(current["directional"])
             if first is None:
-                if one_way_role:
+                if one_way_role and directional:
                     raise MemoryRuleError(ROLE_ONE_WAY)
-                mark = None if default else True
+                mark = None if predicate in link_words.BOTH_WAYS else True
             else:
                 if first not in (subject, other):
                     raise MemoryRuleError(NOT_FOUND)
-                # (a one-way family role already reads one way by its role: its mark stays)
-                mark = current["both_ways"] if one_way_role else (False if default else None)
-                if first != subject:
-                    changes.update({"subject_id": other, "object_id": subject})
-                    if one_way_role:
-                        turned = kin.opposite(role or "")
-                        if turned is None:
-                            raise MemoryRuleError(ROLE_CANT_TURN)
-                        # (a role whose opposite is mutual, "sister" to "sibling", has no side)
-                        changes.update({"detail": turned, "directional": kin.directional(turned)})
-                    await _no_twin_the_other_way(w, current, changes.get("detail", detail))
-            if current["both_ways"] != mark:
-                changes["both_ways"] = mark
-            row = await w.update(RELATIONS, relation_id, changes) if changes else current
-            return Written(_relation(row), w.batch)
+                if one_way_role:
+                    # (an arrow on "niece" says who the niece is: the role takes the direction,
+                    # #2457, and needs no mark of its own)
+                    directional, mark = True, None
+                else:
+                    mark = False if predicate in link_words.BOTH_WAYS else None
+            changes = {
+                k: v
+                for k, v in (("both_ways", mark), ("directional", directional))
+                if current[k] != v
+            }
+            if changes:
+                # (first on the row as it stands, in this same change: turned round, it must no
+                # longer read both ways, or it would be its own twin the other way round)
+                current = await w.update(RELATIONS, relation_id, changes)
+            if first is None or first == subject:
+                return Written(_relation(current), w.batch)
+            new = await self._replace_relation_in(
+                w, current, predicate, detail, directional=directional, swap=True, both_ways=mark
+            )
+            return Written(new, w.batch)
 
     async def update_relation(
         self,
@@ -6035,40 +6041,69 @@ class MemoryStore:
             current = await w.get(RELATIONS, relation_id)
             if current is None or current["status"] != CONFIRMED:
                 raise MemoryRuleError(NOT_FOUND)
-            before = {
-                r.id: r.status
-                for r in await _relations_touching(w, current["subject_id"], current["object_id"])
-            }
-            # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
-            # connection stored the other way round); it only matters to a family role (#2457)
-            first, second = (
-                (current["object_id"], current["subject_id"])
-                if swap
-                else (current["subject_id"], current["object_id"])
-            )
-            new, _ = await self.add_relation_in(
-                w, first, predicate, second, confidence=1.0,
-                status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
-                unrevealed=bool(current["unrevealed"]), directional=directional,
-                # new words or a new feeling keep whether they met (#3881)
-                knows_how=str(current["knows_how"] or "") if predicate == KNOWS else "",
+            # The DM's direction for it (#4154) stays with the same kind; a new kind starts from its
+            # own default (a one-way rival made an enemy reads both ways, as every enemy does)
+            mark = current["both_ways"] if predicate == current["predicate"] else None
+            new = await self._replace_relation_in(
+                w, current, predicate, detail, directional=directional, swap=swap,
+                dm_feeling=dm_feeling, both_ways=mark,
             )  # fmt: skip
-            if dm_feeling and predicate == "knows" and source == DM:
-                await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
-            if new.id == relation_id:
-                return Written(new, w.batch)
-            # The words are new, or match a duplicate only proposed so far (the upgrade just made it
-            # the DM's, with no beliefs yet): the new connection takes over (#2409)
-            if before.get(new.id) != CONFIRMED:
-                await beliefs.carry(w, current, new.id)
-                moved = await w.get(RELATIONS, new.id)
-                assert moved is not None
-                new = _relation(moved)
-            if current["secret"] and not new.secret:
-                new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
-            check_status_change(current["status"], REJECTED, source)
-            await w.update(RELATIONS, relation_id, {"status": REJECTED})
             return Written(new, w.batch)
+
+    async def _replace_relation_in(
+        self,
+        w: Changes,
+        current: dict[str, Any],
+        predicate: str,
+        detail: str,
+        *,
+        directional: bool,
+        swap: bool,
+        dm_feeling: bool = False,
+        both_ways: bool | None = None,
+    ) -> Relation:
+        """`change_relation_words`'s work in a write already open: the connection written anew with
+        every check `add_relation_in` makes, keeping who sees it and what is believed of it, and
+        the old one ended (rejected: a correction, never history). Also a turn round (#4154)."""
+        relation_id = str(current["id"])
+        before = {
+            r.id: r.status
+            for r in await _relations_touching(w, current["subject_id"], current["object_id"])
+        }
+        # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
+        # connection stored the other way round, #2457), or the DM turned it round (#4154)
+        first, second = (
+            (current["object_id"], current["subject_id"])
+            if swap
+            else (current["subject_id"], current["object_id"])
+        )
+        new, _ = await self.add_relation_in(
+            w, first, predicate, second, confidence=1.0,
+            status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+            unrevealed=bool(current["unrevealed"]), directional=directional,
+            # new words or a new feeling keep whether they met (#3881)
+            knows_how=str(current["knows_how"] or "") if predicate == KNOWS else "",
+            both_ways=both_ways,
+        )  # fmt: skip
+        if dm_feeling and predicate == "knows" and w.source == DM:
+            await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
+        if new.id == relation_id:
+            return new
+        # The words are new, or match a duplicate only proposed so far (the upgrade just made it
+        # the DM's, with no beliefs yet): the new connection takes over (#2409)
+        if before.get(new.id) != CONFIRMED:
+            await beliefs.carry(w, current, new.id)
+            moved = await w.get(RELATIONS, new.id)
+            assert moved is not None
+            new = _relation(moved)
+        if current["secret"] and not new.secret:
+            new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
+        # and who knows it (#2935): the list follows the statement to its new row, so new words or
+        # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
+        await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        check_status_change(current["status"], REJECTED, w.source)
+        await w.update(RELATIONS, relation_id, {"status": REJECTED})
+        return new
 
     async def resolve_flag(
         self, guild_id: int, campaign_id: str, flag_id: str, *, source: str
@@ -7878,21 +7913,6 @@ async def _met_back(
             await w.update(RELATIONS, r.id, {"knows_how": KNOWS_MET})
 
 
-async def _no_twin_the_other_way(w: Scope, current: dict[str, Any], detail: str) -> None:
-    """Refuse turning a connection round onto one that already reads that way (#4154): the same
-    kind and words from the other name, still kept. Two would say the same thing twice."""
-    for r in await _relations_touching(w, str(current["object_id"])):
-        if (
-            r.id != current["id"]
-            and r.status in (CONFIRMED, PROPOSED)
-            and r.to_session_at is None
-            and (r.subject_id, r.object_id) == (current["object_id"], current["subject_id"])
-            and r.predicate == current["predicate"]
-            and r.detail.casefold() == detail.casefold()
-        ):
-            raise MemoryRuleError(TWIN_THE_OTHER_WAY)
-
-
 async def _relations_touching(w: Scope, *entity_ids: str) -> list[Relation]:
     # In id order: the facts a check finds become flags in this order, so the same memory
     # always gets the same flags, whatever order the rows sit in on disk (#476).
@@ -8281,7 +8301,10 @@ async def _move_relations(
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
-            subject, obj = ordered(pred, subject, obj, str(row["detail"]), bool(row["directional"]))
+            subject, obj = ordered(
+                pred, subject, obj, str(row["detail"]), bool(row["directional"]),
+                row.get("both_ways"),  # (the DM's direction stays as it was, #4154)
+            )  # fmt: skip
         # (a join moves a connection AND makes it secret in this one update: a second update of
         # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync
         # from treating it as shown)

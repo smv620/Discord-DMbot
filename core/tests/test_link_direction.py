@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory.gate import CONNECTION
 from dmbot.memory.link_words import (
     PAIR_WORDS,
     back_words,
@@ -15,12 +15,7 @@ from dmbot.memory.link_words import (
     reads_both_ways,
 )
 from dmbot.memory.models import MemoryRuleError, Relation
-from dmbot.memory.store import (
-    DIRECTION_DM_ONLY,
-    ROLE_CANT_TURN,
-    ROLE_ONE_WAY,
-    TWIN_THE_OTHER_WAY,
-)
+from dmbot.memory.store import DIRECTION_DM_ONLY, ROLE_ONE_WAY
 from dmbot.web import relationships
 from tests.test_memory_store import GUILD_A, MemoryTest
 from tests.test_web_link_actions import Editing
@@ -48,7 +43,7 @@ class TheWords(unittest.TestCase):
         self.assertEqual(pair_words("kin_of", "sibling"), "are siblings")
         self.assertEqual(pair_words("kin_of", "niece"), "are family")  # (an undirected old row)
         self.assertEqual(pair_words("knows", "", "met"), "have met")
-        self.assertEqual(pair_words("knows", "", "aware"), "know each other")
+        self.assertEqual(pair_words("knows", "", "aware"), "know of each other")
         self.assertEqual(
             pair_words("associated_with", "sworn on the ashes of"),
             "are connected (“sworn on the ashes of”)",
@@ -67,14 +62,18 @@ class TheWords(unittest.TestCase):
         self.assertIsNone(back_words("rival_of", ""))
         self.assertEqual(back_words("kin_of", "", both_ways=False), "is family of")
 
-    def test_a_role_turns_round_to_a_neutral_word(self) -> None:
-        for role, turned in (
-            ("niece", "aunt or uncle"), ("uncle", "niece or nephew"), ("mother", "child"),
-            ("son", "parent"), ("grandmother", "grandchild"), ("sister", "sibling"),
-            ("wife", "spouse"), ("cousin", "cousin"), ("guardian", None),
-        ):  # fmt: skip
-            with self.subTest(role):
-                self.assertEqual(kin.opposite(role), turned)
+    def test_a_player_never_reads_a_feeling_from_the_other_end(self) -> None:
+        """#3611: the DM's old friend and enemy lines are plain "knows" to anyone else."""
+        for predicate in ("ally_of", "enemy_of"):
+            row = {
+                "id": "r1", "a": "bb", "b": "aa", "predicate": predicate, "detail": "",
+                "secret": False, "at": 1, "both_ways": False,
+            }  # fmt: skip
+            with self.subTest(predicate):
+                (edge,) = relationships.edges_from([row], can_edit=False, is_dm=False)
+                back = str(edge["links"][0]["back"])
+                self.assertNotIn("friend", back)
+                self.assertNotIn("enemy", back)
 
 
 class TheStore(MemoryTest):
@@ -91,6 +90,13 @@ class TheStore(MemoryTest):
         got = await self.memory.relation(GUILD_A, self.c, rid)
         assert got is not None
         return got
+
+    async def live(self, predicate: str) -> list[Relation]:
+        return [
+            r
+            for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+            if r.predicate == predicate and r.status == "confirmed"
+        ]
 
     async def turn(self, rid: str, first: str | None) -> Any:
         return await self.memory.set_direction(GUILD_A, self.c, rid, first, source="dm")
@@ -114,35 +120,86 @@ class TheStore(MemoryTest):
         back = await self.turn(r.id, None)
         self.assertIsNone(back.value.both_ways)  # (the kind's default: nothing stored)
 
-    async def test_a_flip_swaps_the_names_keeps_the_id_and_undo_swaps_back(self) -> None:
+    async def test_a_turn_writes_it_anew_keeping_secret_pin_and_knowers_and_undo_restores(
+        self,
+    ) -> None:
+        hero = await self.add(
+            "Hero", type="character", role="player_character", played_by=8, status="confirmed"
+        )
         r = await self.tie("sworn_to", self.cerric, self.wit, secret=True)
         await self.memory.pin(GUILD_A, self.c, r.id, True, source="dm")
-        done = await self.turn(r.id, self.wit)
-        flipped = await self.stored(r.id)
-        self.assertEqual((flipped.subject_id, flipped.object_id), (self.wit, self.cerric))
-        self.assertTrue(flipped.secret)  # (a secret stays secret through a flip)
-        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {r.id})
-        await self.memory.undo(GUILD_A, self.c, done.batch)
-        again = await self.stored(r.id)
-        self.assertEqual((again.subject_id, again.object_id), (self.cerric, self.wit))
-
-    async def test_a_family_role_turns_round_or_is_refused(self) -> None:
-        niece = await self.tie("kin_of", self.cerric, self.wit, detail="niece", directional=True)
-        await self.turn(niece.id, self.wit)
-        turned = await self.stored(niece.id)
-        self.assertEqual(
-            (turned.subject_id, turned.detail, turned.directional),
-            (self.wit, "aunt or uncle", True),
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, CONNECTION, r.id, [hero], source="dm"
         )
-        self.assertEqual(await self.refused(niece.id, None), ROLE_ONE_WAY)
-        ward = await self.add("Pell", type="character")
-        guardian = await self.tie("kin_of", self.cerric, ward, detail="guardian", directional=True)
-        self.assertEqual(await self.refused(guardian.id, ward), ROLE_CANT_TURN)
+        done = await self.turn(r.id, self.wit)
+        new = done.value
+        self.assertNotEqual(new.id, r.id)
+        self.assertEqual((new.subject_id, new.object_id, new.secret), (self.wit, self.cerric, True))
+        self.assertEqual((await self.stored(r.id)).status, "rejected")  # (a correction, no history)
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {new.id})
+        known = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [new.id])
+        self.assertEqual(known.get(new.id), [hero])
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        self.assertEqual([x.id for x in await self.live("sworn_to")], [r.id])
 
-    async def test_a_twin_the_other_way_round_is_refused(self) -> None:
+    async def test_a_turned_rivalry_said_again_stays_one_and_turned(self) -> None:
+        r = await self.tie("rival_of", self.cerric, self.wit)
+        _low, high = sorted((self.cerric, self.wit))
+        turned = (await self.turn(r.id, high)).value
+        self.assertEqual((turned.subject_id, turned.both_ways), (high, False))
+        await self.relate(self.cerric, "rival_of", self.wit, status="confirmed")
+        (only,) = await self.live("rival_of")
+        self.assertEqual((only.id, only.subject_id), (turned.id, high))
+
+    async def test_a_merge_keeps_the_dms_direction(self) -> None:
+        r = await self.tie("rival_of", self.cerric, self.wit)
+        _low, high = sorted((self.cerric, self.wit))
+        await self.turn(r.id, high)
+        twin = await self.add("Cerric the Bold", type="character")
+        await self.memory.merge(GUILD_A, self.c, self.cerric, twin, source="dm")
+        (only,) = await self.live("rival_of")
+        self.assertEqual((only.subject_id, only.both_ways), (high, False))
+
+    async def test_a_family_role_turns_with_its_names_and_reads_one_way(self) -> None:
+        niece = await self.tie("kin_of", self.cerric, self.wit, detail="niece", directional=True)
+        turned = (await self.turn(niece.id, self.wit)).value
+        self.assertEqual(
+            (turned.subject_id, turned.detail, turned.directional), (self.wit, "niece", True)
+        )  # ("Wit is the niece of Cerric": the correction when it was written the wrong way)
+        self.assertEqual(await self.refused(turned.id, None), ROLE_ONE_WAY)
+
+    async def test_an_old_undirected_role_takes_the_arrow(self) -> None:
+        sister = await self.tie("kin_of", self.cerric, self.wit, detail="sister")
+        self.assertFalse(sister.directional)
+        done = await self.turn(sister.id, sister.subject_id)
+        self.assertEqual((done.value.directional, done.value.both_ways), (True, None))
+
+    async def test_a_turn_the_rules_refuse_writes_nothing(self) -> None:
+        """A turn is a new connection's write, with its checks (the reviewer's B2): a player
+        character never travels with its own companion."""
+        hero = await self.add(
+            "Hero", type="character", role="player_character", played_by=8, status="confirmed"
+        )
+        r = await self.tie("travels_with", self.cerric, hero)
+        with self.assertRaises(MemoryRuleError):
+            await self.turn(r.id, hero)
+        left = [(x.id, x.subject_id, x.both_ways) for x in await self.live("travels_with")]
+        self.assertEqual(left, [(r.id, self.cerric, None)])
+
+    async def test_a_words_change_keeps_the_dms_direction(self) -> None:
+        r = await self.tie("knows", self.cerric, self.wit)
+        both = (await self.turn(r.id, None)).value
+        changed = await self.memory.change_relation_words(
+            GUILD_A, self.c, both.id, "knows", "wary", source="dm", dm_feeling=True
+        )
+        self.assertIs(changed.value.both_ways, True)
+
+    async def test_a_twin_the_other_way_round_takes_over(self) -> None:
         r = await self.tie("sworn_to", self.cerric, self.wit)
-        await self.tie("sworn_to", self.wit, self.cerric)
-        self.assertEqual(await self.refused(r.id, self.wit), TWIN_THE_OTHER_WAY)
+        twin = await self.tie("sworn_to", self.wit, self.cerric)
+        done = await self.turn(r.id, self.wit)
+        self.assertEqual(done.value.id, twin.id)
+        self.assertEqual([x.id for x in await self.live("sworn_to")], [twin.id])
 
     async def test_the_same_direction_writes_nothing_and_only_the_dm_sets_it(self) -> None:
         r = await self.tie("sworn_to", self.cerric, self.wit)
@@ -164,8 +221,10 @@ class TheWebsite(Editing):
             with self.subTest(direction):
                 answer = await self.edit(rid, action="direction", direction=direction)
                 self.assertEqual([o.error for o in await self.apply_all()], [""])
-                self.assertEqual((await self.poll(answer))["state"], "done")
-                link = self.link_of(await self.graph(center=self.mira, hops=1), rid)
+                polled = await self.poll(answer)
+                self.assertEqual(polled["state"], "done")
+                (link,) = polled["edge"]["links"]  # (a turn writes it anew: the id may change)
+                rid = link["id"]
                 self.assertEqual(link["direction"], direction)
                 self.assertEqual("pairWords" in link, direction == "both")
                 stored = await self.memory.relation(self.g, self.one.id, rid)
@@ -198,14 +257,12 @@ class TheWebsite(Editing):
                     "bad_action",
                 )
 
-    async def test_a_family_role_that_cant_turn_fails_plainly(self) -> None:
+    async def test_both_ways_on_a_one_way_family_role_fails(self) -> None:
         made = await self.memory.add_relation(
             self.g, self.one.id, self.mira, "kin_of", self.rook, source="dm", confidence=1.0,
-            status="confirmed", detail="guardian", directional=True,
+            status="confirmed", detail="niece", directional=True,
         )  # fmt: skip
-        rid = made.value[0].id
-        towards = "b-a" if min(self.mira, self.rook) == self.mira else "a-b"
-        answer = await self.edit(rid, action="direction", direction=towards)
+        answer = await self.edit(made.value[0].id, action="direction", direction="both")
         await self.apply_all()
         self.assertEqual((await self.poll(answer))["state"], "failed")
 
@@ -240,14 +297,25 @@ class TheDiscordMenu(unittest.TestCase):
             False, 0, both_ways=both_ways,
         )  # fmt: skip
 
-    def test_three_choices_with_the_one_it_reads_now_chosen(self) -> None:
-        from dmbot.ui.connection_edit import BOTH, direction_choices
+    def test_three_choices_each_saying_its_sentence(self) -> None:
+        from dmbot.ui.connection_edit import BOTH, BOTH_LABEL, direction_choices
 
-        one_way = direction_choices(self.rel("sworn_to"), "Cerric", "Wit")
+        def said(r: Relation) -> str:
+            return f"{r.subject_id} {r.detail or r.predicate} {r.object_id} {r.both_ways}"
+
+        one_way = direction_choices(self.rel("sworn_to"), "Cerric", "Wit", said)
         self.assertEqual(
-            [(o.label, o.value, o.default) for o in one_way],
-            [("Cerric → Wit", "c1", True), ("Wit → Cerric", "w1", False),
-             ("Cerric ↔ Wit", BOTH, False)],
+            [(o.label, o.value, o.default, o.description) for o in one_way],
+            [("Cerric → Wit", "c1", True, "c1 sworn_to w1 False"),
+             ("Wit → Cerric", "w1", False, "w1 sworn_to c1 False"),
+             (BOTH_LABEL, BOTH, False, "c1 sworn_to w1 True")],
         )  # fmt: skip
-        both = direction_choices(self.rel("rival_of"), "Cerric", "Wit")
+        both = direction_choices(self.rel("rival_of"), "Cerric", "Wit", said)
         self.assertEqual([o.default for o in both], [False, False, True])
+        niece = Relation(
+            "r1", "c1", "kin_of", "w1", "niece", 1.0, "confirmed", "dm", (), None, None, None,
+            None, False, 0, directional=True,
+        )  # fmt: skip
+        turned = direction_choices(niece, "Mira", "Aldric", said)
+        self.assertEqual([o.value for o in turned], ["c1", "w1"])  # (no both ways for a niece)
+        self.assertEqual(turned[1].description, "w1 niece c1 None")  # (the role keeps its word)

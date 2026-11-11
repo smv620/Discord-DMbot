@@ -83,9 +83,9 @@ ONE_WAY_BACK = {
 }
 # A role true of both names, said of the two together ("are cousins")
 KIN_PAIR_WORDS = {"sibling": "are siblings", "spouse": "are married", "cousin": "are cousins"}
-# How two people know each other (#3881), said of the two: "aware" is one-way by its nature (one
-# has only heard of the other), so it keeps "know each other" rather than claim more
-KNOWS_PAIR_WORDS = {"met": "have met"}
+# How two people know each other (#3881), said of the two: "aware" (only heard of each other) never
+# claims they met
+KNOWS_PAIR_WORDS = {"met": "have met", "aware": "know of each other"}
 
 
 def for_reader(predicate: str, detail: str, *, feeling: bool) -> tuple[str, str]:

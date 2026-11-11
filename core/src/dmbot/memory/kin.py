@@ -66,28 +66,6 @@ def directional(detail: str) -> bool:
     return role is not None and role not in MUTUAL
 
 
-# A one-way role read from the other name (#4154, a connection turned round by the DM): the neutral
-# word, so a gender is never guessed for the name that now holds it ("niece" turns round to "aunt
-# or uncle", never "aunt"). A role with no opposite DMbot knows ("guardian": "ward" is no role) is
-# missing, and the caller refuses the turn.
-_OPPOSITE = {
-    **dict.fromkeys(("parent", "mother", "father"), "child"),
-    **dict.fromkeys(("child", "son", "daughter"), "parent"),
-    **dict.fromkeys(("grandparent", "grandmother", "grandfather"), "grandchild"),
-    **dict.fromkeys(("grandchild", "granddaughter", "grandson"), "grandparent"),
-    **dict.fromkeys(("aunt", "uncle", "aunt or uncle"), "niece or nephew"),
-    **dict.fromkeys(("niece", "nephew", "niece or nephew"), "aunt or uncle"),
-    **dict.fromkeys(("sister", "brother"), "sibling"),
-    **dict.fromkeys(("wife", "husband"), "spouse"),
-}
-
-
-def opposite(role: str) -> str | None:
-    """The role the other name holds ("niece" → "aunt or uncle"), or None when DMbot knows none.
-    A mutual role is its own opposite."""
-    return role if role in MUTUAL else _OPPOSITE.get(role)
-
-
 def forward(role: str) -> str:
     """How the connection reads from its first name: "is the niece of"."""
     return f"is the {role} of"

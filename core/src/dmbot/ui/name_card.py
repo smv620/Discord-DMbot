@@ -213,8 +213,10 @@ def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> s
     if subject is None or obj is None:
         return None
     shown = _safe(r, _guard(lookup))
-    if reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways):
-        predicate, detail = for_reader(shown.predicate, shown.detail, feeling=feeling)
+    # (as this reader is shown it, as on the website: a player's old friend line is a one-way
+    # "knows", #3611)
+    predicate, detail = for_reader(shown.predicate, shown.detail, feeling=feeling)
+    if reads_both_ways(predicate, detail, r.directional, r.both_ways):
         words = pair_words(predicate, _md(detail), r.knows_how if predicate == "knows" else None)
         return f"{subject.name} and {obj.name} {words}"
     words = fact_words(shown, subject.type, feeling=feeling)
