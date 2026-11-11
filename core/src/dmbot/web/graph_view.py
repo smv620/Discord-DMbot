@@ -159,6 +159,8 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
                 "id": link["id"], "a": a, "b": b, "predicate": predicate,
                 "detail": "" if changed else _label(link, guard, viewer),
                 "directional": link["directional"],
+                # the DM's direction for it (#4154): None is its kind's default
+                "both_ways": link.get("both_ways"),
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
                 # whether two people have met (#3882), under the door's own key, as

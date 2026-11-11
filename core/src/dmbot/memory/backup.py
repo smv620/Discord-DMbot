@@ -195,6 +195,7 @@ _NULLABLE = {
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
     "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
     "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
+    "both_ways",  # (the DM's direction, #4154: None is the kind's default)
 }  # fmt: skip
 
 
@@ -251,6 +252,7 @@ def _valid(column: str, value: object) -> bool:
         "directional",
         "pinned",
         "added_entry",
+        "both_ways",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -697,6 +699,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "via_alias_id": None,  # from before #3037: no connection came through a name
                 "knows_how": "",  # from before #3881: the story's word on how was not kept
                 "end_reason": None,  # from before #4115: why a tie ended was not kept
+                "both_ways": None,  # from before #4154: every direction was its kind's default
                 **raw,
                 "definition_version": version,
             }

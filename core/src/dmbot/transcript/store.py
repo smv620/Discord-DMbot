@@ -20,6 +20,7 @@ from typing import Any
 
 from dmbot.db import Database, row_int
 from dmbot.memory import evidence, forget_readings, met_store, private_scene_store
+from dmbot.session_locks import lock_sessions_of
 from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
@@ -1170,12 +1171,7 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             # The campaign's sessions that hold this speaker are locked first, so a save adding
             # lines at the same moment can't make the recount below come out one batch short.
-            await conn.execute(
-                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " AND id IN (SELECT session_id FROM transcript_lines"
-                "   WHERE guild_id = %s AND user_id = %s) ORDER BY id FOR UPDATE",
-                (*scope, guild_id, speaker),
-            )
+            await lock_sessions_of(conn, guild_id, speaker, campaign_id)
             await conn.execute(
                 "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
                 " VALUES (%s, %s, %s, extract(epoch FROM now())::BIGINT)"

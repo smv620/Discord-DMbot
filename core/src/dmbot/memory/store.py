@@ -47,6 +47,7 @@ from dmbot.memory import (
     kind_offers,
     knowers,
     lineage,
+    link_words,
     merge_restore,
     notify,
     place_levels,
@@ -125,6 +126,7 @@ from dmbot.memory.models import (
     DETAIL_MAX,
     DID,
     DM,
+    END_REASONS,
     ENDED,
     FACT_STATUSES,
     FIX,
@@ -223,6 +225,9 @@ NOT_HERE = "That campaign doesn't exist in this server."
 # Only a place has a size (#4173)
 ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 # How two people know each other is a `knows` thing only (#3881).
+# A connection's direction set by the DM (#4154), refused in plain words
+ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
+DIRECTION_DM_ONLY = "Only the DM can change which way a connection reads."
 KNOWS_HOW_ONLY = (
     "That connection isn't about two people knowing each other any more."
     " Open the name card again to see it."
@@ -320,6 +325,14 @@ async def _live_ids(scope: Scope, among: Collection[str] | None = None) -> set[s
 PARTY_NAME = "The party"
 # (`web_actions` matches this text to give the website its own refusal word: reword both together.)
 NAMES_NOT_SHOWN = "Show both names to the players first, then this connection."
+ONLY_DM_SAYS = "Only the DM can say that."
+TWO_ENTRIES = "A relationship needs two different entries."
+SAY_WHO_PLAYS = "Say who plays a character on the character itself."
+DESCRIBED_AS = "Say who they are described as."
+WORD_TOO_LONG = "That relationship word is too long."
+COMPANION_NOT_NPC = "Only a character who is not a player character travels with the party."
+COMPANION_PARTY_SOURCE = "Only the DM or a session can say who travels with the party."
+COMPANION_TARGET = "A companion travels with a player character or with the party."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
@@ -328,6 +341,35 @@ MERGE_LED_TO_LOOP = (
     "These two can't be joined yet: one led to something that led to the other, and joining them "
     "would make a loop. Take away one of those “led to” links first."
 )
+
+# The refusals of `add_relation` and `add_unnamed` that may be written to the log (#4161): fixed
+# sentences with no name, alias, role or detail in them, defined above (or `_changes.NOT_FOUND`).
+# Anything else, a message built from a value, is logged as "unlisted rule" and its class: logs hold
+# ids and codes, never a campaign's words (CLAUDE.md). A new fixed sentence these two paths raise is
+# added here; one built from a value never is.
+LOGGABLE_REFUSALS: tuple[str, ...] = (
+    NOT_FOUND,
+    ONLY_DM_SAYS,
+    TWO_ENTRIES,
+    SAY_WHO_PLAYS,
+    DESCRIBED_AS,
+    WORD_TOO_LONG,
+    COMPANION_NOT_NPC,
+    COMPANION_PARTY_SOURCE,
+    COMPANION_TARGET,
+    LED_TO_KINDS,
+    LED_TO_CONFIRM,
+    LED_TO_LOOP,
+)
+
+
+def refusal_for_log(exc: BaseException) -> str:
+    """A rule's refusal in words the log may hold: its own sentence if it is one of
+    `LOGGABLE_REFUSALS`, otherwise "unlisted rule (ClassName)" and nothing of its text."""
+    text = str(exc)
+    return text if text in LOGGABLE_REFUSALS else f"unlisted rule ({type(exc).__name__})"
+
+
 DUE_MAX = 120  # letters in a promise's due note
 THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
 STANDING_VIEWERS = ("character", "faction", "place")
@@ -390,7 +432,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
-        r.get("end_reason"),
+        r.get("end_reason"), r.get("both_ways"),
     )  # fmt: skip
 
 
@@ -418,6 +460,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "via_alias_id": rel.via_alias_id,
         "knows_how": rel.knows_how,
         "end_reason": rel.end_reason,
+        "both_ways": rel.both_ways,
     }
 
 
@@ -1087,7 +1130,7 @@ class MemoryStore:
         """Say whether only one of this item exists (Heartseeker, not a longbow): the DM's
         call. Switching it on flags a unique item that two are already carrying."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             current = await _entity_row(w, entity_id)
@@ -1812,10 +1855,10 @@ class MemoryStore:
         Written as the extractor, so it is a proposal under the DM-confirmed rule."""
         word = unnamed_mod.tidy(what)
         if not word:
-            raise MemoryRuleError("Say who they are described as.")
+            raise MemoryRuleError(DESCRIBED_AS)
         role = (role or "").strip() or None
         if role is not None and len(role) > unnamed_mod.MAX_ROLE:
-            raise MemoryRuleError("That relationship word is too long.")
+            raise MemoryRuleError(WORD_TOO_LONG)
         if len(details) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, "extractor") as w:
@@ -1983,7 +2026,7 @@ class MemoryStore:
         named (#3431): it becomes an unnamed person, shown as "unnamed - the woman", and the
         DM can give them a name later. Only for an entry `described_entries` offers; one undo."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             row = await _entity_row(w, entity_id)
             aliases = await w.select(ALIASES, " AND entity_id = %s", [entity_id])
@@ -2021,7 +2064,7 @@ class MemoryStore:
         is the DM's alone like a clue only some know; off ("Players know it now"), everyone
         sees it. Not a clue's audience (`set_audience_limited`), which has its own rules."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if hidden and (
@@ -2116,7 +2159,7 @@ class MemoryStore:
         """The DM's switch "Only some people know this". Turned on only with at least one
         person listed, because a limited clue nobody is listed for would warn about everyone."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, clue_id)
             if current["type"] != CLUE:
@@ -2139,7 +2182,7 @@ class MemoryStore:
         """The DM says a character knows this clue: a confirmed, dated `knows` fact. It works
         for any clue; the switch decides whether anyone is warned."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             return Written(
                 await self.add_knower_in(w, clue_id, character_id, from_session_at),
@@ -2172,7 +2215,7 @@ class MemoryStore:
         connection, and Undo works). Returns the clue and whether the switch turned itself off
         because nobody is left."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             clue = await _entity_row(w, clue_id)
             facts = await w.select(
@@ -2230,7 +2273,7 @@ class MemoryStore:
         know this one yet" (#2321), theirs to say. `session_started_at`: the session a name scan
         found it in, recorded for the split-party check (#4043)."""
         if hidden_from_players and source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         check_named(type, name)
         type, role = resolve_kind(type, role)
         if hidden_from_players and (role == PLAYER_CHARACTER or played_by is not None):
@@ -3522,7 +3565,7 @@ class MemoryStore:
         DM has already decided: it shows when its name is confirmed and goes with it if the name
         is turned down."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
             if current["status"] != PROPOSED:
@@ -3538,7 +3581,7 @@ class MemoryStore:
         """The DM's "They're a group" (#3383, part 2): no group is known, so the DM names it. The
         group is made (confirmed, the DM's), then everything `join_group` does. One change."""
         if source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         name = clean_text(name)
         async with self._write(guild_id, campaign_id, source) as w:
             current = await _entity_row(w, entity_id)
@@ -5412,6 +5455,7 @@ class MemoryStore:
         keep_flags: bool = False,
         by_hand: bool = False,
         knows_how: str = "",
+        both_ways: bool | None = None,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -5421,11 +5465,12 @@ class MemoryStore:
         `made_by`: the source to record when it is not the write's own (a guess a player voiced is
         the extractor's, whoever pressed the button). `knows_how` (#3881): on a `knows` only, how
         the two know each other ("met", "aware" or ""); restating a known one only ever moves it up,
-        and "met" moves the other's existing `knows` back up too."""
+        and "met" moves the other's existing `knows` back up too. `both_ways` (#4154): the DM's
+        direction for a new row (None: its kind's default), which also decides its stored order."""
         source = made_by or w.source
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
-            raise MemoryRuleError("Only the DM can say that.")
+            raise MemoryRuleError(ONLY_DM_SAYS)
         _check_choice(status, LIVE, "relation status")
         check_status_change(None, status, source)
         _check_confidence(confidence)
@@ -5436,12 +5481,12 @@ class MemoryStore:
         if not all(is_id(m) for m in mention_ids):
             raise ValueError("Bad mention ID")
         if subject_id == object_id:
-            raise MemoryRuleError("A relationship needs two different entries.")
+            raise MemoryRuleError(TWO_ENTRIES)
         onto = await _load_ontology(w)
         pred = onto.active_predicate(predicate)
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
-            raise MemoryRuleError("Say who plays a character on the character itself.")
+            raise MemoryRuleError(SAY_WHO_PLAYS)
         if pred.key == TRAVELS_WITH:
             await _check_travels_with(w, source, subject_id, object_id)
         if pred.key == threads_mod.LED_TO:
@@ -5465,7 +5510,7 @@ class MemoryStore:
             and pred.key == "kin_of"
             and kin.role_of(detail)
         )
-        s, o = ordered(pred, subject_id, object_id, detail, directional)
+        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways)
         # A disguise is hidden by nature (#3091): a NEW one is made secret however it is made, and
         # the DM reveals it with the connection's own switch. One that already exists keeps the
         # DM's choice (the upgrade below reads the caller's `secret`).
@@ -5476,6 +5521,7 @@ class MemoryStore:
             pred.version, unrevealed, directional, (decided or None),
             # (between two people only: a character "knows" a place or a secret, never "met" it)
             knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
+            both_ways=both_ways,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -5550,6 +5596,63 @@ class MemoryStore:
                 )  # fmt: skip
             return Written(_relation(row), w.batch)
 
+    async def set_direction(
+        self, guild_id: int, campaign_id: str, relation_id: str, first: str | None, *, source: str
+    ) -> Written[Relation]:
+        """Which way one connection reads, the DM's choice (#4154): `first` the name it reads from
+        (A → B), or None for both ways (A ↔ B). One change, so one Undo puts it back.
+
+        Both ways is the row's own `both_ways` mark, stored only where it differs from its kind's
+        default (`link_words.BOTH_WAYS`), so a kind's default can still change for every row that
+        never had one. Turning it round is the words change's own path (Supervisor's ruling): the
+        connection is written anew the other way, through every check a new connection gets (the
+        kinds of names each end may be, the travel and "led to" rules, flags), keeping who sees it
+        and what is believed of it, and the old one is ended as a correction (rejected, never a
+        "used to" line). A twin that already reads that way takes over, as for new words. A
+        family role turns round with its names: "Mira is the niece of Aldric" turned is "Aldric
+        is the niece of Mira", the correction a DM makes when it was written the wrong way round,
+        never a guessed opposite. A role true of one name only can't read both ways. The direction
+        it already has writes nothing (an empty batch)."""
+        if source != DM:
+            raise MemoryRuleError(DIRECTION_DM_ONLY)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None or current["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            predicate, detail = str(current["predicate"]), str(current["detail"] or "")
+            subject, other = str(current["subject_id"]), str(current["object_id"])
+            role = kin.role_of(detail) if predicate == link_words.KIN else None
+            one_way_role = role is not None and kin.directional(role)
+            directional = bool(current["directional"])
+            if first is None:
+                if one_way_role and directional:
+                    raise MemoryRuleError(ROLE_ONE_WAY)
+                mark = None if predicate in link_words.BOTH_WAYS else True
+            else:
+                if first not in (subject, other):
+                    raise MemoryRuleError(NOT_FOUND)
+                if one_way_role:
+                    # (an arrow on "niece" says who the niece is: the role takes the direction,
+                    # #2457, and needs no mark of its own)
+                    directional, mark = True, None
+                else:
+                    mark = False if predicate in link_words.BOTH_WAYS else None
+            changes = {
+                k: v
+                for k, v in (("both_ways", mark), ("directional", directional))
+                if current[k] != v
+            }
+            if changes:
+                # (first on the row as it stands, in this same change: turned round, it must no
+                # longer read both ways, or it would be its own twin the other way round)
+                current = await w.update(RELATIONS, relation_id, changes)
+            if first is None or first == subject:
+                return Written(_relation(current), w.batch)
+            new = await self._replace_relation_in(
+                w, current, predicate, detail, directional=directional, swap=True, both_ways=mark
+            )
+            return Written(new, w.batch)
+
     async def update_relation(
         self,
         guild_id: int,
@@ -5561,10 +5664,12 @@ class MemoryStore:
         to_session_at: int | None = None,
         secret: bool | None = None,
         unrevealed: bool | None = None,
+        end_reason: str | None = None,
     ) -> Written[Relation]:
         """Confirm or reject a fact, mark it secret, or end it (history is kept: a new
         fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
-        to players on a connection (#2404): both its ends must be shown to the players first."""
+        to players on a connection (#2404): both its ends must be shown to the players first.
+        `end_reason` (#4115): why an `owns` or `carries` ends, given with `to_session_at`."""
         async with self._write(guild_id, campaign_id, source) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
@@ -5582,7 +5687,7 @@ class MemoryStore:
                 changes["secret"] = secret
             if unrevealed is not None and unrevealed != current["unrevealed"]:
                 if source != DM:
-                    raise MemoryRuleError("Only the DM can say that.")
+                    raise MemoryRuleError(ONLY_DM_SAYS)
                 if not unrevealed:
                     ends = await w.select(
                         ENTITIES,
@@ -5605,6 +5710,12 @@ class MemoryStore:
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
+            if end_reason is not None:
+                if to_session_at is None or end_reason not in END_REASONS:
+                    raise ValueError("An end reason goes with an end.")
+                if current["predicate"] not in hand_over_mod.HELD:
+                    raise MemoryRuleError("Only owning or holding something ends with a reason.")
+                changes["end_reason"] = end_reason
             if (
                 current["predicate"] == threads_mod.LED_TO
                 and changes.get("status") == CONFIRMED
@@ -6020,40 +6131,69 @@ class MemoryStore:
             current = await w.get(RELATIONS, relation_id)
             if current is None or current["status"] != CONFIRMED:
                 raise MemoryRuleError(NOT_FOUND)
-            before = {
-                r.id: r.status
-                for r in await _relations_touching(w, current["subject_id"], current["object_id"])
-            }
-            # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
-            # connection stored the other way round); it only matters to a family role (#2457)
-            first, second = (
-                (current["object_id"], current["subject_id"])
-                if swap
-                else (current["subject_id"], current["object_id"])
-            )
-            new, _ = await self.add_relation_in(
-                w, first, predicate, second, confidence=1.0,
-                status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
-                unrevealed=bool(current["unrevealed"]), directional=directional,
-                # new words or a new feeling keep whether they met (#3881)
-                knows_how=str(current["knows_how"] or "") if predicate == KNOWS else "",
+            # The DM's direction for it (#4154) stays with the same kind; a new kind starts from its
+            # own default (a one-way rival made an enemy reads both ways, as every enemy does)
+            mark = current["both_ways"] if predicate == current["predicate"] else None
+            new = await self._replace_relation_in(
+                w, current, predicate, detail, directional=directional, swap=swap,
+                dm_feeling=dm_feeling, both_ways=mark,
             )  # fmt: skip
-            if dm_feeling and predicate == "knows" and source == DM:
-                await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
-            if new.id == relation_id:
-                return Written(new, w.batch)
-            # The words are new, or match a duplicate only proposed so far (the upgrade just made it
-            # the DM's, with no beliefs yet): the new connection takes over (#2409)
-            if before.get(new.id) != CONFIRMED:
-                await beliefs.carry(w, current, new.id)
-                moved = await w.get(RELATIONS, new.id)
-                assert moved is not None
-                new = _relation(moved)
-            if current["secret"] and not new.secret:
-                new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
-            check_status_change(current["status"], REJECTED, source)
-            await w.update(RELATIONS, relation_id, {"status": REJECTED})
             return Written(new, w.batch)
+
+    async def _replace_relation_in(
+        self,
+        w: Changes,
+        current: dict[str, Any],
+        predicate: str,
+        detail: str,
+        *,
+        directional: bool,
+        swap: bool,
+        dm_feeling: bool = False,
+        both_ways: bool | None = None,
+    ) -> Relation:
+        """`change_relation_words`'s work in a write already open: the connection written anew with
+        every check `add_relation_in` makes, keeping who sees it and what is believed of it, and
+        the old one ended (rejected: a correction, never history). Also a turn round (#4154)."""
+        relation_id = str(current["id"])
+        before = {
+            r.id: r.status
+            for r in await _relations_touching(w, current["subject_id"], current["object_id"])
+        }
+        # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
+        # connection stored the other way round, #2457), or the DM turned it round (#4154)
+        first, second = (
+            (current["object_id"], current["subject_id"])
+            if swap
+            else (current["subject_id"], current["object_id"])
+        )
+        new, _ = await self.add_relation_in(
+            w, first, predicate, second, confidence=1.0,
+            status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+            unrevealed=bool(current["unrevealed"]), directional=directional,
+            # new words or a new feeling keep whether they met (#3881)
+            knows_how=str(current["knows_how"] or "") if predicate == KNOWS else "",
+            both_ways=both_ways,
+        )  # fmt: skip
+        if dm_feeling and predicate == "knows" and w.source == DM:
+            await _dm_feeling_in(w, new.subject_id, new.object_id, detail)
+        if new.id == relation_id:
+            return new
+        # The words are new, or match a duplicate only proposed so far (the upgrade just made it
+        # the DM's, with no beliefs yet): the new connection takes over (#2409)
+        if before.get(new.id) != CONFIRMED:
+            await beliefs.carry(w, current, new.id)
+            moved = await w.get(RELATIONS, new.id)
+            assert moved is not None
+            new = _relation(moved)
+        if current["secret"] and not new.secret:
+            new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
+        # and who knows it (#2935): the list follows the statement to its new row, so new words or
+        # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
+        await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        check_status_change(current["status"], REJECTED, w.source)
+        await w.update(RELATIONS, relation_id, {"status": REJECTED})
+        return new
 
     async def resolve_flag(
         self, guild_id: int, campaign_id: str, flag_id: str, *, source: str
@@ -7528,14 +7668,14 @@ def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: 
     session reader) can never point at it: it can only name the player character. The party is
     the entry with the `party` flag, the one marker (#3954)."""
     if subject["type"] != "character" or subject["role"] == PLAYER_CHARACTER:
-        return "Only a character who is not a player character travels with the party."
+        return COMPANION_NOT_NPC
     if target["type"] == "character" and target["role"] == PLAYER_CHARACTER:
         return None
     if target["type"] == "faction" and target["party"]:
         if source in (DM, "extractor"):
             return None
-        return "Only the DM or a session can say who travels with the party."
-    return "A companion travels with a player character or with the party."
+        return COMPANION_PARTY_SOURCE
+    return COMPANION_TARGET
 
 
 async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:
@@ -8251,7 +8391,10 @@ async def _move_relations(
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
-            subject, obj = ordered(pred, subject, obj, str(row["detail"]), bool(row["directional"]))
+            subject, obj = ordered(
+                pred, subject, obj, str(row["detail"]), bool(row["directional"]),
+                row.get("both_ways"),  # (the DM's direction stays as it was, #4154)
+            )  # fmt: skip
         # (a join moves a connection AND makes it secret in this one update: a second update of
         # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync
         # from treating it as shown)

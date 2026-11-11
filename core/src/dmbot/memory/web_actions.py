@@ -78,6 +78,10 @@ FEELING_TEXT = "feeling:"
 # through `MemoryStore.set_knows_how`. The door's allowed-actions list holds it (WebDev's
 # migration).
 KNOWS_HOW_ACTION = "link-knows-how"
+# Which way a connection reads, the DM's choice (#4154): `text` "a-b" (from the pair's first name
+# by id, the edge's `a` on the page), "b-a", or "both"
+DIRECTION_ACTION = "link-direction"
+DIRECTIONS = ("a-b", "b-a", "both")
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -1114,6 +1118,16 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
             batch = None if changed is None else changed.batch  # (None: the same words already)
+        elif a.action == DIRECTION_ACTION:
+            # the page names the two ends as its edge does, by id order (`relationships.edges_from`)
+            if a.text not in DIRECTIONS:
+                return _failed(BAD_TARGET)
+            low, high = sorted((link.subject_id, link.object_id))
+            reads_from = None if a.text == "both" else (low if a.text == "a-b" else high)
+            # (a retried job finds it already so: the store writes nothing, and there is no batch;
+            # a turn is written anew in one batch, so the page's Undo puts the old row back, #4156)
+            turned = await memory.set_direction(guild_id, cid, link.id, reads_from, source=DM)
+            batch = turned.batch
         elif a.action == KNOWS_HOW_ACTION:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
@@ -1310,6 +1324,10 @@ async def _answer_waiting(
     link = next((x for x in ready if x.id == a.target_id), None)
     if link is None:
         return _failed(NOT_FOUND)
+    if link.hand_over:
+        # Keeping it ends what someone else holds of an item (#4115), and the website's list does
+        # not say so yet (#4122): until it does, it is kept in Discord, where the card says it.
+        return _failed(BAD_TARGET)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(

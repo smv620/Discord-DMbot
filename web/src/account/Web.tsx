@@ -21,6 +21,7 @@ import {
   type IconChoice,
   type NameChange,
   type NameRow,
+  type WebEdge,
   type WebGraph,
   type WebNode,
   type WebLinkChange,
@@ -99,6 +100,12 @@ function refusal(error: unknown): string | null {
   return words.errors[kind] ?? words.errorFallback;
 }
 
+/** The open pair stays while its connection is drawn, or (a pair joined by hand, #4155) while both its names are. */
+function keepLine<L extends { a: string; b: string; fresh?: true }>(now: L | null, g: WebGraph): L | null {
+  const hit = now && g.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a));
+  return now && (hit || (now.fresh && [now.a, now.b].every((id) => g.nodes.some((n) => n.id === id)))) ? now : null;
+}
+
 export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const ref = webRefFromPath(path);
   const [view, setView] = useState<View>("loading");
@@ -126,7 +133,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [openRows, setOpenRows] = useState<Set<string>>(new Set());
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
-  const [line, setLine] = useState<{ a: string; b: string } | null>(null);
+  const [line, setLine] = useState<{ a: string; b: string; fresh?: true; open?: string } | null>(null);
+  // Joining two names (#4155): the first one picked, until the second is.
+  const [pairFrom, setPairFrom] = useState<string | null>(null);
   // The redesigned connection panel asks before the page leaves it with edits unsaved (#4155): it registers here while it has some.
   const leaveGuard = useRef<((leave: () => void) => boolean) | null>(null);
   const goOn = (leave: () => void): void => {
@@ -233,7 +242,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       setCenter(read.center);
       setHops(clampHops(steps, read.maxHops));
       setHopsText(String(clampHops(steps, read.maxHops)));
-      setLine((now) => (now && read.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
+      setLine((now) => keepLine(now, read));
       setView("ok");
     } catch (error) {
       if (mine !== latest.current) return;
@@ -308,7 +317,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       const next = read.canEdit ? read : plainGraph(read);
       if (graphSignature(next) === graphSignature(shown)) return "same";
       setGraph(next);
-      setLine((now) => (now && next.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a)) ? now : null));
+      setLine((now) => keepLine(now, next));
       void loadOverview();
       return "changed";
     } catch (error) {
@@ -375,6 +384,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setSeeAsNote("");
     switchTo(next);
     setLine(null);
+    setPairFrom(null);
     setAlone(null);
     setOverview(null); // never leave the other view's names on screen while this one loads
     void load(center, hops, true);
@@ -386,6 +396,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     seeAsNow.current = next;
     setSeeAsNote("");
     setLine(null);
+    setPairFrom(null);
     setAlone(null);
     void load(center, hops, true);
   }
@@ -509,10 +520,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   /** One change to the connections; the web is read again after it so the lines are the API's own. */
   /** `own` words one kind of refusal for this one call (the store's rule saying no to a companion, #3505); every other
    * failure, a network failure, a busy server, being signed out, is worded as it always is. */
-  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>): Promise<string | null> {
+  async function act(change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>, onEdge?: (edge: WebEdge | { removed: true }) => void): Promise<string | null> {
     if (!ref || !api.changeWebLink) return words.errorFallback;
     try {
-      await api.changeWebLink(ref, change);
+      const drawn = await api.changeWebLink(ref, change); // (not inside the optional call: it would never run without a listener)
+      onEdge?.(drawn); // the edge the answer drew: a change that writes a connection anew gives it a new id
     } catch (error) {
       const said = (error instanceof ApiError && own?.[error.kind]) || refusal(error);
       if (said === null) {
@@ -658,7 +670,22 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setHopsText(String(next));
     void load(center, next);
   };
-  const chosen = line ? (edges.find((e) => e.a === line.a && e.b === line.b || e.a === line.b && e.b === line.a) ?? null) : null;
+  // A pair with no connection yet is a line with nothing on it, so the panel can add the first (#4155).
+  const chosen = line
+    ? (edges.find((e) => (e.a === line.a && e.b === line.b) || (e.a === line.b && e.b === line.a)) ??
+      (line.fresh && keepLine(line, graph) ? { a: line.a, b: line.b, label: "", more: 0, links: [] } : null))
+    : null;
+  const pairOn = CONNECTION_PANEL_LIVE && canEdit && !seeing;
+  // A first name no longer drawn (the middle moved) is forgotten, so the banner never names nobody; a placeholder has no name to join yet.
+  const named = (id: string): boolean => nodes.some((n) => n.id === id && !n.unnamed);
+  const pairLive = pairFrom !== null && nodes.some((n) => n.id === pairFrom) ? pairFrom : null;
+  const pairWith = (id: string): void => {
+    if (pairLive === id) setPairFrom(null);
+    else if (!named(id)) return;
+    else if (pairLive === null) setPairFrom(id);
+    // (forgotten only once the page really moves on: a refused leave keeps the first name picked)
+    else goOn(() => (setPairFrom(null), setLine({ a: pairLive, b: id, fresh: true })));
+  };
 
   return (
     <div class="stack web-page">
@@ -823,6 +850,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               selected={line}
               onCenter={(id) => goOn(() => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); })}
               onLine={(a, b) => goOn(() => setLine({ a, b }))}
+              pairFrom={pairOn ? pairLive : null}
+              onPair={pairOn ? pairWith : undefined}
+              onJump={pairOn ? (a, b, linkId) => goOn(() => setLine({ a, b, open: linkId })) : undefined}
               onNodePick={() => goOn(() => setLine(null))}
               look={look}
               onIcon={seeing ? undefined : chooseIcon}
@@ -836,10 +866,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             >
               {chosen && (
                 <LazyPanel
-                  key={`${chosen.a}|${chosen.b}`}
+                  key={`${chosen.a}|${chosen.b}|${line?.open ?? ''}`}
                   load={() => (CONNECTION_PANEL_LIVE ? import("./WebConnectionPanel") : import("./WebLinePanel"))}
                   what="the connections"
-                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard }}
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard, open: line?.open ?? null }}
                 />
               )}
             </WebMap>

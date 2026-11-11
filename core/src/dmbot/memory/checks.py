@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from dmbot.memory import kin, place_levels, place_words
+from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
@@ -98,15 +99,21 @@ def conflicts(onto: Ontology, p: PredicateTerm, other_key: str) -> bool:
 
 
 def ordered(
-    p: PredicateTerm, subject_id: str, object_id: str, detail: str = "", directional: bool = False
+    p: PredicateTerm,
+    subject_id: str,
+    object_id: str,
+    detail: str = "",
+    directional: bool = False,
+    both_ways: bool | None = None,
 ) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
     "B ally A" are the same fact (inverse consistency by construction). Not a family connection
     with a role true of one name only ("Mira is the niece of Aldric"): there the order is the
-    meaning (#2457)."""
+    meaning (#2457). `both_ways` is the DM's own direction for it (#4154): one the DM made one-way
+    ("Wit sees Cerric as a rival") keeps its order, and one the DM made two-way is sorted."""
     if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
-    if p.symmetric and object_id < subject_id:
+    if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
 
@@ -117,6 +124,12 @@ def _same_order(old: Relation, new: Relation) -> bool:
     order: the plain one has no direction, so the DM's word on it wins (#2457). Two with a
     direction must agree on it."""
     if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
+        return True
+    # one the DM turned one way (#4154) is still the same fact as a two-way one said again, in
+    # either order: the DM's direction is kept on the old row
+    if any(
+        reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways) for r in (old, new)
+    ) and (old.subject_id, old.object_id) == (new.object_id, new.subject_id):
         return True
     if new.predicate == "kin_of" and not (old.directional and new.directional):
         return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
