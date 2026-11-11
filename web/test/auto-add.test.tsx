@@ -6,6 +6,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import CampaignSettings from "../src/account/CampaignSettings";
 import { mockApi } from "../src/account/mock";
 import { fromHash } from "../src/account/Names";
@@ -25,7 +26,7 @@ afterEach(() => {
   live.on = true;
 });
 
-const SOURCE = { kind: "lore" as const, id: "up1" };
+const SOURCE = { kind: "lore" as const, id: "ab".repeat(16) }; // (a website lore upload: 32 hex)
 const show = (campaign: string, source = SOURCE) => {
   const api = mockApi("table");
   render(<UploadNotice api={api} campaignRef={campaign} source={source} />);
@@ -46,7 +47,7 @@ describe("the notice", () => {
     show("100.cmp1.autoadd");
     expect((await screen.findByRole("status")).textContent).toContain("Added 62 names");
     expect(screen.getByRole("status").textContent).toContain("48 connections from Lore, 24 Oct.");
-    expect((screen.getByRole("link", { name: w.seeNames }) as HTMLAnchorElement).getAttribute("href")).toBe("/account/names/100.cmp1.autoadd"); // (not a website upload id: no filter)
+    expect((screen.getByRole("link", { name: w.seeNames }) as HTMLAnchorElement).getAttribute("href")).toBe(`/account/names/100.cmp1.autoadd#from=u${SOURCE.id}`);
     expect((screen.getByRole("link", { name: w.seeGraph }) as HTMLAnchorElement).getAttribute("href")).toBe("/account/web/100.cmp1.autoadd");
     expect(screen.getByText(w.questions(3), { exact: false })).toBeTruthy();
     expect(screen.getByRole("link", { name: w.questionsLink }).getAttribute("href")).toBe("/account/questions");
@@ -80,6 +81,42 @@ describe("Undo this upload", () => {
     expect(await screen.findByText(w.tookBack(60, 110))).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("undoUpload"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
+  });
+  const failWith = async (error: ApiError): Promise<void> => {
+    const api = mockApi("table");
+    api.undoUpload = async () => {
+      throw error;
+    };
+    render(<UploadNotice api={api} campaignRef="100.cmp1.autoadd" source={SOURCE} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    fireEvent.click(screen.getByRole("button", { name: w.undoYes }));
+  };
+  it("says an undo that failed is an undo that failed, and lets the DM try again", async () => {
+    await failWith(new ApiError("server"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.undoFailed);
+    expect(screen.getByRole("button", { name: w.undo })).toBeTruthy();
+  });
+  it("says it is still working when the wait ran out", async () => {
+    await failWith(new ApiError("still-waiting"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.undoStillWorking);
+  });
+  it("says why when it was already undone or is too old", async () => {
+    await failWith(new ApiError("undo-done"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.undoneAlready);
+    cleanup();
+    await failWith(new ApiError("undo-late"));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.undoLate);
+  });
+  it("shows the shared wait panel while it undoes", async () => {
+    const api = mockApi("table");
+    let finish: (v: { took: number }) => void = () => {};
+    api.undoUpload = () => new Promise((r) => (finish = r));
+    render(<UploadNotice api={api} campaignRef="100.cmp1.autoadd" source={SOURCE} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    fireEvent.click(screen.getByRole("button", { name: w.undoYes }));
+    expect(await screen.findByText(new RegExp(w.undoing))).toBeTruthy();
+    finish({ took: 4 });
+    expect(await screen.findByText(w.tookBack(4))).toBeTruthy();
   });
   it("keeps the upload when the answer is No", async () => {
     const api = show("100.cmp1.autoadd");
@@ -123,8 +160,11 @@ describe("the notice's Names link", () => {
     const id = "ab".repeat(16);
     expect(await hrefFor({ kind: "lore", id })).toBe(`/account/names/100.cmp1.autoadd#from=u${id}`);
   });
-  it("opens the whole page for an import, whose names the filter cannot pick yet", async () => {
-    expect(await hrefFor({ kind: "import", id: "ab".repeat(16) })).toBe("/account/names/100.cmp1.autoadd");
+  it("opens the whole page for an import, whose names the filter cannot pick yet, and says so", async () => {
+    render(<UploadNotice api={mockApi("table")} campaignRef="100.cmp1.autoadd" source={{ kind: "import", id: "ab".repeat(16) }} />);
+    const link = await screen.findByRole("link", { name: w.seeAllNames });
+    expect(link.getAttribute("href")).toBe("/account/names/100.cmp1.autoadd");
+    expect(screen.queryByRole("link", { name: w.seeNames })).toBeNull();
   });
 });
 
