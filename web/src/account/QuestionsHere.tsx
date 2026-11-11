@@ -4,6 +4,7 @@
 // connections waiting, "Which one?" and facts to check are the Story Graph's one waiting list; what people believe
 // is the Story Graph's readings list. Every one is campaign-wide and answers, waits and undoes as it does on its
 // own page, so nothing here is a second copy.
+import { HAND_OVER_LIVE } from "../content/hand-over-switch";
 import { type AccountApi } from "./api";
 import LazyPanel from "./LazyPanel";
 import QuestionsNames from "./QuestionsNames";
@@ -25,7 +26,12 @@ export default function QuestionsHere({ api, campaignRef, group, id }: { api: Ac
   return (
     <div id={id} class="stack">
       {group === "waiting" ? (
-        <LazyPanel load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef }} />
+        <>
+          <LazyPanel load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef }} />
+          {HAND_OVER_LIVE && api.handOverQuestions !== undefined && (
+            <LazyPanel load={() => import("./HandOverQuestions")} what="the items that changed hands" props={{ api, campaignRef, id: `${id}-handover` }} />
+          )}
+        </>
       ) : (
         <LazyPanel load={() => import("./WebReadings")} what="what people believe" props={{ api, campaignRef }} />
       )}

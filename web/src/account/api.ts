@@ -1345,6 +1345,26 @@ export interface UploadUndo {
   took: number;
   of: number;
 }
+/** One "Does {older} still have it?" question (#4122; core web/hand_over.py): a one-of-a-kind item that two holders now have. `olderTie`
+ * and `newerTie` name the question in an answer. Names are the DM's own words; DM only. */
+export interface HandOverQuestion {
+  item: string;
+  itemName: string;
+  older: string;
+  olderName: string;
+  newer: string;
+  newerName: string;
+  predicate: "owns" | "carries";
+  olderTie: string;
+  newerTie: string;
+  madeAt: number;
+}
+/** What an answer to it was: the bot's own words for how it ended come as the error, and `undoable` is the id of the answer to
+ * quote to take a "no" back. */
+export interface HandOverAnswered {
+  answerId: string;
+  undoable: boolean;
+}
 /** One lineage or class question waiting for the DM (#3946; core web/trait_offers.py): what the lore said about a character the
  * campaign already has. `quote` and `upload` are the DM's own lore: DM only. */
 export interface TraitOffer {
@@ -2810,6 +2830,11 @@ export interface AccountApi {
   /** Undo this upload (#3879): queued for the bot, which takes back the upload's own changes newest first; resolves with what was
    * taken back once it is done. Refusals: "too-late" (past 7 days), "already" (done once), "not-allowed". */
   undoUpload?(ref: string, source: { kind: "lore" | "import"; id: string }, onLook?: (progress: JobProgress | null) => void): Promise<UploadUndo>;
+  /** The "Does Claude still have it?" questions waiting for the DM (#4122), oldest first; a DM of the campaign only. */
+  handOverQuestions?(ref: string): Promise<HandOverQuestion[]>;
+  /** One answer: `no` (not any more), `both`, or `undo` (with `undoes`, the id of the `no` to take back): queued for the bot and polled;
+   * rejects `gone`, `not-allowed`, `too-late`, `changed`, or `server`, with the bot's word in `note`. */
+  answerHandOver?(ref: string, question: Pick<HandOverQuestion, "olderTie" | "newerTie">, answer: "no" | "both" | "undo", undoes?: string, onLook?: (look: WaitingLook) => void): Promise<HandOverAnswered>;
   /** The lineage and class questions waiting for the DM (#3946); a DM of the campaign only (anyone else gets `not-found`). */
   traitOffers?(ref: string): Promise<TraitOffer[]>;
   /** Yes (`keep`) or No (`never`) to one of them: queued for the bot, which applies it as the DM; resolves with the change's number
@@ -3373,7 +3398,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
