@@ -248,9 +248,10 @@ async def add_credits(
     or server is metered but not added to the month (the rule #3792 gave hours)."""
     async with db.meter(guild_id, owner_user_id) as conn:
         s = await standing_of(conn, owner_user_id, now_ms // 1000, read_used=False)
-        await conn.execute(
+        cur = await conn.execute(
             "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
-            " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, id) DO NOTHING",
             (
                 spend_id,
                 guild_id,
@@ -263,6 +264,8 @@ async def add_credits(
                 now_ms,
             ),
         )
+        if not cur.rowcount:
+            return  # this charge was written before (a retry after a timeout): never counted twice
         if owner_user_id in entitlements.free_users() or await entitlements.on_free_guild(conn):
             return
         # The row lock this upsert takes serialises two campaigns of one owner charging at once.
