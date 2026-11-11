@@ -188,6 +188,103 @@ class AccountDeletion(DatabaseTest):
             cur = await conn.execute("SELECT credits FROM owner_credits")
             self.assertEqual([r["credits"] for r in await cur.fetchall()], [10])
 
+    async def test_every_table_the_person_forget_names_exists_with_its_policies(self) -> None:
+        from importlib import import_module
+
+        mod = import_module("dmbot.migrations.0431_forget_person")
+        async with self.db.unscoped() as conn:
+            for table, column in (*mod.DELETED, *mod.ZEROED):
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM information_schema.columns"
+                    " WHERE table_schema = current_schema() AND table_name = %s"
+                    " AND column_name = %s",
+                    (table, column),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["n"], 1, (table, column))
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM pg_policies WHERE schemaname = current_schema()"
+                    " AND tablename = %s AND policyname LIKE 'forget_%%'",
+                    (table,),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertGreaterEqual(row["n"], 2, table)
+
+    async def test_the_persons_own_requests_and_records_go_and_the_confirmation_stays_at_zero(
+        self,
+    ) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            for user in (ALICE, BOB):
+                await conn.execute(
+                    "INSERT INTO member_directory (guild_id, user_id, display_name, updated_at)"
+                    " VALUES (%s, %s, 'x', 1)",
+                    (GUILD_A, user),
+                )
+                await conn.execute(
+                    "INSERT INTO question_notices (guild_id, campaign_id, user_id)"
+                    " VALUES (%s, %s, %s)",
+                    (GUILD_A, self.a1.id, user),
+                )
+                await conn.execute(
+                    "INSERT INTO shared_confirmations (guild_id, campaign_id, id, user_id, purpose,"
+                    " fingerprint, confirmed_at) VALUES (%s, %s, %s, %s, 'rulebook', %s, 5)",
+                    (GUILD_A, self.a1.id, f"c{user}", user, "a" * 64),
+                )
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        async with self.db.guild(GUILD_A) as conn:
+            for table, want in (("member_directory", [BOB]), ("question_notices", [BOB])):
+                cur = await conn.execute(f"SELECT user_id FROM {table} ORDER BY user_id")
+                self.assertEqual([r["user_id"] for r in await cur.fetchall()], want, table)
+            cur = await conn.execute("SELECT user_id FROM shared_confirmations ORDER BY user_id")
+            # (the campaign's record of who confirmed stays; hers has no Discord ID any more)
+            self.assertEqual([r["user_id"] for r in await cur.fetchall()], [0, BOB])
+
+    async def test_the_forget_policies_do_nothing_outside_the_function(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO member_directory (guild_id, user_id, display_name, updated_at)"
+                " VALUES (%s, %s, 'x', 1)",
+                (GUILD_A, ALICE),
+            )
+        async with self.db.guild(GUILD_B) as conn:  # (an ordinary query in another server)
+            cur = await conn.execute("DELETE FROM member_directory")
+            self.assertEqual(cur.rowcount, 0)
+        # With the person set but without the function's own setting (or with another one's), the
+        # forget policies open nothing: the delete matches no row and the row stays put.
+        for setting in ("", "forget_hours", "move"):
+            async with self.db.user(ALICE) as conn:
+                if setting:
+                    await conn.execute(
+                        "SELECT set_config('dmbot.owner_sync', %s, true)", (setting,)
+                    )
+                cur = await conn.execute(
+                    "DELETE FROM member_directory WHERE user_id = %s", (ALICE,)
+                )
+                self.assertEqual(cur.rowcount, 0, setting)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 1)  # (the row is still there)
+
+    async def test_alices_rows_in_every_server_go(self) -> None:
+        for guild in (GUILD_A, GUILD_B):
+            async with self.db.guild(guild) as conn:
+                await conn.execute(
+                    "INSERT INTO member_directory (guild_id, user_id, display_name, updated_at)"
+                    " VALUES (%s, %s, 'x', 1)",
+                    (guild, ALICE),
+                )
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for guild in (GUILD_A, GUILD_B):
+            async with self.db.guild(guild) as conn:
+                cur = await conn.execute("SELECT count(*) AS n FROM member_directory")
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["n"], 0, guild)
+
     async def test_deleting_twice_or_with_no_campaigns_is_harmless(self) -> None:
         await accounts.delete_person(self.db, ALICE, now=NOW + 5)
         await accounts.delete_person(self.db, ALICE, now=NOW + 99)  # nothing left to orphan
