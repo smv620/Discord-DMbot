@@ -1170,9 +1170,13 @@ later sessions.
   player with two characters is no scene). Another group's lines in between neither end it nor join it; the DM's lines
   can't be placed, so they count in no scene. Each is kept as ids and times only (`memory_private_scenes`, migration
   0419). The DM can say "Not private", and a later run never finds that scene again. A scene goes with its session's
-  transcript and with anyone who spoke in it; a backup carries both scenes and marks. Next (a follow-up): the DM's list
-  with "Not private", PlotBot weighing a character named in one (reason `private_scene`), and the recap citing each
-  without saying what (#2997).
+  transcript and with anyone who spoke in it; a backup carries both scenes and marks. The DM's list (🤫 Private scenes, under Names → More lists) has "Not private" (#4105). PlotBot
+  is told when an entry was spoken of inside one ("private scene:" with the two names) and ranks it
+  at least 2 (Recurring), reason `private_scene`; the floor is held in code, never left to the AI,
+  and never overrides a rank the DM set. Only a line said inside the scene by one of its two
+  counts. Today the raised rank is stored like any reading, so a later "Not private" or a speaker
+  who stops being recorded does not lower it again (a floor worked out on read would; asked on
+  #2996). Next: the recap cites each scene without saying what (#2997).
 
 **8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
 - the Story Graph and its doors;

@@ -56,6 +56,7 @@ from dmbot.memory import (
     told,
     whereabouts,
 )
+from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import party as party_mod
@@ -377,6 +378,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
+        r.get("end_reason"),
     )  # fmt: skip
 
 
@@ -403,6 +405,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "decided": rel.decided,
         "via_alias_id": rel.via_alias_id,
         "knows_how": rel.knows_how,
+        "end_reason": rel.end_reason,
     }
 
 
@@ -5159,6 +5162,37 @@ class MemoryStore:
         was worked out from. A DM-only reader."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await worked_out_mod.waiting(scope)
+
+    # ---- a one-of-a-kind item changing hands (#4115) ---------------------------------------------
+
+    async def hand_over_waiting(
+        self, guild_id: int, campaign_id: str, *, source: str
+    ) -> list[hand_over_mod.Question]:
+        """The "Does A still have it?" questions waiting for the DM, ids only. A DM-only reader:
+        it can name a secret tie."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can see those questions.")
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await hand_over_mod.waiting(scope, await _load_ontology(scope))
+
+    async def answer_hand_over(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        question: hand_over_mod.Question,
+        *,
+        still_has: bool,
+        source: str,
+    ) -> Written[list[str]]:
+        """The DM's answer (#4115): "No, not any more" ends A's tie as history, one change so one
+        Undo reopens it; "Yes, both have it" is remembered. Returns the ties it ended."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can answer that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            ended = await hand_over_mod.answer(
+                w, await _load_ontology(w), question, still_has=still_has
+            )
+            return Written(ended, w.batch)
 
     async def party_on_assignment(self, guild_id: int, campaign_id: str) -> None:
         """The DM gave a player their character (#3036, Supervisor's ruling 2026-11-02): while the
