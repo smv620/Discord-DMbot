@@ -1,4 +1,4 @@
-"""Every table account deletion changes is tested with real rows (#4162, first PR): one row for
+"""Every table account deletion changes is tested with real rows (#4162): one row for
 Alice and one for Bob in each, then the deletion. Alice's rows go from the DELETED tables and her
 person column goes to 0 in the ZEROED ones; Bob's rows stay untouched. The lists come from the
 migrations themselves, so a table added to a forget function fails the completeness test until it
@@ -159,20 +159,50 @@ ROWS: dict[str, str] = {
         "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
         " VALUES (%(g)s, %(c)s, %(u)s, 1)"
     ),
+    "rule_set_editors": (
+        "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by, added_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(u)s, 1)"
+    ),
+    "adventure_chunks": (
+        "INSERT INTO adventure_chunks (guild_id, campaign_id, id, document_id, position, heading,"
+        " text, created_at, created_by) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 0, 'h', 'x', 1,"
+        " %(u)s)"
+    ),
+    "session_imports": (
+        "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,"
+        " imported_by, imported_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 'f.txt', %(u)s, 1)"
+    ),
+    "transcript_suggestions": (
+        "INSERT INTO transcript_suggestions (guild_id, campaign_id, session_id, started_ms,"
+        " user_id, suggested, base_text, created_at, decided_by) VALUES (%(g)s, %(c)s,"
+        " %(k)s, 0, %(u)s, 'x', 'x', 1, %(u)s)"
+    ),
+    "waiting_name_questions": (
+        "INSERT INTO waiting_name_questions (guild_id, campaign_id, session_id, speaker_id,"
+        " started_ms, heard, option_ids, created_at, decided_by) VALUES (%(g)s, %(c)s,"
+        " %(k)s, %(u)s, 0, 'x', ARRAY['a', 'b'], 1, %(u)s)"
+    ),
+    "recap_jobs": (
+        "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, created_at)"
+        " VALUES (%(g)s, %(c)s, %(u)s, %(u)s, 1)"
+    ),
 }
 
-# The second PR of #4162 covers these (parent rows: a rule set, a document, a transcript session;
-# and recap_jobs). That PR empties this set and checks it is empty.
-NOT_YET: frozenset[str] = frozenset(
-    {
-        "rule_set_editors",  # covered in the second PR of #4162
-        "adventure_chunks",  # covered in the second PR of #4162
-        "session_imports",  # covered in the second PR of #4162
-        "transcript_suggestions",  # covered in the second PR of #4162
-        "waiting_name_questions",  # covered in the second PR of #4162
-        "recap_jobs",  # covered in the second PR of #4162
-    }
-)
+# The parent rows those tables need, written before ROWS (rule sets and transcript sessions).
+PARENTS: dict[str, str] = {
+    "rule_sets": (
+        "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+        " created_at) VALUES (%(g)s, %(c)s, %(k)s, 'house_rules', 'x', 'shared', %(u)s, 1)"
+    ),
+    "transcript_sessions": (
+        "INSERT INTO transcript_sessions (guild_id, campaign_id, id, started_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 1)"
+    ),
+}
+
+# Empty: the second PR of #4162 covered the parent-row tables and recap_jobs (above). The
+# completeness test below still checks that every forgotten table is covered somewhere.
+NOT_YET: frozenset[str] = frozenset()
 
 
 class AccountDeletionTables(DatabaseTest):
@@ -193,8 +223,9 @@ class AccountDeletionTables(DatabaseTest):
             ALICE: await self.store.create(GUILD_A, "Alice one", ALICE),
             BOB: await self.store.create(GUILD_A, "Bob one", BOB),
         }
+        self.campaigns = campaigns
         async with self.db.guild(GUILD_A) as conn:
-            for sql in ROWS.values():
+            for sql in [*PARENTS.values(), *ROWS.values()]:
                 for user in (ALICE, BOB):
                     await conn.execute(
                         sql,
@@ -235,13 +266,40 @@ class AccountDeletionTables(DatabaseTest):
             )
             return [dict(r) for r in await cur.fetchall()]
 
+    async def test_an_editor_alice_added_stays_with_nobody_as_the_adder(self) -> None:
+        # Bob is an editor of Alice's rule set, which Alice added: his row stays, the adder goes.
+        alice_campaign = self.campaigns[ALICE].id
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
+                " added_at) VALUES (%s, %s, %s, %s, %s, 1)",
+                (GUILD_A, alice_campaign, f"{ALICE:032x}", BOB, ALICE),
+            )
+            cur = await conn.execute(
+                "SELECT added_by FROM rule_set_editors WHERE campaign_id = %s AND user_id = %s",
+                (alice_campaign, BOB),
+            )
+            self.assertEqual([r["added_by"] for r in await cur.fetchall()], [ALICE])
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, added_by FROM rule_set_editors"
+                " WHERE campaign_id = %s AND user_id = %s",
+                (alice_campaign, BOB),
+            )
+            rows = [(r["user_id"], r["added_by"]) for r in await cur.fetchall()]
+        self.assertEqual(rows, [(BOB, 0)])
+
     async def test_every_zeroed_column_goes_to_zero_and_the_row_stays(self) -> None:
-        alices = {table: await self.rows(table, column, ALICE) for table, column in ZEROED}
+        # (rule_set_editors is also deleted by its user: its adder is tested on its own above)
+        deleted = {table for table, _ in DELETED}
+        pairs = [(table, column) for table, column in ZEROED if table not in deleted]
+        alices = {table: await self.rows(table, column, ALICE) for table, column in pairs}
         for table in alices:
             if table in ROWS:  # (before the deletion, Alice's row is there: no vacuous pass)
                 self.assertEqual(len(alices[table]), 1, table)
         await accounts.delete_person(self.db, ALICE, now=NOW + 50)
-        for table, column in ZEROED:
+        for table, column in pairs:
             if table not in ROWS:
                 continue
             with self.subTest(table=table, column=column):
@@ -258,6 +316,7 @@ class AccountDeletionTables(DatabaseTest):
     async def test_every_forgotten_table_has_a_row_test(self) -> None:
         forgotten = {t for t, _ in DELETED} | {t for t, _ in ZEROED}
         self.assertEqual(forgotten, set(ROWS) | set(NOT_YET) | set(ALREADY_COVERED))
+        self.assertEqual(NOT_YET, frozenset())  # the second PR emptied it
         self.assertFalse(set(ROWS) & set(NOT_YET))
         self.assertFalse(set(ROWS) & ALREADY_COVERED)
         self.assertFalse(set(NOT_YET) & ALREADY_COVERED)
