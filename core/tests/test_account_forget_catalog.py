@@ -22,9 +22,9 @@ ELSEWHERE = {
     t: None
     for t in (
         "access_grants", "account_discord_ids", "account_id_history", "account_link_history",
-        "account_moves", "account_reserved", "ai_credit_spend", "owner_credits", "owner_hours",
+        "account_reserved", "ai_credit_spend", "owner_credits", "owner_hours",
         "session_usage", "owner_campaigns", "campaigns", "email_changes", "email_sign_in_links",
-        "email_unsubscribed", "sent_emails", "entitlements", "payment_events", "web_sessions",
+        "sent_emails", "entitlements", "web_sessions",
         "web_users", "support_tickets", "wizard_documents", "wizard_drafts", "wizard_finishes",
         "installs",
     )
@@ -33,6 +33,8 @@ BY_DESIGN = {  # kept on purpose: protects the person, or stops a second free tr
     "improvement_opt_outs": None,
     "trial_extensions": None,
     "try_it_used": None,
+    "email_unsubscribed": None,  # the unsubscribe list is kept so nobody is emailed again
+    "payment_events": None,  # the payment record is kept (the delete_person docstring)
 }
 TRANSCRIPTS = {  # the campaign's transcripts, speakers and consent: the owner's call (rule 4)
     t: None
@@ -60,8 +62,8 @@ NOT_A_PERSON = {  # matched by name only
     "campaigns": ("owner_left_at", "owner_missing_since"),  # times
 }
 UNREVIEWED = {  # not yet decided: the list for Supervisor on #4141 (columns not yet audited)
-    "access_log": None, "active_sessions": None, "adventure_reads": None,
-    "campaign_dms": None, "campaign_handover_offers": None, "homebrew_entries": ("added_by",),
+    "access_log": None, "account_moves": None, "active_sessions": None, "adventure_reads": None,
+    "campaign_dms": None, "campaign_handover_offers": None,
     "house_rule_wins": None, "house_rules_file": None, "lore_uploads": ("rights_by",),
     "map_notes": None, "memory_beliefs": None, "memory_knowers": None, "move_code_asks": None,
     "move_codes": None, "name_answers": None, "name_not_same": None, "pack_suggestions": None,

@@ -315,6 +315,49 @@ class AccountDeletion(DatabaseTest):
                 ["Crits double the dice", "Rest takes a night"],
             )
 
+    async def test_a_follower_who_took_the_update_themselves_can_delete_their_account(self) -> None:
+        from dmbot.rules.house import HouseRuleStore
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: NOW)
+        await houses.add(GUILD_A, self.b1.id, BOB, "Crits double the dice")
+        rules = await houses.list(GUILD_A, self.b1.id)
+        await sets.publish(GUILD_A, self.b1.id, BOB, "Frostmaiden", rules, None)
+        code = await sets.make_code(GUILD_A, self.b1.id, BOB)
+        for guild, campaign in ((GUILD_A, self.a1), (GUILD_B, self.a2)):
+            offer = await sets.by_code(guild, ALICE, code)
+            await sets.follow(guild, campaign.id, ALICE, offer)
+        async with self.db.guild(GUILD_A) as conn:  # (one took the newer version herself)
+            await conn.execute("UPDATE rule_set_follows SET taken_by = %s", (ALICE,))
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for guild, taken in ((GUILD_A, 0), (GUILD_B, None)):  # (the other has no taker: NULL stays)
+            async with self.db.guild(guild) as conn:
+                cur = await conn.execute("SELECT followed_by, taken_by FROM rule_set_follows")
+                rows = [(r["followed_by"], r["taken_by"]) for r in await cur.fetchall()]
+            self.assertEqual(rows, [(0, taken)], guild)
+
+    async def test_a_backup_of_a_campaign_still_restores_after_its_author_deleted_their_account(
+        self,
+    ) -> None:
+        from dmbot.rules.house import HouseRulesSection, HouseRuleStore
+        from dmbot.rules.rule_set_backup import RuleSetsSection
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        self.store.register_section(HouseRulesSection())
+        self.store.register_section(RuleSetsSection())
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: NOW)
+        await houses.add(GUILD_A, self.a1.id, ALICE, "Crits double the dice")
+        rules = await houses.list(GUILD_A, self.a1.id)
+        await sets.publish(GUILD_A, self.a1.id, ALICE, "Frostmaiden", rules, None)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        backup = await self.store.export(GUILD_A, self.a1.id)
+        restored = await self.store.import_backup(
+            GUILD_B, backup, BOB
+        )  # (refused as damaged before)
+        self.assertEqual(len(await houses.list(GUILD_B, restored.id)), 1)
+
     async def test_every_authorship_column_can_hold_zero_and_has_its_policies(self) -> None:
         from importlib import import_module
 

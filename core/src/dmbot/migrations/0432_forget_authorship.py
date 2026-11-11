@@ -26,6 +26,7 @@ ZEROED: tuple[tuple[str, str], ...] = (
     ("rule_set_follows", "taken_by"),
     ("rule_set_editors", "added_by"),
     ("homebrew_entries", "created_by"),
+    ("homebrew_entries", "added_by"),  # (a copy of created_by, 0113)
     ("adventure_documents", "added_by"),
     ("adventure_chunks", "created_by"),
     ("recap_style_examples", "created_by"),
@@ -57,7 +58,7 @@ def _policy_sql() -> str:
         columns = [c for t, c in ZEROED if t == table]
         mine = " OR ".join(f"{c} = dmbot_current_user()" for c in columns)
         shown = " OR ".join(f"{c} = dmbot_current_user() OR {c} = 0" for c in columns)
-        newrow = " AND ".join(f"{c} <> dmbot_current_user()" for c in columns)
+        newrow = " AND ".join(f"{c} IS DISTINCT FROM dmbot_current_user()" for c in columns)
         out.append(
             f"        EXECUTE format('CREATE POLICY forget_author_read ON {table}\n"
             f"            FOR SELECT TO %I\n"
@@ -99,10 +100,18 @@ def _relax_sql() -> str:
 
 
 def _body() -> str:
-    return "".join(
-        f"        UPDATE {t} SET {c} = 0 WHERE {c} = dmbot_current_user();\\n".replace("\\n", "\n")
-        for t, c in ZEROED
-    )
+    """One UPDATE for each table, setting every column that holds the person at once: a table with
+    two such columns (`rule_set_follows`: followed_by and taken_by, often the same person) would
+    otherwise be refused by its own policy half way, and a NULL column stays NULL."""
+    out = []
+    for table in dict.fromkeys(t for t, _ in ZEROED):
+        columns = [c for t, c in ZEROED if t == table]
+        sets = ", ".join(
+            f"{c} = CASE WHEN {c} = dmbot_current_user() THEN 0 ELSE {c} END" for c in columns
+        )
+        where = " OR ".join(f"{c} = dmbot_current_user()" for c in columns)
+        out.append(f"        UPDATE {table} SET {sets} WHERE {where};\n")
+    return "".join(out)
 
 
 SQL = (
