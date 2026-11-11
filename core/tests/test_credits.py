@@ -112,7 +112,8 @@ class Estimates(unittest.TestCase):
         self.assertGreater(
             credits.lore_estimate(200_000).credits, credits.lore_estimate(10_000).credits
         )
-        self.assertGreaterEqual(credits.lore_estimate(0).credits, 10)  # (never free)
+        self.assertEqual(credits.lore_estimate(0).credits, 10)  # (one cent at least: never free)
+        self.assertEqual(credits.lore_estimate(100).credits, 10)
 
     def test_every_plan_has_an_allowance(self) -> None:
         self.assertEqual(set(credits.CREDITS_PER_MONTH), set(get_args(PlanId)))

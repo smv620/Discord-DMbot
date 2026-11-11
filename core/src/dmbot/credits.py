@@ -132,8 +132,10 @@ def estimate(job_kind: str, units: float, *, allowance: int, used: int) -> Estim
 def lore_estimate(chars: int, *, allowance: int = 0, used: int = 0) -> Estimate:
     """What reading a lore text of `chars` characters will cost. It uses the model-priced figure the
     lore card already worked out (`memory.background.estimate_cents`: the text goes in three times,
-    at the list prices, with a margin), which is never low, rather than a per-word guess. One cent
-    is 10 credits (a credit is a thousandth of a dollar)."""
+    at the list prices, with a margin), rather than a per-word guess. It prices the read itself;
+    the extra steps some options add (who a pronoun means, the AI's call on who knows it) are not
+    in it, and the margin is what absorbs them. The charge is logged beside it so the two can be
+    compared. One cent is 10 credits (a credit is a thousandth of a dollar)."""
     # (imported here: memory.background imports ai, which imports this module)
     from dmbot.memory.background import estimate_cents
 
