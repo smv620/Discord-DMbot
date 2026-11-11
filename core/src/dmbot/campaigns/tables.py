@@ -206,6 +206,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
     "upload_undos": _WAIT,  # a press of Undo this upload: ids and counts, gone in a day (#3879)
     "trait_answers": _WAIT,  # a Yes or No on a lineage or class question, gone in a day (#3946)
+    "hand_over_answers": _WAIT,  # a "Does Claude still have it?" answer, gone in a day (#4122)
+    "hand_over_questions": "the bot's list of \"Does Claude still have it?\" questions for the "
+    "website (#4122): ids and a time, written again every minute from the campaign's connections",
     "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
