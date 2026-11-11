@@ -504,7 +504,7 @@ class Safeguards(SyncTest):
         it = self.interaction()
 
         async def broken(**kw: Any) -> None:
-            raise discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")  # type: ignore[arg-type]
+            raise discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")
 
         it.edit_original_response = broken
         with patch.object(house_file_sync, "apply", AsyncMock(side_effect=RuntimeError("x"))):
