@@ -1,4 +1,4 @@
-"""Every table account deletion changes is tested with real rows (#4162, first PR): one row for
+"""Every table account deletion changes is tested with real rows (#4162): one row for
 Alice and one for Bob in each, then the deletion. Alice's rows go from the DELETED tables and her
 person column goes to 0 in the ZEROED ones; Bob's rows stay untouched. The lists come from the
 migrations themselves, so a table added to a forget function fails the completeness test until it
@@ -21,6 +21,60 @@ FORGET_PERSON = import_module("dmbot.migrations.0431_forget_person")
 FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
 DELETED: tuple[tuple[str, str], ...] = FORGET_PERSON.DELETED
 ZEROED: tuple[tuple[str, str], ...] = FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED
+
+# Written out on purpose: if a column is dropped from a forget function, this test fails too, so
+# the drop shows up here as well as in the migration's review.
+EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
+    (
+        ("hand_over_answers", "user_id"),
+        ("lore_uploads", "user_id"),
+        ("member_directory", "user_id"),
+        ("name_actions", "user_id"),
+        ("npc_notes", "user_id"),
+        ("picture_actions", "user_id"),
+        ("question_notices", "user_id"),
+        ("recap_requests", "user_id"),
+        ("rule_set_editors", "user_id"),
+        ("script_makes", "user_id"),
+        ("setting_actions", "user_id"),
+        ("trait_answers", "user_id"),
+        ("upload_undos", "user_id"),
+        ("web_backups", "user_id"),
+        ("web_house_file_actions", "user_id"),
+        ("web_line_deletions", "user_id"),
+        ("web_line_fixes", "user_id"),
+        ("web_peeks", "user_id"),
+        ("web_recap_style_actions", "user_id"),
+        ("web_report_requests", "user_id"),
+        ("web_restores", "user_id"),
+        ("web_rule_actions", "user_id"),
+    )
+)
+EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
+    (
+        ("adventure_chunks", "created_by"),
+        ("adventure_documents", "added_by"),
+        ("homebrew_entries", "added_by"),
+        ("homebrew_entries", "created_by"),
+        ("house_rules", "created_by"),
+        ("recap_holds", "dm_user_id"),
+        ("recap_jobs", "dm_user_id"),
+        ("recap_must_haves", "created_by"),
+        ("recap_style_examples", "created_by"),
+        ("recap_style_notes", "created_by"),
+        ("recap_upload_rights", "user_id"),
+        ("rule_set_editors", "added_by"),
+        ("rule_set_follows", "followed_by"),
+        ("rule_set_follows", "taken_by"),
+        ("rule_set_versions", "created_by"),
+        ("rule_sets", "created_by"),
+        ("session_imports", "imported_by"),
+        ("shared_confirmations", "user_id"),
+        ("speaker_removals", "requested_by"),
+        ("transcript_suggestions", "decided_by"),
+        ("waiting_name_questions", "decided_by"),
+    )
+)
 
 # Tables the account-deletion tests already cover with real rows (test_account_deletion.py).
 ALREADY_COVERED = frozenset(
@@ -159,20 +213,75 @@ ROWS: dict[str, str] = {
         "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
         " VALUES (%(g)s, %(c)s, %(u)s, 1)"
     ),
+    "rule_set_editors": (
+        "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by, added_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(u)s, 1)"
+    ),
+    "adventure_chunks": (
+        "INSERT INTO adventure_chunks (guild_id, campaign_id, id, document_id, position, heading,"
+        " text, created_at, created_by) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 0, 'h', 'x', 1,"
+        " %(u)s)"
+    ),
+    "session_imports": (
+        "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,"
+        " imported_by, imported_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 'f.txt', %(u)s, 1)"
+    ),
+    "transcript_suggestions": (
+        "INSERT INTO transcript_suggestions (guild_id, campaign_id, session_id, started_ms,"
+        " user_id, suggested, base_text, created_at, decided_by) VALUES (%(g)s, %(c)s,"
+        " %(k)s, 0, %(u)s, 'x', 'x', 1, %(u)s)"
+    ),
+    "waiting_name_questions": (
+        "INSERT INTO waiting_name_questions (guild_id, campaign_id, session_id, speaker_id,"
+        " started_ms, heard, option_ids, created_at, decided_by) VALUES (%(g)s, %(c)s,"
+        " %(k)s, %(u)s, 0, 'x', ARRAY['a', 'b'], 1, %(u)s)"
+    ),
+    "recap_jobs": (
+        "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, created_at)"
+        " VALUES (%(g)s, %(c)s, %(u)s, %(u)s, 1)"
+    ),
 }
 
-# The second PR of #4162 covers these (parent rows: a rule set, a document, a transcript session;
-# and recap_jobs). That PR empties this set and checks it is empty.
-NOT_YET: frozenset[str] = frozenset(
+# The parent rows those tables need, written before ROWS (rule sets and transcript sessions).
+PARENTS: dict[str, str] = {
+    "rule_sets": (
+        "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+        " created_at) VALUES (%(g)s, %(c)s, %(k)s, 'house_rules', 'x', 'shared', %(u)s, 1)"
+    ),
+    "transcript_sessions": (
+        "INSERT INTO transcript_sessions (guild_id, campaign_id, id, started_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 1)"
+    ),
+}
+
+# Empty: the second PR of #4162 covered the parent-row tables and recap_jobs (above). The
+# completeness test below still checks that every forgotten table is covered somewhere.
+NOT_YET: frozenset[str] = frozenset()
+
+# Tables the same-campaign test (#4181) cannot give Bob's second row in Alice's campaign: a key that
+# already has Bob's row, one row per campaign, or a parent row with a clashing key. Each has its
+# reason beside it.
+SAME_CAMPAIGN_SKIPS: frozenset[str] = frozenset(
     {
-        "rule_set_editors",  # covered in the second PR of #4162
-        "adventure_chunks",  # covered in the second PR of #4162
-        "session_imports",  # covered in the second PR of #4162
-        "transcript_suggestions",  # covered in the second PR of #4162
-        "waiting_name_questions",  # covered in the second PR of #4162
-        "recap_jobs",  # covered in the second PR of #4162
+        # recap_upload_rights: one row per campaign (key: server and campaign), and Alice's setUp
+        # row already holds Alice's campaign's one.
+        "recap_upload_rights",
+        # rule_sets: a campaign has one house-rules set, and Alice's campaign already has it, so
+        # Bob's parent row cannot go in; rule_set_editors points at that row, so it is skipped too.
+        "rule_sets",
+        "rule_set_editors",
+        # transcript_sessions: unique on (campaign, started_at), and Bob's parent row has the
+        # same fixed start time as Alice's; the three tables that point at a session are skipped.
+        "transcript_sessions",
+        "session_imports",
+        "transcript_suggestions",
+        "waiting_name_questions",
     }
 )
+
+# Bob's second row in Alice's campaign: its own id, distinct from both people's rows.
+SECOND_ID = f"{BOB + 0x10000:032x}"
+SECOND_FINGERPRINT = f"{BOB + 0x10000:064x}"
 
 
 class AccountDeletionTables(DatabaseTest):
@@ -193,8 +302,9 @@ class AccountDeletionTables(DatabaseTest):
             ALICE: await self.store.create(GUILD_A, "Alice one", ALICE),
             BOB: await self.store.create(GUILD_A, "Bob one", BOB),
         }
+        self.campaigns = campaigns
         async with self.db.guild(GUILD_A) as conn:
-            for sql in ROWS.values():
+            for sql in [*PARENTS.values(), *ROWS.values()]:
                 for user in (ALICE, BOB):
                     await conn.execute(
                         sql,
@@ -235,13 +345,40 @@ class AccountDeletionTables(DatabaseTest):
             )
             return [dict(r) for r in await cur.fetchall()]
 
+    async def test_an_editor_alice_added_stays_with_nobody_as_the_adder(self) -> None:
+        # Bob is an editor of Alice's rule set, which Alice added: his row stays, the adder goes.
+        alice_campaign = self.campaigns[ALICE].id
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
+                " added_at) VALUES (%s, %s, %s, %s, %s, 1)",
+                (GUILD_A, alice_campaign, f"{ALICE:032x}", BOB, ALICE),
+            )
+            cur = await conn.execute(
+                "SELECT added_by FROM rule_set_editors WHERE campaign_id = %s AND user_id = %s",
+                (alice_campaign, BOB),
+            )
+            self.assertEqual([r["added_by"] for r in await cur.fetchall()], [ALICE])
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, added_by FROM rule_set_editors"
+                " WHERE campaign_id = %s AND user_id = %s",
+                (alice_campaign, BOB),
+            )
+            rows = [(r["user_id"], r["added_by"]) for r in await cur.fetchall()]
+        self.assertEqual(rows, [(BOB, 0)])
+
     async def test_every_zeroed_column_goes_to_zero_and_the_row_stays(self) -> None:
-        alices = {table: await self.rows(table, column, ALICE) for table, column in ZEROED}
+        # (rule_set_editors is also deleted by its user: its adder is tested on its own above)
+        deleted = {table for table, _ in DELETED}
+        pairs = [(table, column) for table, column in ZEROED if table not in deleted]
+        alices = {table: await self.rows(table, column, ALICE) for table, column in pairs}
         for table in alices:
             if table in ROWS:  # (before the deletion, Alice's row is there: no vacuous pass)
                 self.assertEqual(len(alices[table]), 1, table)
         await accounts.delete_person(self.db, ALICE, now=NOW + 50)
-        for table, column in ZEROED:
+        for table, column in pairs:
             if table not in ROWS:
                 continue
             with self.subTest(table=table, column=column):
@@ -258,6 +395,66 @@ class AccountDeletionTables(DatabaseTest):
     async def test_every_forgotten_table_has_a_row_test(self) -> None:
         forgotten = {t for t, _ in DELETED} | {t for t, _ in ZEROED}
         self.assertEqual(forgotten, set(ROWS) | set(NOT_YET) | set(ALREADY_COVERED))
+        self.assertEqual(NOT_YET, frozenset())  # the second PR emptied it
         self.assertFalse(set(ROWS) & set(NOT_YET))
         self.assertFalse(set(ROWS) & ALREADY_COVERED)
         self.assertFalse(set(NOT_YET) & ALREADY_COVERED)
+
+    async def count_in_campaign(self, table: str, column: str, value: int, campaign: str) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                f"SELECT count(*) AS n FROM {table} WHERE {column} = %s AND campaign_id = %s",
+                (value, campaign),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    async def test_the_forget_lists_are_the_ones_pinned_here(self) -> None:
+        self.assertEqual(set(DELETED), EXPECTED_DELETED)
+        self.assertEqual(set(ZEROED), EXPECTED_ZEROED)
+
+    async def test_a_second_persons_row_in_the_same_campaign_survives(self) -> None:
+        alice_campaign = self.campaigns[ALICE].id
+        written: list[tuple[str, tuple[str, ...]]] = []
+        params = {
+            "g": GUILD_A,
+            "c": alice_campaign,
+            "u": BOB,
+            "k": SECOND_ID,
+            "f": SECOND_FINGERPRINT,
+        }
+        async with self.db.guild(GUILD_A) as conn:
+            for table, sql in ROWS.items():
+                if table in PARENTS or table in SAME_CAMPAIGN_SKIPS or "campaign_id" not in sql:
+                    continue
+                columns = tuple(c for t, c in (*DELETED, *ZEROED) if t == table)
+                self.assertTrue(columns, table)
+                await conn.execute(sql, params)
+                written.append((table, columns))
+        # Every forgotten table with a row here and a campaign column is written, or skipped above.
+        expected = {
+            table
+            for table, _ in (*DELETED, *ZEROED)
+            if table in ROWS
+            and table not in PARENTS
+            and table not in SAME_CAMPAIGN_SKIPS
+            and "campaign_id" in ROWS[table]
+        }
+        self.assertEqual({table for table, _ in written}, expected)
+        for table, columns in written:  # (before the deletion, both people's rows are there)
+            for column in columns:
+                with self.subTest(table=table, column=column, before=True):
+                    self.assertEqual(
+                        await self.count_in_campaign(table, column, ALICE, alice_campaign), 1
+                    )
+                    self.assertEqual(
+                        await self.count_in_campaign(table, column, BOB, alice_campaign), 1
+                    )
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for table, columns in written:
+            for column in columns:
+                with self.subTest(table=table, column=column, after=True):
+                    self.assertEqual(
+                        await self.count_in_campaign(table, column, BOB, alice_campaign), 1
+                    )
