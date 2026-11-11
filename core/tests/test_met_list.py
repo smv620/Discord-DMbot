@@ -57,6 +57,8 @@ class Words(unittest.TestCase):
         self.assertTrue(
             all(len(o.label) <= 100 and len(o.description or "") <= 100 for o in options)
         )
+        # (a menu can't show Discord's date: it keeps the plain one, #4104)
+        self.assertTrue(all("<t:" not in (o.description or "") for o in options))
 
 
 class TheMessage(unittest.TestCase):

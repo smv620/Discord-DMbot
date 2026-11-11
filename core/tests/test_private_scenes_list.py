@@ -49,6 +49,8 @@ class Words(unittest.TestCase):
         self.assertEqual(len(options), psl.SHOWN_MAX)
         self.assertTrue(all(len(o.label) <= 100 and len(o.description or "") <= 100
                             for o in options))  # fmt: skip
+        # (a menu can't show Discord's date: it keeps the plain one, #4104)
+        self.assertTrue(all("<t:" not in (o.description or "") for o in options))
 
 
 class Presses(unittest.IsolatedAsyncioTestCase):
