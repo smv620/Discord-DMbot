@@ -1335,15 +1335,16 @@ export interface UploadNotice {
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */
-  undone: { took: number; of: number } | null;
+  undone: { took: number; of?: number } | null;
   /** The questions left for the DM from this upload. */
   questionsLeft: number;
   serverNow: number;
 }
-/** What one Undo this upload did (#3879): how many changes it took back of how many it had. */
+/** What one Undo this upload did (#3879): how many changes it took back, and of how many it had when the API says (core's answer
+ * has the first only: the notice keeps no count of its changes). */
 export interface UploadUndo {
   took: number;
-  of: number;
+  of?: number;
 }
 /** One lineage or class question waiting for the DM (#3946; core web/trait_offers.py): what the lore said about a character the
  * campaign already has. `quote` and `upload` are the DM's own lore: DM only. */
@@ -3319,6 +3320,10 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_clip: "bad-clip",
   undo_late: "undo-late",
   undo_done: "undo-done",
+  // core's words for Undo this upload (0417): the door's refusals and the bot's outcome words (#3879, #4078)
+  too_late: "undo-late",
+  undone: "undo-done",
+  already: "undo-done",
   voice_off: "voice-off",
   no_consent: "no-consent",
   not_a_dm: "not-allowed",
