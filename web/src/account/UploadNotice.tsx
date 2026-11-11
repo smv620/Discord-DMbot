@@ -18,7 +18,7 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
   const [failed, setFailed] = useState(false);
   const [asking, setAsking] = useState(false);
   const [undoing, setUndoing] = useState(false);
-  const [undone, setUndone] = useState<{ took: number; of: number } | null>(null);
+  const [undone, setUndone] = useState<{ took: number; of?: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const live = useRef(true);
   const yes = useRef<HTMLButtonElement>(null);
@@ -75,7 +75,10 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
 
   const days = notice.undoUntil && notice.undoUntil > notice.serverNow ? Math.max(1, Math.ceil((notice.undoUntil - notice.serverNow) / 86400)) : 0;
   const result = undone ?? notice.undone;
-  const names = `/account/names/${encodeURIComponent(campaignRef)}#from=${encodeURIComponent(source.id)}`;
+  // Core's Names filter knows the website's lore uploads (`u` and the upload's 32-hex id); an import's names are found by session, which
+  // that filter does not offer yet, so the link opens the whole Names page for it.
+  const fromId = source.kind === "lore" && /^[0-9a-f]{32}$/.test(source.id) ? `u${source.id}` : "";
+  const names = `/account/names/${encodeURIComponent(campaignRef)}${fromId ? `#from=${fromId}` : ""}`;
 
   async function undo(): Promise<void> {
     if (undoing || !api.undoUpload) return;

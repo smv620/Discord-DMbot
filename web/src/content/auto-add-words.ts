@@ -25,7 +25,7 @@ export const autoAddWords = {
   undoYes: "Yes, undo this upload",
   undoNo: "No, keep it",
   undoing: "Taking it back",
-  tookBack: (took: number, of: number): string => `Took back ${took} of ${of}.`,
+  tookBack: (took: number, of?: number): string => (of === undefined ? `Took back ${took}.` : `Took back ${took} of ${of}.`),
   undoneAlready: "This upload has already been undone.",
   undoLate: "This upload can't be undone any more. It was more than 7 days ago.",
   notice: { failed: "DMbot couldn't read how this upload went. Open the Names page to see what was added.", stalled: "Nothing new for a while." },

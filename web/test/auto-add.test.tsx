@@ -46,7 +46,7 @@ describe("the notice", () => {
     show("100.cmp1.autoadd");
     expect((await screen.findByRole("status")).textContent).toContain("Added 62 names");
     expect(screen.getByRole("status").textContent).toContain("48 connections from Lore, 24 Oct.");
-    expect((screen.getByRole("link", { name: w.seeNames }) as HTMLAnchorElement).getAttribute("href")).toBe("/account/names/100.cmp1.autoadd#from=up1");
+    expect((screen.getByRole("link", { name: w.seeNames }) as HTMLAnchorElement).getAttribute("href")).toBe("/account/names/100.cmp1.autoadd"); // (not a website upload id: no filter)
     expect((screen.getByRole("link", { name: w.seeGraph }) as HTMLAnchorElement).getAttribute("href")).toBe("/account/web/100.cmp1.autoadd");
     expect(screen.getByText(w.questions(3), { exact: false })).toBeTruthy();
     expect(screen.getByRole("link", { name: w.questionsLink }).getAttribute("href")).toBe("/account/questions");
@@ -111,6 +111,20 @@ describe("the setting", () => {
     render(<CampaignSettings api={api} campaignRef="100.cmp1" page={page} />);
     await screen.findByRole("heading", { name: /settings/i });
     expect(screen.queryByText(w.setting.heading)).toBeNull();
+  });
+});
+
+describe("the notice's Names link", () => {
+  const hrefFor = async (source: { kind: "lore" | "import"; id: string }) => {
+    render(<UploadNotice api={mockApi("table")} campaignRef="100.cmp1.autoadd" source={source} />);
+    return (await screen.findByRole("link", { name: w.seeNames })).getAttribute("href");
+  };
+  it("opens on the lore upload's own names, asked for by its website id", async () => {
+    const id = "ab".repeat(16);
+    expect(await hrefFor({ kind: "lore", id })).toBe(`/account/names/100.cmp1.autoadd#from=u${id}`);
+  });
+  it("opens the whole page for an import, whose names the filter cannot pick yet", async () => {
+    expect(await hrefFor({ kind: "import", id: "ab".repeat(16) })).toBe("/account/names/100.cmp1.autoadd");
   });
 });
 
