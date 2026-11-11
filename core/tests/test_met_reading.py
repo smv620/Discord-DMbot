@@ -19,6 +19,7 @@ from dmbot.memory.met_store import MAX_PER_SESSION, MetAdded, MetRow, MetStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
+from tests.agreed import agree
 from tests.test_extractor import DM, Kept, dm_session, go, line, session
 from tests.test_memory_names import DM as DM_ID
 from tests.test_memory_names import GUILD, NamesTest
@@ -205,6 +206,7 @@ class Store(NamesTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM_ID, 8, 99)  # (the writer re-reads it, #4153)
         self.met_store = MetStore(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
@@ -244,6 +246,15 @@ class Store(NamesTest):
     async def test_a_speaker_whose_lines_went_before_the_write_is_never_cited(self) -> None:
         # (#4091: "Delete my transcripts" committed between the read and this write)
         await self.transcripts.delete_person(GUILD, DM_ID)
+        done = await self.met(("barbarians", 2))
+        self.assertEqual((done.made, done.gone), (0, 1))
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_speaker_who_stopped_before_the_write_is_never_cited(self) -> None:
+        # (#4153: "Stop recording me" deletes no lines; the writer re-reads who agreed)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM consent WHERE guild_id = %s AND user_id = %s",
+                               (GUILD, DM_ID))  # fmt: skip
         done = await self.met(("barbarians", 2))
         self.assertEqual((done.made, done.gone), (0, 1))
         self.assertEqual(await self.rows(), [])

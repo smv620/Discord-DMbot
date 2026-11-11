@@ -17,6 +17,7 @@ from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING, MET_N
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import met_list, split_words
+from tests.agreed import agree
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 LINE_MS = 1_700_000_001_000
@@ -75,6 +76,7 @@ class TheMessage(unittest.TestCase):
 class TheList(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM, PLAYER, 99)  # (the writer re-reads it, #4153)
         self.met = MetStore(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
@@ -270,6 +272,7 @@ class MetWhileSplit(NamesTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM, PLAYER, 99)  # (the writer re-reads it, #4153)
         cid = self.campaign.id
         self.wren = await self.pc("Wren", DM)  # (7 plays Wren here, as in test_split_names)
         self.ash = await self.pc("Ash", PLAYER)

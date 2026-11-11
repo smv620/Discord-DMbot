@@ -21,6 +21,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.consent import still_recorded
 from dmbot.db import Database
 from dmbot.memory.models import spelling_key
 from dmbot.memory.private_scenes import Clock, Scene, find
@@ -88,6 +89,9 @@ class PrivateScenes:
             if row is None:
                 return Written()
             started_at = int(row["started_at"])
+            # who agreed was read before this write began: a "Stop recording me" since then is
+            # read again here, under the row (#4153), so a scene never cites someone who stopped
+            recorded = sorted(await still_recorded(conn, guild_id, campaign_id, recorded))
             # Spoken lines only: the DM's sidebar, table questions and typed lines are not the
             # scene (and a typed line has no voice to place).
             cur = await conn.execute(
