@@ -185,6 +185,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The person's own requests and records go; authorship and transcripts are the campaign's
         # (#4141).
         await conn.execute("SELECT dmbot_forget_person()")
+        # What they wrote or decided for a campaign stays, with nobody as the author (#4141).
+        await conn.execute("SELECT dmbot_forget_authorship()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.
