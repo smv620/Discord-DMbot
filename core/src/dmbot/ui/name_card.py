@@ -26,7 +26,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import kin, link_edits, name_edits, tags
+from dmbot.memory import hand_over, kin, link_edits, name_edits, tags
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -459,6 +459,25 @@ def traits_line(links: Sequence[RuleLink]) -> str:
     return "\n🧬 " + " · ".join(parts) if parts else ""
 
 
+def history_line(
+    lookup: CampaignLookup, entity_id: str, connections: Sequence[Relation], *, secrets: bool
+) -> str:
+    """How an item changed hands (#4115): "📜 **How it changed hands:** Claude sold it to
+    Belleros · Belleros has it now", or "" when no holder's tie to it has ended. A secret tie is
+    left out unless `secrets`, and a holder the reader may not see is never named."""
+
+    def name(holder: str) -> str | None:
+        e = lookup.entities.get(holder)
+        return _md(e.name) if e is not None and e.status == CONFIRMED else None
+
+    ties = [r for r in connections if r.object_id == entity_id and (secrets or not r.secret)]
+    steps = hand_over.history(ties, name)
+    return f"{HISTORY_HEAD} {' · '.join(steps)}" if steps else ""
+
+
+HISTORY_HEAD = "📜 **How it changed hands:**"
+
+
 def card_text(
     lookup: CampaignLookup,
     entity_id: str,
@@ -506,8 +525,21 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
-    if (entity.type == ITEM if item is None else item) and entity.is_unique:
+    is_item = entity.type == ITEM if item is None else item
+    if is_item and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
+    steps = history_line(lookup, entity_id, connections, secrets=secrets) if is_item else ""
+    if steps:  # (the ended ties it tells are not listed again as connections below)
+        lines.append(steps)
+        connections = [
+            r
+            for r in connections
+            if not (
+                r.predicate in hand_over.HELD
+                and r.object_id == entity_id
+                and r.to_session_at is not None
+            )
+        ]
     if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
         lines.extend(thread_lines)
     if book_line and secrets:  # who this is in the DM's adventure: the DM's alone (#1715)
