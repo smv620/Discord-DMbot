@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, placing, told
+from dmbot.memory import beliefs, evidence, link_edits, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
@@ -78,6 +78,9 @@ FEELING_TEXT = "feeling:"
 # through `MemoryStore.set_knows_how`. The door's allowed-actions list holds it (WebDev's
 # migration).
 KNOWS_HOW_ACTION = "link-knows-how"
+# "Who knows this?" on a connection and on a secret other name (#2999): text `dm`, `everyone` or
+# `some <ids>` (web/who_knows.py); the door checks its shape and that the ids are this campaign's.
+LINK_WHO, ALIAS_WHO = "link-who", "alias-who"
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
@@ -336,19 +339,21 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else int(row["result_other"])
 
-    async def link_batch_made(
+    async def link_batches_with(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
-    ) -> bool:
-        """Whether `batch` is a change one of this DM's own done connection edits made, so an Undo
-        can only take back what they did themselves from the website (#4156)."""
+    ) -> list[int]:
+        """Every change of the one connection edit, by this DM, done, that made `batch` (#4156;
+        one edit can make two, #4159), so an Undo can only take back what they did themselves from
+        the website, and all of it. Empty: no such edit."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                "SELECT result_batches FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
                 " AND user_id = %s AND action LIKE 'link-%%' AND action <> 'link-undo'"
-                " AND state = 'done' AND %s = ANY (result_batches)",
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
-            return await cur.fetchone() is not None
+            row = await cur.fetchone()
+        return [int(b) for b in row["result_batches"]] if row is not None else []
 
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
@@ -695,6 +700,43 @@ async def _spelling(
     return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
 
 
+def _who_of(text: str) -> tuple[str, list[str]]:
+    """The website's answer as the door let it through: `dm`, `everyone` or `some <ids>`. An
+    empty one is "" (the store refuses it as no answer)."""
+    words = text.split()
+    return (words[0], words[1:]) if words else ("", [])
+
+
+async def _alias_who(
+    memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
+) -> Outcome:
+    """ "Who knows this?" for a secret other name of this entry (#2999, #4159): the name card's
+    call, `name_edits.set_who_knows`, with the website's whole list of who knows it. A refusal (no
+    character picked, one who isn't a confirmed character of this campaign, a name that can't be
+    shown yet) is the page's "bad target", never a half change."""
+    alias = next(
+        (
+            x
+            for x in await memory.aliases(
+                guild_id, campaign_id, entity_id=entity_id, include_secret=True
+            )
+            if x.id == a.target_id
+        ),
+        None,
+    )
+    if alias is None:
+        return _failed(NOT_FOUND)
+    who, characters = _who_of(a.text)
+    made: list[int] = []
+    try:  # (the same answer again writes nothing: the store only changes what differs)
+        await name_edits.set_who_knows(
+            memory, guild_id, campaign_id, alias, who, characters, made=made
+        )
+    except MemoryRuleError:
+        return _failed(BAD_TARGET)
+    return Outcome(result_id=entity_id, batches=tuple(made))
+
+
 async def _told(
     memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
 ) -> Outcome:
@@ -802,15 +844,26 @@ async def _link_undo(
     if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
         return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
     batch = int(a.target_id)
-    if not await actions.link_batch_made(guild_id, cid, a.user_id, batch):
+    together = await actions.link_batches_with(guild_id, cid, a.user_id, batch)
+    if not together:
         return _failed(GONE)
-    try:
-        await memory.undo(guild_id, cid, batch)
-    except TooLateToUndo:
-        return _failed(TOO_LATE)
-    except MemoryRuleError as exc:
-        return _failed(GONE if str(exc) in (STORE_NOT_FOUND, ALREADY_UNDONE) else CHANGED)
-    return Outcome()
+    # Every change the one edit made, newest first (#4159: "Who knows this?" can be two), so the
+    # connection is as it was before the edit, never half of it. One already taken back (a retried
+    # Undo) is skipped; a later refusal stops there and says why.
+    undone = 0
+    for each in sorted(together, reverse=True):
+        try:
+            await memory.undo(guild_id, cid, each)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                continue
+            if undone == 0 and str(exc) == STORE_NOT_FOUND:
+                return _failed(GONE)
+            return _failed(CHANGED)
+        undone += 1
+    return Outcome() if undone else _failed(GONE)
 
 
 async def _confirm_undo(
@@ -991,6 +1044,8 @@ async def _do(
         return Outcome(result_id=entity_id)
     if a.action in TOLD_ACTIONS:
         return await _told(memory, guild_id, cid, entity_id, a)
+    if a.action == ALIAS_WHO:
+        return await _alias_who(memory, guild_id, cid, entity_id, a)
     if a.action == "secret":  # one of its other names
         alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
         if alias_id is None:
@@ -1119,6 +1174,18 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 batch = (
                     await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
                 ).batch
+        elif a.action == LINK_WHO:
+            # "Who knows this?" (#2999, never applied until #4159): Discord's call. The website's
+            # pick is the whole list (any confirmed character, as its door checks), not Discord's
+            # player-characters-only menu, so it replaces every knower.
+            # (the same answer again writes nothing: the store only changes what differs, so a
+            # retried job is done with no change.) One answer can be two changes (hide it, then
+            # who knows it): the page's Undo takes back every one (`link_batches_with`).
+            # A job stopped between the two and retried carries only the second.
+            who, characters = _who_of(a.text)
+            made: list[int] = []
+            await link_edits.set_who_knows(memory, guild_id, cid, link, who, characters, made=made)
+            return replace(pair, batches=tuple(made))
         else:
             return _failed(FAILED)
     except MemoryRuleError as exc:
