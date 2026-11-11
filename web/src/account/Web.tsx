@@ -8,6 +8,8 @@
 // phone can draw it only slowly.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { CONNECTION_PANEL_LIVE } from "../content/connection-panel-switch";
+import { HAND_OVER_LIVE } from "../content/hand-over-switch";
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { GRAPH_CLEANUP_LIVE } from "../content/graph-cleanup-switch";
@@ -125,6 +127,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   // A web too big to draw without asking: what was asked for, held until the person says yes.
   const [big, setBig] = useState<{ names: number; center: string | null; hops: number } | null>(null);
   const [line, setLine] = useState<{ a: string; b: string } | null>(null);
+  // The redesigned connection panel asks before the page leaves it with edits unsaved (#4155): it registers here while it has some.
+  const leaveGuard = useRef<((leave: () => void) => boolean) | null>(null);
+  const goOn = (leave: () => void): void => {
+    if (!leaveGuard.current?.(leave)) leave();
+  };
   // A private message's "Open on the website" can name one line, as `?item=<idA>.<idB>` (#3663): its panel is opened once the
   // graph is here, or the page says it has been answered (or is not drawn any more).
   const wantedLine = useRef(((item) => (item === null ? null : pairFromItem(item)))(currentItem()));
@@ -361,6 +368,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAsked(next);
   }
   function chooseView(next: WebView | undefined): void {
+    goOn(() => chooseViewNow(next));
+  }
+  function chooseViewNow(next: WebView | undefined): void {
     seeAsNow.current = undefined; // Full View, or the Players View, is never "as someone" (#2999)
     setSeeAsNote("");
     switchTo(next);
@@ -666,7 +676,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           </label>
           <p class="small muted">{asked === "players" ? words.playersViewNote : words.fullViewNote}</p>
           {asked === "players" && api.webViewers && (
-            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => chooseSeeAs(id)} onBack={() => chooseSeeAs(undefined)} />
+            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => goOn(() => chooseSeeAs(id))} onBack={() => goOn(() => chooseSeeAs(undefined))} />
           )}
         </fieldset>
       )}
@@ -692,7 +702,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
       <div class="web-tools-form">
         {/* Hidden while the web is read as someone: the search reads the DM's own names, not theirs (#3161). */}
-        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />}
+        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => goOn(() => void load(id, hops))} asPlayers={!canEdit} view={asked} />}
         <div class="field">
           <label for="web-hops">{words.hopsLabel}</label>
           <div class="row web-spinner">
@@ -811,9 +821,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               center={center}
               refId={ref}
               selected={line}
-              onCenter={(id) => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); }}
-              onLine={(a, b) => setLine({ a, b })}
-              onNodePick={() => setLine(null)}
+              onCenter={(id) => goOn(() => { if (!graph.nodes.find((x) => x.id === id)?.unnamed) void load(id, hops); })}
+              onLine={(a, b) => goOn(() => setLine({ a, b }))}
+              onNodePick={() => goOn(() => setLine(null))}
               look={look}
               onIcon={seeing ? undefined : chooseIcon}
               iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
@@ -827,9 +837,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {chosen && (
                 <LazyPanel
                   key={`${chosen.a}|${chosen.b}`}
-                  load={() => import("./WebLinePanel")}
+                  load={() => (CONNECTION_PANEL_LIVE ? import("./WebConnectionPanel") : import("./WebLinePanel"))}
                   what="the connections"
-                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null) }}
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard }}
                 />
               )}
             </WebMap>
@@ -854,7 +864,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           refId={ref}
           center={center}
           alone={alone}
-          onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
+          onCentre={(id) => goOn(() => void load(id, Math.max(hops, graph?.maxHops ?? hops)))}
           onAlone={setAlone}
         />
       )}
@@ -919,6 +929,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                 </button>
                 {open && (
                   <div class="web-name-more row" id={`web-name-${n.id}`}>
+                    {HAND_OVER_LIVE && n.history && (
+                      <p class="small" style="flex-basis: 100%">
+                        <span aria-hidden="true">🔁 </span>
+                        <strong>{words.historyHead}</strong> {n.history}
+                      </p>
+                    )}
                     {n.page === true && npcPageHref(ref, n.id) && (
                       <a class="small" href={npcPageHref(ref, n.id) ?? undefined}>
                         {words.openItsPage}
@@ -926,7 +942,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                       </a>
                     )}
                     {n.id !== center && !n.unnamed && (
-                      <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
+                      <button type="button" class="button secondary" onClick={() => goOn(() => void load(n.id, hops))} aria-label={words.makeMiddle(n.name)}>
                         {words.makeMiddleShort}
                       </button>
                     )}
@@ -991,12 +1007,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           />
         )}
         <h3 class="small">{words.linesHeading}</h3>
-        <WebLines lines={own} onOpen={(a, b) => setLine({ a, b })} />
+        <WebLines lines={own} onOpen={(a, b) => goOn(() => setLine({ a, b }))} />
         {further.length > 0 && (
           <>
             <h3 class="small">{words.furtherOut}</h3>
             <p class="small muted">{words.furtherOutHint(center ? nameOf(center) : "")}</p>
-            <WebLines lines={further} onOpen={(a, b) => setLine({ a, b })} />
+            <WebLines lines={further} onOpen={(a, b) => goOn(() => setLine({ a, b }))} />
           </>
         )}
         </div>

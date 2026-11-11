@@ -375,6 +375,8 @@ async def read_web(
     page = page_of(got, await dm_standings(db, session, ref) if own_view else None)
     if own_view:
         await with_know_words(db, session, ref, page, known)
+    if own_view:
+        await with_histories(db, session, ref, page)
     # where each connection came from (#2946): the DM's own view gets the full value, any other
     # look (a player's, or Players View) the player's
     await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
@@ -382,6 +384,40 @@ async def read_web(
     # (the DM's Players view is what a player gets, so it carries no tools for the picture)
     await pc_icons.with_icons(db, session, ref, page, tools=view != "players")
     return page
+
+
+async def with_histories(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+    """Adds `history` to each item of a DM's own Full View (#4122): how it changed hands, in
+    Discord's words (`graph_view.history_line`). This view is read from the database as a whole,
+    not through the gate, so the ties come from their own DM-only door for the names on the page.
+    Changes `page` in place; an item nobody let go of gets none."""
+    # only the items can have a history; the door takes 500 of them, more than a page draws
+    ids = [
+        str(n["id"])
+        for n in page.get("nodes", [])
+        if n.get("kind") == "item" and not str(n["id"]).startswith("alias:")
+    ]
+    if not ids:
+        return
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_item_ties(%s, %s, %s) AS r", (guild_id, campaign_id, ids[:500])
+        )
+        found = await cur.fetchone()
+    rows = found["r"] if found else None
+    if not rows:
+        return
+    names = {str(r["a"]): r["name"] for r in rows if r.get("name")}
+    by_item: dict[str, list[Any]] = {}
+    for row in rows:
+        by_item.setdefault(str(row["b"]), []).append(graph_view.tie_of(row))
+    for node in page["nodes"]:
+        line = graph_view.history_line(by_item.get(str(node["id"]), []), names.get)
+        if line:
+            node["history"] = line
 
 
 def _knowers(
@@ -943,6 +979,18 @@ WAITING_QUEUE = {
 }
 
 
+async def queue_link_undo(db: Database, session: Session, ref: str, batch: str) -> str:
+    """Queue the Undo of one connection edit (#4156), by the change number its answer carried. The
+    door checks the caller is a DM of the campaign and that the batch is one their own done
+    connection edit made there (`not_found` otherwise); the bot checks again and may say `gone`,
+    `changed` or `too_late`. Nothing is written until then."""
+    if not (batch.isascii() and batch.isdigit()) or len(batch) > 12:
+        raise RecapError("not_found")
+    return await _queue(
+        db, session, ref, entity=None, action="link-undo", target=batch, text="", flag=False
+    )
+
+
 async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue the DM's answer to one waiting connection, or Keep all. DM only (the door checks), and
     the bot applies the very calls the DM screen's buttons make. Returns the answer's id.
@@ -1084,11 +1132,17 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         around = await read_web(db, session, ref, center=got["resultId"], hops=1)
         pair = sorted((got["resultId"], got["resultOther"]))
         edge = next((e for e in around["edges"] if [e["a"], e["b"]] == pair), None)
+    if got["action"] == "link-undo":
+        # the page's ↩ Undo of one of its edits (#4156): it only needs to know it went back
+        return {"state": got["state"], "error": got["error"], "undone": got["state"] == "done"}
+    batches = got.get("resultBatches") or []
     return {
         "state": got["state"],
         "error": got["error"],
         "edge": edge,
         "removed": got["state"] == "done" and edge is None,
+        # the change this edit made, for the page's ↩ Undo (#4156); absent when it changed nothing
+        "batch": int(batches[0]) if got["state"] == "done" and batches else None,
     }
 
 

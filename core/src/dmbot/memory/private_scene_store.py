@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.models import spelling_key
 from dmbot.memory.private_scenes import Clock, Scene, find
 
 LIST_MAX = 250  # rows a list shows; past it, the newest
@@ -64,10 +65,14 @@ class PrivateScenes:
     ) -> Written:
         """Find the session's private scenes and keep them, in place of the ones an earlier run on
         it kept. `opted_in`: who is recorded in this server now; nobody else's lines are read. One
-        transaction; two runs on one session wait for each other on a lock of their own, never on
-        the session's row (a person's "Delete my transcripts" writes that row after deleting these,
-        so holding it here could deadlock). A scene found again keeps its id, so a "Not private"
-        button posted before a re-run still works."""
+        transaction; two runs on one session wait for each other on a lock of their own, and the
+        session's row is held (`FOR SHARE`) before its lines are read, so "Delete my transcripts"
+        or a DM's removal of a speaker, which lock that same row (`FOR UPDATE`) first, run wholly
+        before or wholly after: a scene citing someone whose lines were just deleted is never
+        written (#4091). The order is this run's own advisory lock, then the session's row, then
+        its lines, then what cites them; the transcript deletions take the row first too, and never
+        the advisory lock. A scene found again keeps its id, so a "Not private" button posted
+        before a re-run still works."""
         recorded = sorted(set(opted_in))
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
@@ -76,7 +81,7 @@ class PrivateScenes:
             )
             cur = await conn.execute(
                 "SELECT started_at FROM transcript_sessions WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s",
+                " AND campaign_id = %s AND id = %s FOR SHARE",
                 (guild_id, campaign_id, session_id),
             )
             row = await cur.fetchone()
@@ -86,12 +91,15 @@ class PrivateScenes:
             # Spoken lines only: the DM's sidebar, table questions and typed lines are not the
             # scene (and a typed line has no voice to place).
             cur = await conn.execute(
-                "SELECT started_ms, user_id FROM transcript_lines WHERE guild_id = %s"
+                "SELECT started_ms, user_id, text, heard FROM transcript_lines WHERE guild_id = %s"
                 " AND session_id = %s AND sidebar IS NULL AND NOT typed"
                 " AND user_id = ANY(%s::bigint[]) ORDER BY started_ms, id",
                 (guild_id, session_id, recorded),
             )
-            lines = [(int(r["started_ms"]), int(r["user_id"])) for r in await cur.fetchall()]
+            line_rows = list(await cur.fetchall())
+            lines = [(int(r["started_ms"]), int(r["user_id"])) for r in line_rows]
+            # (each line's words, folded when a scene needs them, in memory only)
+            said: list[tuple[int, int, str]] | None = None
             players = await _players(conn, guild_id, campaign_id)
             scenes: list[Scene] = []
             if lines and len(players) >= 2:
@@ -127,6 +135,7 @@ class PrivateScenes:
                 marked.append((a, b, int(r["from_ms"]), int(r["to_ms"])))
             used: set[str] = set()
             new = 0
+            spellings: dict[str, str] | None = None  # (read once, when a scene is kept)
             kept = skipped = 0
             for scene in scenes:
                 if any(_overlaps(scene, m) for m in marked):
@@ -149,6 +158,13 @@ class PrivateScenes:
                 )  # fmt: skip
                 kept += int(cur.rowcount or 0)
                 new += int(cur.rowcount or 0) if same is None else 0
+                if cur.rowcount:
+                    if spellings is None:
+                        spellings = await _spellings(conn, guild_id, campaign_id)
+                    if said is None:
+                        said = _folded(line_rows, scenes)
+                    await _keep_entries(conn, guild_id, campaign_id, scene_id, scene, said,
+                                        spellings)  # fmt: skip
             return Written(kept, skipped, new)
 
     async def not_private(self, guild_id: int, campaign_id: str, scene_id: str, now: int) -> bool:
@@ -194,6 +210,91 @@ class PrivateScenes:
             )  # fmt: skip
             rows = [_kept(r) for r in await cur.fetchall()]
         return rows[::-1] if session_started_at is not None else rows
+
+
+ENTRIES_MAX = 200  # entries kept for one scene (a backup holds no more; sorted by id)
+
+
+async def _spellings(conn: Any, guild_id: int, campaign_id: str) -> dict[str, str]:
+    """Each folded spelling of a confirmed, named entry that is not a player character (their rank
+    is 5 already) to its entry: its name and its confirmed, open other names. A spelling two
+    entries share, or one a player character also has ("Rook" the PC and "Rook" the inn), is left
+    out: never a guess. A secret one is never used, nor an unnamed entry's description."""
+    cur = await conn.execute(
+        "SELECT id AS entry, name AS text, role FROM memory_entities WHERE guild_id = %s"
+        " AND campaign_id = %s AND status = 'confirmed' AND type <> 'person' AND NOT unnamed"
+        " UNION ALL SELECT a.entity_id AS entry, a.text, e.role FROM memory_aliases a"
+        " JOIN memory_entities e ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+        " AND e.id = a.entity_id WHERE a.guild_id = %s AND a.campaign_id = %s"
+        " AND a.status = 'confirmed' AND NOT a.secret AND e.status = 'confirmed'"
+        " AND e.type <> 'person' AND NOT e.unnamed",
+        (guild_id, campaign_id, guild_id, campaign_id),
+    )
+    owners: dict[str, set[str]] = {}
+    players: set[str] = set()
+    for r in await cur.fetchall():
+        key = spelling_key(str(r["text"]))
+        if not key:
+            continue
+        owners.setdefault(key, set()).add(str(r["entry"]))
+        if r["role"] == "player_character":
+            players.add(key)
+    return {
+        key: next(iter(ids)) for key, ids in owners.items() if len(ids) == 1 and key not in players
+    }
+
+
+async def _keep_entries(
+    conn: Any,
+    guild_id: int,
+    campaign_id: str,
+    scene_id: str,
+    scene: Scene,
+    said: Sequence[tuple[int, int, str]],
+    spellings: dict[str, str],
+) -> None:
+    """The entries spoken of inside the scene by one of its two, as whole words (ids only, at most
+    `ENTRIES_MAX`). One deleted meanwhile is skipped, never an error that loses the run."""
+    found: set[str] = set()
+    for started_ms, speaker, words in said:
+        if scene.from_ms <= started_ms <= scene.to_ms and speaker in scene.speaker_ids:
+            found.update(e for key, e in spellings.items() if f" {key} " in words)
+    rows = [
+        (guild_id, campaign_id, scene_id, e, guild_id, campaign_id, e)
+        for e in sorted(found)[:ENTRIES_MAX]
+    ]
+    if rows:
+        async with conn.cursor() as cursor:
+            await cursor.executemany(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) SELECT %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s) ON CONFLICT DO NOTHING",
+                rows,
+            )
+
+
+def _folded(rows: Sequence[Any], scenes: Sequence[Scene]) -> list[tuple[int, int, str]]:
+    """The lines inside any scene, their words folded (in memory only, never kept)."""
+    spans = [(s.from_ms, s.to_ms) for s in scenes]
+    return [
+        (int(r["started_ms"]), int(r["user_id"]),
+         f" {spelling_key(str(r['text'] or ''))} {spelling_key(str(r['heard'] or ''))} ")
+        for r in rows
+        if any(a <= int(r["started_ms"]) <= b for a, b in spans)
+    ]  # fmt: skip
+
+
+async def entries(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
+    """The entries said in a KEPT private scene of the campaign: the importance floor's input
+    (#4110). A "Not private" scene, or one gone (its transcript, a speaker), counts for none."""
+    cur = await conn.execute(
+        "SELECT DISTINCT x.entity_id FROM memory_private_scene_entries x"
+        " JOIN memory_private_scenes s ON s.guild_id = x.guild_id"
+        " AND s.campaign_id = x.campaign_id AND s.id = x.scene_id"
+        " WHERE x.guild_id = %s AND x.campaign_id = %s AND s.status = 'kept'",
+        (guild_id, campaign_id),
+    )
+    return {str(r["entity_id"]) for r in await cur.fetchall()}
 
 
 def _overlaps(scene: Scene, marked: tuple[str, str, int, int]) -> bool:
@@ -323,6 +424,6 @@ async def keep_recorded(
 
 
 __all__ = [
-    "LIST_MAX", "Kept", "PrivateScenes", "Written", "forget_session", "forget_speaker",
-    "keep_recorded",
+    "ENTRIES_MAX", "LIST_MAX", "Kept", "PrivateScenes", "Written", "entries", "forget_session",
+    "forget_speaker", "keep_recorded",
 ]  # fmt: skip

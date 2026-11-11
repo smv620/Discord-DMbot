@@ -2954,3 +2954,13 @@ SAMPLE RUN 17 (dev1, 2026-11-11, live build cfddcda33; counts on #3545). One run
 CREDITS, read-only (counts only): the sample campaign has 89 rows and 578 credits: import extractor 34 rows, import name_pass 2, import topic 29, lore names_background 6, lore names_background_read 18. The owner has no owner_credits row (free server), and the owner's spend rows total 578, equal to the campaign total.
 
 Session: dev1
+
+DEPLOY 9636c6e1 (deploy 18; Supervisor's handover on #3720 naming 9636c6e17fce74ad63a9b660e50ed8edb9e0e259, CI green on every job; the owner's go in the dev1 session on 2026-11-11). Live was cfddcda3 (17). Migrations 0422_tie_end_reason and 0426_entity_parts_current. Backups: the sample campaign by the live build (format 6, one transcript part), and pg_dumpall to ~/db-backups/dmbot-pre-9636c6e1-<UTC>.sql (mode 600, 3 of 3 dump sections complete). Dry run on the copy (dryrun-pg): restored from the dump, ownership fixed, the dmbot role password reset from the template; migrations applied exactly 0422 and 0426; a second run applied nothing. Order: the bot first, then web-api. Start-up: connected to 2 servers, 0 ERROR or Traceback lines in core; web-api healthy, 0 errors. GIT_COMMIT is 9636c6e17fce74ad63a9b660e50ed8edb9e0e259 on both containers. Image prune: builder cache cleared; oneoff-5336b031 is still kept, beyond the five-deploy rule, pending the owner's answer.
+
+SAMPLE RUN 18 (dev1, 2026-11-11, live build 9636c6e1; counts on #3545). One run, exit 0, with the DM id the owner approved in the dev1 session for this campaign only. Lore read: 4 of 4 player characters. Session import: 172 lines. AI decides: 14 careful calls, about $0.05. Recap (no audio) kept as a draft on the sample campaign for the owner to review.
+
+CREDITS, read-only (counts only, this campaign): import extractor 34 calls, 211 credits; import topic 29 calls, 29 credits; import name_pass 2 calls, 6 credits; lore names_background 5 calls, 12 credits; lore names_background_read 2 calls, 326 credits.
+
+Found in the sample, not a deploy fault: the owner's Keep on one waiting connection (a lore sentence about two characters travelling together) was refused with "couldn't keep that one", and the log gives no reason (#4161, for CloudDev).
+
+Session: dev1

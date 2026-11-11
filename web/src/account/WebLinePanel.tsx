@@ -99,7 +99,7 @@ export default function LinePanel({
 
 /** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
  * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
-function WhoKnows({
+export function WhoKnows({
   api,
   refId,
   link,

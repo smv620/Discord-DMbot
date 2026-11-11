@@ -47,6 +47,7 @@ from dmbot.memory.models import (
     REJECTED,
     MemoryRuleError,
     Relation,
+    TooLateToUndo,
     lookup_key,
     name_key,
 )
@@ -82,6 +83,9 @@ NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
+CHANGED = "changed"  # an Undo refused: something done since is in the way (#4156)
+TOO_LATE = "too_late"  # an Undo past the store's limit (#4156)
+LINK_UNDO = "link-undo"  # takes back the change batch of one of the DM's own connection edits
 NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
 STOPPED = "stopped_recording"  # someone whose words it holds is no longer recorded
 CANNOT_WRITE = "cannot_write"  # the rules refuse to write that fact now
@@ -332,6 +336,20 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else int(row["result_other"])
 
+    async def link_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is a change one of this DM's own done connection edits made, so an Undo
+        can only take back what they did themselves from the website (#4156)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action LIKE 'link-%%' AND action <> 'link-undo'"
+                " AND state = 'done' AND %s = ANY (result_batches)",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
     ) -> bool:
@@ -453,6 +471,10 @@ async def apply(
         return await _confirm(memory, actions, guild_id, cid, action)
     if action.action in MATCH_ACTIONS:
         return await _match(memory, guild_id, cid, action)
+    if action.action == LINK_UNDO:
+        if actions is None:
+            return _failed(FAILED)
+        return await _link_undo(memory, actions, guild_id, cid, action)
     if action.action in MET_ACTIONS:
         if waiting is None and action.action != "met-remove":
             return _failed(FAILED)  # (naming or joining needs who is recorded now)
@@ -767,6 +789,30 @@ async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     return Outcome()
 
 
+async def _link_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """Take back one connection edit from the page's ↩ Undo (#4156): the store's own `undo`, as
+    Discord's Undo button does. Only a batch this DM's own done edit of this campaign made (read
+    again here, as the door checked it before; a made-up number must never reach `undo`, which would
+    undo any change). `gone`: already undone or no longer remembered; `changed`: something done
+    since is in the way; `too_late`: past the store's limit. The queue keeps a row about an hour
+    (the door prunes older ones), so in practice the page's Undo lasts about that long and then says
+    `gone`; a retried edit that finds its work already done carries no batch, so offers no Undo."""
+    if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
+        return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.target_id)
+    if not await actions.link_batch_made(guild_id, cid, a.user_id, batch):
+        return _failed(GONE)
+    try:
+        await memory.undo(guild_id, cid, batch)
+    except TooLateToUndo:
+        return _failed(TOO_LATE)
+    except MemoryRuleError as exc:
+        return _failed(GONE if str(exc) in (STORE_NOT_FOUND, ALREADY_UNDONE) else CHANGED)
+    return Outcome()
+
+
 async def _confirm_undo(
     memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
 ) -> Outcome:
@@ -1013,14 +1059,15 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         # "has a niece" typed on Aldric's card is stored as "Mira kin_of Aldric, niece" (#2457)
         first, second = (other.id, entity_id) if swapped else (entity_id, other.id)
         try:
-            await memory.add_relation(
+            added = await memory.add_relation(
                 guild_id, cid, first, predicate, second, source=DM, confidence=1.0,
                 status=CONFIRMED, detail=detail[:100], secret=a.flag,
                 directional=predicate == "kin_of" and bool(detail), by_hand=True,
             )  # fmt: skip
         except MemoryRuleError:
             return _failed(BAD_TARGET)
-        return Outcome(result_id=entity_id, result_other=other.id)
+        # the change it made, for the page's Undo (#4156); none when it was already known
+        return Outcome(result_id=entity_id, result_other=other.id, batches=_batch_of(added.batch))
     # the others name one connection, filed under its first name
     link = await memory.relation(guild_id, cid, a.target_id)
     if link is None or entity_id not in (link.subject_id, link.object_id):
@@ -1032,24 +1079,25 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         if link.status == REJECTED and await _already(memory, guild_id, cid, link, a):
             return pair
         return _failed(NOT_FOUND)
+    batch: int | None = None  # the change the edit made, for the page's Undo (#4156)
     try:
         if a.action == "link-secret":
-            await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
+            batch = (await link_edits.set_secret(memory, guild_id, cid, link, a.flag)).batch
         elif a.action == "link-pin":
             # 📌 100% truth (#2447): the card's own call. A retried job finds it already so.
             if (link.id in await memory.pinned_connections(guild_id, cid)) != a.flag:
-                await memory.pin(guild_id, cid, link.id, a.flag, source=DM)
+                batch = (await memory.pin(guild_id, cid, link.id, a.flag, source=DM)).batch
         elif a.action == "link-remove":
             if not a.flag:
                 return _failed(BAD_TARGET)
-            await link_edits.remove(memory, guild_id, cid, link)
+            batch = (await link_edits.remove(memory, guild_id, cid, link)).batch
         elif a.action == "link-words":
             picked = a.text.startswith(FEELING_TEXT)
             if picked and link.predicate != "knows":
                 return _failed(BAD_TARGET)  # the picker is for a knows line only (#3606)
             predicate, detail, swapped = predicate_for_either(_words_of(a.text))
             other_end = link.object_id if entity_id == link.subject_id else link.subject_id
-            await link_edits.change_words(
+            changed = await link_edits.change_words(
                 memory,
                 guild_id,
                 cid,
@@ -1059,6 +1107,7 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 first=other_end if swapped else entity_id,
                 dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
+            batch = None if changed is None else changed.batch  # (None: the same words already)
         elif a.action == KNOWS_HOW_ACTION:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
@@ -1067,7 +1116,9 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             if link.predicate != "knows" or a.text not in KNOWS_HOWS:
                 return _failed(BAD_TARGET)
             if link.knows_how != a.text:  # a retried job finds it already so: nothing to write
-                await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
+                batch = (
+                    await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
+                ).batch
         else:
             return _failed(FAILED)
     except MemoryRuleError as exc:
@@ -1079,7 +1130,12 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         if reason == unnamed_mod.NAME_BEFORE_SHOWING:
             return _failed(NAME_UNNAMED)
         return _failed(BAD_TARGET)
-    return pair
+    return replace(pair, batches=_batch_of(batch))
+
+
+def _batch_of(batch: int | None) -> tuple[int, ...]:
+    """The change batches an outcome carries: the one a write made, or none (nothing changed)."""
+    return () if batch is None else (batch,)
 
 
 async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> Outcome:
