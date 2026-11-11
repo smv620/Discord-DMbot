@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-10 UTC by dev1 (after deploy 16)
+Last updated: 2026-11-11 UTC by dev1 (after deploy 17)
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at 7db2efd0 (deploy 16: migrations 0415 to 0417; the wizard, DMBOT_MET_UNNAMED and RECAP_CACHE off; OWNER_ALERT_EMAIL already set). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 16 exit 0 (counts on #3545); recap kept as a draft. Full entry: docs/testing-history.log.
+core + web-api at cfddcda33 (deploy 17: migrations 0418 to 0420; switches off: DMBOT_MET_UNNAMED, DMBOT_PRIVATE_SCENES, DMBOT_PICTURE_NAMES, RECAP_CACHE, the wizard). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 17 exit 0 (counts on #3545); recap kept as a draft. Full entry: docs/testing-history.log.
 READY TO DEPLOY
 ------------------------------------------------------------------------------
 Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all of them run together, in order. Nothing to deploy yet.
@@ -17,7 +17,7 @@ Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all 
 ------------------------------------------------------------------------------
 OWNER CHECKS (not done yet)
 ------------------------------------------------------------------------------
-Deploy 16 (7db2efd0), owner checks: the Keep-all card's new line on an upload with connections from other files; a PDF with picture-only pages (the note). DONE by the owner: a PDF with pictures and text uploaded as lore, accepted and worked (size and the note not yet confirmed). Deploy 15, owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF
+Deploy 16 (7db2efd0), owner checks: DONE by the owner, the sample recap draft on the website works for review (2026-11-11). the Keep-all card's new line on an upload with connections from other files; a PDF with picture-only pages (the note). DONE by the owner: a PDF with pictures and text uploaded as lore, accepted and worked (size and the note not yet confirmed). Deploy 15, owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF
   upload in the names menu, dev1 checks the counts). Then: recap notices in the DM Bot channel with no title or writer name;
   a player with two characters sees both names on transcript lines.
 Part A (eleventh deploy, b1fb7f8d): on a test campaign, "Lia is the mother of Mira" and "Tam is the brother of Mira" give

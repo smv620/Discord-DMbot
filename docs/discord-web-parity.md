@@ -149,6 +149,7 @@ match. "In Discord" says where the DM finds it today.
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
 | Check the connections; Keep, Keep as secret, No, Keep all; Undo | Check the connections | Story Graph: waiting connections (live) |
+| A one-of-a-kind item two characters have: "Does A still have it?" (No, not any more; Yes, both have it; Not now; Undo) and the item's "How it changed hands" line | 🔁 card in 📜 Check the connections; the line on the item's name card (DM only, #4115) | #4122 (the Questions page and the Story Graph's history; the bot already applies the answers) |
 | Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645); both pages say whether the bot showed a yes to the players or kept it hidden (#3974, #3986), or kept it to the group that was there while the party was split (#2996; the website's half is #4035) |
 | Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
 | Change a connection; its feeling; why (the lore quote, DM only) | connection edit | Story Graph: change a connection; feeling picker and "Why?" (#3607) |
@@ -164,8 +165,8 @@ match. "In Discord" says where the DM finds it today.
 | Deeds the party did | deeds card | #3591 |
 | What the characters learned (Keep / Not this) | reveal card | #3863 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
-| Met but not named (who the party met in play that nobody named): name, Same as…, remove | 👣 Met but not named, Names home (DM only, #4045) | #4084 (the website's page; the bot already applies its actions) |
-| Private scenes (two player characters alone together while split): Not private | 🤫 Open the list, on the after-session note in the DM Bot channel (DM only, #2996 rule 5) | #4102 (the website's page) |
+| Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | #4084 (the website's page; the bot already applies its actions) |
+| Private scenes (two player characters alone together while split): Not private | Names home → 📋 More lists → 🤫 Private scenes, or 🤫 Open the list on the after-session note (DM only, #2996 rule 5, #4103) | #4102 (the website's page) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |
