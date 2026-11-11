@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { HAND_OVER_LIVE } from "../content/hand-over-switch";
-import { handOverWords } from "../content/hand-over-words";
 import { itemWords } from "../content/item-words";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { GRAPH_CLEANUP_LIVE } from "../content/graph-cleanup-switch";
@@ -924,7 +923,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                     {HAND_OVER_LIVE && n.history && (
                       <p class="small" style="flex-basis: 100%">
                         <span aria-hidden="true">🔁 </span>
-                        <strong>{handOverWords.historyHead}</strong> {n.history}
+                        <strong>{words.historyHead}</strong> {n.history}
                       </p>
                     )}
                     {n.page === true && npcPageHref(ref, n.id) && (

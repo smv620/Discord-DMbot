@@ -8,8 +8,6 @@ export const the = (name: string): string => (/^(the|a|an)\s/i.test(name) ? name
 
 export const handOverWords = {
   heading: "Items that changed hands",
-  // The Story Graph's line for an item (core graph_view, from memory/hand_over.history): the steps come from the API, in Discord's words.
-  historyHead: "How it changed hands:",
   loading: "Loading…",
   failed: "We couldn't load these. Reload the page to try again.",
   no: "No, not any more",

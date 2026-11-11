@@ -14,7 +14,7 @@ vi.mock("../src/content/hand-over-switch", () => ({
 
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
-import { handOverWords as w } from "../src/content/hand-over-words";
+import { webPage as w } from "../src/content/web-words";
 
 afterEach(() => {
   cleanup();
