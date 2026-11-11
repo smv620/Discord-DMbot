@@ -528,7 +528,8 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
-      return got.removed || !got.edge ? { removed: true } : got.edge;
+      const batch = typeof got.batch === "number" ? got.batch : null;
+      return got.removed || !got.edge ? { removed: true, batch } : { ...got.edge, batch };
     },
   };
 }
