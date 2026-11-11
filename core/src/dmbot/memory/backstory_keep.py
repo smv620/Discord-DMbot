@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from dmbot.memory import kin, knows_how, lore_knowledge
 from dmbot.memory import reputation_words as feeling_words
+from dmbot.memory.background import SALES
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
@@ -67,6 +68,7 @@ def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> 
     pair = {link.subject_id, link.object_id}
     if pred is None:
         return []
+    handed = hand_over_ties(link, existing)
     # A feeling on "knows" (#3175) is what friend and enemy used to say: against a friendship
     # stored the old way, "enemies" is a change, and the other way round.
     opposite = (
@@ -83,7 +85,29 @@ def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> 
             or r.predicate == opposite
             or _feeling_changed(link, r)
         )
+    ] + handed
+
+
+def hand_over_ties(link: Waiting, existing: Sequence[Relation]) -> list[Relation]:
+    """What a hand-over ends (#4115; Supervisor's ruling, 2026-11-10): the one it came from's live
+    `owns` and `carries` of the item after a sale, a gift or a trade; only their `carries` after a
+    theft or a loss (they still own it). Never a "found" or any other tie. Pure."""
+    if not link.hand_over or not link.hand_over_from:
+        return []
+    kinds = ("owns", "carries") if link.hand_over in SALES else ("carries",)
+    return [
+        r
+        for r in existing
+        if r.to_session_at is None
+        and r.status != REJECTED
+        and r.subject_id == link.hand_over_from
+        and r.object_id == link.object_id
+        and r.predicate in kinds
     ]
+
+
+def _hidden(r: Relation) -> bool:
+    return r.secret or r.unrevealed
 
 
 def _feeling_changed(link: Waiting, held: Relation) -> bool:
@@ -192,13 +216,23 @@ async def end_replaced(
     old: Sequence[Relation],
     start: int,
     ended: list[int | None],
+    *,
+    link: Waiting | None = None,
+    hidden: bool = False,
 ) -> None:
     """End these connections as of `start` (never deleted, so the history and the timeline keep
     them). Each one's batch is appended to `ended` as it is done, so a caller whose later step
-    fails can take back exactly what was ended (`undo_batches`)."""
+    fails can take back exactly what was ended (`undo_batches`). A hand-over's (`link`, #4115)
+    end with its reason; when what is kept is `hidden` (secret, or not said at the table yet), a
+    hand-over never ends a tie the players can see: that would tell them the item moved
+    (`whereabouts`' rule, Supervisor on #4123)."""
+    handed = {r.id for r in hand_over_ties(link, old)} if link is not None else set()
     for r in old:
+        reason = link.hand_over if link is not None and r.id in handed else None
+        if r.id in handed and hidden and not _hidden(r):
+            continue
         written = await memory.update_relation(
-            guild_id, campaign_id, r.id, source=DM, to_session_at=start
+            guild_id, campaign_id, r.id, source=DM, to_session_at=start, end_reason=reason
         )
         ended.append(written.batch)
 
@@ -256,7 +290,8 @@ async def keep_all(
     if one_press and len(links) != 1:
         raise ValueError("One press keeps one connection.")
     if not one_press:
-        links = [c for c in links if not c.inferred]
+        # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
+        links = [c for c in links if not c.inferred and not c.hand_over]
     total = len(links)
     if progress is not None:
         await progress(0, total)
@@ -272,7 +307,10 @@ async def keep_all(
         ended: list[int | None] = []
         start = change_start(old, now)
         try:
-            await end_replaced(memory, guild_id, campaign_id, old, start, ended)
+            await end_replaced(
+                memory, guild_id, campaign_id, old, start, ended, link=c,
+                hidden=c.secret or kept_unrevealed(c, c.secret, shown),
+            )  # fmt: skip
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
@@ -405,6 +443,9 @@ async def _undo_all(
                     c.truth,
                     known_by=c.known_by,
                     world=c.world,
+                    # (back with who had it before, so keeping it again ends their part, #4115)
+                    hand_over_from=c.hand_over_from,
+                    hand_over=c.hand_over,
                 )
             ],
         )
