@@ -2096,7 +2096,7 @@ export interface SmartNamesAnswer {
   capped?: boolean;
 }
 
-/** One being the party met that nobody named (#4084, core 0437): `count` 1 is one being, 0 is "several". */
+/** One being the party met that nobody named (#4084, core 0438): `count` 1 is one being, 0 is "several". */
 export interface MetItem {
   id: string;
   what: string;
