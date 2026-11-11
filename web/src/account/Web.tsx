@@ -368,6 +368,9 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     setAsked(next);
   }
   function chooseView(next: WebView | undefined): void {
+    goOn(() => chooseViewNow(next));
+  }
+  function chooseViewNow(next: WebView | undefined): void {
     seeAsNow.current = undefined; // Full View, or the Players View, is never "as someone" (#2999)
     setSeeAsNote("");
     switchTo(next);
@@ -673,7 +676,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           </label>
           <p class="small muted">{asked === "players" ? words.playersViewNote : words.fullViewNote}</p>
           {asked === "players" && api.webViewers && (
-            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => chooseSeeAs(id)} onBack={() => chooseSeeAs(undefined)} />
+            <SeeAsPicker api={api} refId={ref} seeing={seeing} note={seeAsNote} onPick={(id) => goOn(() => chooseSeeAs(id))} onBack={() => goOn(() => chooseSeeAs(undefined))} />
           )}
         </fieldset>
       )}
@@ -699,7 +702,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
       <div class="web-tools-form">
         {/* Hidden while the web is read as someone: the search reads the DM's own names, not theirs (#3161). */}
-        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />}
+        {!seeing && <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => goOn(() => void load(id, hops))} asPlayers={!canEdit} view={asked} />}
         <div class="field">
           <label for="web-hops">{words.hopsLabel}</label>
           <div class="row web-spinner">
@@ -861,7 +864,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           refId={ref}
           center={center}
           alone={alone}
-          onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
+          onCentre={(id) => goOn(() => void load(id, Math.max(hops, graph?.maxHops ?? hops)))}
           onAlone={setAlone}
         />
       )}
@@ -939,7 +942,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                       </a>
                     )}
                     {n.id !== center && !n.unnamed && (
-                      <button type="button" class="button secondary" onClick={() => void load(n.id, hops)} aria-label={words.makeMiddle(n.name)}>
+                      <button type="button" class="button secondary" onClick={() => goOn(() => void load(n.id, hops))} aria-label={words.makeMiddle(n.name)}>
                         {words.makeMiddleShort}
                       </button>
                     )}
@@ -1004,12 +1007,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           />
         )}
         <h3 class="small">{words.linesHeading}</h3>
-        <WebLines lines={own} onOpen={(a, b) => setLine({ a, b })} />
+        <WebLines lines={own} onOpen={(a, b) => goOn(() => setLine({ a, b }))} />
         {further.length > 0 && (
           <>
             <h3 class="small">{words.furtherOut}</h3>
             <p class="small muted">{words.furtherOutHint(center ? nameOf(center) : "")}</p>
-            <WebLines lines={further} onOpen={(a, b) => setLine({ a, b })} />
+            <WebLines lines={further} onOpen={(a, b) => goOn(() => setLine({ a, b }))} />
           </>
         )}
         </div>

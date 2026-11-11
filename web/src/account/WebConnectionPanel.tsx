@@ -34,10 +34,23 @@ export type Guard = (leave: () => void) => boolean;
 export function changesOf(link: Link, staged: Staged | undefined): WebLinkChange[] {
   if (!staged) return [];
   const out: WebLinkChange[] = [];
-  if (staged.words !== undefined && staged.words.trim() !== (link.rawWords ?? link.words).trim()) out.push({ action: "words", id: link.id, words: staged.words });
+  if (staged.words !== undefined && staged.words.trim() !== "" && staged.words.trim() !== (link.rawWords ?? link.words).trim()) out.push({ action: "words", id: link.id, words: staged.words });
   if (staged.secret !== undefined && staged.secret !== link.secret) out.push({ action: "secret", id: link.id, secret: staged.secret });
   if (staged.pinned !== undefined && staged.pinned !== (link.pinned ?? false)) out.push({ action: "pin", id: link.id, pinned: staged.pinned });
   return out;
+}
+
+/** The staged picks without the one `change` made (it is saved now). */
+function without(was: Record<string, Staged>, change: WebLinkChange): Record<string, Staged> {
+  if (change.action !== "words" && change.action !== "secret" && change.action !== "pin") return was;
+  const mine = { ...was[change.id] };
+  if (change.action === "words") delete mine.words;
+  else if (change.action === "secret") delete mine.secret;
+  else delete mine.pinned;
+  const next = { ...was };
+  if (Object.keys(mine).length === 0) delete next[change.id];
+  else next[change.id] = mine;
+  return next;
 }
 
 export default function ConnectionPanel({
@@ -76,7 +89,9 @@ export default function ConnectionPanel({
   const [adding, setAdding] = useState(false);
   const [ask, setAsk] = useState<null | (() => void)>(null);
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState<{ done: number; of: number } | null>(null); // which change is with the bot
   const saveFlight = useRef(false);
+  const stopped = useRef(false); // Discard or Leave while a save is on its way: the rest of it is not sent
   const [problem, setProblem] = useState<string | null>(null);
   const live = useRef(true);
   useEffect(() => {
@@ -102,7 +117,10 @@ export default function ConnectionPanel({
   }, [guard, dirty]);
   useEffect(() => {
     if (!dirty) return;
-    const warn = (e: BeforeUnloadEvent): void => e.preventDefault();
+    const warn = (e: BeforeUnloadEvent): void => {
+      e.preventDefault();
+      e.returnValue = ""; // (older browsers want it set)
+    };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
@@ -123,19 +141,25 @@ export default function ConnectionPanel({
     setProblem(null);
     const plan = pending.flatMap((l) => changesOf(l, staged[l.id]));
     let done = 0;
+    stopped.current = false;
     try {
       for (const change of plan) {
+        if (stopped.current) return;
+        if (live.current) setStep({ done, of: plan.length });
         const refused = await act(change, p.saved);
         if (refused !== null) {
-          if (live.current) setProblem(done > 0 ? `${p.partlySaved(done, plan.length)} ${refused}`.trim() : refused);
+          // (a refusal with no words, being signed out, says nothing more)
+          if (live.current && refused !== "") setProblem(done > 0 ? p.partlySaved(done, plan.length, refused) : p.notSaved(refused));
           return;
         }
         done += 1;
+        if (live.current) setStaged((was) => without(was, change)); // (what is saved is no longer waiting)
       }
-      if (live.current) setStaged({});
+    } catch {
+      if (live.current) setProblem(words.errorFallback);
     } finally {
       saveFlight.current = false;
-      if (live.current) setSaving(false);
+      if (live.current) (setSaving(false), setStep(null));
     }
   }
 
@@ -152,14 +176,16 @@ export default function ConnectionPanel({
         )}
       </h2>
       {ask && (
-        <div class="row" role="alertdialog" aria-label={p.leaveAsk}>
+        <div class="row" role="alertdialog" aria-label={p.leaveAsk} onKeyDown={(e) => e.key === "Escape" && setAsk(null)}>
           <span>{p.leaveAsk}</span>
           <button
             type="button"
             class="button"
+            disabled={saving}
             onClick={() => {
               const go = ask;
               setAsk(null);
+              stopped.current = true;
               setStaged({});
               go();
             }}
@@ -194,6 +220,7 @@ export default function ConnectionPanel({
               dirty={changesOf(l, staged[l.id]).length > 0}
               staged={staged[l.id]}
               canEdit={canEdit}
+              locked={saving}
               onToggle={() => (openId === l.id ? setOpenId(null) : leaving(() => setOpenId(l.id)))}
               onStage={(next) => stage(l.id, next)}
               act={act}
@@ -210,12 +237,12 @@ export default function ConnectionPanel({
           <button type="button" class="button" disabled={saving} onClick={() => void save()}>
             {p.save}
           </button>
-          <button type="button" class="button secondary" disabled={saving} onClick={() => setStaged({})}>
+          <button type="button" class="button secondary" disabled={saving} onClick={() => (void (stopped.current = true), setStaged({}))}>
             {p.discard}
           </button>
         </div>
       )}
-      <SavingWait active={saving} stage={p.saving} />
+      <SavingWait active={saving} stage={step ? p.saving(step.done + 1, step.of) : p.saving(1, 1)} />
       {problem && (
         <p class="warn" role="alert">
           {problem}
@@ -238,6 +265,7 @@ function Line({
   dirty,
   staged,
   canEdit,
+  locked,
   onToggle,
   onStage,
   act,
@@ -254,6 +282,7 @@ function Line({
   dirty: boolean;
   staged: Staged | undefined;
   canEdit: boolean;
+  locked: boolean;
   onToggle: () => void;
   onStage: (next: Staged) => void;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
@@ -326,7 +355,7 @@ function Line({
               ) : (
                 <label class="field">
                   {words.wordsLabel(n)}
-                  <input type="text" value={text} maxLength={100} onInput={(e) => onStage({ words: (e.target as HTMLInputElement).value })} />
+                  <input type="text" value={text} maxLength={100} disabled={locked} onInput={(e) => onStage({ words: (e.target as HTMLInputElement).value })} />
                 </label>
               )}
               {how !== null && <LazyPanel load={() => import("./LinkKnowsHow")} what={knowsHowWords.loading} props={{ n, id: link.id, how, act }} />}
@@ -335,19 +364,21 @@ function Line({
                   type="button"
                   class="button secondary"
                   aria-pressed={secret}
-                  aria-label={secret ? words.makeKnown(n) : words.makeSecret(n)}
+                  aria-label={words.makeSecret(n)}
+                  disabled={locked}
                   onClick={() => onStage({ secret: !secret })}
                 >
-                  {secret ? p.makeKnown : p.makeSecret}
+                  {p.makeSecret}
                 </button>
                 <button
                   type="button"
                   class="button secondary"
                   aria-pressed={pinned}
-                  aria-label={pinned ? words.unpinLabel(n) : words.pinLabel(n)}
+                  aria-label={words.pinLabel(n)}
+                  disabled={locked}
                   onClick={() => onStage({ pinned: !pinned })}
                 >
-                  {pinned ? p.unpin : p.pin}
+                  {p.pin}
                 </button>
                 {!asking && (
                   <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>

@@ -138,7 +138,7 @@ describe("staged edits", () => {
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     fireEvent.click(screen.getByRole("button", { name: p.save }));
-    expect((await screen.findByRole("alert")).textContent).toBe(`${p.partlySaved(1, 2)} The bot said no.`);
+    expect((await screen.findByRole("alert")).textContent).toBe(p.partlySaved(1, 2, "The bot said no."));
     expect(screen.getByRole("button", { name: p.save })).toBeTruthy();
   });
 });
@@ -196,7 +196,7 @@ describe("leaving with changes pending", () => {
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false); // (the changes were dropped by Leave)
     fireEvent.click(screen.getByRole("button", { name: /owes a favour/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Make connection 2 known/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Make connection 2 secret/ }));
     const warn = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(warn);
     expect(warn.defaultPrevented).toBe(true);
@@ -208,6 +208,85 @@ describe("leaving with changes pending", () => {
     expect(guard.current).not.toBeNull();
     cleanup();
     expect(guard.current).toBeNull();
+  });
+});
+
+describe("while a save is on its way", () => {
+  /** A save held open until the test lets it go. */
+  function held() {
+    let finish: (v: string | null) => void = () => {};
+    const calls: WebLinkChange[] = [];
+    show({
+      act: (change) => {
+        calls.push(change);
+        return new Promise<string | null>((r) => (finish = r));
+      },
+    });
+    return { calls, finish: (v: string | null = null) => finish(v) };
+  }
+  const stageTwo = () => {
+    open(/are rivals/);
+    fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
+    fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+  };
+
+  it("the fields and toggles are locked, so nothing typed is lost", async () => {
+    const { finish } = held();
+    stageTwo();
+    expect((screen.getByLabelText(/Words for connection 1/) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Make connection 1 secret/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(p.saving(1, 2), { exact: false })).toBeTruthy();
+    finish();
+    await waitFor(() => expect(screen.getByText(p.saving(2, 2), { exact: false })).toBeTruthy());
+    finish();
+    await waitFor(() => expect((screen.getByLabelText(/Words for connection 1/) as HTMLInputElement).disabled).toBe(false));
+  });
+
+  it("Discard stops the rest of it from being sent", async () => {
+    const { calls, finish } = held();
+    stageTwo();
+    expect((screen.getByRole("button", { name: p.discard }) as HTMLButtonElement).disabled).toBe(true); // (not while it is with the bot)
+    finish();
+    await waitFor(() => expect(calls).toHaveLength(2));
+    finish();
+  });
+
+  it("Leave is off while it is saving", () => {
+    const guard: { current: Guard | null } = { current: null };
+    const calls: WebLinkChange[] = [];
+    show({ guard, act: (c) => (calls.push(c), new Promise<string | null>(() => {})) });
+    stageTwo();
+    fireEvent.click(screen.getByRole("button", { name: p.close }));
+    expect((screen.getByRole("button", { name: p.leave }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a save that throws says so and keeps the changes", async () => {
+    show({
+      act: async () => {
+        throw new Error("boom");
+      },
+    });
+    stageTwo();
+    expect((await screen.findByRole("alert")).textContent).toBeTruthy();
+    expect(screen.getByRole("button", { name: p.save })).toBeTruthy();
+  });
+
+  it("an empty words field is not a change", () => {
+    show();
+    open(/are rivals/);
+    fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "  " } });
+    expect(screen.queryByRole("button", { name: p.save })).toBeNull();
+  });
+
+  it("Escape closes the question and keeps the changes", () => {
+    show();
+    open(/are rivals/);
+    fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
+    fireEvent.click(screen.getByRole("button", { name: p.close }));
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(screen.queryByText(p.leaveAsk)).toBeNull();
+    expect(row(/Cerric ↔ Wit/).textContent).toContain("•");
   });
 });
 
