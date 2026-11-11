@@ -76,7 +76,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
 from dmbot.memory.pronouns import is_pronoun
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
@@ -2996,7 +2996,14 @@ class ConnectionOffer(_Menu):
                 await keep.undo_batches(memory, campaign.guild_id, campaign.id, ended)
                 if not isinstance(exc, MemoryRuleError):
                     raise
-                log.info("A connection from a background was refused")
+                # The rule's reason goes in the log when it is one of the fixed sentences, never a
+                # campaign's words: a refusal nobody can explain cannot be fixed (#4161).
+                log.info(
+                    "A connection from a background was refused: %s (%s)",
+                    refusal_for_log(exc),
+                    c.predicate,
+                )
+                # (the card says what to do, not the rule's own words: those are for the log)
                 await _tell(
                     interaction,
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
