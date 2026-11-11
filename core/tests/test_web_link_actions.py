@@ -88,11 +88,12 @@ class Editing(Web):
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(
-                self.memory, self.g, {ALICE.id} if dms is None else dms, action, waiting
-            )
+                self.memory, self.g, {ALICE.id} if dms is None else dms, action, waiting,
+                actions=self.actions,
+            )  # fmt: skip
             await self.actions.finish(
                 self.g, action, error=outcome.error, result_id=outcome.result_id,
-                result_other=outcome.result_other,
+                result_other=outcome.result_other, result_batches=outcome.batches,
             )  # fmt: skip
             done.append(outcome)
         return done
@@ -128,6 +129,118 @@ class Editing(Web):
                 (self.one.id, version),
             )
             return list(await cur.fetchall())
+
+
+class TheUndo(Editing):
+    """The Story Graph panel's ↩ Undo of a connection edit (#4156): an edit's answer carries the
+    change it made, and a queued `link-undo` takes it back with the store's own undo."""
+
+    async def undo(self, batch: int) -> str:
+        return await relationships.queue_link_undo(self.web, self.session, self.cref, str(batch))
+
+    async def test_an_edits_answer_carries_its_change_and_a_repeated_press_carries_none(
+        self,
+    ) -> None:
+        first = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(first))["batch"]
+        self.assertIsInstance(batch, int)
+        again = await self.add_link(self.mira, self.hall, "Is a Member of")  # (already known)
+        await self.apply_all()
+        self.assertIsNone((await self.poll(again))["batch"])
+        self.assertEqual((await self.poll(again))["state"], "done")
+
+    async def test_every_kind_of_edit_carries_the_change_it_made(self) -> None:
+        link = (await self.stored_link(self.mira, self.rook)).id
+        for body in (
+            {"action": "secret", "secret": True},
+            {"action": "pin", "pinned": True},
+            {"action": "words", "words": "is the sworn friend of"},
+        ):
+            answer = await self.edit(link, **body)
+            await self.apply_all()
+            polled = await self.poll(answer)
+            self.assertEqual((polled["state"], polled["error"]), ("done", ""), body)
+            self.assertIsInstance(polled["batch"], int, body)
+
+    async def stored_link(self, a: str, b: str) -> Any:
+        data = await self.memory.relations(self.g, self.one.id, entity_id=a)
+        return next(r for r in data if {r.subject_id, r.object_id} == {a, b})
+
+    async def test_link_undo_takes_the_edit_back_and_a_second_one_says_gone(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        undone = await self.undo(batch)
+        self.assertEqual((await self.poll(undone))["state"], "waiting")
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual(await self.poll(undone), {"state": "done", "error": "", "undone": True})
+        data = await self.memory.relations(self.g, self.one.id, entity_id=self.hall)
+        self.assertEqual([r for r in data if r.predicate == "member_of"], [])  # (it is gone)
+        second = await self.undo(batch)
+        self.assertEqual([o.error for o in await self.apply_all()], ["gone"])
+        polled = await self.poll(second)
+        self.assertEqual(
+            (polled["state"], polled["error"], polled["undone"]), ("failed", "gone", False)
+        )
+
+    async def test_a_batch_that_is_not_the_callers_own_edit_is_refused(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        with self.assertRaises(RecapError) as caught:
+            await relationships.queue_link_undo(self.web, self.player, self.cref, str(batch))
+        self.assertEqual(caught.exception.code, "not_allowed")  # (a player is no DM)
+        other_ref = f"{self.g}.{self.two.id}"  # (another campaign)
+        with self.assertRaises(RecapError):
+            await relationships.queue_link_undo(self.web, self.session, other_ref, str(batch))
+        for bad in ("0", "999999999", "-1", "x", "1" * 13, "²"):  # (a number no edit made, or junk)
+            with self.assertRaises(RecapError, msg=bad):
+                await relationships.queue_link_undo(self.web, self.session, self.cref, bad)
+        self.assertEqual(await self.actions.claim_next(self.g), None)  # (nothing was queued)
+
+    async def test_a_store_that_says_too_late_is_told_to_the_page(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        undone = await self.undo(batch)
+        with patch.object(
+            type(self.memory), "undo", side_effect=TooLateToUndo("Undo only works for a day.")
+        ):
+            self.assertEqual([o.error for o in await self.apply_all()], ["too_late"])
+        self.assertEqual((await self.poll(undone))["error"], "too_late")
+
+    async def test_the_bot_refuses_a_batch_no_link_edit_of_this_dm_made_even_if_queued(
+        self,
+    ) -> None:
+        """A forged row that skipped the door: the bot's own check refuses it before `undo`."""
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        for forged in (batch + 1, 7):  # (a batch no edit of hers made)
+            action = wa.Action(
+                id="e" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+                action="link-undo", kind="", target_id=str(forged), text="", flag=False,
+                claimed_at=1,
+            )  # fmt: skip
+            outcome = await wa.apply(self.memory, self.g, {ALICE.id}, action, actions=self.actions)
+            self.assertEqual(outcome.error, "gone", forged)
+        data = await self.memory.relations(self.g, self.one.id, entity_id=self.hall)
+        self.assertTrue([r for r in data if r.predicate == "member_of"])  # (nothing was undone)
+
+    async def test_an_edit_made_since_says_changed(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        link = await self.stored_link(self.mira, self.hall)
+        gone = await self.edit(link.id, action="remove", confirm=True)
+        await self.apply_all()
+        self.assertEqual((await self.poll(gone))["state"], "done")
+        await self.undo(batch)
+        errors = [o.error for o in await self.apply_all()]
+        self.assertEqual(errors, ["changed"])  # (the store refuses: the connection ended since)
 
 
 class TheEdits(Editing):
@@ -2450,6 +2563,41 @@ class TheRoutes(Editing):
             self.assertEqual((nope.status_code, nope.json()["error"]), (404, "not_found"))
             junk = await client.post(f"/me/campaigns/{self.cref}/web/links", content=b"not json")
             self.assertEqual((junk.status_code, junk.json()["error"]), (400, "bad_action"))
+
+    async def test_the_undo_route_queues_for_the_dm_and_refuses_a_batch_no_edit_made(self) -> None:
+        from dmbot.web import sessions
+
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            posted = await client.post(
+                f"/me/campaigns/{self.cref}/web/links",
+                json={"a": self.mira, "b": self.hall, "words": "knows", "secret": False},
+            )
+            await self.apply_all()
+            answer = await client.get(
+                f"/me/campaigns/{self.cref}/web/answers/{posted.json()['answer']}"
+            )
+            batch = answer.json()["batch"]
+            self.assertIsInstance(batch, int)
+            undo = await client.post(f"/me/campaigns/{self.cref}/web/links/{batch}/undo")
+            self.assertEqual(undo.status_code, 202)
+            await self.apply_all()
+            done = await client.get(
+                f"/me/campaigns/{self.cref}/web/answers/{undo.json()['answer']}"
+            )
+            self.assertEqual(done.json(), {"state": "done", "error": "", "undone": True})
+            for bad in (str(batch + 1000), "abc"):
+                refused = await client.post(f"/me/campaigns/{self.cref}/web/links/{bad}/undo")
+                self.assertEqual(refused.status_code, 404, bad)
 
 
 class WhichOneFromTheWebsite(Editing):
