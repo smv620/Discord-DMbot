@@ -127,9 +127,12 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         }
         for i, name in shown.items()
     }
-    for item, line in _histories(src["links"], seen, viewer, shown).items():
-        if item in nodes:
-            nodes[item]["history"] = line
+    if not src.get(
+        "limited", False
+    ):  # (a source cut at its limits may lack a holder: no line then)
+        for item, line in _histories(src["links"], seen, viewer, shown).items():
+            if item in nodes:
+                nodes[item]["history"] = line
     guard = _name_guard(kn, seen, shown)
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()

@@ -101,3 +101,44 @@ class ItemHistory(OneCampaign):
         assert node is not None
         self.assertEqual(node["history"], "Okra has it now")
         self.assertNotIn("Bruno", node["history"])
+
+    async def test_a_secret_tie_is_told_to_the_dm_only(self) -> None:
+        await self.end_first()
+        await self.sql("UPDATE memory_relations SET secret = TRUE WHERE id = %s", self.first)
+        await self.told_to_okra(
+            (ENTRY, self.brand), (ENTRY, self.wen), (CONNECTION, self.first),
+            (CONNECTION, self.second),
+        )  # fmt: skip
+        dm = self.node(await self.graph(self.session, view="full", center=self.brand, hops=3))
+        assert dm is not None
+        self.assertEqual(dm["history"], "Wen sold it to Okra · Okra has it now")
+        player = self.node(await self.full_page(center=self.brand, hops=3))
+        assert player is not None
+        self.assertNotIn("history", player)  # (the secret sale is left out: nothing ended is shown)
+
+    async def test_the_dms_players_view_is_the_players_words_not_the_dms(self) -> None:
+        await self.end_first()
+        # nobody but Wen is told of the sale: in Players View the DM sees what a player sees
+        node = self.node(await self.graph(self.session, view="players", center=self.brand, hops=3))
+        assert node is None or "history" not in node
+
+    async def test_the_two_paths_word_the_same_history_the_same(self) -> None:
+        await self.end_first("traded")
+        await self.told_to_okra(
+            (ENTRY, self.brand), (ENTRY, self.wen), (CONNECTION, self.first),
+            (CONNECTION, self.second),
+        )  # fmt: skip
+        dm = self.node(await self.graph(self.session, view="full", center=self.brand, hops=3))
+        player = self.node(await self.full_page(center=self.brand, hops=3))
+        assert dm is not None and player is not None
+        self.assertEqual(dm["history"], player["history"])
+
+    async def test_the_item_ties_door_gives_nothing_to_a_player(self) -> None:
+        async with self.web.user(self.player.user_id, session=self.player.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_item_ties(%s, %s, %s) AS r", (self.g, self.one.id, [self.brand])
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertIsNone(found["r"])

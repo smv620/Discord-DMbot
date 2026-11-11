@@ -391,7 +391,12 @@ async def with_histories(db: Database, session: Session, ref: str, page: dict[st
     Discord's words (`graph_view.history_line`). This view is read from the database as a whole,
     not through the gate, so the ties come from their own DM-only door for the names on the page.
     Changes `page` in place; an item nobody let go of gets none."""
-    ids = [str(n["id"]) for n in page.get("nodes", []) if not str(n["id"]).startswith("alias:")]
+    # only the items can have a history; the door takes 500 of them, more than a page draws
+    ids = [
+        str(n["id"])
+        for n in page.get("nodes", [])
+        if n.get("kind") == "item" and not str(n["id"]).startswith("alias:")
+    ]
     if not ids:
         return
     guild_id, campaign_id = _parse(ref)
