@@ -73,6 +73,7 @@ _PATTERN = re.compile(
 )
 # Words left out on purpose: "harbour" (Minstral Harbor is a city) and others that are as often
 # part of a settlement's own name. A missing level is the safe side: a wrong one turns off a check.
+_OF = re.compile(r"\s+of\s+", re.IGNORECASE)  # "Spine of the World": the name before "of"
 _WINDOW = 120  # characters read either side of a name: a short look, never the whole upload
 _SENTENCE_END = re.compile(r"[.!?;:\n]")
 _ARTICLES = ("the", "a", "an")
@@ -86,9 +87,15 @@ def level_of_word(word: str) -> str | None:
 
 def level_from_name(name: str) -> str | None:
     """A level the name itself says: "Market Square", "the Yawning Portal Inn". The last level word
-    wins ("Castle Street" is a street)."""
-    found = [m.group(1) for m in _PATTERN.finditer(name)]
-    return level_of_word(found[-1]) if found else None
+    wins ("Castle Street" is a street). Two kinds of name say nothing (Supervisor, #4186):
+    - Only the part before the first "of" counts: "Tower of Kord" is a building, but "Spine of the
+      World" is a mountain range, not a world.
+    - A word read only through a plural s gives no level: "Ten-Towns" is a region of ten towns, not
+      a town (a word that is itself on the list, such as "Docks" or "Stables", still counts)."""
+    head = _OF.split(name, maxsplit=1)[0]
+    found = [m.group(0) for m in _PATTERN.finditer(head)]
+    whole = [w for w in found if " ".join(w.split()).casefold() in _BY_WORD]
+    return _BY_WORD[" ".join(whole[-1].split()).casefold()] if whole else None
 
 
 def level_beside(name: str, text: str) -> str | None:

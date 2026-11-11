@@ -24,6 +24,25 @@ class TheWords(unittest.TestCase):
         self.assertEqual(pl.read_level("Icewind Dale"), "region")
         self.assertEqual(pl.read_level("The Common Room"), "room")  # the longer phrase first
 
+    def test_names_that_say_no_size(self) -> None:
+        # (Supervisor on #4186: two Frostmaiden places the name words got wrong)
+        self.assertIsNone(pl.read_level("Spine of the World"))  # only the part before "of"
+        self.assertIsNone(pl.read_level("Ten-Towns"))  # only through a plural s
+        self.assertIsNone(pl.read_level("Sea of Moving Ice"))
+
+    def test_names_that_keep_their_size(self) -> None:
+        for name, level in (
+            ("Tower of Kord", "building"),
+            ("Temple of the Morninglord", "building"),
+            ("Kingdom of Many Towns", "region"),
+            ("Lands of Intrigue", "region"),  # a word that is itself on the list
+            ("The Docks", "district"),
+            ("Stables", "building"),
+            ("Icewind Dale", "region"),
+            ("Market Square", "street"),
+        ):
+            self.assertEqual(pl.read_level(name), level, name)
+
     def test_the_last_level_word_in_a_name_wins(self) -> None:
         self.assertEqual(pl.read_level("Castle Street"), "street")
         self.assertEqual(pl.read_level("Street Castle"), "building")
