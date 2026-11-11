@@ -38,9 +38,10 @@ def _entity(row: Mapping[str, Any]) -> Entity:
 def _ties(
     entities: Mapping[str, Mapping[str, Any]], rows: Sequence[Mapping[str, Any]], mine: str
 ) -> list[tags.TagTie]:
-    """The entry's confirmed ties as `tags.tag_for` reads them (as `MemoryStore.tag_ties` builds
-    them): the other end's name, whether this entry is the subject, whether the tie is secret. A
-    tie to an entry that is not live is left out."""
+    """The entry's confirmed, current ties (the door leaves out ended ones, #4134) as
+    `tags.tag_for` reads them (as `MemoryStore.tag_ties` builds them): the other end's name,
+    whether this entry is the subject, whether the tie is secret. A tie to an entry that is not
+    live is left out."""
     found: list[tags.TagTie] = []
     for r in rows:
         for here, other, outgoing in (
