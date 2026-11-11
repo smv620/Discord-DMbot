@@ -157,7 +157,10 @@ async def _find(
         confirmed_only=True,
         include_secret=secrets,
     )
-    shown = {row.id: row.relation for row in _rows(names, entity_id, mine, secrets)}
+    # (the same rows the menu offered: an ended holding too, for the DM, #4115)
+    shown = {
+        row.id: row.relation for row in _rows(names, entity_id, mine, secrets, history=secrets)
+    }
     relation = shown.get(relation_id)
     if relation is None or relation.status != CONFIRMED:
         await _tell(interaction, GONE_LINK)

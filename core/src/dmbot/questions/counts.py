@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.models import PROPOSED
+from dmbot.memory.models import DM, PROPOSED
 from dmbot.questions import kinds
 
 log = logging.getLogger(__name__)
@@ -83,7 +83,8 @@ async def _lookalikes(src: Sources, g: int, c: str) -> Counted:
 
 async def _connections(src: Sources, g: int, c: str) -> Counted:
     """Backstory connections (not "Which one?", its own kind), the names an AI read suggested for
-    confirmed entries, unnamed people who may be a named one, and the family links worked out."""
+    confirmed entries, unnamed people who may be a named one, the family links worked out, and
+    the one-of-a-kind items two holders have (#4115)."""
     total = 0
     if src.backstory is not None:
         # (two reads: a "Which one?" added between them must not make this negative)
@@ -94,6 +95,7 @@ async def _connections(src: Sources, g: int, c: str) -> Counted:
         total += len(await src.memory.suggested_names(g, c))
         total += len(await src.memory.same_person_offers(g, c))
         total += len(await src.memory.worked_out_waiting(g, c))
+        total += len(await src.memory.hand_over_waiting(g, c, source=DM))  # (#4115)
     return Counted(total)
 
 

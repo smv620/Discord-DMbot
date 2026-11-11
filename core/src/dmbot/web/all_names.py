@@ -12,6 +12,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
@@ -74,7 +75,20 @@ def kinds_from(counts: dict[str, int]) -> list[dict[str, Any]]:
     )
 
 
-SOURCE_ID = re.compile(r"^l[0-9a-f]{16}$")  # an upload choice (0420): `l` and 16 hex of its key
+# An upload choice: `l` and 16 hex of md5(its key) (0420), or `u` and the website upload's own
+# 32-hex id, which is what the upload notice knows (#3879); the second is turned into the first
+# before the door is asked.
+SOURCE_ID = re.compile(r"^(l[0-9a-f]{16}|u[0-9a-f]{32})$")
+
+
+def _choice_id(given: str) -> str:
+    return (
+        "l" + hashlib.md5(given[1:].encode(), usedforsecurity=False).hexdigest()[:16]
+        if given[0] == "u"
+        else given
+    )
+
+
 SOURCES_MAX = 40  # most uploads ticked at once
 
 
@@ -133,7 +147,7 @@ async def read_page(
             # nothing to anyone else. An empty result is "", which matches no name, never all.
             cur = await conn.execute(
                 "SELECT dmbot_web_name_source_ids(%s, %s, %s) AS r",
-                (guild_id, campaign_id, sources),
+                (guild_id, campaign_id, [_choice_id(s) for s in sources]),
             )
             found_ids = await cur.fetchone()
             if found_ids is None or found_ids["r"] is None:
