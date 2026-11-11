@@ -1718,6 +1718,8 @@ class RecapFeatures:
         """The same note as a private message to the DM, with the same check (#2027): it waits
         until the DM next opens Discord. Closed private messages cost nothing but a line in the
         log: the DM screen has it too. Never raises."""
+        if not dm_user_id:  # 0 is a DM whose account was deleted (#4141): nobody to tell
+            return
         try:
             user = await self.fetch_user(dm_user_id)
             base = recap_names_dm_view(gid, cid)

@@ -272,7 +272,7 @@ class NotesTest(DatabaseTest):
             [{**good, "extra": 1}],
             [{**good, "text": ""}],
             [{**good, "text": "x" * (NOTE_CHARS + 1)}],
-            [{**good, "by": "0"}],
+            [{**good, "by": "-1"}],
             [good] * (MAX_NOTES + 1),
         ):
             with self.assertRaises(CampaignError):

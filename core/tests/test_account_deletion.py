@@ -285,6 +285,104 @@ class AccountDeletion(DatabaseTest):
                 assert row is not None
                 self.assertEqual(row["n"], 0, guild)
 
+    async def test_what_the_person_wrote_stays_with_nobody_as_the_author(self) -> None:
+        from dmbot.rules.house import HouseRuleStore
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: NOW)
+        await houses.add(GUILD_A, self.a1.id, ALICE, "Crits double the dice")
+        await houses.add(GUILD_A, self.b1.id, BOB, "Rest takes a night")
+        rules = await houses.list(GUILD_A, self.a1.id)
+        await sets.publish(GUILD_A, self.a1.id, ALICE, "Frostmaiden", rules, None)
+        code = await sets.make_code(GUILD_A, self.a1.id, ALICE)
+        offer = await sets.by_code(GUILD_A, BOB, code)
+        await sets.follow(GUILD_A, self.b1.id, BOB, offer)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        async with self.db.guild(GUILD_A) as conn:
+            for table, column, want in (
+                ("house_rules", "created_by", [0, BOB]),
+                ("rule_sets", "created_by", [0]),
+                ("rule_set_versions", "created_by", [0]),
+                ("rule_set_follows", "followed_by", [BOB]),
+            ):
+                cur = await conn.execute(f"SELECT {column} AS who FROM {table} ORDER BY 1")
+                self.assertEqual([r["who"] for r in await cur.fetchall()], want, table)
+            cur = await conn.execute("SELECT rule FROM house_rules")
+            # (the record itself is kept: the rules are still there, with nobody as the author)
+            self.assertEqual(
+                sorted(r["rule"] for r in await cur.fetchall()),
+                ["Crits double the dice", "Rest takes a night"],
+            )
+
+    async def test_a_follower_who_took_the_update_themselves_can_delete_their_account(self) -> None:
+        from dmbot.rules.house import HouseRuleStore
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: NOW)
+        await houses.add(GUILD_A, self.b1.id, BOB, "Crits double the dice")
+        rules = await houses.list(GUILD_A, self.b1.id)
+        await sets.publish(GUILD_A, self.b1.id, BOB, "Frostmaiden", rules, None)
+        code = await sets.make_code(GUILD_A, self.b1.id, BOB)
+        for guild, campaign in ((GUILD_A, self.a1), (GUILD_B, self.a2)):
+            offer = await sets.by_code(guild, ALICE, code)
+            await sets.follow(guild, campaign.id, ALICE, offer)
+        async with self.db.guild(GUILD_A) as conn:  # (one took the newer version herself)
+            await conn.execute("UPDATE rule_set_follows SET taken_by = %s", (ALICE,))
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        for guild, taken in ((GUILD_A, 0), (GUILD_B, None)):  # (the other has no taker: NULL stays)
+            async with self.db.guild(guild) as conn:
+                cur = await conn.execute("SELECT followed_by, taken_by FROM rule_set_follows")
+                rows = [(r["followed_by"], r["taken_by"]) for r in await cur.fetchall()]
+            self.assertEqual(rows, [(0, taken)], guild)
+
+    async def test_a_backup_of_a_campaign_still_restores_after_its_author_deleted_their_account(
+        self,
+    ) -> None:
+        from dmbot.rules.house import HouseRulesSection, HouseRuleStore
+        from dmbot.rules.rule_set_backup import RuleSetsSection
+        from dmbot.rules.rule_sets import RuleSetStore
+
+        self.store.register_section(HouseRulesSection())
+        self.store.register_section(RuleSetsSection())
+        houses = HouseRuleStore(self.db)
+        sets = RuleSetStore(self.db, clock=lambda: NOW)
+        await houses.add(GUILD_A, self.a1.id, ALICE, "Crits double the dice")
+        rules = await houses.list(GUILD_A, self.a1.id)
+        await sets.publish(GUILD_A, self.a1.id, ALICE, "Frostmaiden", rules, None)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 50)
+        backup = await self.store.export(GUILD_A, self.a1.id)
+        restored = await self.store.import_backup(
+            GUILD_B, backup, BOB
+        )  # (refused as damaged before)
+        self.assertEqual(len(await houses.list(GUILD_B, restored.id)), 1)
+
+    async def test_every_authorship_column_can_hold_zero_and_has_its_policies(self) -> None:
+        from importlib import import_module
+
+        mod = import_module("dmbot.migrations.0432_forget_authorship")
+        async with self.db.unscoped() as conn:
+            for table, column in mod.ZEROED:
+                cur = await conn.execute(
+                    "SELECT pg_get_constraintdef(con.oid) AS d FROM pg_constraint con"
+                    " JOIN pg_attribute a"
+                    " ON a.attrelid = con.conrelid AND a.attnum = ANY (con.conkey)"
+                    " WHERE con.conrelid = %s::regclass AND con.contype = 'c' AND a.attname = %s",
+                    (table, column),
+                )
+                for check in await cur.fetchall():
+                    # (no check left that refuses 0: "> 0" became ">= 0")
+                    self.assertNotRegex(check["d"], r"(?<![>=<])> 0", (table, column))
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM pg_policies WHERE schemaname = current_schema()"
+                    " AND tablename = %s AND policyname LIKE 'forget_author_%%'",
+                    (table,),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["n"], 2, table)
+
     async def test_deleting_twice_or_with_no_campaigns_is_harmless(self) -> None:
         await accounts.delete_person(self.db, ALICE, now=NOW + 5)
         await accounts.delete_person(self.db, ALICE, now=NOW + 99)  # nothing left to orphan
