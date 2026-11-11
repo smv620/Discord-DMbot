@@ -32,6 +32,17 @@ _campaign: ContextVar[str | None] = ContextVar("dmbot_campaign_id", default=None
 CONTEXT_FIELDS = ("shard_id", "guild_id", "campaign_id")
 
 
+def refusal_words(exc: BaseException, *names: str) -> str:
+    """Why a rule refused something, for the log (#4161): its own message with any of `names` (the
+    entries the card was about) replaced by "[name]", whitespace squeezed and cut to 120 characters.
+    The memory rules' messages are plain fixed sentences, so this leaves the rule and not the
+    campaign's words; a refusal logged without its reason cannot be diagnosed."""
+    words = " ".join(str(exc).split())
+    for name in sorted({n for n in names if n}, key=len, reverse=True):
+        words = re.sub(re.escape(name), "[name]", words, flags=re.IGNORECASE)
+    return words[:120]
+
+
 @contextmanager
 def log_context(*, guild_id: int | None = None, campaign_id: str | None = None) -> Iterator[None]:
     """Tag every log record in this block (and tasks started in it) with these IDs."""

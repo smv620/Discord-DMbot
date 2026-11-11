@@ -125,3 +125,24 @@ class LibraryLevels(unittest.TestCase):
             pass
         self.assertIsNone(_guild.get())
         self.assertIsNone(_campaign.get())
+
+
+class RefusalWords(unittest.TestCase):
+    """Why a rule refused something, for the log, with the entries' names left out (#4161)."""
+
+    def test_the_rules_sentence_stays_and_the_names_go(self) -> None:
+        from dmbot.logs import refusal_words
+
+        exc = ValueError(
+            "Only Cerric Vanya'elen travels with Okthandom Korran when cerric vanya'elen is a PC."
+        )
+        got = refusal_words(exc, "Cerric Vanya'elen", "Okthandom Korran")
+        self.assertEqual(got, "Only [name] travels with [name] when [name] is a PC.")
+
+    def test_it_is_one_short_line(self) -> None:
+        from dmbot.logs import refusal_words
+
+        got = refusal_words(ValueError("a\n  b\t" + "x" * 500), "")
+        self.assertNotIn("\n", got)
+        self.assertEqual(len(got), 120)
+        self.assertTrue(got.startswith("a b xxx"))

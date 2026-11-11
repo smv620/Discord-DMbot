@@ -25,6 +25,7 @@ from dmbot import credits
 from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
+from dmbot.logs import refusal_words
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
@@ -2996,11 +2997,17 @@ class ConnectionOffer(_Menu):
                 await keep.undo_batches(memory, campaign.guild_id, campaign.id, ended)
                 if not isinstance(exc, MemoryRuleError):
                     raise
-                log.info("A connection from a background was refused")
+                # The rule's own reason goes in the log, the card's names left out: a refusal nobody
+                # can explain cannot be fixed (#4161). The card keeps its plain "what to do".
+                log.info(
+                    "A connection from a background was refused: %s (%s)",
+                    refusal_words(exc, c.subject, c.object),
+                    c.predicate,
+                )
                 await _tell(
                     interaction,
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
-                )
+                )  # (what to do, not the rule's own words: those are for the log)
                 return
             made = kept.value[0]
             # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred

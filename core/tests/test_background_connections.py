@@ -591,6 +591,36 @@ class ThePath(NamesTest):
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
+    async def test_a_refused_keep_logs_why_without_the_names(
+        self,
+    ) -> None:
+        """#4161: "couldn't keep that one" left nothing to go on. The rule's own sentence is in the
+        log with the card's two names left out; the card still says only what to do."""
+        from unittest.mock import patch
+
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        card = view.current
+        reason = f"A companion travels with a player character. {card.subject} is not one."
+        press = self.it()
+        with (
+            patch.object(type(self.memory), "add_relation", side_effect=MemoryRuleError(reason)),
+            self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
+        ):
+            await self.button(view, "✅ Keep").callback(press)
+        said = press.followup.send.await_args.args[0]
+        self.assertIn("couldn't keep that one", said)
+        self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
+        line = next(m for m in logged.output if "was refused" in m)
+        self.assertIn("A companion travels with a player character. [name] is not one.", line)
+        self.assertNotIn(card.subject, line)  # (the log never has the names)
+        self.assertNotIn(card.object, line)
+        self.assertEqual(await self.relations(), [])  # (nothing was kept)
+        self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
+
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
         for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):
