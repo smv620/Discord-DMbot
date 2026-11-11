@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { WaitingBackstory } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
-import { handBracket, handKeepInDiscord } from "../src/content/hand-over-words";
+import { handBracket, handKeeps } from "../src/content/hand-over-words";
 import { waitingWords as w } from "../src/content/web-waiting";
 
 afterEach(() => {
@@ -53,7 +53,7 @@ describe("handBracket", () => {
 });
 
 describe("a waiting hand-over", () => {
-  it("shows the bracket and sends the DM to Discord to keep it", async () => {
+  it("shows the bracket, what Keep does to the one before, and a Keep button", async () => {
     await show({
       handOver: "sold",
       handOverFrom: "a".repeat(32),
@@ -62,8 +62,8 @@ describe("a waiting hand-over", () => {
     expect(
       await screen.findByText("Belleros owns the Frost Brand (Claude sold it)"),
     ).toBeTruthy();
-    expect(screen.getByText(handKeepInDiscord)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.keep })).toBeNull();
+    expect(screen.getByText(handKeeps("sold", "Claude", false))).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
   });
 
@@ -73,7 +73,13 @@ describe("a waiting hand-over", () => {
       await screen.findByText("Belleros owns the Frost Brand"),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
-    expect(screen.queryByText(handKeepInDiscord)).toBeNull();
+    expect(screen.queryByText(/no longer has it/)).toBeNull();
+  });
+
+  it("a theft says only that they no longer have it with them", async () => {
+    await show({ handOver: "stolen", handOverFrom: "a".repeat(32), handOverName: "Claude" });
+    expect(await screen.findByText(handKeeps("stolen", "Claude", false))).toBeTruthy();
+    expect(screen.getByText(/Who owns it doesn't change/)).toBeTruthy();
   });
 
   it("one whose previous holder has no name shows as a plain connection", async () => {
@@ -105,7 +111,7 @@ describe("a waiting hand-over", () => {
     expect(screen.queryByRole("button", { name: w.keepAll(3) })).toBeNull();
   });
 
-  it("a secret hand-over shows neither Keep button, and still Skip", async () => {
+  it("a secret hand-over can be kept (as secret), and says the players still see the one before", async () => {
     await show({
       secret: true,
       handOver: "stolen",
@@ -117,8 +123,8 @@ describe("a waiting hand-over", () => {
         "Belleros owns the Frost Brand (taken from Claude)",
       ),
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.keepIsSecret })).toBeNull();
-    expect(screen.queryByRole("button", { name: w.keep })).toBeNull();
+    expect(screen.getByText(handKeeps("stolen", "Claude", true))).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.keepIsSecret })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
   });
 });
