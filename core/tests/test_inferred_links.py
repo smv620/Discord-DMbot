@@ -109,6 +109,7 @@ def waiting(inferred: str = "") -> Any:
     return SimpleNamespace(
         subject_id="s", predicate="knows", object_id="o", secret=False, detail="", truth=False,
         decided="", known_by="", world=0, upload="", inferred=inferred, quote="q", ready=True,
+        hand_over="", hand_over_from="",  # (no hand-over, #4115)
     )  # fmt: skip
 
 
