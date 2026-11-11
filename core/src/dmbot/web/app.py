@@ -61,6 +61,7 @@ from dmbot.web import (
     imports,
     line_fixes,
     lore,
+    met_list,
     my_lines,
     names_smart,
     npc_pages,
@@ -2461,6 +2462,33 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await all_names.queue_match(db, session, ref, batch, answer)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/met")
+    async def me_campaign_met_list(ref: str, signed: Signed) -> dict[str, Any]:
+        """The creatures and people the party met that nobody named (#4084): DM only."""
+        session, _token = signed
+        try:
+            return await met_list.listed(db, session, ref)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/met/{met_id}", status_code=202)
+    async def me_campaign_met_answer(
+        ref: str, met_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Give one of them a name, say it is a name the campaign has, or remove it (#4084),
+        queued for the bot; the answer is polled at `.../all-names/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await met_list.queue(db, session, ref, met_id, body)}
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
