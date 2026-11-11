@@ -14,6 +14,10 @@ export const panelWords = {
   open: (line: string): string => `Open: ${line}`,
   close: "Close",
   words: "Words",
+  // The direction toggle shows the state it is in and what pressing it does; the arrow reads with the names in the panel's order.
+  direction: (state: string): string => `Direction: ${state}. Press to change it.`,
+  cannotTurn: "That family role can't be turned round. Change its words instead.",
+  reloadFirst: "The connections changed while saving. Close this panel, open it again and try the rest.",
   makeSecret: "Make secret",
   pin: "Pin as true",
   remove: "Remove",

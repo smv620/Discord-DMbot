@@ -24,7 +24,7 @@ const EDGE: WebEdge = {
   b: "b1",
   label: "are rivals",
   more: 1,
-  links: [link("l1"), link("l2", { words: "owes a favour to", direction: "a-b", secret: true })],
+  links: [link("l1", { words: "rival", pairWords: "are rivals" }), link("l2", { words: "owes a favour to", direction: "a-b", secret: true })],
 };
 const names: Record<string, string> = { a1: "Cerric", b1: "Wit" };
 
@@ -48,7 +48,8 @@ function show(over: { canEdit?: boolean; act?: (c: WebLinkChange, ok: string) =>
   );
   return { act, onClose };
 }
-const row = (text: RegExp) => screen.getByRole("button", { name: text });
+/** The compact line of a connection (its toggle), not the direction button inside an opened one. */
+const row = (text: RegExp) => screen.getAllByRole("button", { name: text }).find((b) => b.getAttribute("aria-controls")?.startsWith("web-link-")) as HTMLElement;
 const open = (text: RegExp) => fireEvent.click(row(text));
 
 describe("changesOf", () => {
@@ -70,14 +71,14 @@ describe("the list", () => {
     show();
     const buttons = screen.getAllByRole("button");
     expect(buttons[0]!.textContent).toBe(p.add);
-    expect(row(/Cerric ↔ Wit · are rivals/)).toBeTruthy();
+    expect(row(/Cerric ↔ Wit · are rivals/)).toBeTruthy(); // (a two-way line reads with the API's pair words)
     expect(row(/Cerric → Wit · owes a favour to/).textContent).toContain("🤫");
     expect(screen.getByRole("heading").textContent).toBe("Cerric and Wit");
   });
 
   it("opens one line at a time", () => {
     show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     expect(screen.getByLabelText(/Words for connection 1/)).toBeTruthy();
     open(/owes a favour/);
     expect(screen.getByLabelText(/Words for connection 2/)).toBeTruthy();
@@ -97,7 +98,7 @@ describe("the list", () => {
 describe("staged edits", () => {
   it("wait until Save: a dot on the line and the heading, and nothing sent", () => {
     const { act } = show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     expect(screen.queryByRole("button", { name: p.save })).toBeNull();
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
     expect(row(/Cerric ↔ Wit/).textContent).toContain("•");
@@ -108,22 +109,22 @@ describe("staged edits", () => {
 
   it("Save sends each pending change once and clears the dots", async () => {
     const { act } = show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     fireEvent.click(screen.getByRole("button", { name: p.save }));
     fireEvent.click(screen.getByRole("button", { name: p.save })); // (a second press while saving does nothing)
     await waitFor(() => expect(screen.queryByRole("button", { name: p.save })).toBeNull());
     expect(act.mock.calls.map((c) => c[0])).toEqual([
+      { action: "secret", id: "l1", secret: true }, // (what keeps the id goes first, then what writes the connection anew)
       { action: "words", id: "l1", words: "are friends" },
-      { action: "secret", id: "l1", secret: true },
     ]);
     expect(row(/Cerric ↔ Wit/).textContent).not.toContain("•");
   });
 
   it("Discard drops them", () => {
     const { act } = show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     expect(row(/Cerric ↔ Wit/).textContent).toContain("•");
     fireEvent.click(screen.getByRole("button", { name: p.discard }));
@@ -134,7 +135,7 @@ describe("staged edits", () => {
   it("a refused save keeps the changes and says why; a partly done one says how far", async () => {
     let n = 0;
     show({ act: async () => ((n += 1) === 2 ? "The bot said no." : null) });
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     fireEvent.click(screen.getByRole("button", { name: p.save }));
@@ -145,7 +146,7 @@ describe("staged edits", () => {
 
 describe("leaving with changes pending", () => {
   const dirty = () => {
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
   };
 
@@ -211,6 +212,56 @@ describe("leaving with changes pending", () => {
   });
 });
 
+describe("which way a connection reads", () => {
+  it("is one button that shows the state and cycles A → B, B → A, A ↔ B", () => {
+    show();
+    open(/owes a favour/);
+    const toggle = () => screen.getByRole("button", { name: /^Direction: / });
+    expect(toggle().textContent).toBe("Cerric → Wit");
+    expect(toggle().getAttribute("aria-label")).toBe(p.direction("Cerric → Wit"));
+    fireEvent.click(toggle());
+    expect(toggle().textContent).toBe("Cerric ← Wit");
+    expect(row(/Cerric ← Wit/).textContent).toContain("•"); // (staged: the line follows, with its dot)
+    fireEvent.click(toggle());
+    expect(toggle().textContent).toBe("Cerric ↔ Wit");
+    fireEvent.click(toggle());
+    expect(toggle().textContent).toBe("Cerric → Wit");
+    expect(row(/Cerric → Wit/).textContent).not.toContain("•"); // (round again: nothing differs)
+  });
+
+  it("is sent with Save, and a family role that cannot be turned says so in its own words", async () => {
+    const { act } = show({ act: (async (c: WebLinkChange, _ok: string, own?: Record<string, string>) => (c.action === "direction" ? (own?.["bad-target"] ?? "no") : null)) as never });
+    open(/owes a favour/);
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    expect((await screen.findByRole("alert")).textContent).toContain(p.cannotTurn);
+    expect(act.mock.calls[0]![0]).toEqual({ action: "direction", id: "l2", direction: "b-a" });
+  });
+
+  it("goes to the new id when an earlier change wrote the connection anew", async () => {
+    // words write the connection anew (l1 becomes l9): the direction after it must be sent to l9, the secret before it to l1
+    const calls: WebLinkChange[] = [];
+    show({
+      act: (async (change: WebLinkChange, _ok: string, _own: unknown, onEdge?: (e: WebEdge) => void) => {
+        calls.push(change);
+        if (change.action === "words") onEdge?.({ ...EDGE, links: [link("l9", { words: "friends" }), EDGE.links[1]!] });
+        return null;
+      }) as never,
+    });
+    open(/are rivals/);
+    fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
+    fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Direction: / }));
+    fireEvent.click(screen.getByRole("button", { name: p.save }));
+    await waitFor(() => expect(calls).toHaveLength(3));
+    expect(calls).toEqual([
+      { action: "secret", id: "l1", secret: true },
+      { action: "words", id: "l1", words: "are friends" },
+      { action: "direction", id: "l9", direction: "a-b" },
+    ]);
+  });
+});
+
 describe("while a save is on its way", () => {
   /** A save held open until the test lets it go. */
   function held() {
@@ -225,7 +276,7 @@ describe("while a save is on its way", () => {
     return { calls, finish: (v: string | null = null) => finish(v) };
   }
   const stageTwo = () => {
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "are friends" } });
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     fireEvent.click(screen.getByRole("button", { name: p.save }));
@@ -274,14 +325,14 @@ describe("while a save is on its way", () => {
 
   it("an empty words field is not a change", () => {
     show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.input(screen.getByLabelText(/Words for connection 1/), { target: { value: "  " } });
     expect(screen.queryByRole("button", { name: p.save })).toBeNull();
   });
 
   it("Escape closes the question and keeps the changes", () => {
     show();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     fireEvent.click(screen.getByRole("button", { name: /Make connection 1 secret/ }));
     fireEvent.click(screen.getByRole("button", { name: p.close }));
     fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
@@ -294,7 +345,7 @@ describe("a player", () => {
   it("gets the same list, read-only: no add, no inputs, no Save", () => {
     show({ canEdit: false });
     expect(screen.queryByRole("button", { name: p.add })).toBeNull();
-    open(/are rivals/);
+    open(/Cerric ↔ Wit/);
     expect(screen.queryByLabelText(/Words for connection/)).toBeNull();
     expect(screen.queryByRole("button", { name: p.save })).toBeNull();
     expect(within(screen.getByRole("list")).getAllByRole("listitem")).toHaveLength(2);

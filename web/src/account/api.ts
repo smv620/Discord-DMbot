@@ -1862,6 +1862,9 @@ export interface WebLink {
   /** The characters that know it, when `who` is "some". */
   knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
+  /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
+   * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
+  pairWords?: string;
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
   /** How it reads from the second name when that differs ("has as a member"); null or missing
@@ -1993,6 +1996,9 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // Which way a connection reads (#4154, core #4166), relative to the edge's own two names. Turning one round writes it anew, so its id
+  // changes: take the link from the answer's edge. Both ways, or back to one way, keeps the id.
+  | { action: "direction"; id: string; direction: "a-b" | "b-a" | "both" }
   // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
   | { action: "feeling"; id: string; feeling: string }
   // How the two people of a `knows` connection know each other (#3882, core #3889): "met", "aware" or "" (not said).
