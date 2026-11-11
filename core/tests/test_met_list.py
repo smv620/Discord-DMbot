@@ -84,8 +84,10 @@ class TheList(NamesTest):
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
         await self.transcripts.add_lines(
-            GUILD, self.sid, [Line(LINE_MS, DM, "Two barbarians jump out.", "x")]
-        )
+            GUILD, self.sid,
+            [Line(LINE_MS, DM, "Two barbarians jump out.", "x"),
+             Line(LINE_MS + 1_000, PLAYER, "I count the dogs.", "x")],  # (#4091: cited, so spoke)
+        )  # fmt: skip
 
     async def keep(
         self, what: str = "barbarians", count: int = 2, speakers: tuple[int, ...] = (DM,)
@@ -310,7 +312,14 @@ class MetWhileSplit(NamesTest):
                     (GUILD, self.campaign.id, character, group),
                 )
 
+    async def spoke(self, speaker: int, line_ms: tuple[int, ...]) -> None:
+        """The speaker's lines a met row cites (never written for someone with none, #4091)."""
+        await TranscriptStore(self.db).add_lines(
+            GUILD, "s500", [Line(ms, speaker, "A wolf!", "x") for ms in line_ms]
+        )
+
     async def named(self, speaker: int, line_ms: tuple[int, ...] = (650_000,)) -> Any:
+        await self.spoke(speaker, line_ms)
         await self.met.add(
             GUILD, self.campaign.id, "s500", [("a wolf", 1, line_ms, (speaker,))],
             session_started_at=500,
@@ -357,6 +366,7 @@ class MetWhileSplit(NamesTest):
 
     async def test_the_website_counts_what_the_dm_is_told(self) -> None:
         await self.split()
+        await self.spoke(99, (650_000,))
         await self.met.add(
             GUILD, self.campaign.id, "s500", [("a wolf", 1, (650_000,), (99,))],
             session_started_at=500,
