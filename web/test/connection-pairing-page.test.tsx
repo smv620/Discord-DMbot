@@ -40,7 +40,7 @@ describe("joining two names on the page", () => {
     page();
     await waitFor(() => expect(node("Brynn")).toBeTruthy());
     fireEvent.click(node("Mira"), { ctrlKey: true });
-    expect(screen.getByText(w.pickSecond("Mira"), { exact: false })).toBeTruthy();
+    expect(await screen.findByText(w.pickSecond("Mira"), { exact: false })).toBeTruthy();
     fireEvent.click(node("Brynn"));
     await waitFor(() => expect(screen.getByText(p.none)).toBeTruthy());
     expect(screen.getByRole("button", { name: p.add })).toBeTruthy();
@@ -50,7 +50,7 @@ describe("joining two names on the page", () => {
     page();
     await waitFor(() => expect(node("Brynn")).toBeTruthy());
     fireEvent.click(node("Mira"));
-    fireEvent.click(screen.getByRole("button", { name: w.connectTo }));
+    fireEvent.click(await screen.findByRole("button", { name: w.connectTo }));
     fireEvent.click(node("Brynn"));
     await waitFor(() => expect(screen.getByText(p.none)).toBeTruthy());
   });

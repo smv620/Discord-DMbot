@@ -8,6 +8,4 @@ export const pairingWords = {
   /** One quiet line for people with a keyboard; the button above does the same on a phone. */
   ctrlHint: "On a computer you can also Ctrl+click (Mac: ⌘+click) one name, then tap the other.",
   /** Beside the connections in a name's panel. */
-  tapHint: "Tap a connection to open it.",
-  openLabel: (text: string): string => `Open this connection: ${text}`,
 };

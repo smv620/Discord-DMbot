@@ -32,7 +32,6 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
-import { pairingWords } from "../content/connection-pairing-words";
 import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
 import { pcIconWords } from "../content/pc-icon-words";
 import LazyPanel from "./LazyPanel";
@@ -848,12 +847,7 @@ export default function WebMap({
         </g>
       </svg>
       {pairFrom !== null && onPair && (
-        <p class="web-side note" role="status">
-          {pairingWords.pickSecond(byId.get(pairFrom)?.name ?? "")}{" "}
-          <button type="button" class="button secondary" onClick={() => onPair(pairFrom)}>
-            {pairingWords.cancel}
-          </button>
-        </p>
+        <LazyPanel load={() => import("./WebPairing")} what="the joining" props={{ kind: "banner" as const, name: byId.get(pairFrom)?.name ?? "", onPair, id: pairFrom }} />
       )}
       {selected && children ? (
         <div class="web-side">{children}</div>
@@ -875,14 +869,14 @@ export default function WebMap({
             <p class="small">{words.sideNone}</p>
           ) : (
             <>
-            {onJump && canEdit && <p class="small muted">{pairingWords.tapHint}</p>}
+            {onJump && canEdit && <p class="small muted">Tap a connection to open it.</p>}
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
                   {markSecret(l) && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
                   {onJump && canEdit ? (
-                    <button type="button" class="link-button" aria-label={pairingWords.openLabel(l.text)} onClick={() => onJump(l.a, l.b, l.id)}>
+                    <button type="button" class="link-button" aria-label={`Open this connection: ${l.text}`} onClick={() => onJump(l.a, l.b, l.id)}>
                       {l.text}
                     </button>
                   ) : (
@@ -894,11 +888,8 @@ export default function WebMap({
             </>
           )}
           {onPair && canEdit && (
-            <button type="button" class="button secondary" onClick={() => onPair(detail.id)}>
-              {pairingWords.connectTo}
-            </button>
+            <LazyPanel load={() => import("./WebPairing")} what="the joining" props={{ kind: "button" as const, name: "", onPair, id: detail.id }} />
           )}
-          {onPair && canEdit && <p class="small muted">{pairingWords.ctrlHint}</p>}
           <button
             type="button"
             class="button secondary"

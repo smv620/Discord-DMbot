@@ -100,6 +100,12 @@ function refusal(error: unknown): string | null {
   return words.errors[kind] ?? words.errorFallback;
 }
 
+/** The open pair stays while its connection is drawn, or (a pair joined by hand, #4155) while both its names are. */
+function keepLine<L extends { a: string; b: string; fresh?: true }>(now: L | null, g: WebGraph): L | null {
+  const hit = now && g.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a));
+  return now && (hit || (now.fresh && [now.a, now.b].every((id) => g.nodes.some((n) => n.id === id)))) ? now : null;
+}
+
 export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const ref = webRefFromPath(path);
   const [view, setView] = useState<View>("loading");
@@ -236,7 +242,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       setCenter(read.center);
       setHops(clampHops(steps, read.maxHops));
       setHopsText(String(clampHops(steps, read.maxHops)));
-      setLine((now) => (now && ((now.fresh && read.nodes.some((n) => n.id === now.a) && read.nodes.some((n) => n.id === now.b)) || read.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a))) ? now : null));
+      setLine((now) => keepLine(now, read));
       setView("ok");
     } catch (error) {
       if (mine !== latest.current) return;
@@ -311,7 +317,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       const next = read.canEdit ? read : plainGraph(read);
       if (graphSignature(next) === graphSignature(shown)) return "same";
       setGraph(next);
-      setLine((now) => (now && ((now.fresh && next.nodes.some((n) => n.id === now.a) && next.nodes.some((n) => n.id === now.b)) || next.edges.some((e) => (e.a === now.a && e.b === now.b) || (e.a === now.b && e.b === now.a))) ? now : null));
+      setLine((now) => keepLine(now, next));
       void loadOverview();
       return "changed";
     } catch (error) {
@@ -666,24 +672,19 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   };
   // A pair with no connection yet is a line with nothing on it, so the panel can add the first (#4155).
   const chosen = line
-    ? (edges.find((e) => e.a === line.a && e.b === line.b || e.a === line.b && e.b === line.a) ??
-        (line.fresh && nodes.some((n) => n.id === line.a) && nodes.some((n) => n.id === line.b) ? { a: line.a, b: line.b, label: "", more: 0, links: [] } : null))
+    ? (edges.find((e) => (e.a === line.a && e.b === line.b) || (e.a === line.b && e.b === line.a)) ??
+      (line.fresh && keepLine(line, graph) ? { a: line.a, b: line.b, label: "", more: 0, links: [] } : null))
     : null;
   const pairOn = CONNECTION_PANEL_LIVE && canEdit && !seeing;
-  // A first name no longer drawn (the middle moved) is forgotten, so the banner never names nobody.
+  // A first name no longer drawn (the middle moved) is forgotten, so the banner never names nobody; a placeholder has no name to join yet.
+  const named = (id: string): boolean => nodes.some((n) => n.id === id && !n.unnamed);
   const pairLive = pairFrom !== null && nodes.some((n) => n.id === pairFrom) ? pairFrom : null;
   const pairWith = (id: string): void => {
-    if (pairLive === null) {
-      if (!nodes.find((n) => n.id === id)?.unnamed) setPairFrom(id); // (a placeholder has no name to join yet)
-    } else if (pairLive === id) setPairFrom(null);
-    else if (!nodes.find((n) => n.id === id)?.unnamed) {
-      const first = pairLive;
-      // forgotten only once the page really moves on: a refused leave keeps the first name picked
-      goOn(() => {
-        setPairFrom(null);
-        setLine({ a: first, b: id, fresh: true });
-      });
-    }
+    if (pairLive === id) setPairFrom(null);
+    else if (!named(id)) return;
+    else if (pairLive === null) setPairFrom(id);
+    // (forgotten only once the page really moves on: a refused leave keeps the first name picked)
+    else goOn(() => (setPairFrom(null), setLine({ a: pairLive, b: id, fresh: true })));
   };
 
   return (

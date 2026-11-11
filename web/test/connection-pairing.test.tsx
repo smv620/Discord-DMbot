@@ -49,23 +49,23 @@ describe("joining two names", () => {
     expect(onPair).toHaveBeenCalledWith("m");
   });
 
-  it("with a first name picked, a plain tap is the second, and the banner says so", () => {
+  it("with a first name picked, a plain tap is the second, and the banner says so", async () => {
     const { onPair } = draw({ pairFrom: "m" });
-    expect(screen.getByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
+    expect(await screen.findByText(w.pickSecond("Mira Voss"), { exact: false })).toBeTruthy();
     fireEvent.click(nodeOf("Garrick"));
     expect(onPair).toHaveBeenCalledWith("g");
   });
 
-  it("Cancel in the banner gives the first name back (the page cancels on the same name)", () => {
+  it("Cancel in the banner gives the first name back (the page cancels on the same name)", async () => {
     const { onPair } = draw({ pairFrom: "m" });
-    fireEvent.click(screen.getByRole("button", { name: w.cancel }));
+    fireEvent.click(await screen.findByRole("button", { name: w.cancel }));
     expect(onPair).toHaveBeenCalledWith("m");
   });
 
-  it("Connect to… in a name's panel starts with that name", () => {
+  it("Connect to… in a name's panel starts with that name", async () => {
     const { onPair } = draw();
     fireEvent.click(nodeOf("Garrick"));
-    fireEvent.click(screen.getByRole("button", { name: w.connectTo }));
+    fireEvent.click(await screen.findByRole("button", { name: w.connectTo }));
     expect(onPair).toHaveBeenCalledWith("g");
   });
 
