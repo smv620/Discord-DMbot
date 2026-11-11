@@ -37,7 +37,7 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, NodeSummary, TraitOffer, UploadNotice, WaitingLook } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, NodeSummary, TraitOffer, UploadNotice, WaitingLook } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -355,18 +355,18 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice,
     // Undo this upload is queued for the bot, then polled like any queued change: once, within 7 days, newest first.
     undoUpload: async (ref, source, onLook) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-undo`;
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-notice/undo`;
       const queued = (await call("POST", base, { kind: source.kind, id: source.id })) as { id: string };
       if (!queued?.id) throw new ApiError("server");
       for (let i = 0; i < NAME_POLLS; i++) {
-        let got = null as { state?: string; error?: string; took?: number; of?: number; progress?: unknown } | null;
+        let got = null as { state?: string; error?: string; undone?: number; progress?: unknown } | null;
         try {
           got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
           onLook?.(sharedOf(got?.progress as never));
         } catch (error) {
           if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
         }
-        if (got?.state === "done") return { took: Number(got.took ?? 0), of: Number(got.of ?? 0) };
+        if (got?.state === "done") return { took: Number(got.undone ?? 0) };
         if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
         if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
       }
@@ -416,6 +416,37 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         ...(scene !== undefined ? { scene } : {}),
         ...(split !== undefined ? { split } : {}),
       };
+    },
+    // The hand-over question (#4122): the list, then one queued answer polled here so the bot's own word for how it ended reaches the card.
+    handOverQuestions: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/hand-over-questions`)) as { questions: HandOverQuestion[] }).questions,
+    answerHandOver: async (ref, question, answer, undoes, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/hand-over-questions/answer`;
+      const body: Record<string, string> = { olderTie: question.olderTie, newerTie: question.newerTie, answer };
+      if (undoes) body["undoes"] = undoes;
+      const queued = (await call("POST", base, body)) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      let misses = 0;
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; undoable?: boolean; waits?: WaitingLook["waits"]; progress?: Parameters<typeof countsOf>[0] } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          misses = 0;
+          onLook?.({ waits: got.waits ?? null, progress: countsOf(got.progress) });
+        } catch (error) {
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
+        }
+        if (got?.state === "done") return { answerId: queued.id, undoable: got.undoable === true };
+        if (got?.state === "failed") {
+          const word = got.error ?? "";
+          const failure = new ApiError(word === "gone" ? "gone" : word === "not-allowed" ? "not-allowed" : "server");
+          failure.note = word;
+          throw failure;
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
     },
     // The lineage and class questions (#3946): the list, then one queued answer that is polled like every other edit.
     traitOffers: async (ref) =>
@@ -497,7 +528,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
-      return got.removed || !got.edge ? { removed: true } : got.edge;
+      // The change's batch rides along only when the bot made one (an edit that changed nothing has none).
+      const made = typeof got.batch === "number" ? { batch: got.batch } : {};
+      return got.removed || !got.edge ? { removed: true, ...made } : { ...got.edge, ...made };
     },
   };
 }

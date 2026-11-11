@@ -1335,15 +1335,36 @@ export interface UploadNotice {
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */
-  undone: { took: number; of: number } | null;
+  undone: { took: number; of?: number } | null;
   /** The questions left for the DM from this upload. */
   questionsLeft: number;
   serverNow: number;
 }
-/** What one Undo this upload did (#3879): how many changes it took back of how many it had. */
+/** What one Undo this upload did (#3879): how many changes it took back, and of how many it had when the API says (core's answer
+ * has the first only: the notice keeps no count of its changes). */
 export interface UploadUndo {
   took: number;
-  of: number;
+  of?: number;
+}
+/** One "Does {older} still have it?" question (#4122; core web/hand_over.py): a one-of-a-kind item that two holders now have. `olderTie`
+ * and `newerTie` name the question in an answer. Names are the DM's own words; DM only. */
+export interface HandOverQuestion {
+  item: string;
+  itemName: string;
+  older: string;
+  olderName: string;
+  newer: string;
+  newerName: string;
+  predicate: "owns" | "carries";
+  olderTie: string;
+  newerTie: string;
+  madeAt: number;
+}
+/** What an answer to it was: the bot's own words for how it ended come as the error, and `undoable` is the id of the answer to
+ * quote to take a "no" back. */
+export interface HandOverAnswered {
+  answerId: string;
+  undoable: boolean;
 }
 /** One lineage or class question waiting for the DM (#3946; core web/trait_offers.py): what the lore said about a character the
  * campaign already has. `quote` and `upload` are the DM's own lore: DM only. */
@@ -1740,6 +1761,9 @@ export interface WebNode {
   revealed?: boolean;
   /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
   page?: boolean;
+  /** How an item changed hands (#4122; core graph_view): "Claude sold it to Belleros · Belleros has it now", in the API's words, only
+   * from connections this viewer knows and only when one has ended. Absent otherwise. */
+  history?: string;
   /** The quests this name is joined to directly, the most-connected first, even a quest outside the steps drawn
    * (#2992). Only for a DM in Full View: nobody else is told of a quest or a tie to one. */
   quests?: { id: string; name: string; links: number }[];
@@ -1838,6 +1862,9 @@ export interface WebLink {
   /** The characters that know it, when `who` is "some". */
   knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
+  /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
+   * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
+  pairWords?: string;
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
   /** How it reads from the second name when that differs ("has as a member"); null or missing
@@ -1969,6 +1996,9 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // Which way a connection reads (#4154, core #4166), relative to the edge's own two names. Turning one round writes it anew, so its id
+  // changes: take the link from the answer's edge. Both ways, or back to one way, keeps the id.
+  | { action: "direction"; id: string; direction: "a-b" | "b-a" | "both" }
   // A "knows (…)" connection's feeling, one of the nine words (#3606, #3607): sent as a feeling, never as the catch-all words.
   | { action: "feeling"; id: string; feeling: string }
   // How the two people of a `knows` connection know each other (#3882, core #3889): "met", "aware" or "" (not said).
@@ -1976,7 +2006,12 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
-  | { action: "remove"; id: string; confirm: true };
+  | { action: "remove"; id: string; confirm: true }
+  // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
+  | { action: "undo"; id: string; batch: number };
+
+/** What a connection edit gave back: the edge as it now stands, and the `batch` that made the change (for Undo). */
+export type WebLinkResult = (WebEdge | { removed: true }) & { batch?: number | null };
 
 /** Words DMbot stopped asking about (#3577, core 0360): the table's own words and the DM's answer, "never" or "later" (Not now). */
 export interface KindOffer {
@@ -2171,6 +2206,8 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
+  /** The change batch a connection edit made, for its Undo (core #4156). */
+  batch?: number | null;
   /** An Undo of a name fix: how many lines were put back (#2645). */
   putBack?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
@@ -2296,6 +2333,10 @@ export interface WaitingBackstory {
   waitingOn: string[];
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
+  /** An item that changed hands (#4122): how it moved (sold, gave, traded, stolen, lost), who had it before, or "" for none. */
+  handOver?: "" | "sold" | "gave" | "traded" | "stolen" | "lost";
+  handOverFrom?: string;
+  handOverName?: string | null;
 }
 export interface WaitingWhich {
   id: string;
@@ -2810,6 +2851,11 @@ export interface AccountApi {
   /** Undo this upload (#3879): queued for the bot, which takes back the upload's own changes newest first; resolves with what was
    * taken back once it is done. Refusals: "too-late" (past 7 days), "already" (done once), "not-allowed". */
   undoUpload?(ref: string, source: { kind: "lore" | "import"; id: string }, onLook?: (progress: JobProgress | null) => void): Promise<UploadUndo>;
+  /** The "Does Claude still have it?" questions waiting for the DM (#4122), oldest first; a DM of the campaign only. */
+  handOverQuestions?(ref: string): Promise<HandOverQuestion[]>;
+  /** One answer: `no` (not any more), `both`, or `undo` (with `undoes`, the id of the `no` to take back): queued for the bot and polled;
+   * rejects `gone`, `not-allowed`, `too-late`, `changed`, or `server`, with the bot's word in `note`. */
+  answerHandOver?(ref: string, question: Pick<HandOverQuestion, "olderTie" | "newerTie">, answer: "no" | "both" | "undo", undoes?: string, onLook?: (look: WaitingLook) => void): Promise<HandOverAnswered>;
   /** The lineage and class questions waiting for the DM (#3946); a DM of the campaign only (anyone else gets `not-found`). */
   traitOffers?(ref: string): Promise<TraitOffer[]>;
   /** Yes (`keep`) or No (`never`) to one of them: queued for the bot, which applies it as the DM; resolves with the change's number
@@ -2944,7 +2990,7 @@ export interface AccountApi {
    * `{ removed: true }` when the last connection between two names went. */
   /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
   setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
-  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
+  changeWebLink?(ref: string, change: WebLinkChange): Promise<WebLinkResult>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
@@ -3319,6 +3365,10 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_clip: "bad-clip",
   undo_late: "undo-late",
   undo_done: "undo-done",
+  // core's words for Undo this upload (0417): the door's refusals and the bot's outcome words (#3879, #4078)
+  too_late: "undo-late",
+  undone: "undo-done",
+  already: "undo-done",
   voice_off: "voice-off",
   no_consent: "no-consent",
   not_a_dm: "not-allowed",
@@ -3373,7 +3423,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

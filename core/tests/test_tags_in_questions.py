@@ -89,6 +89,17 @@ class TheCardTitle(ConfirmedMemoryTest):
             tags.tag_for(woman, ties[self.woman], dm=True), "beggar woman (in Termalaine)"
         )
 
+    async def test_a_place_she_left_is_never_her_tag(self) -> None:
+        # (#4134: a tag says who they are now)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET to_session_at = 5 WHERE subject_id = %s",
+                (self.woman,),
+            )
+        woman = next(e for e in await self.memory.entities(GUILD_A, self.c) if e.id == self.woman)
+        ties = await self.memory.tag_ties(GUILD_A, self.c, [self.woman])
+        self.assertNotIn("Termalaine", tags.tag_for(woman, ties.get(self.woman, []), dm=True))
+
     async def test_the_tag_is_looked_up_only_for_the_dm(self) -> None:
         # show_card asks for ties only when `secrets` is true (a player's card keeps the name)
         source = inspect.getsource(name_card.show_card)

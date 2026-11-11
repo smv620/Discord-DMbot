@@ -19,6 +19,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.consent import still_recorded
 from dmbot.db import Database
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.models import name_key, new_id
@@ -50,6 +51,9 @@ class MetAdded:
     again: int = 0  # already kept for this session (a later batch, or a restarted read)
     named: int = 0  # the words are a name the campaign already has: not an unnamed being
     past_cap: int = 0  # the session already has `MAX_PER_SESSION`: not kept
+    # a speaker it cites has no lines in the session now (their transcript was deleted, or a DM
+    # removed them, after the read and before this write): never kept (#4091)
+    gone: int = 0
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,25 @@ class MetStore:
                 (guild_id, campaign_id),
             )
             named |= {str(r["key"]) for r in await cur.fetchall()}
+            # Who still has lines in the session, read under the session's row lock (#4091): the
+            # read the encounters came from was minutes ago (an AI call), and "Delete my
+            # transcripts" or a DM's removal of a speaker locks this same row before it deletes
+            # their lines and the rows citing them, so a row citing someone gone is never written.
+            # By speaker, on purpose: the deletions this guards against take every line of that
+            # person in the session, so "has none left" is the exact test (#4091).
+            cur = await conn.execute(
+                "SELECT DISTINCT user_id FROM transcript_lines WHERE guild_id = %s"
+                " AND session_id = %s",
+                (guild_id, session_id),
+            )
+            present = {int(r["user_id"]) for r in await cur.fetchall()}
+            # and still recorded (#4153): who agreed was read before this write began, and a
+            # "Stop recording me" since then deletes no lines, so it is asked again here
+            present = set(await still_recorded(conn, guild_id, campaign_id, present))
             for word, count, line_ms, speakers in met:
+                if not set(speakers) <= present:
+                    out.gone += 1
+                    continue
                 what = unnamed_mod.tidy(word)
                 plain = unnamed_mod.same_person_key(what, None).removeprefix("|")
                 if not what or {name_key(what), plain} & named:

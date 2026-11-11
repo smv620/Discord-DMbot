@@ -48,6 +48,7 @@ from dmbot import (
     entitlements,
     features,
     fightbot,
+    hand_over_answer,
     hours,
     images,
     install,
@@ -706,6 +707,9 @@ SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered
 SCRIPT_MAKE_EVERY_S = 5
 TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied (#3946)
 TRAIT_ANSWER_EVERY_S = 5
+HAND_OVER_FIRST_S = 35  # the website's "Does Claude still have it?" (#4122): answers applied,
+HAND_OVER_EVERY_S = 5  # and the list for the page written again every LIST_EVERY rounds
+HAND_OVER_LIST_EVERY = 12  # (a minute)
 UPLOAD_UNDO_FIRST_S = 30  # the website's "Undo this upload" presses are applied (#4078)
 UPLOAD_UNDO_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
@@ -1924,6 +1928,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
             self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
+            self._watched(self._hand_over_loop(), "hand-over-answers"),
             self._watched(self._upload_undo_loop(), "upload-undos"),
             *(
                 [
@@ -2554,7 +2559,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Could not remove the story claims of a stopped speaker")
         try:
-            return await self.consent.revoke(guild_id, user_id)
+            revoked = await self.consent.revoke(guild_id, user_id)
         finally:
             if self.members is not None:  # no longer offered by name in the import search (#2141)
                 try:
@@ -2568,6 +2573,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
+        if self.memory is not None:
+            # Once more, now the consent row is gone (#4153): an after-session writer that read
+            # who agreed before the stop and re-read it just before the delete committed has
+            # written by now (this waits on its session row), so what it wrote goes too. Never
+            # blocks or fails the stop: a failure is one counts-only warning, and nothing is shown
+            # meanwhile, because every list re-checks who is recorded when it is read (the met
+            # list deletes such rows then; private scenes leave them out).
+            try:
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
+            except Exception as exc:
+                log.warning(
+                    "Could not remove the story claims of a stopped speaker again: %s",
+                    type(exc).__name__,
+                )
+        return revoked
 
     async def count_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]:
         """(lines, sessions) this person has in this server's transcripts, for the warning
@@ -8988,19 +9009,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # after" is true (#2564).
                     limit = asyncio.timeout(plan_reader.MAX_RUN_S)
                     try:
+                        # (a read of the DM's adventure is metered as AI credits, #4005)
                         async with limit:
-                            report = await plan_reader.run(
-                                ai,
-                                plan,
-                                guild_id=guild_id,
-                                campaign_id=campaign_id,
-                                document_id=document_id,
-                                start_chunk=start,
-                                model=lambda: ai.model,
-                                allowed=plan_allowed,
-                                progress=moved,
-                                report=report,
-                            )
+                            with credits.preparing(guild_id, campaign_id, "adventure"):
+                                report = await plan_reader.run(
+                                    ai,
+                                    plan,
+                                    guild_id=guild_id,
+                                    campaign_id=campaign_id,
+                                    document_id=document_id,
+                                    start_chunk=start,
+                                    model=lambda: ai.model,
+                                    allowed=plan_allowed,
+                                    progress=moved,
+                                    report=report,
+                                )
                     except TimeoutError:
                         if not limit.expired():
                             raise  # a store's or a call's own timeout: the generic handler
@@ -14109,6 +14132,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.warning("A lineage answer round failed (%s)", type(exc).__name__)
             await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
 
+    async def _hand_over_loop(self) -> None:
+        """Every few seconds: apply the website's answers to "Does Claude still have it?"; every
+        minute: write the list of those questions the page reads (#4122; `hand_over_answer`).
+        Quick work (no AI), one pass per server; a server's trouble never stops the others."""
+        await asyncio.sleep(HAND_OVER_FIRST_S)
+        rounds = 0
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    if rounds % HAND_OVER_LIST_EVERY == 0:
+                        await hand_over_answer.refresh_guild(self, guild.id)
+                    while await hand_over_answer.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("A hand-over answer round failed (%s)", type(exc).__name__)
+            rounds += 1
+            await asyncio.sleep(HAND_OVER_EVERY_S)
+
     async def _disk_check_loop(self) -> None:
         """Every ten minutes: look at how full the disks core can see are, and say so before one is
         full (#4075; `disk_check`). Counts only in the log; the owner is told by the usual alert."""
@@ -15074,7 +15115,8 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
-    campaigns.register_section(PrivateScenesSection())  # private scenes (#2996 rule 5)
+    # private scenes (#2996 rule 5); their entries only for who is recorded where it lands (#4110)
+    campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)

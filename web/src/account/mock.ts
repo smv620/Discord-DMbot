@@ -71,7 +71,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { CleanupView, ImportClock, TraitOffer, NameAnswerResult, NameGroupHint } from "./api";
+import type { CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -716,6 +716,13 @@ function pretendReadings(): Reading[] {
 }
 
 /** The pretend lineage and class questions (#3946): a lineage that changes one, and a class that adds one. */
+function pretendHandOvers(): HandOverQuestion[] {
+  return [
+    { item: "a".repeat(32), itemName: "Frost Brand", older: "b".repeat(32), olderName: "Claude", newer: "c".repeat(32), newerName: "Belleros", predicate: "owns", olderTie: "d".repeat(32), newerTie: "e".repeat(32), madeAt: 1_800_000_000 },
+    { item: "f".repeat(32), itemName: "the Lantern of Ash", older: "1".repeat(32), olderName: "Mira Voss", newer: "2".repeat(32), newerName: "Okra", predicate: "carries", olderTie: "3".repeat(32), newerTie: "4".repeat(32), madeAt: 1_800_000_100 },
+  ];
+}
+
 function pretendTraitOffers(): TraitOffer[] {
   return [
     { entity: "e1", who: "Torvin", kind: "species", name: "Dwarf", key: "dwarf", known: true, edition: "2024", current: "Human", classes: [], upload: "Notes, 9 Nov", quote: "Torvin Ashgrove is a dwarf of the northern holds." },
@@ -818,6 +825,7 @@ function mockSourcesOf(id: string): string[] {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
+  const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
   const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -974,6 +982,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           words: l.words,
           secret: l.secret,
           direction: l.direction,
+          ...(l.direction === "both" ? { pairWords: `are connected (“${l.words}”)` } : {}),
           // What the real API works out from the relationship type (core #2942), here from the pretend words.
           kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
@@ -998,6 +1007,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // What each connection edit changed, for Undo (the numbers only go up).
+  let lastBatch = 0;
+  const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
@@ -2335,49 +2347,73 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
-      const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
-        return found[0] ?? { removed: true };
+      // Each edit is a batch that Undo can take back while nothing has been done since (core #4156): the snapshot is what it put back.
+      if (change.action === "undo") {
+        const kept = linkBatches.get(change.batch);
+        if (!kept) throw new ApiError("not-found");
+        if (change.batch !== Math.max(...linkBatches.keys())) throw new ApiError("changed");
+        state.links.splice(0, state.links.length, ...kept.map((l) => ({ ...l })));
+        linkBatches.delete(change.batch);
+        return { removed: true, batch: null };
+      }
+      const before = state.links.map((l) => ({ ...l }));
+      const edit = (): WebEdge | { removed: true } => {
+        const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
+          const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
+          return found[0] ?? { removed: true };
+        };
+        if (change.action === "add") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
+          state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
+          return edgeOf(change.a, change.b);
+        }
+        const link = state.links.find((l) => l.id === change.id);
+        if (!link) throw new ApiError("not-found");
+        if (change.action === "words") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          link.words = change.words.trim();
+        } else if (change.action === "direction") {
+          // Both ways or one way keeps the id; turning a one-way connection round writes it anew, with a new id (core #4166).
+          if (change.direction === link.direction) return edgeOf(link.a, link.b);
+          if (link.direction === "both" || change.direction === "both") link.direction = change.direction;
+          else {
+            [link.a, link.b] = [link.b, link.a];
+            link.id = `l${state.nextLink++}`;
+          }
+        } else if (change.action === "secret") {
+          link.secret = change.secret;
+        } else if (change.action === "pin") {
+          link.pinned = change.pinned;
+        } else if (change.action === "feeling") {
+          // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
+          if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
+          link.words = `knows (${change.feeling})`;
+        } else if (change.action === "knows-how") {
+          // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
+          if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
+          link.words = withKnowsHow(link.words, change.how);
+        } else if (change.action === "who") {
+          // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
+          const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
+          linkWho.set(
+            link.id,
+            change.who === "dm"
+              ? { who: "dm", knownBy: [] }
+              : change.who === "everyone"
+                ? { who: "all", knownBy: [] }
+                : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+          );
+        } else {
+          if (change.confirm !== true) throw new ApiError("needs-confirm");
+          state.links.splice(state.links.indexOf(link), 1);
+        }
+        return edgeOf(link.a, link.b);
       };
-      if (change.action === "add") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
-        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
-        return edgeOf(change.a, change.b);
-      }
-      const link = state.links.find((l) => l.id === change.id);
-      if (!link) throw new ApiError("not-found");
-      if (change.action === "words") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        link.words = change.words.trim();
-      } else if (change.action === "secret") {
-        link.secret = change.secret;
-      } else if (change.action === "pin") {
-        link.pinned = change.pinned;
-      } else if (change.action === "feeling") {
-        // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
-        if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
-        link.words = `knows (${change.feeling})`;
-      } else if (change.action === "knows-how") {
-        // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
-        if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
-        link.words = withKnowsHow(link.words, change.how);
-      } else if (change.action === "who") {
-        // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
-        const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
-        linkWho.set(
-          link.id,
-          change.who === "dm"
-            ? { who: "dm", knownBy: [] }
-            : change.who === "everyone"
-              ? { who: "all", knownBy: [] }
-              : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
-        );
-      } else {
-        if (change.confirm !== true) throw new ApiError("needs-confirm");
-        state.links.splice(state.links.indexOf(link), 1);
-      }
-      return edgeOf(link.a, link.b);
+      const drawn = edit();
+      const batch = ++lastBatch;
+      linkBatches.set(batch, before);
+      return { ...drawn, batch };
     },
     async recapStyle(ref): Promise<RecapStyle> {
       calls.push(`recapStyle:${ref}`);
@@ -2875,6 +2911,50 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const got = { took: 60, of: 62 + 48 };
       undoneUploads.set(source.id, got);
       return got;
+    },
+    // The hand-over question (#4122). A campaign ref ending `.handover` has two; `.handover-gone` says an answer was already given
+    // meanwhile; `-fail` cannot be saved; `-late` and `-changed` cannot undo; `-notallowed` is refused. Only a game master sees them.
+    async handOverQuestions(ref): Promise<HandOverQuestion[]> {
+      calls.push(`handOverQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      return structuredClone((handOverState[ref] ??= { list: /\.handover/.test(ref) ? pretendHandOvers() : [], no: new Map() }).list);
+    },
+    async answerHandOver(ref, question, answer, undoes, onLook) {
+      calls.push(`answerHandOver:${ref}:${question.olderTie}:${answer}${undoes ? `:${undoes}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      onLook?.({ waits: null, progress: null });
+      if (/\.handover-fail/.test(ref)) throw new ApiError("server");
+      const state = (handOverState[ref] ??= { list: pretendHandOvers(), no: new Map() });
+      if (/\.handover-notallowed/.test(ref)) {
+        const refused = new ApiError("not-allowed");
+        refused.note = "not-allowed";
+        throw refused;
+      }
+      if (answer === "undo") {
+        const back = undoes ? state.no.get(undoes) : undefined;
+        if (/\.handover-late/.test(ref) || /\.handover-changed/.test(ref)) {
+          const failure = new ApiError("server");
+          failure.note = /late/.test(ref) ? "too-late" : "changed";
+          throw failure;
+        }
+        if (!back) throw new ApiError("gone");
+        state.no.delete(undoes!);
+        state.list.unshift(back);
+        return { answerId: undoes!, undoable: false };
+      }
+      const at = state.list.findIndex((q) => q.olderTie === question.olderTie && q.newerTie === question.newerTie);
+      if (at < 0 || /\.handover-gone/.test(ref)) {
+        if (at >= 0) state.list.splice(at, 1);
+        throw new ApiError("gone");
+      }
+      const [gone] = state.list.splice(at, 1);
+      const id = `a${at}${question.olderTie.slice(0, 4)}`.padEnd(32, "0");
+      if (answer === "no") state.no.set(id, gone!);
+      return { answerId: id, undoable: answer === "no" };
     },
     // The lineage and class questions (#3946). A campaign ref ending `.traits` has one of each; `.traits-gone` says an answer was
     // already given meanwhile; `.traits-fail` cannot be saved. Only a game master sees them.

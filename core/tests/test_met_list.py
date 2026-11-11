@@ -17,6 +17,7 @@ from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING, MET_N
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import met_list, split_words
+from tests.agreed import agree
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 LINE_MS = 1_700_000_001_000
@@ -30,7 +31,10 @@ class Words(unittest.TestCase):
         self.assertEqual(met_list.label(row), "barbarians (2)")
         self.assertEqual(met_list.label(MetRow("m", "s", None, "a wolf", 1, (), ())), "a wolf")
         self.assertIn("(several)", met_list.label(MetRow("m", "s", None, "rats", 0, (), ())))
-        self.assertEqual(met_list.when(row), "met on 14 Nov 2023")
+        # (a message shows Discord's own date, in the reader's time zone; a menu keeps the date,
+        # #4104)
+        self.assertEqual(met_list.when(row), "met on <t:1700000000:d>")
+        self.assertEqual(met_list.when(row, menu=True), "met on 14 Nov 2023")
         self.assertEqual(met_list.count_text(3), "👣 Met but not named (3)")
         self.assertIn("99+", met_list.count_text(120))
         self.assertIn("2 creatures or people", met_list.notice(2))
@@ -54,6 +58,8 @@ class Words(unittest.TestCase):
         self.assertTrue(
             all(len(o.label) <= 100 and len(o.description or "") <= 100 for o in options)
         )
+        # (a menu can't show Discord's date: it keeps the plain one, #4104)
+        self.assertTrue(all("<t:" not in (o.description or "") for o in options))
 
 
 class TheMessage(unittest.TestCase):
@@ -69,18 +75,21 @@ class TheMessage(unittest.TestCase):
     def test_a_short_list_keeps_its_lines(self) -> None:
         row = MetRow("m" * 32, "s", 1_700_000_000, "barbarians", 2, (), ())
         text = met_list.list_text("", [row], 1)
-        self.assertIn("\n\n• **barbarians (2)** · met on 14 Nov 2023", text)
+        self.assertIn("\n\n• **barbarians (2)** · met on <t:1700000000:d>", text)
 
 
 class TheList(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM, PLAYER, 99)  # (the writer re-reads it, #4153)
         self.met = MetStore(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
         await self.transcripts.add_lines(
-            GUILD, self.sid, [Line(LINE_MS, DM, "Two barbarians jump out.", "x")]
-        )
+            GUILD, self.sid,
+            [Line(LINE_MS, DM, "Two barbarians jump out.", "x"),
+             Line(LINE_MS + 1_000, PLAYER, "I count the dogs.", "x")],  # (#4091: cited, so spoke)
+        )  # fmt: skip
 
     async def keep(
         self, what: str = "barbarians", count: int = 2, speakers: tuple[int, ...] = (DM,)
@@ -268,6 +277,7 @@ class MetWhileSplit(NamesTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM, PLAYER, 99)  # (the writer re-reads it, #4153)
         cid = self.campaign.id
         self.wren = await self.pc("Wren", DM)  # (7 plays Wren here, as in test_split_names)
         self.ash = await self.pc("Ash", PLAYER)
@@ -305,7 +315,14 @@ class MetWhileSplit(NamesTest):
                     (GUILD, self.campaign.id, character, group),
                 )
 
+    async def spoke(self, speaker: int, line_ms: tuple[int, ...]) -> None:
+        """The speaker's lines a met row cites (never written for someone with none, #4091)."""
+        await TranscriptStore(self.db).add_lines(
+            GUILD, "s500", [Line(ms, speaker, "A wolf!", "x") for ms in line_ms]
+        )
+
     async def named(self, speaker: int, line_ms: tuple[int, ...] = (650_000,)) -> Any:
+        await self.spoke(speaker, line_ms)
         await self.met.add(
             GUILD, self.campaign.id, "s500", [("a wolf", 1, line_ms, (speaker,))],
             session_started_at=500,
@@ -352,6 +369,7 @@ class MetWhileSplit(NamesTest):
 
     async def test_the_website_counts_what_the_dm_is_told(self) -> None:
         await self.split()
+        await self.spoke(99, (650_000,))
         await self.met.add(
             GUILD, self.campaign.id, "s500", [("a wolf", 1, (650_000,), (99,))],
             session_started_at=500,

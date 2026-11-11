@@ -162,6 +162,8 @@ export const webPage = {
   save: "Save",
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
+  // The line for an item two people handed over (#4122): the steps come from the API in Discord's words.
+  historyHead: "How it changed hands:",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
   // One connection as a sentence, read subject, then what it does, then object (#2666).
   lineText: (from: string, words: string, to: string, after = ""): string => (after ? `${from} ${words} ${to} ${after}` : `${from} ${words} ${to}`),

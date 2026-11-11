@@ -53,6 +53,7 @@ from dmbot.web import (
     feedback,
     game_masters,
     graph_cleanup,
+    hand_over,
     handover_accept,
     handover_offer,
     house_file,
@@ -2295,6 +2296,18 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/web/links/{batch}/undo", status_code=202)
+    async def me_campaign_web_link_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """Take back one connection edit by the change number its answer carried (#4156, the
+        Story Graph panel's ↩ Undo). DM only; queued for the bot, which says `gone`, `changed`
+        or `too_late` in the answer polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            return {"answer": await relationships.queue_link_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/waiting")
     async def me_campaign_web_waiting_list(ref: str, signed: Signed) -> dict[str, Any]:
         """What waits for the DM (#2652): claims, a backstory's connections (with the upload each
@@ -3506,6 +3519,42 @@ def create_app(
         session, _token = signed
         try:
             return await trait_offers.read_answer(db, session, ref, answer_id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # "Does Claude still have it?": a one-of-a-kind item two characters have (#4122). DMs only.
+    @app.get("/me/campaigns/{ref}/hand-over-questions")
+    async def me_hand_over_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The questions waiting: the item, who had it first, who has it now."""
+        session, _token = signed
+        try:
+            return await hand_over.waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/hand-over-questions/answer")
+    async def me_hand_over_answer(ref: str, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Queue `no`, `both` or `undo` (with `undoes`) for one question, named by `olderTie` and
+        `newerTie`; answers `{id}` to poll."""
+        session, _token = signed
+        try:
+            made = await hand_over.answer(
+                db, session, ref, body.get("olderTie"), body.get("newerTie"), body.get("answer"),
+                body.get("undoes"),
+            )  # fmt: skip
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/campaigns/{ref}/hand-over-questions/answer/{answer_id}")
+    async def me_hand_over_answer_state(ref: str, answer_id: str, signed: Signed) -> dict[str, Any]:
+        """Where one answer stands: the state, the error word, whether Undo is offered, the wait."""
+        session, _token = signed
+        try:
+            return await hand_over.read_answer(db, session, ref, answer_id)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
