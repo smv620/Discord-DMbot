@@ -26,6 +26,7 @@ export interface Staged {
   words?: string;
   secret?: boolean;
   pinned?: boolean;
+  direction?: Link["direction"];
 }
 /** Asked by the page before it leaves this panel: true when the panel has taken over (it is asking, and will run `leave` if the DM says Leave). */
 export type Guard = (leave: () => void) => boolean;
@@ -37,15 +38,28 @@ export function changesOf(link: Link, staged: Staged | undefined): WebLinkChange
   if (staged.words !== undefined && staged.words.trim() !== "" && staged.words.trim() !== (link.rawWords ?? link.words).trim()) out.push({ action: "words", id: link.id, words: staged.words });
   if (staged.secret !== undefined && staged.secret !== link.secret) out.push({ action: "secret", id: link.id, secret: staged.secret });
   if (staged.pinned !== undefined && staged.pinned !== (link.pinned ?? false)) out.push({ action: "pin", id: link.id, pinned: staged.pinned });
+  if (staged.direction !== undefined && staged.direction !== link.direction) out.push({ action: "direction", id: link.id, direction: staged.direction });
   return out;
 }
 
+/** Moves what is staged on one connection to its new id (it was written anew). */
+function moveStage(was: Record<string, Staged>, from: string, to: string): Record<string, Staged> {
+  if (from === to || was[from] === undefined) return was;
+  const next = { ...was, [to]: { ...was[to], ...was[from] } };
+  delete next[from];
+  return next;
+}
+
+/** Saved in this order: what keeps a connection's id (secret, pin) first, then the two that write it anew (words, direction). */
+const ORDER: Record<string, number> = { secret: 0, pin: 1, words: 2, direction: 3 };
+
 /** The staged picks without the one `change` made (it is saved now). */
 function without(was: Record<string, Staged>, change: WebLinkChange): Record<string, Staged> {
-  if (change.action !== "words" && change.action !== "secret" && change.action !== "pin") return was;
+  if (change.action !== "words" && change.action !== "secret" && change.action !== "pin" && change.action !== "direction") return was;
   const mine = { ...was[change.id] };
   if (change.action === "words") delete mine.words;
   else if (change.action === "secret") delete mine.secret;
+  else if (change.action === "direction") delete mine.direction;
   else delete mine.pinned;
   const next = { ...was };
   if (Object.keys(mine).length === 0) delete next[change.id];
@@ -71,7 +85,7 @@ export default function ConnectionPanel({
   nameOf: (id: string) => string;
   kindOf: (id: string) => string;
   canEdit: boolean;
-  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>, onEdge?: (edge: WebEdge | { removed: true }) => void) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
   api: AccountApi;
@@ -139,21 +153,47 @@ export default function ConnectionPanel({
     saveFlight.current = true;
     setSaving(true);
     setProblem(null);
-    const plan = pending.flatMap((l) => changesOf(l, staged[l.id]));
+    const plan = pending.flatMap((l) => changesOf(l, staged[l.id])).sort((x, y) => (ORDER[x.action] ?? 9) - (ORDER[y.action] ?? 9));
     let done = 0;
     stopped.current = false;
+    // A change that writes a connection anew (words, turning it round) gives it a new id: the next change to it goes to the new one,
+    // found as the one link in the answer's edge that was not there before.
+    const now = new Map<string, string>();
+    let known = new Set(edge.links.map((l) => l.id));
     try {
       for (const change of plan) {
         if (stopped.current) return;
         if (live.current) setStep({ done, of: plan.length });
-        const refused = await act(change, p.saved);
+        const sentTo = "id" in change ? (now.get(change.id) ?? change.id) : "";
+        const sent = "id" in change ? { ...change, id: sentTo } : change;
+        let drawn: WebEdge | { removed: true } | null = null;
+        const refused = await act(sent, p.saved, change.action === "direction" ? { "bad-target": change.direction === "both" ? p.cannotBoth : p.cannotTurn } : undefined, (got) => (drawn = got));
         if (refused !== null) {
           // (a refusal with no words, being signed out, says nothing more)
           if (live.current && refused !== "") setProblem(done > 0 ? p.partlySaved(done, plan.length, refused) : p.notSaved(refused));
           return;
         }
         done += 1;
-        if (live.current) setStaged((was) => without(was, change)); // (what is saved is no longer waiting)
+        // What is saved is no longer waiting; what still is follows the connection to its new id.
+        let lost = false;
+        if ("id" in change && drawn !== null) {
+          const rewrites = change.action === "words" || change.action === "direction";
+          const links = "links" in (drawn as WebEdge) ? (drawn as WebEdge).links : [];
+          const fresh = links.filter((l) => !known.has(l.id));
+          known = new Set(links.map((l) => l.id));
+          if (fresh.length === 1) now.set(change.id, fresh[0]!.id);
+          // (written anew but no new link, or several: the next change would go to the wrong one or to none)
+          else if (rewrites && !links.some((l) => l.id === sentTo)) lost = true;
+          else if (fresh.length > 1) lost = true;
+        }
+        const moved = now.get("id" in change ? change.id : "");
+        if (live.current) {
+          setStaged((was) => without(moved && "id" in change ? moveStage(was, change.id, moved) : was, moved && "id" in change ? { ...change, id: moved } : change));
+        }
+        if (lost) {
+          if (live.current) setProblem(p.partlySaved(done, plan.length, p.reloadFirst));
+          return;
+        }
       }
     } catch {
       if (live.current) setProblem(words.errorFallback);
@@ -255,6 +295,9 @@ export default function ConnectionPanel({
   );
 }
 
+/** The direction button cycles A → B, B → A, A ↔ B and round again. */
+const NEXT: Record<Link["direction"], Link["direction"]> = { "a-b": "b-a", "b-a": "both", both: "a-b" };
+
 /** One connection: its compact line, and (opened) its full options. */
 function Line({
   n,
@@ -299,7 +342,9 @@ function Line({
   const secret = staged?.secret ?? link.secret;
   const pinned = staged?.pinned ?? link.pinned ?? false;
   const text = staged?.words ?? link.rawWords ?? link.words;
-  const line = `${p.arrow(a, b, link.direction)} · ${link.words}`;
+  const shownDirection = staged?.direction ?? link.direction;
+  // A two-way connection reads with both names ("Cerric ↔ Wit · are rivals"): the API's words, never worked out here.
+  const line = `${p.arrow(a, b, shownDirection)} · ${shownDirection === "both" && link.direction === "both" ? (link.pairWords ?? link.words) : link.words}`;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       <button type="button" class="button secondary web-line-row" aria-expanded={isOpen} aria-controls={`web-link-${link.id}`} onClick={onToggle}>
@@ -360,6 +405,21 @@ function Line({
               )}
               {how !== null && <LazyPanel load={() => import("./LinkKnowsHow")} what={knowsHowWords.loading} props={{ n, id: link.id, how, act }} />}
               <div class="row">
+                <div class="stack">
+                  <span class="small">{p.directionLabel}</span>
+                  <button
+                    type="button"
+                    class="button secondary"
+                    aria-label={p.direction(p.directionSays(a, b, shownDirection))}
+                    disabled={locked}
+                    onClick={() => onStage({ direction: NEXT[shownDirection] })}
+                  >
+                    {p.arrow(a, b, shownDirection)}
+                  </button>
+                  <span class="small muted">
+                    {p.directionSays(a, b, shownDirection)} {p.directionNext}
+                  </span>
+                </div>
                 <button
                   type="button"
                   class="button secondary"

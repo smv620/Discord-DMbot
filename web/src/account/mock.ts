@@ -982,6 +982,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           words: l.words,
           secret: l.secret,
           direction: l.direction,
+          ...(l.direction === "both" ? { pairWords: `are connected (“${l.words}”)` } : {}),
           // What the real API works out from the relationship type (core #2942), here from the pretend words.
           kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
@@ -2358,6 +2359,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (change.action === "words") {
         if (change.words.trim() === "") throw new ApiError("bad-name");
         link.words = change.words.trim();
+      } else if (change.action === "direction") {
+        // Both ways or one way keeps the id; turning a one-way connection round writes it anew, with a new id (core #4166).
+        if (change.direction === link.direction) return edgeOf(link.a, link.b);
+        if (link.direction === "both" || change.direction === "both") link.direction = change.direction;
+        else {
+          [link.a, link.b] = [link.b, link.a];
+          link.id = `l${state.nextLink++}`;
+        }
       } else if (change.action === "secret") {
         link.secret = change.secret;
       } else if (change.action === "pin") {
