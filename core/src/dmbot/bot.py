@@ -8993,19 +8993,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # after" is true (#2564).
                     limit = asyncio.timeout(plan_reader.MAX_RUN_S)
                     try:
+                        # (a read of the DM's adventure is metered as AI credits, #4005)
                         async with limit:
-                            report = await plan_reader.run(
-                                ai,
-                                plan,
-                                guild_id=guild_id,
-                                campaign_id=campaign_id,
-                                document_id=document_id,
-                                start_chunk=start,
-                                model=lambda: ai.model,
-                                allowed=plan_allowed,
-                                progress=moved,
-                                report=report,
-                            )
+                            with credits.preparing(guild_id, campaign_id, "adventure"):
+                                report = await plan_reader.run(
+                                    ai,
+                                    plan,
+                                    guild_id=guild_id,
+                                    campaign_id=campaign_id,
+                                    document_id=document_id,
+                                    start_chunk=start,
+                                    model=lambda: ai.model,
+                                    allowed=plan_allowed,
+                                    progress=moved,
+                                    report=report,
+                                )
                     except TimeoutError:
                         if not limit.expired():
                             raise  # a store's or a call's own timeout: the generic handler
@@ -15097,7 +15099,8 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
-    campaigns.register_section(PrivateScenesSection())  # private scenes (#2996 rule 5)
+    # private scenes (#2996 rule 5); their entries only for who is recorded where it lands (#4110)
+    campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)
