@@ -28,7 +28,7 @@ from dmbot.memory.whereabouts import CARRIES
 OWNS = "owns"
 # The only ties a hand-over ends. Anything else (a "found", a "made") is something that happened.
 HELD = (OWNS, CARRIES)
-GONE = "That has changed since. Nothing was saved."
+GONE = "That question no longer waits."  # (the card says it in its own words)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,8 +49,14 @@ class Question:
 
 
 def _order(r: dict[str, Any]) -> tuple[int, int, str]:
-    """Which tie is newer: the session it began in, then when DMbot wrote it."""
-    return (r["from_session_at"] or 0, r["created_at"], r["id"])
+    """Which tie is newer: the session it began in, then when DMbot wrote it. A tie with no
+    session (the DM added it by hand, outside a session) is as new as when it was written, so the
+    DM's own word is never taken for the older one (seconds, like a session's start)."""
+    return (r["from_session_at"] or r["created_at"], r["created_at"], r["id"])
+
+
+def _hidden(r: dict[str, Any]) -> bool:
+    return bool(r["secret"] or r["unrevealed"])
 
 
 def pair(a: str, b: str) -> tuple[str, str]:
@@ -59,11 +65,16 @@ def pair(a: str, b: str) -> tuple[str, str]:
 
 
 async def waiting(scope: Scope, onto: Ontology) -> list[Question]:
-    """The questions waiting for the DM, oldest item first. A pair the DM answered "Yes, both" is
-    never asked again; a holder that is not confirmed, or an item that is not one of a kind, is
-    never asked about."""
+    """The questions waiting for the DM, by item. A pair the DM answered "Yes, both" is never
+    asked again; a holder that is not confirmed, or an item that is not one of a kind, is never
+    asked about. A hidden tie (secret, or not shown yet) is never asked about against one the
+    players can see: ending the seen one would give the hidden one away (`whereabouts`' rule).
+    Each older holder is asked about against the newest one only: with three holders and two
+    "Yes, both", the two older ones are not asked about between themselves (both still have it,
+    which is what the DM said)."""
     cur = await scope.conn.execute(
         "SELECT r.id, r.subject_id, r.predicate, r.object_id, r.from_session_at, r.created_at,"
+        " r.secret, r.unrevealed,"
         " e.id AS item_id, e.type, e.name, e.status, e.unique_item"
         " FROM memory_relations r"
         " JOIN memory_entities e ON e.guild_id = r.guild_id AND e.campaign_id = r.campaign_id"
@@ -75,7 +86,10 @@ async def waiting(scope: Scope, onto: Ontology) -> list[Question]:
         "  AND EXISTS (SELECT 1 FROM memory_relations o WHERE o.guild_id = r.guild_id"
         "   AND o.campaign_id = r.campaign_id AND o.object_id = r.object_id"
         "   AND o.predicate = r.predicate AND o.subject_id <> r.subject_id"
-        "   AND o.status = 'confirmed' AND o.to_session_at IS NULL)",
+        "   AND o.status = 'confirmed' AND o.to_session_at IS NULL"
+        "   AND EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = o.guild_id"
+        "    AND x.campaign_id = o.campaign_id AND x.id = o.subject_id"
+        "    AND x.status = 'confirmed'))",
         (*scope.ids, list(HELD)),
     )
     rows = await cur.fetchall()
@@ -92,6 +106,8 @@ async def waiting(scope: Scope, onto: Ontology) -> list[Question]:
         for older in reversed(ties[:-1]):
             a = older["subject_id"]
             if a in seen or (item, *pair(a, newer["subject_id"])) in both:
+                continue
+            if _hidden(newer) and not _hidden(older):
                 continue
             seen.add(a)
             out.append(Question(item, a, newer["subject_id"], predicate, older["id"], newer["id"]))
@@ -110,7 +126,7 @@ async def _both(scope: Scope) -> set[tuple[str, str, str]]:
 def ends_at(older_from: int | None, newer_from: int | None, now: int) -> int:
     """When the older holder's tie stops: the session the new one began in, else now, and never
     before the old tie began (a span must not run backwards; `whereabouts._ends_at`'s rule)."""
-    return max(newer_from or now, (older_from or 0) + 1)
+    return max(newer_from or now, older_from or 0)
 
 
 async def hand_over(
@@ -121,6 +137,7 @@ async def hand_over(
     at: int,
     reason: str | None,
     predicates: Sequence[str] = HELD,
+    hidden_only: bool = False,
 ) -> list[str]:
     """End `holder_id`'s current ties to the item among `predicates` (only `owns` and `carries`)
     at `at`, with `reason` (one of END_REASONS, or None when the story didn't say). Through the
@@ -136,7 +153,9 @@ async def hand_over(
         " AND status = 'confirmed' AND to_session_at IS NULL",
         [holder_id, item_id, list(predicates)],
     ):
-        end = max(at, (r["from_session_at"] or 0) + 1)
+        if hidden_only and not (r["secret"] or r["unrevealed"]):
+            continue  # (a hidden new holder never ends what the players can see)
+        end = max(at, r["from_session_at"] or 0)
         await w.update(RELATIONS, r["id"], {"to_session_at": end, "end_reason": reason})
         ended.append(r["id"])
     if ended:  # an ended tie holds nothing: its "held twice" alerts no longer hold
@@ -154,8 +173,10 @@ async def answer(w: Changes, onto: Ontology, question: Question, *, still_has: b
     tie of the question's kind, and with an `owns` A's `carries` too (what A no longer owns, A no
     longer holds); "Yes, both have it" remembers the pair. Refused when the question no longer
     waits (answered elsewhere, a tie ended or changed meanwhile). Returns the ties it ended."""
-    if question.key not in {q.key for q in await waiting(w, onto)}:
+    fresh = {q.key: q for q in await waiting(w, onto)}.get(question.key)
+    if fresh is None:
         raise MemoryRuleError(GONE)
+    question = fresh  # (the ties as they are now: one may have been replaced since the card)
     if still_has:
         first, second = pair(question.older_id, question.newer_id)
         await w.conn.execute(
@@ -171,7 +192,8 @@ async def answer(w: Changes, onto: Ontology, question: Question, *, still_has: b
     at = ends_at(older["from_session_at"], newer["from_session_at"], w.now)
     kinds = HELD if question.predicate == OWNS else (CARRIES,)
     return await hand_over(w, question.item_id, question.older_id, at=at, reason=None,
-                           predicates=kinds)  # fmt: skip
+                           predicates=kinds,
+                           hidden_only=bool(newer["secret"] or newer["unrevealed"]))  # fmt: skip
 
 
 # The history line's words (#4115, through the ux-critic): plain verbs, past tense, oldest first,
@@ -190,6 +212,7 @@ _ALONE = {
 }
 USED_TO = "{a} used to have it"
 HAS_NOW = "{a} has it now"
+OWNS_STILL = "{a} still owns it"
 STILL_OWNS = {
     "stolen": "it was stolen from {a}, who still owns it",
     "lost": "{a} lost it but still owns it",
@@ -228,9 +251,14 @@ def history(ties: Sequence[Relation], name: Callable[[str], str | None]) -> list
                 if t.predicate == CARRIES and t.end_reason in STILL_OWNS
                 and not any(o.predicate == CARRIES and o.to_session_at is None for o in mine)
             ]  # fmt: skip
-            steps.append(
-                STILL_OWNS[taken[-1]].format(a=shown) if taken else HAS_NOW.format(a=shown)
-            )
+            held_now = any(t.predicate == CARRIES and t.to_session_at is None for t in mine)
+            let_go = any(t.predicate == CARRIES and t.to_session_at is not None for t in mine)
+            if taken:
+                steps.append(STILL_OWNS[taken[-1]].format(a=shown))
+            elif let_go and not held_now:  # (owns it, no longer has it in hand: "No" on a carry)
+                steps.append(OWNS_STILL.format(a=shown))
+            else:
+                steps.append(HAS_NOW.format(a=shown))
             continue
         last = max(t.to_session_at or 0 for t in mine)
         reasons = [t.end_reason for t in mine if t.to_session_at == last and t.end_reason]

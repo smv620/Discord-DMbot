@@ -150,6 +150,28 @@ class TheQuestion(ConfirmedMemoryTest):
                 GUILD_A, self.c, q, still_has=False, source="extractor"
             )
 
+    async def test_a_tie_the_dm_added_outside_a_session_is_the_newer(self) -> None:
+        # (reviewer, #4115) no session start: as new as when it was written, never the oldest
+        await self.tie(self.claude, "owns", S1)
+        made = await self.relate(self.belleros, "owns", self.brand, status=CONFIRMED)
+        (q,) = await self.waiting()
+        self.assertEqual((q.older_id, q.newer_id, q.newer_relation_id),
+                         (self.claude, self.belleros, made.value[0].id))  # fmt: skip
+
+    async def test_a_secret_new_holder_never_ends_what_players_see(self) -> None:
+        # (whereabouts' rule: the history must not give a secret away)
+        await self.tie(self.claude, "owns", S1)
+        await self.relate(self.belleros, "owns", self.brand, status=CONFIRMED,
+                          from_session_at=S2, secret=True)  # fmt: skip
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_both_ties_from_one_session_end_at_that_session(self) -> None:
+        owns = await self.tie(self.claude, "owns", S2)
+        await self.tie(self.belleros, "owns", S2)
+        (q,) = await self.waiting()
+        await self.answer(q, still_has=False)
+        self.assertEqual((await self.row(owns))["to_session_at"], S2)
+
     async def test_a_hand_over_with_a_reason_keeps_it_until_reopened(self) -> None:
         owns = await self.tie(self.claude, "owns", S1)
         async with self.memory._write(GUILD_A, self.c, DM) as w:
@@ -246,3 +268,12 @@ class TheHistoryLine(unittest.TestCase):
         self.assertEqual(
             history(ties, NAMES.get), ["Belleros sold it to Claude", "Claude has it now"]
         )
+
+    def test_an_owner_who_no_longer_holds_it_still_owns_it(self) -> None:
+        # (reviewer, #4115) "No, not any more" on who holds it: no reason, the owning stays
+        ties = [
+            _tie("a", "claude", "owns", 1),
+            _tie("b", "claude", "carries", 1, 2),
+            _tie("c", "belleros", "carries", 2),
+        ]
+        self.assertEqual(history(ties, NAMES.get), ["Claude still owns it", "Belleros has it now"])

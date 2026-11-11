@@ -185,12 +185,13 @@ class HandOverQuestions(_Menu):
 
     async def _later(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
-        campaign = await campaign_for(interaction, self.campaign_id)
-        if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # every press
-            await _tell(interaction, ONLY_DMS)
-            return
-        left = len(await self._waiting(interaction))
-        self.stop()
+        async with self.busy:  # (an answer still saving finishes first, then the card closes)
+            campaign = await campaign_for(interaction, self.campaign_id)
+            if campaign is None or interaction.user.id not in campaign.dm_user_ids:  # every press
+                await _tell(interaction, ONLY_DMS)
+                return
+            left = len(await self._waiting(interaction))
+            self.stop()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=(

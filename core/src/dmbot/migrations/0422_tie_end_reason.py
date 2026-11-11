@@ -24,7 +24,8 @@ SQL = r"""
     -- The DM's "Yes, both have it" (#4115): two holders of a one-of-a-kind item that DMbot must not
     -- ask about again. Ids and a time only. The two holders are sorted, so one row is the pair
     -- either way round; a holder or the item deleted takes the row with it. Not in a backup (it is
-    -- an answer to a question: a restored campaign may ask it once more, `campaigns/tables.py`).
+    -- an answer to a question: a restored campaign may ask it once more, `campaigns/tables.py`;
+    -- so may a merge, whose kept entry has no answer of its own yet).
     CREATE TABLE memory_hand_over_both (
         guild_id       BIGINT NOT NULL,
         campaign_id    TEXT NOT NULL,
