@@ -2326,6 +2326,10 @@ export interface WaitingBackstory {
   waitingOn: string[];
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
+  /** An item that changed hands (#4122): how it moved (sold, gave, traded, stolen, lost), who had it before, or "" for none. */
+  handOver?: "" | "sold" | "gave" | "traded" | "stolen" | "lost";
+  handOverFrom?: string;
+  handOverName?: string | null;
 }
 export interface WaitingWhich {
   id: string;

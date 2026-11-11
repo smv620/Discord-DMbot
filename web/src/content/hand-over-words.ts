@@ -39,3 +39,10 @@ export function cardOf(q: HandOverQuestion): { said: string; ask: string; noMean
     bothMeans: "DMbot keeps both and won't ask again.",
   };
 }
+
+/** The bracket after a waiting connection that means an item changed hands (#4122), the same words as Discord's card. */
+export const handBracket = (how: string, from: string): string =>
+  ({ sold: `${from} sold it`, gave: `${from} gave it`, traded: `${from} traded it`, stolen: `taken from ${from}`, lost: `${from} lost it` } as Record<string, string>)[how] ?? "";
+
+/** Why a hand-over has no Keep on the website yet: keeping it ends what the one before held, and Discord's card says so. */
+export const handKeepInDiscord = "Keep this one in Discord, where the card shows how the item changed hands.";
