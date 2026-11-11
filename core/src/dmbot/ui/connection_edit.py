@@ -145,11 +145,19 @@ def direction_choices(
     a, b = logic.name_label(first), logic.name_label(second)
     role = kin.role_of(r.detail) if r.predicate == "kin_of" else None
     one_way_role = role is not None and kin.directional(role)
-    one_way = {"both_ways": False} if not one_way_role else {"directional": True}
-    turned = dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id, **one_way)
+
+    def one_way(x: Relation) -> Relation:
+        # (a role takes the arrow as its direction; any other kind is marked one way)
+        return (
+            dataclasses.replace(x, directional=True)
+            if one_way_role
+            else dataclasses.replace(x, both_ways=False)
+        )
+
+    turned = one_way(dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id))
     both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways)
     choices = [
-        (f"{a} → {b}", r.subject_id, not both, said(dataclasses.replace(r, **one_way))),
+        (f"{a} → {b}", r.subject_id, not both, said(one_way(r))),
         (f"{b} → {a}", r.object_id, False, said(turned)),
     ]
     if not (one_way_role and r.directional):
