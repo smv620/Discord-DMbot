@@ -234,7 +234,7 @@ describe("which way a connection reads", () => {
     expect(row(/Cerric → Wit/).textContent).not.toContain("•"); // (round again: nothing differs)
   });
 
-  it("is sent with Save, and a family role that cannot be turned says so in its own words", async () => {
+  it("is sent with Save, and a turn the rules refuse says so in its own words", async () => {
     const { act } = show({ act: (async (c: WebLinkChange, _ok: string, own?: Record<string, string>) => (c.action === "direction" ? (own?.["bad-target"] ?? "no") : null)) as never });
     open(/owes a favour/);
     fireEvent.click(screen.getByRole("button", { name: /^Direction: / }));
@@ -340,7 +340,7 @@ describe("a save that writes a connection anew", () => {
     expect(calls.map((c) => ("id" in c ? c.id : ""))).toEqual(["l1", "l1"]);
   });
 
-  it("says a family role that cannot read both ways reads one way only", async () => {
+  it("says a connection that cannot read both ways cannot", async () => {
     const { act } = show({ act: (async (c: WebLinkChange, _ok: string, own?: Record<string, string>) => (c.action === "direction" ? (own?.["bad-target"] ?? "no") : null)) as never });
     open(/owes a favour/);
     fireEvent.click(screen.getByRole("button", { name: /^Direction: / })); // → b-a
