@@ -430,7 +430,8 @@ class ThePath(NamesTest):
     async def test_the_offer_says_what_it_costs_and_what_it_is_for(self) -> None:
         it, view = await self.offer()
         text = it.response.sent[0][0]
-        self.assertIn("Cost: about", text)
+        self.assertRegex(text, r"About [\d,]+ AI credits? for the lore\.")
+        self.assertNotIn("cent", text)  # (the old cents wording is gone)
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
