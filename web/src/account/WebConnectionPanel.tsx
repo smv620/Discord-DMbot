@@ -208,22 +208,28 @@ export default function ConnectionPanel({
     }
   }
 
-  /** Puts back the last save, newest change first; it stops at the first one that cannot be put back and says why. */
+  /** Puts back the last save, newest change first; it stops at the first one that cannot be put back and says why. A change that cannot be
+   * put back blocks every older one behind it, so they are given up together (pressing again could only fail the same way). */
   async function undo(): Promise<void> {
     if (undoing || saving || dirty || undoable.length === 0) return;
     setUndoing(true);
     setProblem(null);
-    const any = edge.links[0]?.id ?? "0".repeat(32); // (the route's path wants a link; the batch is what counts)
     let left = [...undoable];
     for (const batch of [...undoable].reverse()) {
-      const refused = await act({ action: "undo", id: any, batch }, p.undone, { "undo-late": p.undoLate, changed: p.undoChanged });
+      // (the route's path wants a link id but core ignores it, so a fixed one cannot vanish between two undos)
+      const refused = await act({ action: "undo", id: "0".repeat(32), batch }, p.undone, { "undo-late": p.undoLate, changed: p.undoChanged, "not-found": p.undoGone });
       if (refused !== null) {
         if (live.current && refused !== "") setProblem(refused);
+        left = [];
         break;
       }
       left = left.filter((x) => x !== batch);
     }
-    if (live.current) (setUndoable(left), setUndoing(false));
+    if (live.current) {
+      setUndoable(left);
+      setUndoing(false);
+      box.current?.focus(); // (the button goes with the last undo, so the keyboard keeps its place)
+    }
   }
 
   return (
@@ -270,7 +276,7 @@ export default function ConnectionPanel({
       )}
       {canEdit && undoable.length > 0 && !dirty && (
         <p class="row">
-          <button type="button" class="button secondary" disabled={undoing || saving} onClick={() => void undo()}>
+          <button type="button" class="button secondary" disabled={undoing || saving} aria-busy={undoing} onClick={() => void undo()}>
             {undoing ? p.undoing : p.undoSave}
           </button>
         </p>

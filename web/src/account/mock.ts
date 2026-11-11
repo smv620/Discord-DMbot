@@ -1007,8 +1007,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // What each connection edit changed, for Undo (the numbers only go up).
+  let lastBatch = 0;
+  const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>(); // (what the edit changed, for Undo)
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
@@ -2349,14 +2351,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (change.action === "undo") {
         const kept = linkBatches.get(change.batch);
         if (!kept) throw new ApiError("not-found");
-        if (change.batch !== linkBatches.size) throw new ApiError("changed");
+        if (change.batch !== Math.max(...linkBatches.keys())) throw new ApiError("changed");
         state.links.splice(0, state.links.length, ...kept.map((l) => ({ ...l })));
         linkBatches.delete(change.batch);
         return { removed: true, batch: null };
       }
       const before = state.links.map((l) => ({ ...l }));
       const edit = (): WebEdge | { removed: true } => {
-      const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
+        const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
           const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
           return found[0] ?? { removed: true };
         };
@@ -2409,7 +2411,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return edgeOf(link.a, link.b);
       };
       const drawn = edit();
-      const batch = linkBatches.size + 1;
+      const batch = ++lastBatch;
       linkBatches.set(batch, before);
       return { ...drawn, batch };
     },

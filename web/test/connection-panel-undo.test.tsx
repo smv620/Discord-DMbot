@@ -61,13 +61,13 @@ describe("↩ Undo this save", () => {
     expect(undone.map((c) => (c as { batch: number }).batch)).toEqual([12, 11]);
   });
 
-  it("stops at the first refusal and keeps the rest to try again, with the reason", async () => {
+  it("stops at the first refusal, with the reason", async () => {
     const act = show(batching((c) => (c.action === "undo" && c.batch === 11 ? p.undoChanged : null)));
     await saveTwo();
     fireEvent.click(screen.getByRole("button", { name: p.undoSave }));
     await screen.findByText(p.undoChanged);
     expect(act.mock.calls.filter((c) => c[0].action === "undo").map((c) => (c[0] as { batch: number }).batch)).toEqual([12, 11]);
-    expect(screen.getByRole("button", { name: p.undoSave })).toBeTruthy(); // (batch 11 is still there to try)
+    expect(screen.queryByRole("button", { name: p.undoSave })).toBeNull(); // (nothing older can be put back past it)
   });
 
   it("is hidden while something new is staged", async () => {
@@ -92,5 +92,26 @@ describe("the pretend API's undo", () => {
     await api.changeWebLink!(ref, { action: "undo", id, batch: 2 });
     const back = (await api.webGraph!(ref, { center: "", hops: 1 })).edges[0]!.links.find((l) => l.id === id)!;
     expect([back.secret, back.pinned ?? false]).toEqual([true, false]);
+  });
+});
+
+describe("when an undo is refused", () => {
+  it("gives up the older changes with it, and says the reason", async () => {
+    const act = show(batching((c) => (c.action === "undo" && c.batch === 12 ? p.undoLate : null)));
+    await saveTwo();
+    fireEvent.click(screen.getByRole("button", { name: p.undoSave }));
+    await screen.findByText(p.undoLate);
+    expect(screen.queryByRole("button", { name: p.undoSave })).toBeNull();
+    expect(act.mock.calls.filter((c) => c[0].action === "undo")).toHaveLength(1);
+  });
+
+  it("always sends the same path id, so a link that went with the first undo cannot break the second", async () => {
+    const act = show(batching());
+    await saveTwo();
+    fireEvent.click(screen.getByRole("button", { name: p.undoSave }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: p.undoSave })).toBeNull());
+    const ids = act.mock.calls.filter((c) => c[0].action === "undo").map((c) => (c[0] as { id: string }).id);
+    expect(new Set(ids).size).toBe(1);
+    expect(ids[0]).toMatch(/^[0-9a-f]{32}$/);
   });
 });

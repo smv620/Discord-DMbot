@@ -43,5 +43,6 @@ export const panelWords = {
   undoing: "Putting it back…",
   undone: "Put back.",
   undoLate: "That was too long ago to put back.",
+  undoGone: "DMbot can't find that change any more, so it can't be put back.",
   undoChanged: "Something has changed since, so it can't be put back.",
 } as const;
