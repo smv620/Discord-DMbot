@@ -98,6 +98,8 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
+  tapConnection: "Tap a connection to open it.",
+  openConnection: (text: string): string => `Open this connection: ${text}`,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).

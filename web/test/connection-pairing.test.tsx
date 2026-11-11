@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebMap from "../src/account/WebMap";
 import type { WebEdge, WebNode } from "../src/account/api";
 import { pairingWords as w } from "../src/content/connection-pairing-words";
+import { webPage as words } from "../src/content/web-words";
 
 const nodes: WebNode[] = [
   { id: "m", name: "Mira Voss", kind: "npc" },
@@ -74,6 +75,13 @@ describe("joining two names", () => {
     fireEvent.click(nodeOf("Garrick"));
     fireEvent.click(screen.getByRole("button", { name: /Open this connection/ }));
     expect(onJump).toHaveBeenCalledWith("m", "g", "l1");
+  });
+
+  it("says the tap hint and the label from the words file", () => {
+    draw();
+    fireEvent.click(nodeOf("Garrick"));
+    expect(screen.getByText(words.tapConnection)).toBeTruthy();
+    expect(screen.getByRole("button", { name: words.openConnection("Mira Voss serves Garrick") })).toBeTruthy();
   });
 
   it("a reader who cannot edit gets neither the button nor the jump", () => {
