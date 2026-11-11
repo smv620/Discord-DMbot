@@ -55,6 +55,7 @@ from dmbot.memory.models import (
     CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
+    END_REASONS,
     ENTITY_STATUSES,
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
@@ -163,6 +164,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     ),
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
+    "end_reason": END_REASONS,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -189,7 +191,7 @@ _NULLABLE = {
     "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
-    "derived_from", "change_kind", "subject_picked", "object_picked",
+    "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
 }  # fmt: skip
 
 
@@ -470,6 +472,15 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         # so a hand-edited file says "damaged" here instead of failing mid-restore
         if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
             raise CampaignError(DAMAGED)
+        # and why a tie ended is on an ended owns or carries only (#4115), as the database says
+        if (
+            table is RELATIONS
+            and raw.get("end_reason") is not None
+            and (
+                raw.get("predicate") not in ("owns", "carries") or raw.get("to_session_at") is None
+            )
+        ):
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
@@ -680,6 +691,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "decided": None,
                 "via_alias_id": None,  # from before #3037: no connection came through a name
                 "knows_how": "",  # from before #3881: the story's word on how was not kept
+                "end_reason": None,  # from before #4115: why a tie ended was not kept
                 **raw,
                 "definition_version": version,
             }
