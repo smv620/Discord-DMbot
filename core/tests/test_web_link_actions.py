@@ -1059,6 +1059,41 @@ class TheEdits(Editing):
         self.assertEqual((choice["side"], choice["words"]), (direct.side, direct.words))
         self.assertTrue(all(e["tag"] for e in choice["entries"]))
 
+    async def test_a_which_one_tag_never_names_a_place_left(self) -> None:
+        """#4134: the website's tag reads current ties only, as the store's `tag_ties` does."""
+        from dmbot.memory import tags
+
+        miras = []
+        for note in ("the ferrywoman", "a smuggler's daughter"):
+            made = await self.memory.add_entity(
+                self.g, self.one.id, type="character", name="Mira", description=note,
+                source="dm", status="confirmed",
+            )  # fmt: skip
+            miras.append(made.value.id)
+        town = await self.memory.add_entity(
+            self.g, self.one.id, type="place", name="Termalaine", source="dm", status="confirmed"
+        )
+        tie = await self.memory.add_relation(
+            self.g, self.one.id, miras[0], "located_in", town.value.id, source="dm",
+            confidence=1.0, status="confirmed", detail="lives in",
+        )  # fmt: skip
+        await self.memory.update_relation(
+            self.g, self.one.id, tie.value[0].id, source="dm", to_session_at=5
+        )
+        await self.claims.propose(
+            self.g, self.one.id, [said("Rook", "is the sister of", "Mira")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        kept = [c for c in (await self.waiting_now())["claims"] if "choices" in c]
+        (choice,) = kept[0]["choices"]
+        shown = {e["id"]: e["tag"] for e in choice["entries"]}
+        self.assertNotIn("Termalaine", shown[miras[0]])
+        ties = await self.memory.tag_ties(self.g, self.one.id, [miras[0]])
+        entity = next(
+            e for e in await self.memory.entities(self.g, self.one.id) if e.id == miras[0]
+        )
+        self.assertEqual(shown[miras[0]], tags.tag_for(entity, ties.get(miras[0], []), dm=True))
+
     async def _kept_claim(self) -> tuple[str, str]:
         for note in ("the ferrywoman", "a smuggler's daughter"):
             await self.memory.add_entity(
