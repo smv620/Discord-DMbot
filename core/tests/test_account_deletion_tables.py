@@ -35,6 +35,10 @@ ALREADY_COVERED = frozenset(
     }
 )
 
+# Rows marked done: some tables allow one open (waiting or working) row per campaign or per
+# server, so Alice's and Bob's rows are written as finished (outside that index). Some ids are
+# identity columns Postgres generates, so they are not set; recap style rows take their position
+# from the Discord ID so each person's row is distinct.
 # Each row takes :g (the server), :c (the campaign), :u (the person's Discord ID) and :k (a
 # 32-hex id unique to that person). Every required column is set; the rest take their defaults.
 ROWS: dict[str, str] = {
