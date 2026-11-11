@@ -9205,6 +9205,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     session_started_at=session.started_at,
                     agreed=agreed,
                     mentions=lambda i: memory.mentions(gid, cid, i),
+                    private=self.settings.private_scenes_on,  # (#2996 rule 5)
                 )
                 if not items:
                     return
