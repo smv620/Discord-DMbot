@@ -1174,8 +1174,11 @@ later sessions.
   The entries spoken of inside a scene by one of its two are kept with it (`memory_private_scene_entries`, ids only,
   migration 0421), and an entry in a **kept** scene is never ranked below 2 (Recurring): a floor worked out on read,
   like the other floors (Supervisor's ruling, #4110). Nothing is stored for it, so "Not private", a speaker who stops
-  being recorded and a deleted transcript undo it by themselves. PlotBot is told ("private scene:" with the two names)
-  so it can rank such an entry higher. Next: the recap cites each scene without saying what (#2997).
+  being recorded and a deleted transcript undo it by themselves. Like every floor, it holds over a rank the DM set
+  lower; the DM lowers it with "Not private". Names are matched as whole words, confirmed and open ones only, never a
+  spelling two entries or a player character share (a one-word name that is an everyday word can still match). Scenes
+  found before 0421 have no entries until their session is read again. PlotBot is told ("private scene:" with the two
+  names) so it can rank such an entry higher. Next: the recap cites each scene without saying what (#2997).
 
 **8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
 - the Story Graph and its doors;

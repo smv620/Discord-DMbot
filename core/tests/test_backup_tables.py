@@ -34,7 +34,8 @@ class EveryClaimedTableComesBack(DatabaseTest):
             forget_audio=lambda g, c: None,
             consenting=cast(
                 Callable[[int], Awaitable[frozenset[int]]],
-                AsyncMock(return_value=frozenset({SPEAKER})),
+                # (4242: a private scene's second speaker, so its entries come back, #4110)
+                AsyncMock(return_value=frozenset({SPEAKER, 4242})),
             ),
         )
         self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)

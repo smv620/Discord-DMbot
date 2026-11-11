@@ -135,6 +135,32 @@ class PrivateSceneStore(NamesTest):
         await ClaimStore(self.memory).forget_speaker(GUILD, P2)  # ("Stop recording me")
         self.assertEqual((await ImportanceStore(self.db).ranks(GUILD, self.cid))[wolf.value.id], 0)
 
+    async def test_a_restore_keeps_entries_only_for_a_scene_wholly_recorded_there(self) -> None:
+        """#4110: the floor reads no consent of its own, so a restore into a server where one of
+        the two is not recorded brings the scene back without the entries that raise a rank."""
+        from dmbot.memory.importance_rank import ImportanceStore
+
+        wolf = await self.memory.add_entity(
+            GUILD, self.cid, name="Greyfang", type="character", status=CONFIRMED, source="dm"
+        )
+        await self.said((650, P1), text="Greyfang!")
+        await self.said((670, P2))
+        await self.write()
+        ranks = ImportanceStore(self.db)
+        async with self.db.guild(GUILD) as conn:
+            rows = await PrivateScenesSection().dump(conn, GUILD, self.cid)
+        self.assertEqual(rows[0]["entries"], [wolf.value.id])
+        for recorded, rank in (({P1}, 0), ({P1, P2}, 2)):
+
+            async def consenting(_: int, who: set[int] = recorded) -> frozenset[int]:
+                return frozenset(who)
+
+            section = PrivateScenesSection(consenting)
+            async with self.db.guild(GUILD) as conn:
+                await section.clear(conn, GUILD, self.cid)
+                await section.load(conn, GUILD, self.cid, section.check(rows))
+            self.assertEqual((await ranks.ranks(GUILD, self.cid))[wolf.value.id], rank, recorded)
+
     async def test_only_a_scene_not_found_before_is_new(self) -> None:
         await self.said((650, P1), (670, P2))
         self.assertEqual((await self.write()).new, 1)

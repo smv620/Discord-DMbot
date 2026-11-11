@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
+from dmbot.memory.private_scene_store import entries as private_entries
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -45,7 +46,8 @@ READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
 # A being met in play that the story never named, once the DM names or joins it from the list of
 # them (#3172 slice 5, #4045): it enters at rank 0 with this reason.
 MET_IN_PLAY = "met_in_play"
-# A rank PlotBot raised for a private scene between two player characters (#2996 rule 5).
+# A rank PlotBot raised for a private scene between two player characters (#2996 rule 5). The CHECK
+# accepts it, but it is never written since #4110: that floor is worked out on read.
 PRIVATE_SCENE = "private_scene"
 REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY, PRIVATE_SCENE)
 ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)
@@ -366,8 +368,6 @@ class ImportanceStore:
         )
         heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
         links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
-        from dmbot.memory.private_scene_store import entries as private_entries
-
         private = await private_entries(conn, guild_id, campaign_id)
         return ranks_from(entities, ended, group, heard, links, companions, private), ended
 

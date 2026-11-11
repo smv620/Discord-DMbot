@@ -1,6 +1,7 @@
 """What the story summary's importance rank is counted from (#3236): ids, kinds, roles, statuses,
-the plain connections, each entry's newest assessment and the sessions it was heard in. Counts and
-dates only. The API ranks with it in Python and sends none of it to a browser."""
+the plain connections, each entry's newest assessment, the sessions it was heard in and the entries
+said in a kept private scene (`private`, #4110). Counts and dates only. The API ranks with it in
+Python and sends none of it to a browser."""
 
 from __future__ import annotations
 

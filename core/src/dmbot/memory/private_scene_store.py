@@ -92,14 +92,10 @@ class PrivateScenes:
                 " AND user_id = ANY(%s::bigint[]) ORDER BY started_ms, id",
                 (guild_id, session_id, recorded),
             )
-            rows = list(await cur.fetchall())
-            lines = [(int(r["started_ms"]), int(r["user_id"])) for r in rows]
-            # (each line's words, folded, in memory only: to find the names said in a scene)
-            said = [
-                (int(r["started_ms"]), int(r["user_id"]),
-                 f" {spelling_key(str(r['text'] or ''))} {spelling_key(str(r['heard'] or ''))} ")
-                for r in rows
-            ]  # fmt: skip
+            line_rows = list(await cur.fetchall())
+            lines = [(int(r["started_ms"]), int(r["user_id"])) for r in line_rows]
+            # (each line's words, folded when a scene needs them, in memory only)
+            said: list[tuple[int, int, str]] | None = None
             players = await _players(conn, guild_id, campaign_id)
             scenes: list[Scene] = []
             if lines and len(players) >= 2:
@@ -161,6 +157,8 @@ class PrivateScenes:
                 if cur.rowcount:
                     if spellings is None:
                         spellings = await _spellings(conn, guild_id, campaign_id)
+                    if said is None:
+                        said = _folded(line_rows, scenes)
                     await _keep_entries(conn, guild_id, campaign_id, scene_id, scene, said,
                                         spellings)  # fmt: skip
             return Written(kept, skipped, new)
@@ -210,27 +208,36 @@ class PrivateScenes:
         return rows[::-1] if session_started_at is not None else rows
 
 
+ENTRIES_MAX = 200  # entries kept for one scene (a backup holds no more; sorted by id)
+
+
 async def _spellings(conn: Any, guild_id: int, campaign_id: str) -> dict[str, str]:
-    """Each folded spelling of a confirmed, live entry that is not a player character (their rank
+    """Each folded spelling of a confirmed, named entry that is not a player character (their rank
     is 5 already) to its entry: its name and its confirmed, open other names. A spelling two
-    entries share is left out (never a guess), and a secret one is never used."""
+    entries share, or one a player character also has ("Rook" the PC and "Rook" the inn), is left
+    out: never a guess. A secret one is never used, nor an unnamed entry's description."""
     cur = await conn.execute(
-        "SELECT id AS entry, name AS text FROM memory_entities WHERE guild_id = %s"
-        " AND campaign_id = %s AND status = 'confirmed' AND type <> 'person'"
-        " AND role IS DISTINCT FROM 'player_character'"
-        " UNION ALL SELECT a.entity_id AS entry, a.text FROM memory_aliases a"
+        "SELECT id AS entry, name AS text, role FROM memory_entities WHERE guild_id = %s"
+        " AND campaign_id = %s AND status = 'confirmed' AND type <> 'person' AND NOT unnamed"
+        " UNION ALL SELECT a.entity_id AS entry, a.text, e.role FROM memory_aliases a"
         " JOIN memory_entities e ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
         " AND e.id = a.entity_id WHERE a.guild_id = %s AND a.campaign_id = %s"
         " AND a.status = 'confirmed' AND NOT a.secret AND e.status = 'confirmed'"
-        " AND e.type <> 'person' AND e.role IS DISTINCT FROM 'player_character'",
+        " AND e.type <> 'person' AND NOT e.unnamed",
         (guild_id, campaign_id, guild_id, campaign_id),
     )
     owners: dict[str, set[str]] = {}
+    players: set[str] = set()
     for r in await cur.fetchall():
         key = spelling_key(str(r["text"]))
-        if key:
-            owners.setdefault(key, set()).add(str(r["entry"]))
-    return {key: next(iter(ids)) for key, ids in owners.items() if len(ids) == 1}
+        if not key:
+            continue
+        owners.setdefault(key, set()).add(str(r["entry"]))
+        if r["role"] == "player_character":
+            players.add(key)
+    return {
+        key: next(iter(ids)) for key, ids in owners.items() if len(ids) == 1 and key not in players
+    }
 
 
 async def _keep_entries(
@@ -242,17 +249,35 @@ async def _keep_entries(
     said: Sequence[tuple[int, int, str]],
     spellings: dict[str, str],
 ) -> None:
-    """The entries spoken of inside the scene by one of its two, as whole words (ids only)."""
+    """The entries spoken of inside the scene by one of its two, as whole words (ids only, at most
+    `ENTRIES_MAX`). One deleted meanwhile is skipped, never an error that loses the run."""
     found: set[str] = set()
     for started_ms, speaker, words in said:
         if scene.from_ms <= started_ms <= scene.to_ms and speaker in scene.speaker_ids:
             found.update(e for key, e in spellings.items() if f" {key} " in words)
-    for entity_id in sorted(found):
-        await conn.execute(
-            "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
-            " entity_id) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            (guild_id, campaign_id, scene_id, entity_id),
-        )
+    rows = [
+        (guild_id, campaign_id, scene_id, e, guild_id, campaign_id, e)
+        for e in sorted(found)[:ENTRIES_MAX]
+    ]
+    if rows:
+        async with conn.cursor() as cursor:
+            await cursor.executemany(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) SELECT %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s) ON CONFLICT DO NOTHING",
+                rows,
+            )
+
+
+def _folded(rows: Sequence[Any], scenes: Sequence[Scene]) -> list[tuple[int, int, str]]:
+    """The lines inside any scene, their words folded (in memory only, never kept)."""
+    spans = [(s.from_ms, s.to_ms) for s in scenes]
+    return [
+        (int(r["started_ms"]), int(r["user_id"]),
+         f" {spelling_key(str(r['text'] or ''))} {spelling_key(str(r['heard'] or ''))} ")
+        for r in rows
+        if any(a <= int(r["started_ms"]) <= b for a, b in spans)
+    ]  # fmt: skip
 
 
 async def entries(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
@@ -395,6 +420,6 @@ async def keep_recorded(
 
 
 __all__ = [
-    "LIST_MAX", "Kept", "PrivateScenes", "Written", "forget_session", "forget_speaker",
-    "keep_recorded",
+    "ENTRIES_MAX", "LIST_MAX", "Kept", "PrivateScenes", "Written", "entries", "forget_session",
+    "forget_speaker", "keep_recorded",
 ]  # fmt: skip

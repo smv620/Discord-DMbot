@@ -13,6 +13,7 @@ with none.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
@@ -29,7 +30,7 @@ _KEYS = {
 }  # fmt: skip
 _ORDER = sorted(_KEYS)
 ENTRIES = "entries"  # (#4110: the entries said in the scene; a file from before has none)
-ENTRIES_MAX = 200
+ENTRIES_MAX = 200  # (the store keeps at most this many a scene: `private_scene_store`)
 
 Row = tuple[Any, ...]
 
@@ -89,15 +90,25 @@ def _is_checked(rows: object) -> bool:
 
 
 class PrivateScenesSection:
+    """`consenting`: who is recorded in a server, read at a restore. The entries said in a scene
+    (the importance floor's input, #4110) are restored only for a kept scene whose speakers are
+    all recorded where it lands: the floor reads no consent of its own. None (a test): every kept
+    one."""
+
     name = "memory_private_scenes"
+
+    def __init__(
+        self, consenting: Callable[[int], Awaitable[frozenset[int]]] | None = None
+    ) -> None:
+        self._consenting = consenting
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
             "SELECT id, first_id, second_id, session_started_at, from_ms, to_ms, line_count,"
             " speaker_ids, status, created_at, decided_at, ARRAY(SELECT x.entity_id"
             "  FROM memory_private_scene_entries x WHERE x.guild_id = p.guild_id"
-            "  AND x.campaign_id = p.campaign_id AND x.scene_id = p.id ORDER BY x.entity_id)"
-            " AS entries FROM memory_private_scenes p"
+            "  AND x.campaign_id = p.campaign_id AND x.scene_id = p.id ORDER BY x.entity_id"
+            " LIMIT 200) AS entries FROM memory_private_scenes p"
             # (past the cap, the DM's marks first, then the newest)
             " WHERE guild_id = %s AND campaign_id = %s"
             " ORDER BY status = 'not_private' DESC, session_started_at DESC, from_ms, id LIMIT %s",
@@ -133,8 +144,9 @@ class PrivateScenesSection:
                 f" VALUES (%s, %s, {', '.join(['%s'] * len(_ORDER))})",
                 [(guild_id, campaign_id, *(r[at[k]] for k in _ORDER)) for r in checked],
             )
+            recorded = await self._consenting(guild_id) if self._consenting is not None else None
             # (an entry the file names that the restored campaign lacks is left out: the floor
-            # only reads entries that exist)
+            # only reads entries that exist; so is any of a scene not wholly recorded here)
             await cursor.executemany(
                 "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
                 " entity_id) SELECT %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM memory_entities e"
@@ -143,6 +155,8 @@ class PrivateScenesSection:
                 [
                     (guild_id, campaign_id, r[at["id"]], e, guild_id, campaign_id, e)
                     for r in checked
+                    if r[at["status"]] == "kept"
+                    and (recorded is None or set(r[at["speaker_ids"]]) <= recorded)
                     for e in r[len(_ORDER)]
                 ],
             )
