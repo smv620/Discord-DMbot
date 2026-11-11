@@ -34,12 +34,16 @@ const row = (over: object = {}) => ({
   ...over,
 });
 
-async function show(over: object) {
+async function show(over: object, more: object[] = []) {
   const api = mockApi("table");
   const real = api.webWaiting!.bind(api);
   api.webWaiting = async (ref) => {
     const got = await real(ref);
-    return { ...got, backstory: [row(over)], counts: { ...got.counts, backstory: 1 } };
+    return {
+      ...got,
+      backstory: [row(over), ...more],
+      counts: { ...got.counts, backstory: 1 + more.length },
+    };
   };
   render(<WebWaiting api={api} campaignRef="100.cmp1" />);
   await screen.findByRole("heading", { name: w.heading });
@@ -57,8 +61,14 @@ describe("handBracket", () => {
 
 describe("a waiting hand-over", () => {
   it("shows the bracket and sends the DM to Discord to keep it", async () => {
-    await show({ handOver: "sold", handOverFrom: "a".repeat(32), handOverName: "Claude" });
-    expect(await screen.findByText("Belleros owns the Frost Brand (Claude sold it)")).toBeTruthy();
+    await show({
+      handOver: "sold",
+      handOverFrom: "a".repeat(32),
+      handOverName: "Claude",
+    });
+    expect(
+      await screen.findByText("Belleros owns the Frost Brand (Claude sold it)"),
+    ).toBeTruthy();
     expect(screen.getByText(handKeepInDiscord)).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.keep })).toBeNull();
     expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
@@ -66,21 +76,69 @@ describe("a waiting hand-over", () => {
 
   it("a plain connection keeps its Keep and has no bracket", async () => {
     await show({});
-    expect(await screen.findByText("Belleros owns the Frost Brand")).toBeTruthy();
+    expect(
+      await screen.findByText("Belleros owns the Frost Brand"),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
     expect(screen.queryByText(handKeepInDiscord)).toBeNull();
   });
 
   it("one whose previous holder has no name shows as a plain connection", async () => {
-    await show({ handOver: "sold", handOverFrom: "a".repeat(32), handOverName: null });
-    expect(await screen.findByText("Belleros owns the Frost Brand")).toBeTruthy();
+    await show({
+      handOver: "sold",
+      handOverFrom: "a".repeat(32),
+      handOverName: null,
+    });
+    expect(
+      await screen.findByText("Belleros owns the Frost Brand"),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
   });
 
   it("changes nothing while the switch is off", async () => {
     live.on = false;
-    await show({ handOver: "sold", handOverFrom: "a".repeat(32), handOverName: "Claude" });
-    expect(await screen.findByText("Belleros owns the Frost Brand")).toBeTruthy();
+    await show({
+      handOver: "sold",
+      handOverFrom: "a".repeat(32),
+      handOverName: "Claude",
+    });
+    expect(
+      await screen.findByText("Belleros owns the Frost Brand"),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
+  });
+
+  it("Keep all leaves a hand-over out", async () => {
+    await show({ id: "b1" }, [
+      row({
+        id: "b2",
+        object: "the Shield",
+        handOver: "gave",
+        handOverFrom: "a".repeat(32),
+        handOverName: "Claude",
+      }),
+      row({ id: "b3", object: "the Lantern" }),
+    ]);
+    expect(
+      await screen.findByRole("button", { name: w.keepAll(2) }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.keepAll(3) })).toBeNull();
+  });
+
+  it("a secret hand-over shows neither Keep button, and still Skip", async () => {
+    await show({
+      secret: true,
+      handOver: "stolen",
+      handOverFrom: "a".repeat(32),
+      handOverName: "Claude",
+    });
+    expect(
+      await screen.findByText(
+        "Belleros owns the Frost Brand (taken from Claude)",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.keepIsSecret })).toBeNull();
+    expect(screen.queryByRole("button", { name: w.keep })).toBeNull();
+    expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
   });
 });
