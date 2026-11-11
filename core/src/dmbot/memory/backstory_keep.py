@@ -290,7 +290,8 @@ async def keep_all(
     if one_press and len(links) != 1:
         raise ValueError("One press keeps one connection.")
     if not one_press:
-        links = [c for c in links if not c.inferred]
+        # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
+        links = [c for c in links if not c.inferred and not c.hand_over]
     total = len(links)
     if progress is not None:
         await progress(0, total)
@@ -442,6 +443,9 @@ async def _undo_all(
                     c.truth,
                     known_by=c.known_by,
                     world=c.world,
+                    # (back with who had it before, so keeping it again ends their part, #4115)
+                    hand_over_from=c.hand_over_from,
+                    hand_over=c.hand_over,
                 )
             ],
         )

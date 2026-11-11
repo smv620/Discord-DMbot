@@ -1248,6 +1248,10 @@ async def _answer_waiting(
     link = next((x for x in ready if x.id == a.target_id), None)
     if link is None:
         return _failed(NOT_FOUND)
+    if link.hand_over:
+        # Keeping it ends what someone else holds of an item (#4115), and the website's list does
+        # not say so yet (#4122): until it does, it is kept in Discord, where the card says it.
+        return _failed(BAD_TARGET)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(

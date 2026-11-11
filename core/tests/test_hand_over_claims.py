@@ -12,9 +12,11 @@ from collections import Counter
 from typing import Any
 from unittest.mock import AsyncMock
 
+from psycopg import errors
+
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory.models import CONFIRMED, END_REASONS, NewName
+from dmbot.memory.models import CONFIRMED, END_REASONS, REJECTED, NewName
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
@@ -40,6 +42,12 @@ def reply(*links: dict[str, Any]) -> str:
     return json.dumps({"names": NAMES, "connections": list(links)})
 
 
+THREE = [
+    bg.Found(n, k, (), (), "q")
+    for n, k in (("Belleros", "person"), ("Claude", "person"), ("Frost Brand", "item"))
+]
+
+
 class TheReader(unittest.TestCase):
     def test_the_change_words_are_the_end_reasons(self) -> None:
         self.assertEqual(bg.HAND_OVERS, END_REASONS)
@@ -58,6 +66,27 @@ class TheReader(unittest.TestCase):
         (got,) = bg.read_connections(reply(handed("owns", "sold", "Mirelle")), TEXT, dropped=lost)
         self.assertEqual((got.from_holder, got.change), ("", ""))
         self.assertEqual(lost["hand_over_dropped"], 1)
+
+    def test_a_pronoun_line_is_held_to_the_rules_when_kept(self) -> None:
+        # (reviewer: a line the who-is-it check settled never went through `_handed`)
+        names = THREE
+        stole = bg.Connection("Belleros", "owns", "Frost Brand", "He stole the Frost Brand from "
+                              "Claude", from_holder="Claude", change="stolen")  # fmt: skip
+        lost: Counter[str] = Counter()
+        (kept,) = bg.keep_connections([[stole]], names, {}, dropped=lost)
+        self.assertEqual((kept.how, kept.change, lost["hand_over_dropped"]), ("owns", "", 1))
+        absent = bg.Connection("Belleros", "owns", "Frost Brand", "He bought the Frost Brand",
+                               from_holder="Claude", change="sold")  # fmt: skip
+        (kept,) = bg.keep_connections([[absent]], names, {})
+        self.assertEqual(kept.change, "")
+
+    def test_a_plain_twin_read_first_takes_the_hand_over(self) -> None:
+        names = THREE
+        plain = bg.Connection("Belleros", "owns", "Frost Brand", "Belleros owns the Frost Brand")
+        sold = bg.Connection("Belleros", "owns", "Frost Brand", QUOTE, from_holder="Claude",
+                             change="sold")  # fmt: skip
+        (kept,) = bg.keep_connections([[plain, sold]], names, {})
+        self.assertEqual((kept.from_holder, kept.change), ("Claude", "sold"))
 
     def test_a_change_on_another_kind_is_ignored(self) -> None:
         self.assertEqual(bg.hand_over_of("knows", "Claude", "sold"), ("knows", "", ""))
@@ -148,7 +177,7 @@ class TheCard(NamesTest):
         await self.read(handed("owns", "stolen"))
         view = await self.card()
         self.assertIn("**Belleros** carries **Frost Brand** (taken from Claude)", view.text())
-        self.assertIn("no longer has it with them, but still owns it", view.text())
+        self.assertIn("no longer has it with them. Who owns it doesn't change.", view.text())
         await self.press(view, "✅ Keep")
         self.assertIsNone((await self.row(owns)).to_session_at)
         got = await self.row(carries)
@@ -174,8 +203,63 @@ class TheCard(NamesTest):
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         self.assertEqual([(w.hand_over_from, w.hand_over) for w in waiting],
                          [(self.claude, "sold")])  # fmt: skip
+        # Keep all never keeps it unseen (it ends what someone else holds): its own press does
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
+        self.assertEqual(done.kept, [])
+        self.assertIsNone((await self.row(owns)).to_session_at)
+        done = await keep.keep_all(
+            self.memory, self.store, GUILD, self.campaign.id, waiting, one_press=True
+        )
         self.assertEqual((await self.row(owns)).end_reason, "sold")
         await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)
         got = await self.row(owns)
         self.assertEqual((got.to_session_at, got.end_reason), (None, None))
+        back = await self.store.waiting(GUILD, self.campaign.id)  # (back with its hand-over)
+        self.assertEqual([(w.hand_over_from, w.hand_over) for w in back], [(self.claude, "sold")])
+
+    async def test_an_upload_that_adds_by_itself_leaves_a_hand_over_waiting(self) -> None:
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        owns = await self.tie(self.claude, "owns")
+        await self.read(handed("owns", "sold"))
+        self.assertIsNone((await self.row(owns)).to_session_at)
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual([w.hand_over for w in waiting], ["sold"])
+
+    async def test_the_one_before_follows_a_merge(self) -> None:
+        await self.read(handed("owns", "sold"))
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Old Claude", "npc", CONFIRMED)], source="dm"
+        )
+        (kept,) = made.value
+        assert kept and self.claude
+        await self.memory.merge(GUILD, self.campaign.id, kept, self.claude, source="dm",
+                                dm_said_same=True)  # fmt: skip
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual((w.hand_over_from, w.hand_over_name, w.hand_over),
+                         (kept, "Old Claude", "sold"))  # fmt: skip
+
+    async def test_a_turned_down_or_merged_in_one_before_leaves_it_plain(self) -> None:
+        await self.read(handed("owns", "sold"))
+        assert self.claude and self.bel
+        await self.memory.merge(GUILD, self.campaign.id, self.bel, self.claude, source="dm",
+                                dm_said_same=True)  # fmt: skip
+        self.assertEqual([w.hand_over for w in await self.store.waiting(GUILD, self.campaign.id)],
+                         [""])  # fmt: skip
+
+    async def test_a_turned_down_one_before_leaves_it_plain(self) -> None:
+        await self.read(handed("owns", "sold"))
+        assert self.claude
+        await self.memory.set_entity_status(GUILD, self.campaign.id, self.claude, REJECTED,
+                                            source="dm")  # fmt: skip
+        self.assertEqual([w.hand_over for w in await self.store.waiting(GUILD, self.campaign.id)],
+                         [""])  # fmt: skip
+
+    async def test_the_table_takes_a_hand_over_whole_and_on_owns_or_carries_only(self) -> None:
+        await self.read(handed("owns", "sold"))
+        for change in ("hand_over_from = ''", "predicate = 'knows'"):
+            with self.subTest(change), self.assertRaises(errors.CheckViolation):
+                async with self.db.guild(GUILD) as conn:
+                    await conn.execute(
+                        f"UPDATE backstory_links SET {change} WHERE campaign_id = %s",
+                        (self.campaign.id,),
+                    )

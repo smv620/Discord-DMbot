@@ -240,6 +240,15 @@ class BackstoryLinks:
                         " AND object_id = %s AND inferred_reason = ''",
                         (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
                     )
+                if cur.rowcount == 0 and _hand_over(link)[1]:
+                    # already waiting without one: the text says who had it before (#4115)
+                    await conn.execute(
+                        "UPDATE backstory_links SET hand_over_from = %s, hand_over = %s"
+                        " WHERE guild_id = %s AND campaign_id = %s AND subject_id = %s"
+                        " AND predicate = %s AND object_id = %s AND hand_over = ''",
+                        (*_hand_over(link), guild_id, campaign_id, link.subject_id,
+                         link.predicate, link.object_id),
+                    )  # fmt: skip
                 if cur.rowcount == 0 and not link.inferred:
                     # already waiting as DMbot's inference: a text that states it makes it stated
                     await conn.execute(

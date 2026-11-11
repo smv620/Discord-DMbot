@@ -1288,6 +1288,9 @@ def keep_connections(
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
     knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
+    # an `owns` or `carries` line's place in `out`, by its `once` key: a later twin with a
+    # hand-over gives it the hand-over (#4115)
+    held_lines: dict[tuple[str, str, str, tuple[str, bool] | None], int] = {}
     # an inferred line's place in `out`, by its `once` key: a stated twin read later clears it
     inferred_at: dict[tuple[str, str, str, tuple[str, bool] | None], int] = {}
     # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
@@ -1409,8 +1412,14 @@ def keep_connections(
             if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
                 prev_end, no_prev = speaker_end(c.from_holder, speaker)
                 prev = reader.match(prev_end)
+                # (checked again here, whichever way the line came: one a pronoun check settled
+                # never went through `_handed`, so the kind and the quote are held to it now)
+                said_how, _, said_change = hand_over_of(c.how, c.from_holder, c.change)
                 if (
-                    no_prev
+                    not said_change
+                    or said_how != c.how
+                    or not quote_holds(c.quote, c.from_holder)
+                    or no_prev
                     or prev.ambiguous
                     or prev.name is None
                     or name_key(prev.name) in (ka, kb)
@@ -1494,6 +1503,14 @@ def keep_connections(
                 # same town are both kept, #3363)
                 once = (ka, c.how, kb, place_words.slot(c.words) if c.how == "located_in" else None)
                 if once in seen:
+                    handed_at = held_lines.get(once)
+                    if made.change and handed_at is not None and not out[handed_at].change:
+                        # (a plain line read first takes the later one's hand-over, #4115)
+                        out[handed_at] = replace(
+                            out[handed_at], from_holder=made.from_holder, change=made.change,
+                            secret=out[handed_at].secret or made.secret,
+                        )  # fmt: skip
+                        lost["hand_over_added"] += 1
                     at = inferred_at.pop(once, None)
                     if at is not None and not c.inferred:
                         # (the text states what DMbot had only inferred: it is stated now)
@@ -1533,6 +1550,8 @@ def keep_connections(
             out.append(made)
             if made.inferred:  # (never family: those are refused when read)
                 inferred_at[once] = len(out) - 1
+            if made.how in ("owns", "carries"):
+                held_lines[once] = len(out) - 1
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
             if c.how == "knows":
