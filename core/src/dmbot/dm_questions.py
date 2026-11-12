@@ -60,7 +60,7 @@ def ordered(asks: list[Ask]) -> list[Ask]:
 
 # The kinds "✅ Check everything" walks through (#4192), in ORDER. The other kinds keep their own
 # buttons until they join the walk.
-WALKED = (NAMES, PEOPLE, CLAIMS, CONNECTIONS)
+WALKED = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS)
 WALK_PRESS = "Press **✅ Check everything** to go through them."
 
 

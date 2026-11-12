@@ -3416,8 +3416,11 @@ class MemoryStore:
                 confirmed += await w.update_where(
                     ENTITIES,
                     {**fields, **extra},
-                    # (a person the story never named is not retyped in bulk: #2790)
-                    " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
+                    # (a person the story never named is not retyped in bulk: #2790; nor an entry
+                    # with a player, which would keep its player on a kind that has none and a
+                    # backup refuses: it waits for its own card, #4244)
+                    " AND status = 'proposed' AND NOT unnamed AND played_by IS NULL"
+                    " AND id = ANY(%s)",
                     [group],
                 )
             heard = not_told = 0  # (said only while split: the group knows it / nobody does)
@@ -7041,6 +7044,7 @@ class MemoryStore:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
+                await _settle_kinds_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -8684,6 +8688,29 @@ async def _live_led_to(w: Changes, *, skip: str | None = None) -> list[tuple[str
         [],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:
+    """An Undo that gives an entry back an older kind skips the rule every other kind change keeps
+    (`states.settle_kind`): something added since for the newer kind would stay on the older one
+    (a species link on what is a place again), and a backup would be refused (#4244). So the
+    entries whose kind this undo changed are settled here, in the undo's own change, so a redo
+    brings everything back. One statement when no kind changed."""
+    cur = await w.conn.execute(
+        "SELECT DISTINCT row_id FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND batch = %s AND table_name = %s AND op = 'update'"
+        " AND (before->>'type') IS DISTINCT FROM (after->>'type')",
+        (*w.ids, batch, ENTITIES.name),
+    )
+    ids = [str(r["row_id"]) for r in await cur.fetchall()]
+    if not ids:
+        return
+    onto = await _load_ontology(w)
+    by_type: dict[str, list[str]] = {}
+    for row in await w.select(ENTITIES, " AND id = ANY(%s)", [ids]):
+        by_type.setdefault(str(row["type"]), []).append(str(row["id"]))
+    for type_key, group in by_type.items():
+        await states.settle_kind(w, onto, group, type_key)
 
 
 async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:

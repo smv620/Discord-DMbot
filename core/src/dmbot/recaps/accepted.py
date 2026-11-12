@@ -131,7 +131,7 @@ class AcceptedSection:
                 or not 0 <= stamp <= INT64_MAX
                 or (at, version) in seen
                 or not (isinstance(by, str) and by.isascii() and by.isdigit())
-                or not 0 < int(by) <= INT64_MAX
+                or not 0 <= int(by) <= INT64_MAX  # (0: someone who has left, #4148)
                 or not 1 <= version <= INT32_MAX
             ):
                 raise CampaignError(DAMAGED)

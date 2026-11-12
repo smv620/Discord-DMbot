@@ -11,7 +11,7 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.extractor import heard_texts
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import PROPOSED, REJECTED, SHORT_NAME_SOURCE
-from dmbot.memory.short_names import short_names, used_alone
+from dmbot.memory.short_names import could_be_short_name, short_names, used_alone
 from dmbot.memory.store import MemoryStore
 from dmbot.names import not_names
 from dmbot.transcript.models import Line
@@ -226,6 +226,23 @@ class TheStore(DatabaseTest):
         self.assertEqual(
             (await self.memory.add_short_names(GUILD, self.campaign.id, [text])).value, []
         )
+
+
+class CouldBeAShortName(unittest.TestCase):
+    def test_an_ordinary_first_name_is_one(self) -> None:
+        for word in ("Cerric", "Wit", "Tran", "Éowyn", "O'Neil", "Anne-Marie"):
+            with self.subTest(word=word):
+                self.assertTrue(could_be_short_name(word))
+
+    def test_a_word_that_is_not_shaped_like_a_name_is_not(self) -> None:
+        for word in ("Al", "cerric", "Cerric's", "Mira,", "Tom2", ""):
+            with self.subTest(word=word):
+                self.assertFalse(could_be_short_name(word))
+
+    def test_a_title_a_creature_or_an_epithet_is_not(self) -> None:
+        for word in ("Captain", "Sir", "The", "Goblin", "Red", "Mad"):
+            with self.subTest(word=word):
+                self.assertFalse(could_be_short_name(word))
 
 
 if __name__ == "__main__":
