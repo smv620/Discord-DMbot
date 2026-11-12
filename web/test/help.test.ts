@@ -58,6 +58,20 @@ describe("Help", () => {
     expect(section).toContain("DMbot has no password.");
   });
 
+  it("the DM steps end with what to do after setting up a campaign", () => {
+    const on = `After you set up a campaign: open your campaign's DM Bot channel. Start DMbot at the table with /dmbot start, ask each player to press "I'm 16 or older, record me", and watch for DMbot's private message when something needs checking.`;
+    const off = "After you set up a campaign: start DMbot at the table with /dmbot start, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking.";
+    expect(dmSteps.at(-1)?.text).toBe(DM_BOT_CHANNEL_LIVE ? on : off);
+    if (!DM_BOT_CHANNEL_LIVE) expect(dmSteps.at(-1)?.text).not.toContain("DM Bot channel"); // the channel is not live yet
+  });
+
+  it("the consent label in that step is core's, read from consent_words.py", () => {
+    const py = readFileSync(fileURLToPath(new URL("../../core/src/dmbot/consent_words.py", import.meta.url)), "utf8");
+    const minAge = /MIN_AGE = (\d+)/.exec(py)?.[1];
+    expect(py).toContain('CONSENT_LABEL = f"I\'m {MIN_AGE} or older, record me"');
+    expect(dmSteps.at(-1)?.text).toContain(`I'm ${minAge} or older, record me`);
+  });
+
   it("names only buttons and commands that are in the bot's code", () => {
     for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps, ...featureSteps]) {
       for (const { name, file } of step.names ?? []) {

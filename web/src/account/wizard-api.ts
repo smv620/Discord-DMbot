@@ -90,6 +90,14 @@ export class WizardError extends Error {
   }
 }
 
+/** A member of this server the DM can name as a character's player (#4204): the Discord id (as text, never shown), the name, and
+ * whether they played with this DM in an earlier campaign on this server. */
+export interface WizardMember {
+  userId: string;
+  name: string;
+  before: boolean;
+}
+
 export interface WizardApi {
   /** The draft, or null when there is none. */
   get(guild: string): Promise<WizardDraft | null>;
@@ -110,6 +118,8 @@ export interface WizardApi {
   finish(guild: string): Promise<string>;
   finishState(guild: string): Promise<WizardFinish | null>;
   discard(guild: string): Promise<void>;
+  /** This server's members, those who played with this DM here first. Rejects when the list cannot be read. */
+  members(guild: string): Promise<WizardMember[]>;
 }
 
 /** The largest file the server reads, in bytes (core name_documents.MAX_DOCUMENT_BYTES); a bigger one is refused before sending. */
