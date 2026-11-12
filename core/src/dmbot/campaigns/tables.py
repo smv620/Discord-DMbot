@@ -22,6 +22,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_predicates",
         "memory_entities",
         "memory_rule_links",
+        "memory_story_languages",  # an NPC's languages from the story (#4229)
         "memory_states",
         "memory_claims",
         "memory_aliases",
@@ -107,6 +108,10 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "sheet_waits": "a D&D Beyond sheet link the DM gave in the wizard for a character with no "
+    "player yet, waiting for the player (#4205): the address and a time, no sheet and no person. "
+    "A request still waiting, like the wizard's own draft; the link is read when the character "
+    "has a player, and is added again on the Sheets page if a restore loses it",
     "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
     "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
     "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",

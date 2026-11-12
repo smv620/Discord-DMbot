@@ -1,0 +1,173 @@
+---
+// What the three Help pages (/help, /help/questions, /help/snags) share: the search box, the "Link copied" voice, the
+// styles and the scripts. The page content goes in the slots, so the pages stay under the size budget one by one (#4235).
+// The styles are global but every rule starts at .help-page, because slotted content is not in this file's own scope.
+---
+
+<div class="help-page">
+  <slot name="top" />
+
+  <!-- The search box needs JavaScript, so it stays hidden until the script below shows it: without
+       JavaScript the page is exactly the long page it was (#1939). -->
+  <form class="search" role="search" data-help-search hidden>
+    <label for="help-search">Search help</label>
+    <input id="help-search" type="search" autocomplete="off" />
+    <p id="help-search-status" role="status" aria-live="polite" class="muted"></p>
+    <button type="button" class="button" data-help-search-clear hidden>See all steps</button>
+  </form>
+
+  <!-- Speaks "Link copied" when a Copy link button is pressed; nothing to see until then. -->
+  <p id="help-copy-status" class="visually-hidden" role="status" aria-live="polite"></p>
+
+  <slot />
+</div>
+
+<script>
+  // Nothing typed here leaves the page: no request, no storage, no address change (#1939).
+  import { wire } from "../../scripts/helpsearch.mjs";
+
+  import { wireCopy } from "../../scripts/helplinks.mjs";
+
+  const form = document.querySelector<HTMLFormElement>("[data-help-search]");
+  const page = document.querySelector("main");
+  if (form && page) wire(form, page);
+  const copied = document.querySelector<HTMLElement>("#help-copy-status");
+  if (page && copied) wireCopy(page, copied, { clipboard: navigator.clipboard, location });
+</script>
+
+<style is:global>
+  .help-page ol {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  .help-page li {
+    margin-bottom: var(--space-4);
+  }
+
+  .help-page section {
+    margin-top: var(--space-8);
+  }
+
+  .help-page nav ul {
+    max-width: var(--text-width);
+    padding-left: var(--space-6);
+  }
+
+  .help-page nav li {
+    margin-bottom: var(--space-2);
+  }
+
+  .help-page nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap); /* a thumb-sized target for a DM tapping mid-session */
+  }
+
+  .help-page .back {
+    margin-top: var(--space-4);
+  }
+
+  .help-page .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The heading is a link to itself, so "/help#game-master" can be pasted into Discord. */
+  /* The Copy link button sits beside its heading; both are direct children of the section. */
+  .help-page section > h2 {
+    display: inline-block;
+    margin-right: var(--space-4);
+    vertical-align: middle;
+  }
+
+  .help-page section > h2 a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .help-page section > h2 a:hover {
+    text-decoration: underline;
+  }
+
+  .help-page .copy-link {
+    vertical-align: middle;
+    min-height: var(--tap);
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .help-page .copy-link[hidden] {
+    display: none;
+  }
+
+  /* The place a link led to. Typing in the search box clears it (data-quiet on main). */
+  .help-page section:target,
+  .help-page li:target {
+    scroll-margin-top: var(--space-6);
+  }
+
+  .help-page section:target > h2,
+  .help-page h2:target,
+  .help-page li:target {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-radius: var(--radius);
+  }
+
+  /* (main belongs to the page layout, so the rule starts from it.) */
+  main[data-quiet] .help-page :target,
+  main[data-quiet] .help-page :target > h2 {
+    background: none;
+  }
+
+  .help-page .search {
+    display: grid;
+    gap: var(--space-2);
+    max-width: var(--text-width);
+    margin: var(--space-6) 0;
+  }
+
+  /* The grid and the button's own display would otherwise win over the hidden attribute. */
+  .help-page .search[hidden],
+  .help-page .search [hidden] {
+    display: none;
+  }
+
+  .help-page .search label {
+    font-weight: 600;
+  }
+
+  .help-page .search input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--control-edge);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .help-page .search p {
+    margin: 0;
+    min-height: 1.5em; /* the page doesn't jump when the count appears */
+  }
+
+  .help-page .search .button {
+    justify-self: start;
+  }
+</style>

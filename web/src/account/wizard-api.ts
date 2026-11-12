@@ -36,7 +36,8 @@ export interface WizardAnswers {
   characters: WizardCharacter[];
   /** The rules to play with and the fallback: "2024" or "2014". */
   target: "2024" | "2014";
-  fallback: "2024" | "2014";
+  /** The rules used when the first has no answer: the other set, or "none" (core FALLBACK_NONE). */
+  fallback: "2024" | "2014" | "none";
   /** The books the person ticked; null until they change a box, so an untouched step keeps the defaults (Xanathar's and Tasha's rules are on). */
   supplements: string[] | null;
   dataUse: boolean;
@@ -90,6 +91,14 @@ export class WizardError extends Error {
   }
 }
 
+/** A member of this server the DM can name as a character's player (#4204): the Discord id (as text, never shown), the name, and
+ * whether they played with this DM in an earlier campaign on this server. */
+export interface WizardMember {
+  userId: string;
+  name: string;
+  before: boolean;
+}
+
 export interface WizardApi {
   /** The draft, or null when there is none. */
   get(guild: string): Promise<WizardDraft | null>;
@@ -110,6 +119,8 @@ export interface WizardApi {
   finish(guild: string): Promise<string>;
   finishState(guild: string): Promise<WizardFinish | null>;
   discard(guild: string): Promise<void>;
+  /** This server's members, those who played with this DM here first. Rejects when the list cannot be read. */
+  members(guild: string): Promise<WizardMember[]>;
 }
 
 /** The largest file the server reads, in bytes (core name_documents.MAX_DOCUMENT_BYTES); a bigger one is refused before sending. */
@@ -133,4 +144,30 @@ export function toBase64(bytes: Uint8Array): string {
 /** A new draft's answers: nothing chosen yet (the books are `null` until a box changes, so the defaults hold). */
 export function emptyAnswers(): WizardAnswers {
   return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
+}
+
+/** What the DM chose about helping improve DMbot (#4212): nothing is pre-selected, so there is a third state the draft's yes/no cannot hold.
+ * It is kept in this tab (sessionStorage, so a reload keeps it) and "not chosen" is sent to the server as off. */
+export type DataChoice = "yes" | "no" | "none";
+
+const dataKey = (guild: string): string => `dmbot.wizard.data.${guild}`;
+
+/** The pick kept in this tab for this server, or what the draft says when there is none (a yes is known to the server). */
+export function readDataChoice(guild: string, dataUse: boolean): DataChoice {
+  try {
+    const kept = window.sessionStorage.getItem(dataKey(guild));
+    if (kept === "yes" || kept === "no") return kept === "yes" && !dataUse ? "none" : kept;
+  } catch {
+    // (no storage here: the draft's yes still shows, a no shows as not chosen)
+  }
+  return dataUse ? "yes" : "none";
+}
+
+export function keepDataChoice(guild: string, choice: DataChoice): void {
+  try {
+    if (choice === "none") window.sessionStorage.removeItem(dataKey(guild));
+    else window.sessionStorage.setItem(dataKey(guild), choice);
+  } catch {
+    // (no storage here: the pick lasts while the wizard is open)
+  }
 }

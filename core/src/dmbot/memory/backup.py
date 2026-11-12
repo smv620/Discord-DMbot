@@ -9,6 +9,7 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -40,6 +41,7 @@ from dmbot.memory._changes import (
     RULE_LINKS,
     SHEETS,
     STATES,
+    STORY_LANGUAGES,
     TOLD,
     TYPES,
     Table,
@@ -60,6 +62,7 @@ from dmbot.memory.models import (
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
     FIX,
+    GIVEN_BY,
     HOWS,
     KEEP,
     KNOWS_HOWS,
@@ -75,6 +78,7 @@ from dmbot.memory.models import (
     PLAYERS_TEXT_MAX,
     ROLES,
     SOURCES,
+    STORY_LANGUAGE_MAX,
     THREAD_STATES,
     is_id,
     lookup_key,
@@ -97,6 +101,8 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
 
+log = logging.getLogger(__name__)
+
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
 
@@ -106,6 +112,7 @@ _TAGS: dict[str, Table] = {
     "predicate": PREDICATES,
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
+    "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -138,6 +145,7 @@ _TEXT_LIMITS = {
     "parent": 40,
     "inverse_label": LABEL_MAX,
     "rules_source": LINK_SOURCE_MAX,
+    "name_key": STORY_LANGUAGE_MAX,  # (a story language's key, #4229)
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
@@ -171,6 +179,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
     "edition": LINK_EDITIONS,
+    "given_by": GIVEN_BY,  # who gave a story language (#4229)
     "action": (FIX, KEEP),
     "source": SOURCES,
     "change_kind": CHANGE_KINDS,
@@ -253,6 +262,7 @@ def _valid(column: str, value: object) -> bool:
         "pinned",
         "added_entry",
         "both_ways",
+        "srd",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -960,13 +970,40 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     ):
         raise CampaignError(DAMAGED)
     _check_states(onto, by_tag)
+    # A link to the rules on an entry that is no character (#4241): a kind change once left them
+    # behind, and a backup downloaded then can't be fixed by a migration, so such a link is left out
+    # (and counted in the log) instead of refusing the file. A link to an entry the file doesn't
+    # hold is still damage.
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
-    if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
+    if any(r["entity_id"] not in kinds for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    kept = [r for r in by_tag["rule_link"] if r["entity_id"] in characters]
+    if len(kept) != len(by_tag["rule_link"]):
+        log.info("A restore left out %d rules links on entries that are no character",
+                 len(by_tag["rule_link"]) - len(kept))  # fmt: skip
+        by_tag["rule_link"] = kept
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    _check_story_languages(by_tag["story_language"], characters)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
+
+
+def _check_story_languages(rows: Sequence[Mapping[str, Any]], characters: set[str]) -> None:
+    """A character's languages from the story (#4229), as the store writes them: a character's,
+    named in at most STORY_LANGUAGE_MAX characters, each kept once, its key made from its name."""
+    seen: set[tuple[str, str]] = set()
+    for r in rows:
+        key = (r["entity_id"], r["name_key"])
+        if (
+            r["entity_id"] not in characters
+            or not 0 < len(r["name"]) <= STORY_LANGUAGE_MAX
+            or r["name_key"] != name_key(r["name"])
+            or not r["name_key"]
+            or key in seen
+        ):
+            raise CampaignError(DAMAGED)
+        seen.add(key)
 
 
 def _check_claim(row: Mapping[str, Any]) -> None:

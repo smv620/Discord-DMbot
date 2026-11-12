@@ -70,6 +70,7 @@ STAMPED_MEMORY = (
     "memory_npc_guesses", "memory_trait_offers", "memory_met", "memory_private_scenes",
     "memory_private_scene_entries",
     "memory_hand_over_both",
+    "memory_story_languages",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -162,6 +163,7 @@ NOT_STAMPED: dict[str, str] = {
         (
             "name_actions",
             "setting_actions",
+            "sheet_waits",  # the DM's wizard sheet link, waiting for its character's player
             "said_as_hears",
             "said_as_listens",
             "script_makes",

@@ -31,7 +31,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, LiteralString
 
 from psycopg import errors, sql
 
@@ -87,7 +87,9 @@ from dmbot.memory._changes import (
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
+    SHEETS,
     STATES,
+    STORY_LANGUAGES,
     TYPES,
     Changes,
     Scope,
@@ -154,6 +156,7 @@ from dmbot.memory.models import (
     SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
+    STORY_LANGUAGE_MAX,
     WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
@@ -165,6 +168,7 @@ from dmbot.memory.models import (
     GroupJoined,
     Heard,
     HeardCount,
+    Known,
     MemoryRuleError,
     MoreNames,
     NewName,
@@ -176,6 +180,7 @@ from dmbot.memory.models import (
     SaidAsSuggestion,
     SplitName,
     State,
+    StoryLanguage,
     TooLateToUndo,
     Trait,
     WaitingJoin,
@@ -401,6 +406,28 @@ def _entity(r: dict[str, Any]) -> Entity:
         r.get("players_text"), place_level=r.get("place_level"),
         place_level_from=r.get("place_level_from"),
     )  # fmt: skip
+
+
+def _story_language(r: dict[str, Any]) -> StoryLanguage:
+    return StoryLanguage(r["id"], r["entity_id"], r["name"], r["srd"], r["given_by"])
+
+
+# Who understands this? (#4229): a sheet's languages in its own order, then (only for a character
+# with no sheet) the story's, oldest first. A sheet whose `languages` is not a list counts as none.
+_LANGUAGES_KNOWN: LiteralString = (
+    "SELECT s.entity_id, lang.name, 'sheet' AS given_by, lang.n AS seq"
+    " FROM character_sheets s,"
+    " jsonb_array_elements_text(CASE WHEN jsonb_typeof(s.sheet->'languages') = 'array'"
+    "   THEN s.sheet->'languages' ELSE '[]'::jsonb END) WITH ORDINALITY AS lang(name, n)"
+    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = ANY(%s)"
+    " UNION ALL"
+    " SELECT l.entity_id, l.name, l.given_by, l.created_at AS seq"
+    " FROM memory_story_languages l"
+    " WHERE l.guild_id = %s AND l.campaign_id = %s AND l.entity_id = ANY(%s)"
+    "   AND NOT EXISTS (SELECT 1 FROM character_sheets s2 WHERE s2.guild_id = l.guild_id"
+    "     AND s2.campaign_id = l.campaign_id AND s2.entity_id = l.entity_id)"
+    " ORDER BY 1, 4, 2"
+)
 
 
 def _rule_link(r: dict[str, Any]) -> RuleLink:
@@ -788,6 +815,28 @@ class MemoryStore:
             )
             live = await _live_ids(scope, None if entity_id is None else [entity_id])
             return [_alias(r) for r in rows if r["entity_id"] in live]
+
+    async def drop_language_suggestions(self, guild_id: int, campaign_id: str) -> int:
+        """A waiting suggestion that is one of the SRD's languages ("Elvish") is turned down, just
+        as the DM's "Not a name" would (#4227), quote and all: suggested before the rule, it is
+        rules vocabulary, never a name in the game. Only a reader's suggestion: the DM's own entry,
+        a campaign's invented tongue kept as an idea, is never touched, and the DM brings one back
+        by adding the name again. Read again inside the change, under the campaign's lock, so a
+        name renamed meanwhile is looked at as it is now. Returns how many (the log gets
+        the count only)."""
+        waiting = " AND status = %s AND source <> %s"
+        async with self._read(guild_id, campaign_id) as scope:  # (most rounds find none: no write)
+            rows = await scope.select(ENTITIES, waiting, [PROPOSED, DM])
+        if not any(not_names.is_language(str(r["name"])) for r in rows):
+            return 0
+        async with self._write(guild_id, campaign_id, "scan") as w:  # (the name scan's rule)
+            rows = await w.select(ENTITIES, waiting, [PROPOSED, DM])
+            done = 0
+            for row in rows:
+                if not_names.is_language(str(row["name"])):
+                    await self._set_status_in(w, str(row["id"]), REJECTED, "scan")
+                    done += 1
+            return done
 
     async def suggested_names(self, guild_id: int, campaign_id: str) -> list[tuple[Alias, str]]:
         """The other names an AI read suggested for entries the DM confirmed, still waiting for
@@ -2778,6 +2827,93 @@ class MemoryStore:
             )
             return Written(_rule_link(row), w.batch)
 
+    async def add_story_language(
+        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+    ) -> Written[StoryLanguage | None]:
+        """A language a character knows from the story (#4229): the DM's word ("dm"), or DMbot's
+        read of the lore or a session ("read", until the DM checks it). Never in the graph: a
+        character with a sheet keeps its languages there, so the DM is told to change the sheet and
+        a read is skipped (None). Kept once per character; the DM's word on one DMbot read checks
+        it."""
+        name = clean_text(name, STORY_LANGUAGE_MAX)
+        key = name_key(name)  # (can come out longer than the name: "ß" is "ss")
+        if not key:
+            raise MemoryRuleError("Give the language a name.")
+        if len(key) > STORY_LANGUAGE_MAX:
+            raise MemoryRuleError("That language's name is too long.")
+        given_by = DM if source == DM else "read"
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            entity = await _entity_row(w, entity_id)
+            if not onto.is_a(entity["type"], "character"):
+                raise MemoryRuleError("Only a character knows languages.")
+            if await w.get(SHEETS, entity_id, lock=False) is not None:
+                if source == DM:
+                    raise MemoryRuleError("This character has a sheet: change its languages there.")
+                return Written(None, w.batch)
+            for old in await w.select(
+                STORY_LANGUAGES, " AND entity_id = %s AND name_key = %s", [entity_id, key]
+            ):
+                if given_by == DM and old["given_by"] != DM:
+                    old = await w.update(STORY_LANGUAGES, old["id"], {"given_by": DM})
+                return Written(_story_language(old), w.batch)
+            row = await w.insert(
+                STORY_LANGUAGES,
+                {
+                    "id": new_id(),
+                    "entity_id": entity_id,
+                    "name": name,
+                    "name_key": key,
+                    "srd": not_names.is_language(name),
+                    "given_by": given_by,
+                    "created_at": w.now,
+                },
+            )
+            return Written(_story_language(row), w.batch)
+
+    async def remove_story_language(
+        self, guild_id: int, campaign_id: str, language_id: str, *, source: str
+    ) -> Written[None]:
+        """Take a language from the story away (the DM's call, #4229); Undo brings it back."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            if await w.get(STORY_LANGUAGES, language_id) is None:
+                raise MemoryRuleError("That language is gone already.")
+            await w.delete(STORY_LANGUAGES, language_id)
+            return Written(None, w.batch)
+
+    async def story_languages(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[StoryLanguage]:
+        """One character's languages from the story, in the order they were given (#4229), as
+        stored: a character that has a sheet since keeps them, hidden ("Who understands this?"
+        reads the sheet). The caller shows them to the campaign's DMs only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                STORY_LANGUAGES, " AND entity_id = %s ORDER BY created_at, id", [entity_id]
+            )
+        return [_story_language(r) for r in rows]
+
+    async def languages_known(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, list[Known]]:
+        """Who understands this? (#4229): each character's languages, from its sheet when it has
+        one (the source of truth) and else from the story, in one query. A character that knows
+        none is left out. DM-only: the caller checks it."""
+        if not entity_ids:
+            return {}
+        ids = list(entity_ids)
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(_LANGUAGES_KNOWN, (*scope.ids, ids, *scope.ids, ids))
+            rows = await cur.fetchall()
+        out: dict[str, list[Known]] = {}
+        for r in rows:
+            name = str(r["name"]).strip()
+            if name:
+                out.setdefault(str(r["entity_id"]), []).append(Known(name, str(r["given_by"])))
+        return out
+
     async def remove_rule_link(
         self, guild_id: int, campaign_id: str, link_id: str, *, source: str
     ) -> Written[None]:
@@ -2787,6 +2923,100 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             await w.delete(RULE_LINKS, link_id)
             return Written(None, w.batch)
+
+    async def name_person(self, guild_id: int, campaign_id: str, user_id: int, name: str) -> bool:
+        """Give a person entry that is still only DMbot's `Player 1234` placeholder (or its "left
+        the server" wording) a real name (#4225): the member's Discord name, read by the bot with
+        no privileged intent. DMbot's own act (the scan's source, logged, one Undo), never a name
+        the DM chose: an entry the DM renamed or touched is left alone. The placeholder's own
+        listened-for name changes with it, so nothing keeps answering to "Player 1234". Returns
+        whether a name was changed."""
+        try:
+            name = clean_text(name)
+        except MemoryRuleError:
+            return False  # (nothing to call them)
+        key = lookup_key(name)
+        if is_dm_word(name):
+            return False  # a member called "DM" is no name for an entry
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            found = await w.select(
+                ENTITIES,
+                " AND type = 'person' AND played_by = %s AND status IN ('proposed', 'confirmed')",
+                [user_id],
+            )
+            if not found:
+                return False
+            row = found[0]
+            if row["name"] == name or row["name"] not in (
+                _placeholder_name(user_id),
+                left_name(user_id),
+            ):
+                return False
+            # An entry the DM took the rename back of (an Undo) stays as it is: the sweep must not
+            # undo the DM's choice a minute later.
+            cur = await w.conn.execute(
+                "SELECT 1 FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                " AND table_name = 'memory_entities' AND row_id = %s AND source = 'undo' LIMIT 1",
+                (*w.ids, row["id"]),
+            )
+            if await cur.fetchone() is not None:
+                return False
+            # Never the same key as another entry's secret name (as `rename_entity` refuses).
+            taken = await w.select(ALIASES, " AND key = %s AND entity_id <> %s", [key, row["id"]])
+            if any(t["secret"] for t in taken):
+                return False
+            old_key = lookup_key(row["name"])
+            own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [row["id"], old_key])
+            await w.update(ENTITIES, row["id"], {"name": name})
+            if own:
+                await w.update(
+                    ALIASES,
+                    own[0]["id"],
+                    {"text": name, "key": key, "sound_codes": list(sound_codes(name))},
+                )
+            else:
+                await w.insert(
+                    ALIASES, _new_alias(w, str(row["id"]), name, "full", CONFIRMED, False, None)
+                )
+        return True
+
+    async def placeholder_people(
+        self, guild_id: int, limit: int, exclude: Sequence[int] = ()
+    ) -> list[int]:
+        """The first `limit` different people of this server still named `Player 1234` (or "left
+        the server"), by Discord id, leaving out `exclude` (#4225): the ones the name sweep looks
+        up. Never someone who said no or stopped (a refusal on record: their name is not ours to
+        keep), never a player without Discord (a negative number), and never an entry whose
+        rename the DM took back."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT e.played_by FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.type = 'person' AND e.played_by > 0"
+                " AND e.status IN ('proposed', 'confirmed')"
+                " AND e.name IN ('Player ' || right(e.played_by::text, 4),"
+                "  'Someone who left the server (' || chr(8230) || right(e.played_by::text, 4)"
+                "  || ')')"
+                " AND e.played_by <> ALL(%s)"
+                " AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+                "  WHERE r.guild_id = e.guild_id AND r.user_id = e.played_by)"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes c WHERE c.guild_id = e.guild_id"
+                "  AND c.campaign_id = e.campaign_id AND c.table_name = 'memory_entities'"
+                "  AND c.row_id = e.id AND c.source = 'undo')"
+                " ORDER BY e.played_by LIMIT %s",
+                (guild_id, list(exclude), limit),
+            )
+            return [int(r["played_by"]) for r in await cur.fetchall()]
+
+    async def placeholder_campaigns(self, guild_id: int, user_id: int) -> list[str]:
+        """The campaigns of this server where this person is still a placeholder."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id FROM memory_entities WHERE guild_id = %s AND type = 'person'"
+                " AND played_by = %s AND status IN ('proposed', 'confirmed')"
+                " AND name IN ('Player ' || right(played_by::text, 4), %s) ORDER BY campaign_id",
+                (guild_id, user_id, left_name(user_id)),
+            )
+            return [str(r["campaign_id"]) for r in await cur.fetchall()]
 
     async def rename_entity(
         self,
@@ -3346,31 +3576,36 @@ class MemoryStore:
     ) -> Written[Entity]:
         _check_choice(status, FACT_STATUSES, "entity status")
         async with self._write(guild_id, campaign_id, source) as w:
-            current = await _entity_row(w, entity_id, allow_rejected=True)
-            check_status_change(current["status"], status, source)
-            row = await w.update(
-                ENTITIES,
-                entity_id,
-                {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
-            )
-            if status == CONFIRMED and source == DM:
-                await self._confirm_group_memberships(w, entity_id)
-                # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
-                await knowers.apply_waiting_guesses(w, entity_id)
-            await _forget_quotes(
-                w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
-            )
-            if status == REJECTED:
-                # A rejected entry is not a name at the table any more, so the DM's word that it is
-                # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
-                # this change brings it back.
-                for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
-                    await w.delete(PLAN_SAME_AS, link["id"])
-            if current["role"] == PLAYER_CHARACTER:
-                await _sync_plays(w, entity_id)  # a rejected character has no player
-            if status == REJECTED:
-                await _let_go_of_anchored(w, entity_id)
-            return Written(_entity(row), w.batch)
+            return Written(await self._set_status_in(w, entity_id, status, source), w.batch)
+
+    async def _set_status_in(self, w: Changes, entity_id: str, status: str, source: str) -> Entity:
+        """`set_entity_status` inside a change already open, so one change can turn down several
+        (#4227) with everything a single "Not a name" does."""
+        current = await _entity_row(w, entity_id, allow_rejected=True)
+        check_status_change(current["status"], status, source)
+        row = await w.update(
+            ENTITIES,
+            entity_id,
+            {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
+        )
+        if status == CONFIRMED and source == DM:
+            await self._confirm_group_memberships(w, entity_id)
+            # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
+            await knowers.apply_waiting_guesses(w, entity_id)
+        await _forget_quotes(
+            w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
+        )
+        if status == REJECTED:
+            # A rejected entry is not a name at the table any more, so the DM's word that it is
+            # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
+            # this change brings it back.
+            for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
+                await w.delete(PLAN_SAME_AS, link["id"])
+        if current["role"] == PLAYER_CHARACTER:
+            await _sync_plays(w, entity_id)  # a rejected character has no player
+        if status == REJECTED:
+            await _let_go_of_anchored(w, entity_id)
+        return _entity(row)
 
     async def split_waiting_name(
         self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
@@ -3746,7 +3981,12 @@ class MemoryStore:
             return Written(_alias(row), w.batch)
 
     async def add_short_names(
-        self, guild_id: int, campaign_id: str, texts: Sequence[str]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        texts: Sequence[str],
+        *,
+        players_before_read: bool = False,
     ) -> Written[list[Alias]]:
         """A person's first name as their short name, by rule (#3880, `short_names.py`): "Tran"
         for Tran Vosk when the text uses "Tran" alone and nothing else in the campaign is called
@@ -3771,13 +4011,25 @@ class MemoryStore:
                 (*scope.ids, SHORT_NAME_SOURCE),
             )
             undone = [(str(r["entity_id"]), str(r["text"])) for r in await cur.fetchall()]
-        people = [(str(e["id"]), str(e["name"])) for e in entities if e["type"] == "character"]
+        people = [
+            (str(e["id"]), str(e["name"]))
+            for e in entities
+            if e["type"] == "character"
+            # Before a lore read (#4224): only the DM's own confirmed player characters, and never a
+            # word the text also writes before another name (a namesake not stored yet).
+            and (
+                not players_before_read
+                or (e["role"] == PLAYER_CHARACTER and e["status"] == CONFIRMED)
+            )
+        ]
         # Every name and other name of a live entry, turned-down other names too: one the DM
         # rejected for this entry is never added again, and a word another entry is called is
         # never taken. An entry the DM rejected outright ("Not a name") blocks nothing.
         names = [(str(e["id"]), str(e["name"])) for e in entities]
         names += [(str(a["entity_id"]), str(a["text"])) for a in aliases]
-        found = short_names_mod.short_names(people, [*names, *undone], texts)
+        found = short_names_mod.short_names(
+            people, [*names, *undone], texts, unread=players_before_read
+        )
         if not found:
             return Written([], None)
         async with self._write(guild_id, campaign_id, SHORT_NAME_SOURCE) as w:
@@ -4534,7 +4786,8 @@ class MemoryStore:
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
-        await _move_rule_links(w, keep_id, gone_id)
+        await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
+        await _move_story_languages(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -5126,6 +5379,8 @@ class MemoryStore:
                     if await _unused_placeholder(w, person_id, user_id):
                         await _drop_person(w, person_id)
                         removed += 1
+                    else:  # kept for what hangs on it: it must not keep their Discord name
+                        removed += await _unname_person(w, person_id, user_id)
         return removed
 
     async def forget_alias_user(self, guild_id: int, user_id: int) -> int:
@@ -6851,9 +7106,13 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
 # ---- helpers (inside a write) ----------------------------------------------------------
 
 
-async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_rule_links(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
     """A merged entry's links to the rules go with it, unless the kept entry already has
-    that species or creature type, or the very same link (then they stay behind, unseen)."""
+    that species or creature type, or the very same link (then they stay behind, unseen), or
+    the kept entry is no character (#4241: only a character is linked to the rules, and a
+    backup holding one on anything else would be refused)."""
+    if not to_character:
+        return
     mine = await w.select(RULE_LINKS, " AND entity_id = %s", [keep_id])
     has_one = {r["kind"] for r in mine if r["kind"] in (SPECIES, CREATURE_TYPE)}
     has_same = {(r["kind"], r["rules_source"], r["name"]) for r in mine}
@@ -6867,6 +7126,26 @@ async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
         if link["kind"] in (SPECIES, CREATURE_TYPE):
             has_one.add(link["kind"])
         has_same.add((link["kind"], link["rules_source"], link["name"]))
+
+
+async def _move_story_languages(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
+    """A merged entry's languages from the story (#4229) go with it, unless the kept entry is not a
+    character (only a character knows languages), has a sheet (the sheet is the source of truth) or
+    already knows that language (then the DM's word wins over DMbot's read). What isn't moved stays
+    behind on the merged entry, unseen. The sheet moves later in a merge, so a kept entry may hold
+    story rows and a sheet at once: "Who understands this?" then reads only the sheet. One read of
+    both entries' rows, so a merge with none costs one statement."""
+    rows = await w.select(STORY_LANGUAGES, " AND entity_id = ANY(%s)", [[keep_id, gone_id]])
+    moving = [r for r in rows if r["entity_id"] == gone_id]
+    if not moving or not to_character or await w.get(SHEETS, keep_id, lock=False) is not None:
+        return
+    mine = {r["name_key"]: r for r in rows if r["entity_id"] == keep_id}
+    for row in moving:
+        have = mine.get(row["name_key"])
+        if have is None:
+            await w.update(STORY_LANGUAGES, row["id"], {"entity_id": keep_id})
+        elif have["given_by"] == "read" and row["given_by"] == DM:
+            await w.update(STORY_LANGUAGES, have["id"], {"given_by": DM})
 
 
 async def _move_plan_links(w: Changes, keep_id: str, gone_id: str) -> None:
@@ -6930,8 +7209,9 @@ async def _ensure_person(w: Changes, user_id: int) -> str:
     # number must be this campaign's own speaker is `_check_player`, in `add_entity` and
     # `confirm_entity` where a player is set.)
     """The campaign's entry for this Discord user, made if there is none. A person made
-    here is named `Player 1234` (the last four digits of their ID, never their Discord
-    name: that is read only in the live session) until a better name is known (#1188)."""
+    here is named `Player 1234` (the last four digits of their ID) until a better name is known
+    (#1188); the bot gives it the member's Discord name by a slow lookup (`member_names`, #4225),
+    and takes that name off again if they stop."""
     found = await w.select(
         ENTITIES,
         " AND type = 'person' AND played_by = %s AND status IN ('proposed', 'confirmed')",
@@ -6970,6 +7250,64 @@ def _placeholder_name(user_id: int) -> str:
 placeholder_name = _placeholder_name  # for a names download (#1559)
 
 
+def left_name(user_id: int) -> str:
+    """What a person who has left the server is called until they come back (#4225): worded so it
+    can't be taken for a name, with the last four digits to tell two of them apart."""
+    return f"Someone who left the server (\u2026{str(abs(user_id))[-4:]})"
+
+
+async def _unname_person(w: Changes, person_id: str, user_id: int) -> int:
+    """A person who stopped (#4225): an entry that stays still carries the Discord name DMbot gave
+    it, which is theirs and goes with their consent, so it is the placeholder again, and what logged
+    the rename is dropped (it holds the name, and an Undo must not bring it back). A name the DM
+    chose is the campaign's own and stays. Returns 1 when a name was put back."""
+    row = await w.get(ENTITIES, person_id)
+    if (
+        row is None
+        or row["type"] != PERSON
+        or row["name"]
+        in (
+            _placeholder_name(user_id),
+            left_name(user_id),
+        )
+    ):
+        return 0
+    cur = await w.conn.execute(
+        "SELECT 1 FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND table_name = 'memory_entities' AND row_id = %s AND source <> 'scan'"
+        " AND op = 'update' AND (before ->> 'name') IS DISTINCT FROM (after ->> 'name') LIMIT 1",
+        (*w.ids, person_id),
+    )
+    if await cur.fetchone() is not None:
+        return 0  # the DM renamed it: their word
+    placeholder = _placeholder_name(user_id)
+    own = await w.select(
+        ALIASES, " AND entity_id = %s AND key = %s", [person_id, lookup_key(row["name"])]
+    )
+    await w.update(ENTITIES, person_id, {"name": placeholder})
+    if own:
+        await w.update(
+            ALIASES,
+            own[0]["id"],
+            {
+                "text": placeholder,
+                "key": lookup_key(placeholder),
+                "sound_codes": list(sound_codes(placeholder)),
+            },
+        )
+    for table_name, row_id in [("memory_entities", person_id)] + [
+        ("memory_aliases", str(a["id"])) for a in own
+    ]:  # (the log holds the name: gone, and with it the Undo of the rename)
+        await w.conn.execute(
+            "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+            " AND table_name = %s AND row_id = %s AND source = 'scan' AND op = 'update'"
+            " AND ((before ->> 'name') IS DISTINCT FROM (after ->> 'name')"
+            "  OR (before ->> 'text') IS DISTINCT FROM (after ->> 'text'))",
+            (*w.ids, table_name, row_id),
+        )
+    return 1
+
+
 async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     """A person entry that is only the `Player 1234` placeholder: still that name, no other
     names, nothing written on it (description, role), nothing logged for it by anyone but the
@@ -6977,7 +7315,10 @@ async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     can't fail halfway), plus the rows that would cascade without a log (a character sheet,
     heard counts), which keep it. An entry the DM touched stays."""
     row = await w.get(ENTITIES, person_id)
-    if row is None or row["type"] != PERSON or row["name"] != _placeholder_name(user_id):
+    # (The name is not compared: DMbot gives a placeholder the member's Discord name itself, #4225,
+    # logged as the scan's own work; a name the DM wrote is logged as theirs, which the log check
+    # below refuses, and any other name of the entry blocks it too.)
+    if row is None or row["type"] != PERSON:
         return False
     if row["description"] or row["role"] is not None:
         return False  # the DM wrote on it (needs_look is DMbot's own mark, not the DM's)

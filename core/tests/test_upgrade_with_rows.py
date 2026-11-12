@@ -71,7 +71,9 @@ SAMPLES: dict[str, dict[str, str]] = {
     "memory_relations": {"status": "'proposed'"},
     "memory_flags": {"status": "'open'", "kind": "'wrong_subject'"},
     "memory_corrections": {"action": "'keep'"},
-    "memory_entities": {"status": "'confirmed'"},
+    # a character: only a character is linked to the rules, and 0449 removes a link on anything
+    # else (#4241)
+    "memory_entities": {"status": "'confirmed'", "type": "'character'"},
     "plan_nodes": {"kind": "'chapter'"},
     "plan_divergences": {"status": "'open'"},
     "rule_set_codes": {"code": "'AAAAAAAAAA'"},

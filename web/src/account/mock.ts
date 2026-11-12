@@ -1912,7 +1912,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const all = [
         { userId: "1", name: "Stormy", agreed: true },
         { userId: "2", name: "Ash", agreed: false },
-        { userId: "3", name: "Mira", agreed: true },
+        { userId: "3", name: "Mira", agreed: true, before: true },
         // Said Stop recording me: can never be ticked in (#3306).
         { userId: "4", name: "Dax", agreed: false, blocked: "said_no" as const },
       ];

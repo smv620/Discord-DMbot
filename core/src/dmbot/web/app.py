@@ -46,6 +46,7 @@ from dmbot.web import (
     campaign_backup,
     campaign_delete,
     campaign_settings,
+    dm_players,
     email_change,
     email_signin,
     entitlements_writer,
@@ -2519,6 +2520,49 @@ def create_app(
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/players")
+    async def me_remembered_players(signed: Signed) -> dict[str, Any]:
+        """The signed-in DM's own list of players they have played with, across campaigns and
+        servers (#4226). Only theirs: the database door reads the signed-in person's rows."""
+        session, _token = signed
+        try:
+            return await dm_players.remembered(db, session)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/players/{player}/forget")
+    async def me_forget_player(player: str, signed: Signed) -> dict[str, int]:
+        """ "Forget this player" (#4226): removes one row from the DM's own list."""
+        session, _token = signed
+        try:
+            return await dm_players.forget_player(db, session, player)
+        except RecapError as err:
+            if err.code == "gone":
+                raise HTTPException(status_code=409, detail="gone") from None
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/remembered-by")
+    async def me_remembered_by(signed: Signed) -> dict[str, Any]:
+        """Which DMs remember the signed-in person (#4226): who, since when, how many campaigns."""
+        session, _token = signed
+        try:
+            return await dm_players.remembered_by(db, session)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/remembered-by/{dm}/clear")
+    async def me_clear_remembered_by(dm: str, signed: Signed) -> dict[str, int]:
+        """Clear one DM's memory of the signed-in person, or every DM's with `all` (#4226)."""
+        session, _token = signed
+        try:
+            return await dm_players.clear(db, session, dm)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/all-names/answers/{answer}")
     async def me_campaign_all_names_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
         """Where the signed-in DM's own action stands: waiting, working, done (with the changed
@@ -3682,6 +3726,16 @@ def create_app(
     def wizard_refusal(err: RecapError) -> HTTPException:
         status, detail = recap_refusals.get(err.code, (404, "not_found"))
         return HTTPException(status_code=status, detail=detail)
+
+    @app.get("/me/wizard/{guild}/members")
+    async def me_wizard_members(guild: int, signed: Signed, q: str = "") -> dict[str, Any]:
+        """Who a character's player can be (#4204): this server's members by Discord name, those
+        who played with this DM here before first. This one server only."""
+        session, _token = signed
+        try:
+            return {"members": await wizard.members(db, session, guild, q)}
+        except RecapError as err:
+            raise wizard_refusal(err) from None
 
     @app.get("/me/wizard/{guild}")
     async def me_wizard_get(guild: int, signed: Signed) -> dict[str, Any]:
