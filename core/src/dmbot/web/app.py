@@ -3655,6 +3655,16 @@ def create_app(
         status, detail = recap_refusals.get(err.code, (404, "not_found"))
         return HTTPException(status_code=status, detail=detail)
 
+    @app.get("/me/wizard/{guild}/members")
+    async def me_wizard_members(guild: int, signed: Signed, q: str = "") -> dict[str, Any]:
+        """Who a character's player can be (#4204): this server's members by Discord name, those
+        who played with this DM here before first. This one server only."""
+        session, _token = signed
+        try:
+            return {"members": await wizard.members(db, session, guild, q)}
+        except RecapError as err:
+            raise wizard_refusal(err) from None
+
     @app.get("/me/wizard/{guild}")
     async def me_wizard_get(guild: int, signed: Signed) -> dict[str, Any]:
         session, _token = signed

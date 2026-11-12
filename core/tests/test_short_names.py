@@ -112,6 +112,24 @@ class TheRule(unittest.TestCase):
         self.assertTrue(single <= not_names.TITLE_WORDS)
 
 
+class BeforeARead(unittest.TestCase):
+    """The run before a lore read (#4224): a word the text also writes before another name may be a
+    namesake the read has yet to store, so it waits for the run after."""
+
+    def test_a_namesake_in_the_unread_text_holds_the_word_back(self) -> None:
+        people = [("pc", "Cerric Vanya'elen")]
+        text = "Cerric Vanya'elen rode in. The smith Cerric Dorn waved, and Cerric laughed."
+        self.assertEqual(short_names(people, people, [text], unread=True), [])
+        self.assertEqual(
+            short_names(people, people, [text]), [("pc", "Cerric")]
+        )  # (after a read the stored owners decide, as before)
+
+    def test_the_persons_own_full_name_is_no_namesake(self) -> None:
+        people = [("pc", "Cerric Vanya'elen")]
+        text = "Cerric Vanya'elen rode in, and later Cerric laughed."
+        self.assertEqual(short_names(people, people, [text], unread=True), [("pc", "Cerric")])
+
+
 class WhatTheReaderMayLookAt(unittest.TestCase):
     def test_only_people_who_agree_and_never_last_time_s_recap(self) -> None:
         def line(user: int, text: str) -> Line:
