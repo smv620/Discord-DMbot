@@ -160,6 +160,7 @@ match. "In Discord" says where the DM finds it today.
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
+| How big a place is (a plane down to a room; read from the lore's words, the DM sets it, Not sure clears it) | 📏 Size on a place's name card (DM only, #4173 slice 1) | Names: the API and door are built (`placeLevel` on each name, the `place-size` action, #4173); the page's menu is WebDev's, #4187 |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
 | A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | Questions for you: the same card, Yes or No (page built, switched off, `TRAIT_QUESTIONS_LIVE`; the bot's applier is CloudDev-lead's; #3946) |
@@ -169,7 +170,7 @@ match. "In Discord" says where the DM finds it today.
 | What the characters learned (Keep / Not this) | reveal card | #3863 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
 | Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | #4084 (the website's page; the bot already applies its actions) |
-| Private scenes (two player characters alone together while split): Not private | Names home → 📋 More lists → 🤫 Private scenes, or 🤫 Open the list on the after-session note (DM only, #2996 rule 5, #4103) | #4102 (the website's page) |
+| Private scenes (two player characters alone together while split): Not private | Names home → 📋 More lists → 🤫 Private scenes, or 🤫 Open the list on the after-session note (DM only, #2996 rule 5, #4103) | Names page → 🤫 Private scenes (DM only): built, switched off, `PRIVATE_SCENES_LIVE` (#4102; core 0439) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |

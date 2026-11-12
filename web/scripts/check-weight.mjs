@@ -23,9 +23,13 @@ import { checkBuild, table } from "./weight.mjs";
 // the switched panels) load on demand with import(), so the recaps page is 174 KB and the largest page
 // is /account at 178.8 KB. The budget is back at 185 KB. A chunk loaded on demand is not part of a page's
 // weight, so it has its own limit.
+// Raised on 2026-11-11 (#4084) to 186 KB, for one reason: the Story Graph page (/account/web) was at 185.0 KB (the connection panel's
+// work in #4155 already moved its banner and button into lazy files), and a website feature's API methods must be named in
+// `NAMES_METHODS` in the first download (here `metList`, `answerMet`: about 22 bytes). Nothing else on the page grew; the list
+// itself is in a lazy file.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 185,
+  totalKB: 186,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
