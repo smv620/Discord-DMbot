@@ -20,6 +20,7 @@ from dmbot.dm_screen import channel_sync
 from dmbot.memory import sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.rules.house import HouseRuleStore
 from tests.pg import DatabaseTest
 from tests.test_sheets import answer as sheet_answer
 
@@ -49,6 +50,7 @@ class FinishTest(DatabaseTest):
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             memory=MemoryStore(self.db),
+            house_rules=HouseRuleStore(self.db),
             get_guild=lambda gid: self.guild if gid == GUILD else None,
             create_refusal=AsyncMock(return_value=None),
         )
@@ -210,6 +212,71 @@ class TheProgress(FinishTest):
         await self.queue()
         with self.assertRaises(psycopg.errors.CheckViolation):  # (a sentence is not a pass word)
             await self.sql("UPDATE wizard_finishes SET pass_word = 'Belleros sold it'")
+
+
+class TheHouseRules(FinishTest):
+    """Step 7's house-rule documents are read into the campaign (#4211) through the House rules
+    page's own reader; the typed box is stored by the page as a document and read the same way."""
+
+    async def rules(self) -> list[tuple[int, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        return sorted(
+            (r.number, r.rule) for r in await self.bot.house_rules.list(GUILD, campaign.id)
+        )
+
+    async def finish(self, docs: tuple[tuple[str, str, str], ...]) -> dict[str, Any]:
+        await self.draft(docs=docs)
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_numbered_file_is_added_with_its_numbers(self) -> None:
+        text = (
+            "House rules\n3. Potions are bonus.\n"
+            "7. Crits max the die. (instead of: Crits double the dice.)"
+        )
+        row = await self.finish((("house", "rules.txt", text),))
+        self.assertEqual((row["state"], row["error"], row["stage"]), ("done", "", "clean"))
+        self.assertEqual(await self.rules(), [(3, "Potions are bonus."), (7, "Crits max the die.")])
+
+    async def test_a_typed_list_with_no_numbers_is_numbered_in_order(self) -> None:
+        text = "# my rules\nFlanking gives advantage.\n\nHealing potions are a bonus action."
+        await self.finish((("house", "Typed house rules", text),))
+        self.assertEqual(
+            await self.rules(),
+            [(1, "Flanking gives advantage."), (2, "Healing potions are a bonus action.")],
+        )
+
+    async def test_a_document_with_no_rule_keeps_its_word_and_the_campaign_stands(self) -> None:
+        row = await self.finish((("house", "empty.txt", "# only a note\n"),
+                                 ("house", "ok.txt", "1. One rule.")))  # fmt: skip
+        self.assertEqual(row["state"], "done")
+        self.assertEqual(row["error"], "house_unreadable")
+        self.assertIn("house_unreadable:1", row["notes"])
+        self.assertEqual(await self.rules(), [(1, "One rule.")])
+
+    async def test_a_retaken_run_adds_nothing_twice(self) -> None:
+        docs = (("house", "rules.txt", "1. One rule.\n2. Another."),)
+        await self.finish(docs)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        from dmbot import wizard_house
+
+        again = await wizard_house.read_documents(
+            self.bot.house_rules, GUILD, campaign.id, DM, [{"text": docs[0][2], "name": "r"}]
+        )
+        self.assertEqual(again[0], 0)
+        self.assertEqual(len(await self.rules()), 2)
+
+    async def test_house_is_a_stage_and_nothing_is_left_for_the_pages(self) -> None:
+        self.assertIn("house", wizard_finish.STAGES)
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertNotEqual(row["error"], wizard_finish.DOCS_LEFT)
+
+    async def test_homebrew_is_still_left_for_its_page(self) -> None:
+        row = await self.finish((("homebrew", "h.txt", "## Thing (item)\n\nWords."),))
+        self.assertEqual(row["error"], wizard_finish.DOCS_LEFT)
 
 
 class TheRun(FinishTest):
