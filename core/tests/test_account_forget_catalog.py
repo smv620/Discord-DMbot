@@ -28,7 +28,7 @@ ELSEWHERE: Rules = {
         "session_usage", "owner_campaigns", "campaigns", "email_changes", "email_sign_in_links",
         "sent_emails", "entitlements", "web_sessions",
         "web_users", "support_tickets", "wizard_documents", "wizard_drafts", "wizard_finishes",
-        "installs",
+        "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
@@ -68,13 +68,13 @@ UNREVIEWED: Rules = {  # not yet decided: the list for Supervisor on #4141 (colu
     "access_log": None, "account_moves": None, "active_sessions": None, "adventure_reads": None,
     "campaign_dms": None, "campaign_handover_offers": None,
     "house_rule_wins": None, "house_rules_file": None, "lore_uploads": ("rights_by",),
-    "map_notes": None, "memory_beliefs": None, "memory_knowers": None, "move_code_asks": None,
-    "move_codes": None, "name_answers": None, "name_not_same": None, "pack_suggestions": None,
+    "map_notes": None, "memory_beliefs": None, "memory_knowers": None,
+    "name_not_same": None, "pack_suggestions": None,
     "pack_suggestions_sent": None, "pc_icons": None, "plan_position": None, "plan_same_as": None,
     "plot_chat": None, "plot_fine": None, "plot_issues": None, "recap_accepted": None,
     "recap_jobs": ("approved_by", "uploaded_by", "speakers"), "report_answers": None,
     "rule_set_suggestions": None, "rule_set_suggestions_sent": None, "site_approvals": None,
-    "web_delete_notices": None, "web_sheet_actions": None,
+    "web_delete_notices": None,
 }  # fmt: skip
 
 
@@ -89,8 +89,9 @@ class EveryPersonColumnHasARule(DatabaseTest):
     async def test_no_table_with_a_person_column_is_without_a_rule(self) -> None:
         part_a = import_module("dmbot.migrations.0431_forget_person")
         part_b = import_module("dmbot.migrations.0432_forget_authorship")
-        done = {*part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED}
-        deleted_tables = {t for t, _ in part_a.DELETED}
+        part_c = import_module("dmbot.migrations.0440_forget_requests")
+        done = {*part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED}
+        deleted_tables = {t for t, _ in (*part_a.DELETED, *part_c.DELETED)}
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT table_name, column_name FROM information_schema.columns"
