@@ -59,7 +59,8 @@ describe("Help", () => {
   });
 
   it("the DM steps end with what to do after setting up a campaign", () => {
-    expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking.");
+    expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: start DMbot at the table with /dmbot start, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking.");
+    expect(dmSteps.at(-1)?.text).not.toContain("DM Bot channel"); // the channel is not live yet (DM_BOT_CHANNEL_LIVE)
   });
 
   it("the consent label in that step is core's, read from consent_words.py", () => {
