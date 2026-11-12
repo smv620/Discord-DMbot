@@ -8,6 +8,7 @@ from collections import Counter
 
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED
+from dmbot.memory.ontology import TypeTerm
 from dmbot.memory.traits_read import Spoken, read_languages, read_traits
 from dmbot.ui.name_background import store_languages
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -15,6 +16,10 @@ from tests.test_memory_store import GUILD_A, MemoryTest
 TEXT = (
     "Brewner speaks Dwarvish and Giant. Mira knows the old tongue of Netheril. Vexnir is a duergar."
 )
+
+
+def pairs(found: list[Spoken]) -> list[tuple[str, str]]:
+    return [(s.name, s.language) for s in found]
 
 
 def line(name: str, words: str, quote: str, kind: str = "language") -> str:
@@ -32,13 +37,10 @@ class TheReader(unittest.TestCase):
             ["Brewner", "Mira"],
         )
         self.assertEqual(
-            got,
-            [
-                Spoken("Brewner", "Dwarvish"),
-                Spoken("Brewner", "Giant"),
-                Spoken("Mira", "Old tongue of Netheril"),
-            ],
+            pairs(got),
+            [("Brewner", "Dwarvish"), ("Brewner", "Giant"), ("Mira", "Old tongue of Netheril")],
         )
+        self.assertEqual(got[0].quote, "Brewner speaks Dwarvish and Giant")  # (for a question)
 
     def test_nothing_is_invented(self) -> None:
         counts: Counter[str] = Counter()
@@ -59,7 +61,7 @@ class TheReader(unittest.TestCase):
         got = read_languages(
             [line("Brewner", "Dwarvish", "Brewner speaks Dwarvish")], TEXT, [], existing=["brewner"]
         )
-        self.assertEqual(got, [Spoken("Brewner", "Dwarvish")])
+        self.assertEqual(pairs(got), [("Brewner", "Dwarvish")])
 
     def test_a_way_of_speaking_is_no_language_and_a_cant_keeps_its_apostrophe(self) -> None:
         text = "Mira speaks softly, in Thieves' Cant, and with animals."
@@ -70,7 +72,7 @@ class TheReader(unittest.TestCase):
             ["Mira"],
             counts,
         )
-        self.assertEqual(got, [Spoken("Mira", "Thieves' Cant")])
+        self.assertEqual(pairs(got), [("Mira", "Thieves' Cant")])
         self.assertEqual(counts["language_words"], 2)
 
     def test_a_language_is_never_read_as_a_lineage(self) -> None:
@@ -139,3 +141,20 @@ class Kept(MemoryTest):
         again = await store_languages(self.memory, campaign, [Spoken("Brewner", "dwarvish")])
         self.assertEqual(again, 0)
         self.assertEqual(len(await self.memory.story_languages(GUILD_A, self.c, brewner)), 1)
+
+    async def test_a_campaigns_own_kind_of_character_is_one(self) -> None:
+        await self.memory.add_type(
+            GUILD_A,
+            self.c,
+            TypeTerm("hireling", "character", "hireling", "A hired hand.", core=False),
+            examples=["a porter"],
+            reason="ours",
+            source="entitybot",
+        )
+        tom = await self.add("Tom", type="hireling")
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        added = await store_languages(self.memory, campaign, [Spoken("Tom", "Halfling")])
+        self.assertEqual(added, 1)
+        (kept,) = await self.memory.story_languages(GUILD_A, self.c, tom)
+        self.assertEqual(kept.name, "Halfling")
