@@ -101,7 +101,16 @@ export const wizardWords = {
     heading: "Who plays each character?",
     lead: "You can skip this. Pick who plays each character, or set it later on the Names page.",
     pending: "Not set yet",
+    placeholder: "Pick a player…",
     none: "There are no characters to match yet.",
+    before: "played with you before",
+    open: "Show the players",
+    listLabel: (character: string): string => `Players for ${character}`,
+    noMatch: (typed: string): string => `No one called ${typed} is in this server's member list. Pick a name from the list, or leave it as Not set yet.`,
+    noPlayerYet: (n: number): string => `${n} ${n === 1 ? "character has" : "characters have"} no player yet`,
+    cannotSee: "DMbot can't see this server's members yet. You can set who plays each character later on the Names page.",
+    loading: "Loading this server's members…",
+    pickedEarlier: "Picked earlier",
   },
 
   // Steps 4 and 5: lore and secrets.
