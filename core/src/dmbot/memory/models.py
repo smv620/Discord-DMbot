@@ -85,6 +85,10 @@ LINK_LABELS = {
 }
 LINK_SOURCE_MAX = 40
 LINK_NAME_MAX = 100
+# A language a character knows from the story (#4229): as written, at most this long, given by
+# DMbot's read or by the DM. A character with a sheet keeps its languages there instead.
+STORY_LANGUAGE_MAX = 60
+GIVEN_BY = ("read", "dm")
 LINK_EDITIONS = ("2014", "2024")
 
 NAME_MAX = 100
@@ -264,6 +268,28 @@ class Trait:
     rules_source: str = ""
     edition: str | None = None
     known: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class StoryLanguage:
+    """A language a character knows from the story (#4229), kept beside the sheets: "Elvish" (one
+    of the SRD's, `srd`) or the campaign's own tongue. `given_by` is "read" until the DM checks it
+    ("dm")."""
+
+    id: str
+    entity_id: str
+    name: str
+    srd: bool
+    given_by: str  # GIVEN_BY
+
+
+@dataclass(frozen=True, slots=True)
+class Known:
+    """One language someone at the table knows, and where DMbot has it from (#4229): "sheet" (the
+    character's sheet, the source of truth), or the story ("read" by DMbot, or the "dm"'s word)."""
+
+    name: str
+    source: str  # "sheet", or GIVEN_BY
 
 
 @dataclass(frozen=True, slots=True)
