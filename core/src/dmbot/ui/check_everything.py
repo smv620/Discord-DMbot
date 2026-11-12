@@ -76,10 +76,19 @@ async def waiting_counts(
 
 
 async def _count_reveals(bot: Any, guild_id: int, campaign_id: str) -> int:
-    """What the characters learned, waiting for a yes (zero when it cannot be read)."""
+    """What the characters learned, waiting for a yes (zero when it cannot be read). Counted only
+    where the after-session question is asked at all: the reveals switch is on and the campaign's
+    plan has story memory (leftover proposals of a lapsed plan are not offered)."""
     from dmbot.ui.reveal_card import count_reveals
 
     try:
+        if not bot.settings.story_reveals_on:
+            return 0
+        campaign = await bot.campaigns.get(guild_id, campaign_id)
+        if campaign is None or not await bot.plan_allows(
+            "story", guild_id, campaign, fail_open=False
+        ):
+            return 0
         return await count_reveals(bot, guild_id, campaign_id)
     except Exception as exc:
         log.warning("Check everything: couldn't count reveals (%s)", type(exc).__name__)
@@ -88,10 +97,19 @@ async def _count_reveals(bot: Any, guild_id: int, campaign_id: str) -> int:
 
 async def _count_deeds(bot: Any, guild_id: int, campaign_id: str) -> int:
     """The deeds waiting for a yes (a count that cannot be read is zero; the log gets the error
-    type only). Counted without changing anything."""
+    type only). Counted without changing anything, and only where the after-session question is
+    asked at all: the deeds switch is on and the campaign's plan has story memory (leftover
+    proposals of a lapsed plan are not offered)."""
     from dmbot.ui.deed_card import count_deeds
 
     try:
+        if not bot.settings.story_deeds_on:
+            return 0
+        campaign = await bot.campaigns.get(guild_id, campaign_id)
+        if campaign is None or not await bot.plan_allows(
+            "story", guild_id, campaign, fail_open=False
+        ):
+            return 0
         return await count_deeds(bot, guild_id, campaign_id)
     except Exception as exc:
         log.warning("Check everything: couldn't count deeds (%s)", type(exc).__name__)
