@@ -33,7 +33,7 @@ from dmbot.ui.names import _campaign_for, _md, _memory
 from dmbot.walk import Walk
 
 NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
-FINISHED = "✅ What was said is checked."  # (the line a "Check everything" walk leaves, #4192)
+FINISHED = "✅ What was said: checked."  # (the line a "Check everything" walk leaves, #4192)
 ODD_PAIR = "DMbot noticed something odd about it"
 REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters

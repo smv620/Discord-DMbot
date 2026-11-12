@@ -83,7 +83,7 @@ async def begin(interaction: discord.Interaction, guild_id: int, campaign_id: st
     counts = await waiting_counts(interaction, campaign.guild_id, campaign.id)
     parts = walks.parts_for(counts)
     if not parts:
-        await _tell(interaction, walks.ALL_DONE)
+        await _tell(interaction, walks.NOTHING_TO_CHECK)
         return
     message = interaction.message
     origin = (message.channel.id, message.id) if message is not None else None
@@ -150,7 +150,9 @@ async def stop_walk(interaction: discord.Interaction, walk: Walk, view: _Menu) -
     from dmbot.ui.dmbot_commands import _replace
 
     view.stop()
-    await _replace(interaction, walks.STOPPED, None)
+    await _replace(
+        interaction, walks.STOPPED if walk.origin is not None else walks.STOPPED_NO_ORIGIN, None
+    )
     counts = await waiting_counts(interaction, walk.guild_id, walk.campaign_id)
     await relabel_origin(interaction, walk, sum(counts.values()))
 

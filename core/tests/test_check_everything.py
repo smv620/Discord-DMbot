@@ -60,6 +60,7 @@ class TheWalksOrderAndWords(unittest.TestCase):
         self.assertEqual(walk.progress(4, 11), "Names, part 1 of 3 · 4 of 11")
         self.assertEqual(walk.next().progress(1, 9), "What was said, part 2 of 3 · 1 of 9")
         self.assertEqual(walk.progress(0, 0), "Names, part 1 of 3")
+        self.assertEqual(Walk(CID, GUILD, 1, (NAMES,)).progress(2, 5), "Names · 2 of 5")
 
     def test_the_last_part_knows_it_is_last(self) -> None:
         walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS))
@@ -76,7 +77,7 @@ class TheWalksOrderAndWords(unittest.TestCase):
     def test_the_card_line_is_empty_outside_a_walk(self) -> None:
         self.assertEqual(ce.progress(None, 1, 2), "")
         walk = Walk(CID, GUILD, 1, (NAMES,))
-        self.assertEqual(ce.progress(walk, 1, 2), "_Names, part 1 of 1 · 1 of 2_\n")
+        self.assertEqual(ce.progress(walk, 1, 2), "_Names · 1 of 2_\n")
 
 
 class TheButtonOnTheMessage(unittest.TestCase):

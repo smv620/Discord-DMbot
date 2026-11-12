@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-FINISHED = "✅ Names checked."  # (the line a "Check everything" walk leaves behind, #4192)
+FINISHED = "✅ Names: checked."  # (the line a "Check everything" walk leaves behind, #4192)
 
 SHOWN_PER_SECTION = 10
 PANEL_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it

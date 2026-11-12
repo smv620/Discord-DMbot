@@ -19,7 +19,7 @@ from dmbot.walk import Walk
 log = logging.getLogger(__name__)
 
 NOTHING_WAITING = "✅ Nothing to check. DMbot asks after a session, when it learns a name."
-FINISHED = "✅ Who is who is checked."  # (the line a "Check everything" walk leaves, #4192)
+FINISHED = "✅ Who is who: checked."  # (the line a "Check everything" walk leaves, #4192)
 GONE = "That one was already answered. Press **Check who is who** again for the next one."
 
 

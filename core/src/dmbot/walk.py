@@ -57,7 +57,12 @@ class Walk:
 
     def progress(self, done: int, total: int) -> str:
         """ "Names, part 1 of 3 · 4 of 11": which part, and how far in it."""
-        part = f"{label(self.kind)}, part {self.index + 1} of {len(self.parts)}"
+        # (a walk of one part has no "part 1 of 1" to show)
+        part = (
+            f"{label(self.kind)}, part {self.index + 1} of {len(self.parts)}"
+            if len(self.parts) > 1
+            else label(self.kind)
+        )
         return f"{part} · {done} of {total}" if total > 0 else part
 
 
@@ -71,8 +76,11 @@ def between(done_kind: str, next_kind: str, waiting: int) -> str:
     return f"{label(done_kind)} done. Next: {label(next_kind).lower()} ({waiting})."
 
 
-STOPPED = "Stopped for now. Press **✅ Carry on** on the message when you want to go on."
+STOPPED = "Stopped. Your answers are saved. Press **✅ Carry on** on the message above to go on."
+# (the message to press was not kept, so the way back is the button on the first message)
+STOPPED_NO_ORIGIN = "Stopped. Your answers are saved. Press **✅ Check everything** again to go on."
 ALL_DONE = "✅ Everything is checked. DMbot will ask again after the next session."
+NOTHING_TO_CHECK = "Nothing to check right now. DMbot will ask again when there is something new."
 STOP_LABEL = "Stop for now"
 
 
