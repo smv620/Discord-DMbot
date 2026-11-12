@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -34,6 +35,8 @@ from dmbot.memory import (
     lore_knowledge,
     lore_pc_names,
     lore_read,
+    map_fact_store,
+    map_facts,
     picture_read,
     place_levels,
     pronouns,
@@ -68,6 +71,7 @@ from dmbot.memory.models import (
     NEEDS_A_LOOK,
     PLAYER_CHARACTER,
     PROPOSED,
+    REJECTED,
     SPECIES,
     MemoryRuleError,
     MoreNames,
@@ -1077,6 +1081,7 @@ async def _read_background(
         done.sheet_languages = tuple(on_sheets)
         done.trait_questions += asked
         done.questions_left += asked
+    await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
     return done
 
 
@@ -1371,6 +1376,61 @@ async def store_languages(
     if added or skipped:
         log.info("Lore languages: %d added as DMbot's read, %d left for later", added, skipped)
     return added
+
+
+async def store_place_facts(
+    memory: MemoryStore, campaign: Campaign, text: str, session_at: int | None = None
+) -> int:
+    """A place's land, climate or ruler, from the set phrases right beside its name
+    (`map_facts.read_facts`, #4256), written as DMbot's read for the DM to check: they wait on the
+    place's card, DM-only, marked "(DMbot read this)". Any place of the campaign named in the text,
+    the ones this read just made included; a name two places share is skipped (DMbot can't tell
+    which). `session_at`: the session the text was said in, so the table knows it. Never raises;
+    the log gets counts per layer only (`unknown` is a place named with nothing found)."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Place facts couldn't be read (%s)", type(exc).__name__)
+        return 0
+    places: dict[str, set[str]] = {}
+    groups: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if who is None or who.status == REJECTED:
+            continue
+        if onto.is_a(who.type, "place"):
+            places.setdefault(entry.text, set()).add(who.id)
+        elif onto.is_a(who.type, "faction"):
+            groups.setdefault(entry.text, set()).add(who.id)
+    group_ids = {name: next(iter(ids)) for name, ids in groups.items() if len(ids) == 1}
+    found: list[map_fact_store.Read] = []
+    counts: Counter[str] = Counter()
+    for name, ids in places.items():
+        if len(ids) != 1 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
+            continue
+        read = map_facts.read_facts(name, text, group_ids)
+        if not read:
+            counts["unknown"] += 1
+        for f in read:
+            counts[f.layer] += 1
+            value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
+            found.append(map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at))
+    if not found:
+        return 0
+    try:
+        written = await memory.add_read_map_facts(
+            campaign.guild_id, campaign.id, found, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # the type only
+        log.warning("Place facts couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    log.info(
+        "Place facts read: terrain=%d climate=%d control=%d unknown=%d; %s",
+        counts[map_facts.TERRAIN], counts[map_facts.CLIMATE], counts[map_facts.CONTROL],
+        counts["unknown"], dict(sorted(written.value.items())),
+    )  # fmt: skip
+    return written.value["written"]
 
 
 async def ask_languages(

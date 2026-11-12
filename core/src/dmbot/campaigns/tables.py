@@ -23,6 +23,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_entities",
         "memory_rule_links",
         "memory_story_languages",  # an NPC's languages from the story (#4229)
+        "memory_map_facts",  # a place's land, climate and who rules it (#4256)
         "memory_states",
         "memory_claims",
         "memory_aliases",

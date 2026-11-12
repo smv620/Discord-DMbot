@@ -281,6 +281,12 @@ async def settle_kind(
     if not onto.is_a(type_key, "character"):  # only a character knows languages (#4229)
         for row in await w.select(STORY_LANGUAGES, " AND entity_id = ANY(%s)", [ids]):
             await w.delete(STORY_LANGUAGES, row["id"])  # (logged: Undo gives them back)
+    # only a place has land, a climate or a ruler, and only a group rules one (#4256)
+    from dmbot.memory import map_fact_store
+
+    await map_fact_store.drop_on_kind_change(
+        w, list(ids), onto.is_a(type_key, "place"), onto.is_a(type_key, "faction")
+    )
 
 
 async def move_states(
