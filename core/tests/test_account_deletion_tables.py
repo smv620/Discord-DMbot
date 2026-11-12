@@ -295,11 +295,13 @@ ROWS: dict[str, str] = {
     ),
     "recap_accepted": (
         "INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version, text_hash, title,"
-        " summary, accepted_by, accepted_at) VALUES (%(g)s, %(c)s, %(u)s, 1, %(f)s, 'x', 'x', %(u)s, 1)"
+        " summary, accepted_by, accepted_at)"
+        " VALUES (%(g)s, %(c)s, %(u)s, 1, %(f)s, 'x', 'x', %(u)s, 1)"
     ),
     "report_answers": (
         "INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,"
-        " answered_by, answered_at) VALUES (%(g)s, %(c)s, %(k)s, 'difference', 'intended', %(u)s, 1)"
+        " answered_by, answered_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 'difference', 'intended', %(u)s, 1)"
     ),
     "plot_fine": (
         "INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)"
