@@ -418,7 +418,7 @@ Every answer is short, says "about", names the map it used, and carries the map'
 |---|---|---|
 | **How far is it?** | 1. a length the DM set; 2. a length stated in the story; 3. the length of a traced path on a map; 4. a straight line between two pins on a map with a scale | "About 40 miles in a straight line, on the Icewind Dale map. 🗺️ link" |
 | **Which way is it?** | the bearing between two pins and the map's north, as one of eight directions | "North-east of Targos, on the map." |
-| **How long will it take?** | the distance above, and the SRD's Travel Pace and Travel Terrain entries, cited. It shows its working and is an estimate for the DM | "About 40 miles. SRD Travel Pace, p. 192: … so about 2 days at a Normal pace. Your call." |
+| **How long will it take?** | a suggestion, never a fact: the route, the terrain, how the party travels and how fast, with the SRD entries cited and the working shown (below) | "About 40 miles by road. On foot at a Normal pace, about 2 days; 3 if Slow. SRD Travel Pace, p. 192. Your call." |
 | **Where is it?** / **Show me** | the most detailed map with a pin for it, opened at that pin; in Discord, a cut-out of the map around the pin | "Here on the Ten-Towns map. 🗺️ link" |
 | **What's near?** / **What's on the way?** | pins close to a place, or along a path | "On the way: Bremen, then Termalaine." |
 | **What is it like there?** | the layer rows, read up the tree | "Mountain · arctic (from Icewind Dale)" |
@@ -426,8 +426,8 @@ Every answer is short, says "about", names the map it used, and carries the map'
 **Rules for answers:**
 
 - **Measured is never exact.** Numbers are rounded, and a straight line is called a straight line.
-- **A stated length beats a measured one.** When they differ a lot, the DM gets a World note after
-  the session, never a correction during play.
+- **A stated length beats a measured one,** and the DM's word always wins. A large difference is
+  flagged to the DM (below); nothing is changed.
 - **Travel time is for the DM.** The SRD's travel entries are DM-side (`Entry.dm_side`), so a
   player's table question about travel time gets "That's one for your DM." A player may ask how
   far and which way, from `table` maps.
@@ -443,9 +443,49 @@ Every answer is short, says "about", names the map it used, and carries the map'
   (`memory/live_heads_up.py`). Code decides this from the words and the pins; it costs no AI call.
 - **The link** opens the website's map page at that spot. In Discord it shows a small cut-out.
 
-**After the session** (as in revision 1): a plausibility note ("reached Bryn Shander in an hour;
-the map makes it about 40 miles"), a weather note against climate and season, recap colour from
-`table_knows` rows, and layer rows for first meetings (#4229).
+**When the DM's word and a map disagree** (owner, 2026-11-12):
+
+- **Distance:** when a distance the DM states (in a session, in lore, or set on a place or route)
+  differs by **more than 20%** from what a map DMbot uses gives for the same two places, DMbot
+  tells the DM.
+  - **Against a traced path,** it is flagged either way, longer or shorter.
+  - **Against a straight line,** it is flagged only when the stated distance is the shorter one by
+    more than 20%. A road is always longer than a straight line, so a longer stated distance is no
+    conflict.
+- **Direction:** flagged when the stated direction is more than one of the eight compass points
+  away from the map's, and only on a map whose north was read or set, never assumed.
+- **What the DM sees:** one line, on the DM screen only, with the map, both figures and the
+  difference: "You said 20 miles from Targos to Bryn Shander. The Ten-Towns map makes it about 35
+  by road. 🗺️ link". Once for each pair of places in a session, as the live heads-up does.
+- **Nothing changes in the data.** The DM keeps their word, fixes the map (its scale or a pin), or
+  ignores it. There are no buttons that change the story.
+- **A conflict found in uploaded lore or prep** goes in that upload's note or in World notes, not
+  on the DM screen during play.
+- **Within 20% is silence.** Never to players, never worded as a correction.
+
+**Travel time is suggested, never flagged** (owner, 2026-11-12). The same trip can take very
+different times, so a stated time is never treated as a conflict with a map.
+
+- **What the suggestion is built from:**
+  1. **The route:** whether one exists between the two places (`route_to`, a traced path, a road on
+     a map), and its length. With no route, DMbot says it is a straight line across country.
+  2. **The terrain** along it, from the terrain layer, including where it is hard going, and the
+     route's condition.
+  3. **How the party travels:** on foot, mounted, by wagon, by boat, flying. Speeds come from the
+     SRD entries already in the rules index (Travel Pace, and the mounts and vehicles), or from
+     what the DM says.
+  4. **How fast:** a Fast, Normal or Slow pace, as the SRD's Travel Pace entry defines them,
+     including which pace allows stealth.
+- **What it looks like:** a short range with its working, citing each SRD entry used: "About 2
+  days on foot at a Normal pace; 3 if Slow for stealth." Anything it had to assume is said ("no
+  road on the map, so across open tundra").
+- **When it is offered:** when the DM asks, or once when the DM states a travel time for a pair of
+  places DMbot can measure. It is DM-side, an estimate, and the DM decides.
+- **What it never does:** change the game clock, mark a journey as travelled, or tell the DM their
+  time is wrong.
+
+**After the session:** a weather note against climate and season, recap colour from `table_knows`
+rows, and layer rows for first meetings (#4229), as in revision 1.
 
 ---
 
@@ -509,6 +549,9 @@ source of positions.
 - **Never make up** a position, a scale, weather, a border, a population, a travel time or a ruler.
   A missing value is "not known", said plainly, with what would fix it.
 - **Never present a measurement as exact,** and never without the map it came from.
+- **Never change anything because a map and the DM's word differ.** DMbot flags a distance or a
+  direction that is far off, privately, once, and leaves both as they are.
+- **Never flag a travel time as wrong.** Time is only ever suggested, with its working.
 - **Never put a coordinate on a place entry,** and never merge positions across maps.
 - **Never keep a picture as a map before its uploader said yes** to the right-to-use question.
 - **Never read a player's map into the graph, positions, layers or answers before a DM said yes**
@@ -583,13 +626,13 @@ Each slice is its own PR with tests, sample keys and a migration number claimed 
 | 1 | **Route length** as stated words on `route_to` and route places | GraphEngineer | part of #4173 slice 6d | "two days by cart" on the route |
 | 2 | **`map_facts` with terrain, climate and control:** the table, the set-phrase readers, the DM's edit, the card line, the players' rule, World notes | GraphEngineer, WebDev | place levels (built) | the "where are we" line on every place |
 | 3 | **Maps are kept as maps:** `campaign_maps`, the right-to-use question in Discord and on the website, the Maps page with upload, the DM-only audience and its link rule, "Show to the table" | CloudDev-lead (store), WebDev (page), GraphEngineer (the record) | the kept pictures (built) | every map in one place, with a link, from Discord or the website |
-| 4 | **Positions:** `map_features`, the AI's pins, scale and north from the map read of #4173 slice 6b, and the measuring module | GraphEngineer | slice 3; #4173 slice 6b | "how far", "which way" and "where is it", with the link |
+| 4 | **Positions:** `map_features`, the AI's pins, scale and north from the map read of #4173 slice 6b, the measuring module, and the private flag when the DM's distance or direction is far from the map's | GraphEngineer | slice 3; #4173 slice 6b | "how far", "which way" and "where is it", with the link; a quiet word when a stated distance is more than 20% off |
 | 5 | **The map page becomes a workbench:** drag a pin, trace a road, set the scale with two clicks, draw an area | WebDev | slice 4 | exact distances along roads |
 | 6 | **Culture and population** | GraphEngineer, WebDev | #4229's catalogue | "strong dwarven culture" on a place |
 | 7 | **Route condition** | GraphEngineer | slice 1 | "closed" on the pass, with its history |
 | 8 | **Layers from maps:** what a map shows outright, as layer rows, with the snapshot and deletion rules | GraphEngineer | slices 2 and 4 | layers filled from a posted map |
 | 9 | **Bringing a map back during play:** the unasked DM-screen line and the Discord cut-out | GraphEngineer | slice 4 | the right map at the right moment |
-| 10 | **Travel time, and the after-session notes** (plausibility, weather), then recap colour | GraphEngineer | slices 4 and 7; recap scored as `docs/RECAP_STANDARD.md` requires | estimates and notes |
+| 10 | **The travel-time suggestion** (route, terrain, how the party travels, pace), then the after-session weather note and recap colour | GraphEngineer | slices 2, 4 and 7; recap scored as `docs/RECAP_STANDARD.md` requires | "about 2 days on foot; 3 if slow for stealth", with its working |
 | 11 | **Imports, one tool per PR:** Azgaar, then Universal VTT, then Watabou, then Kanka | GraphEngineer, WebDev | slices 4 and 8 | a whole world in one upload |
 | 12 | **The sketch from the graph** | WebDev | slice 4 | a picture where there is no map |
 
