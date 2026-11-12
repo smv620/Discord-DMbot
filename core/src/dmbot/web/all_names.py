@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import place_levels
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
@@ -281,6 +282,7 @@ ACTIONS = (
     "told-remove",  # ... or take that telling back: {alias, character}
     "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
     "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
+    "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
 )
 
 KIND_WORD = re.compile(
@@ -412,6 +414,11 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_name")
         if len(text) > PLAYERS_TEXT_MAX:
             raise RecapError("too_long")
+    elif action == "place-size":  # one size word, or null for "Not sure" (the door checks too)
+        size = body.get("size")
+        if size is not None and size not in place_levels.LEVELS:
+            raise RecapError("bad_name")
+        text = size or ""
     elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
         target = str(body.get("alias") or "")
         if not ID_PATTERN.match(target):

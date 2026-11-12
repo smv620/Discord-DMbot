@@ -99,7 +99,15 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         " AND s.type = ANY(%s) AND o.type = ANY(%s)",
         (*w.ids, NESTS, places, places),
     )
-    return Nesting((r["subject_id"], r["object_id"]) for r in await cur.fetchall())
+    pairs = [(str(r["subject_id"]), str(r["object_id"])) for r in await cur.fetchall()]
+    # and how big each place is (#4173): two of different sizes are never rivals
+    cur = await w.conn.execute(
+        "SELECT id, place_level FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+        " AND place_level IS NOT NULL",
+        w.ids,
+    )
+    levels = {str(r["id"]): str(r["place_level"]) for r in await cur.fetchall()}
+    return Nesting(pairs, levels)
 
 
 async def load_extras(w: Scope, onto: Ontology, facts: Sequence[Relation]) -> Extras:
@@ -210,8 +218,9 @@ async def settle_kind(
 ) -> None:
     """After ANY write that gives entries a new kind: a condition the new kind can't have is
     closed (an item made a character is no longer `intact`; the history stays) and
-    `unique_item` is cleared unless the new kind is an item, and `audience_limited` unless it is
-    a clue. Without it a backup of the campaign would be refused as damaged when restored."""
+    `unique_item` is cleared unless the new kind is an item, `audience_limited` unless it is
+    a clue, and a size (#4173) unless it is a place. Without it a backup of the campaign would be
+    refused as damaged when restored."""
     ids = sorted(set(entity_ids))
     if not ids:
         return
@@ -224,7 +233,8 @@ async def settle_kind(
     # for each.
     flagged = await w.select(
         ENTITIES,
-        " AND (unique_item IS NOT NULL OR audience_limited OR party) AND id = ANY(%s)",
+        " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL)"
+        " AND id = ANY(%s)",
         [ids],
     )
     clears: dict[str, dict[str, Any]] = {}
@@ -236,6 +246,9 @@ async def settle_kind(
             undo["party"] = False  # only a group can be the party
         if r["audience_limited"] and type_key != "clue":
             undo["audience_limited"] = False  # only a clue has an audience
+        if r.get("place_level") is not None and not onto.is_a(type_key, "place"):
+            undo["place_level"] = None  # only a place has a size (#4173)
+            undo["place_level_from"] = None
         if undo:
             clears[r["id"]] = undo
     if clears:
