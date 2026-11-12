@@ -273,8 +273,9 @@ class WebAccounts(DatabaseTest):
             await conn.execute("DELETE FROM web_users WHERE user_id = %s", (ALICE,))
         self.assertEqual(await self.count("try_it_used", self.db.user(ALICE)), 1)
 
-    async def test_try_it_keeps_only_the_discord_id(self) -> None:
-        # Kept after a deletion, so it holds nothing but the id (privacy page, #435).
+    async def test_try_it_keeps_only_the_discord_id_and_its_keyed_hash(self) -> None:
+        # Kept after a deletion, so it holds nothing but the id and the keyed one-way hash of it
+        # that lets a returning person be recognised once the id is gone (privacy page, #435, #4145).
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT column_name FROM information_schema.columns"
@@ -282,7 +283,7 @@ class WebAccounts(DatabaseTest):
                 " ORDER BY ordinal_position"
             )
             columns = [row["column_name"] for row in await cur.fetchall()]
-        self.assertEqual(columns, ["user_id"])
+        self.assertEqual(columns, ["user_id", "person_key"])
 
     async def test_a_person_cannot_forge_or_forget_payment_events(self) -> None:
         await self.add_user(ALICE)
