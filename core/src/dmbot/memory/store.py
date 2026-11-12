@@ -3198,9 +3198,6 @@ class MemoryStore:
                 found = await name_scene(w, r)
                 if found is not None:
                     scenes[str(r["id"])] = found
-            # An entry with a player (a person, or a player character waiting) is never retyped in
-            # bulk: it would keep its player on a kind that has none, which a backup refuses
-            # (#4244). It stays waiting for its own card.
             fields = {"type": type, "role": role, "status": CONFIRMED, "needs_look": False}
             confirmed = []
             for group, extra in (
@@ -3211,7 +3208,9 @@ class MemoryStore:
                 confirmed += await w.update_where(
                     ENTITIES,
                     {**fields, **extra},
-                    # (a person the story never named is not retyped in bulk: #2790)
+                    # (a person the story never named is not retyped in bulk: #2790; nor an entry
+                    # with a player, which would keep its player on a kind that has none and a
+                    # backup refuses: it waits for its own card, #4244)
                     " AND status = 'proposed' AND NOT unnamed AND played_by IS NULL"
                     " AND id = ANY(%s)",
                     [group],

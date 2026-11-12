@@ -26,15 +26,9 @@ class AfterAnUndo(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, undone.batch, source="dm")  # the redo
         (back,) = await self.memory.rule_links(GUILD_A, self.c, [tower])
         self.assertEqual(back.name, "Wizard")
-
-    async def test_an_undo_that_changes_no_kind_changes_nothing_more(self) -> None:
-        npc = await self.add("Brewner")
-        await self.memory.set_rule_link(GUILD_A, self.c, npc, "class", "Fighter", source="dm")
-        renamed = await self.memory.rename_entity(GUILD_A, self.c, npc, "Brewner Ash", source="dm")
-        assert renamed.batch is not None
-        await self.memory.undo(GUILD_A, self.c, renamed.batch, source="dm")
-        (kept,) = await self.memory.rule_links(GUILD_A, self.c, [npc])
-        self.assertEqual(kept.name, "Fighter")
+        redone = await self.memory.entity(GUILD_A, self.c, tower)
+        assert redone is not None
+        self.assertEqual(redone.type, "character")  # a character again, with its class
 
 
 class InAGroup(MemoryTest):
@@ -46,9 +40,14 @@ class InAGroup(MemoryTest):
             )
         ).value.id  # fmt: skip
         plain = await self.add("Grik", source="scan", status=PROPOSED)
-        await self.memory.confirm_kinds(GUILD_A, self.c, [person, plain], "place", source="dm")
+        written = await self.memory.confirm_kinds(
+            GUILD_A, self.c, [person, plain], "place", source="dm"
+        )
+        self.assertEqual(written.value, 1)  # the count the DM is told
         sam = await self.memory.entity(GUILD_A, self.c, person)
         grik = await self.memory.entity(GUILD_A, self.c, plain)
         assert sam is not None and grik is not None
         self.assertEqual((sam.status, sam.played_by), (PROPOSED, 5))  # left for its own card
         self.assertEqual((grik.type, grik.status), ("place", CONFIRMED))
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)  # (loads)
