@@ -393,7 +393,10 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     answers = check_answers(draft.answers)
     if answers is None:
         return BAD_ANSWERS
-    needs_rights = any(d["slot"] in CHOICE_OF for d in draft.documents)
+    # (the door refuses it too; checked again here, for every slot that is read and for links)
+    needs_rights = bool(answers.get("homebrew_links")) or any(
+        d["slot"] in (*CHOICE_OF, "house", "homebrew") for d in draft.documents
+    )
     if needs_rights and not draft.rights_shared_at:
         return NO_RIGHTS  # nothing is read, and none is made up, without the DM's confirmation
     guild = bot.get_guild(guild_id)
@@ -783,6 +786,14 @@ async def _read_slot(
     return word
 
 
+def _with_pairs(notes: str, new: dict[str, int]) -> str:
+    """The notes with these "word:count" pairs set, each replacing an earlier pair of its word (a
+    retaken run does not double a count); at most 8 pairs, as the row's check allows."""
+    pairs = {p.partition(":")[0]: p for p in notes.split() if p}
+    pairs.update({w: f"{w}:{n}" for w, n in new.items()})
+    return " ".join(list(pairs.values())[:8])
+
+
 async def _read_house(
     bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
     docs: list[dict[str, Any]],
@@ -808,9 +819,7 @@ async def _read_house(
         log.warning("A wizard run could not read its house rules (%s)", type(exc).__name__)
         return word or HOUSE_FAILED
     if unreadable:
-        pairs = [p for p in run.notes.split() if p]
-        pairs.append(f"{wizard_house.HOUSE_UNREADABLE}:{min(unreadable, 999)}")
-        run.notes = " ".join(pairs[:8])
+        run.notes = _with_pairs(run.notes, {wizard_house.HOUSE_UNREADABLE: min(unreadable, 999)})
         return word or wizard_house.HOUSE_UNREADABLE
     return word
 
@@ -829,7 +838,7 @@ async def _read_homebrew(
     links = [str(v).strip() for v in answers.get("homebrew_links") or [] if str(v).strip()]
     store = getattr(bot, "homebrew", None)
     importer, sources = getattr(bot, "importer", None), getattr(bot, "sources", None)
-    if (docs and store is None) or (links and (importer is None or sources is None)):
+    if ((docs or links) and store is None) or (links and (importer is None or sources is None)):
         return HOMEBREW_FAILED  # the DM adds them on the Homebrew page
     if not docs and not links:
         return word
@@ -847,7 +856,7 @@ async def _read_homebrew(
                 guild_id, run, stage="homebrew", part=len(docs) + 1, of_parts=len(docs) + len(links)
             )
             _, failed = await wizard_homebrew.read_links(
-                importer, sources, guild_id, campaign_id, run.user_id, links
+                importer, sources, store, guild_id, campaign_id, run.user_id, links
             )
             if failed:
                 counts[wizard_homebrew.HOMEBREW_LINK_FAILED] = failed
@@ -857,9 +866,7 @@ async def _read_homebrew(
         log.warning("A wizard run could not read its homebrew (%s)", type(exc).__name__)
         return word or HOMEBREW_FAILED
     if counts:
-        pairs = [p for p in run.notes.split() if p]
-        pairs += [f"{w}:{min(n, 999)}" for w, n in counts.items()]
-        run.notes = " ".join(pairs[:8])
+        run.notes = _with_pairs(run.notes, {w: min(n, 999) for w, n in counts.items()})
         return word or next(iter(counts))
     return word
 

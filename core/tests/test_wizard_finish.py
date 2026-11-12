@@ -340,6 +340,33 @@ class TheHouseRules(FinishTest):
         [campaign] = await self.campaigns.list_campaigns(GUILD)
         self.assertEqual(len(await self.bot.homebrew.list(GUILD, campaign.id)), 1)
 
+    async def test_links_without_the_right_to_use_confirmation_read_nothing(self) -> None:
+        await self.draft({"name": "Frostmaiden", "homebrew_links": [HOMEBREW_URL]}, rights=0)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("failed", "no_rights"))
+        self.assertEqual(await self.sql("SELECT 1 FROM site_approvals"), [])
+
+    async def test_a_homebrew_document_without_the_confirmation_reads_nothing(self) -> None:
+        await self.draft(docs=(("homebrew", "h.txt", "## Hollow King (monster)\n\nWords.\n"),),
+                         rights=0)  # fmt: skip
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["error"], "no_rights")
+
+    async def test_a_second_run_does_not_double_the_notes(self) -> None:
+        notes = wizard_finish._with_pairs("homebrew_unreadable:1", {"homebrew_unreadable": 1})
+        self.assertEqual(notes, "homebrew_unreadable:1")
+
+    async def test_the_door_refuses_finish_for_links_without_the_confirmation(self) -> None:
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_finish'"
+        )
+        self.assertIn("jsonb_array_length(d.answers->'homebrew_links')", door["d"])
+
     async def test_homebrew_is_a_stage_and_the_door_takes_the_links_key(self) -> None:
         self.assertIn("homebrew", wizard_finish.STAGES)
         [door] = await self.sql(

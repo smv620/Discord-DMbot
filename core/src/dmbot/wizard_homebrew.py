@@ -54,22 +54,39 @@ async def read_documents(
 
 
 async def read_links(
-    importer: Any, sources: Any, guild_id: int, campaign_id: str, user_id: int, links: list[str]
+    importer: Any,
+    sources: Any,
+    homebrew: Any,
+    guild_id: int,
+    campaign_id: str,
+    user_id: int,
+    links: list[str],
 ) -> tuple[int, int]:
     """Add each published page. Returns (pages added, links that failed). A site is approved for
     the campaign the first time a link needs it (the draft's confirmation); a page already in the
     campaign is not added twice."""
     added = failed = 0
+    have = {
+        e.page_url
+        for e in await homebrew.list(guild_id, campaign_id, usable_only=False)
+        if e.source_kind == "link"
+    }
     for text in links:
         try:
             url, domain = importer.check_address(text)
+            if url in have:
+                continue  # (an earlier try of this run added it: neither added nor failed)
             if not await sources.approved(guild_id, campaign_id, domain):
                 await sources.approve(guild_id, campaign_id, user_id, domain)
             preview = await importer.read(guild_id, campaign_id, url)
             await importer.save(guild_id, campaign_id, user_id, preview)
+            have.add(url)
             added += 1
         except (ImportRefused, HomebrewError) as exc:
             log.info("A wizard homebrew link was not added: %s", type(exc).__name__)
+            failed += 1
+        except Exception as exc:  # one link's trouble never stops the others
+            log.warning("A wizard homebrew link failed (%s)", type(exc).__name__)
             failed += 1
     log.info(
         "A wizard run read %d homebrew link(s): %d added, %d failed", len(links), added, failed

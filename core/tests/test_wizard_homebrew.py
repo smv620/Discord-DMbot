@@ -53,7 +53,7 @@ class WizardHomebrew(DatabaseTest):
 
     async def test_a_link_adds_one_page_and_approves_the_site_with_who_and_when(self) -> None:
         added, failed = await wizard_homebrew.read_links(
-            self.importer, self.sources, GUILD, self.campaign.id, DM, [URL]
+            self.importer, self.sources, self.brew, GUILD, self.campaign.id, DM, [URL]
         )
         self.assertEqual((added, failed), (1, 0))
         self.assertEqual(self.net.asked, [URL])
@@ -63,14 +63,19 @@ class WizardHomebrew(DatabaseTest):
 
     async def test_a_bad_link_is_counted_and_the_good_one_stands(self) -> None:
         added, failed = await wizard_homebrew.read_links(
-            self.importer, self.sources, GUILD, self.campaign.id, DM,
+            self.importer, self.sources, self.brew, GUILD, self.campaign.id, DM,
             ["https://example.com/page", URL, "not a link"],
         )  # fmt: skip
         self.assertEqual((added, failed), (1, 2))
 
-    async def test_the_same_link_twice_adds_one_and_counts_the_second(self) -> None:
+    async def test_the_same_link_twice_adds_one_and_a_retake_does_not_fail(self) -> None:
         added, failed = await wizard_homebrew.read_links(
-            self.importer, self.sources, GUILD, self.campaign.id, DM, [URL, URL]
+            self.importer, self.sources, self.brew, GUILD, self.campaign.id, DM, [URL, URL]
         )
-        self.assertEqual((added, failed), (1, 1))  # (the name is taken: refused like any add)
+        self.assertEqual((added, failed), (1, 0))  # (the second is already there: not a failure)
         self.assertEqual(self.net.asked, [URL])  # (the kept page is re-used, never fetched again)
+
+    async def test_a_retake_with_the_link_already_added_is_not_a_failure(self) -> None:
+        args = (self.importer, self.sources, self.brew, GUILD, self.campaign.id, DM, [URL])
+        self.assertEqual(await wizard_homebrew.read_links(*args), (1, 0))
+        self.assertEqual(await wizard_homebrew.read_links(*args), (0, 0))
