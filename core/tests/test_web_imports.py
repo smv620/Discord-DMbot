@@ -2013,14 +2013,39 @@ class TheMemberDirectory(WithImports):
         assert row is not None
         self.assertEqual(row["n"], 0)
 
-    async def test_the_campaigns_own_person_comes_first_and_is_not_listed_twice(self) -> None:
+    async def test_a_discord_name_beats_the_player_placeholder_and_is_listed_once(self) -> None:
         from dmbot.members import MemberDirectory
 
         await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
-        for q in ("", "mira_v", "real", "player 0"):  # whichever of her names is searched
+        for q in ("", "mira_v", "real"):  # whichever of her names is searched
             names = [n for n, _ in await self.find(q)]
-            self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
-            self.assertNotIn("Mira Real", names, q)
+            self.assertEqual(names.count("Mira Real"), 1, q)  # MIRA's placeholder is "Player 0"
+            self.assertNotIn("Player 0", names, q)
+
+    async def test_the_username_is_sent_with_the_name(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
+        got = await imports.search_members(self.web, self.session, self.ref_c, "", **self.kw)
+        mira = next(m for m in got["members"] if m["userId"] == str(MIRA))
+        self.assertEqual((mira["name"], mira["username"]), ("Mira Real", "mira_v"))
+
+    async def test_a_person_with_no_name_is_never_a_player_placeholder(self) -> None:
+        names = [n for n, _ in await self.find("")]
+        self.assertNotIn("Player 0", names)
+        self.assertTrue(any(n.startswith("Unknown member (…") for n in names), names)
+
+    async def test_a_person_who_is_not_in_discord_keeps_the_name_the_dm_gave(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by, role) VALUES (%s, %s, %s, 'person',"
+                " 'Player 3 (no Discord)', '', 'confirmed', 'dm', 700, -3, 'npc')",
+                (THURSDAY.id, self.one.id, f"{700:032x}"),
+            )
+        names = [n for n, _ in await self.find("")]
+        self.assertIn("Player 3 (no Discord)", names)
+        self.assertFalse(any("-3" in n for n in names))
 
     async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
         from dmbot.members import MemberDirectory
