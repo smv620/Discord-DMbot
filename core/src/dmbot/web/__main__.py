@@ -164,7 +164,8 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     entitlements.configure_free_users(settings.free_users)  # #771
-    person_key.configure(settings.person_key)  # the hash kept after an account is deleted (#4145)
+    if not person_key.configure(settings.person_key):  # the hash kept after an account is deleted
+        log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     # Account emails (sign-in links, #1231); nothing is sent until SMTP is set up in .env.
     mailer = (

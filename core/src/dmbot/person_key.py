@@ -78,7 +78,12 @@ def configure(secret: str) -> bool:
 
 def key_for(user_id: int) -> str | None:
     """The key to store beside this Discord ID, or None when no secret is configured."""
-    return None if _configured is None else _configured.of(user_id)
+    if _configured is None:
+        return None
+    try:
+        return _configured.of(user_id)
+    except ValueError:
+        return None  # (not a Discord ID: a read finds nothing, as it always did)
 
 
 def from_settings(settings: object) -> PersonKeys:

@@ -120,3 +120,40 @@ class PersonKeyRecords(DatabaseTest):
         [row] = await self.rows("SELECT person_key FROM email_unsubscribed")
         self.assertIsNone(row["person_key"])
         self.assertIsNone(person_key.key_for(ALICE))
+
+    async def test_an_invalid_id_has_no_key_so_a_read_finds_nothing(self) -> None:
+        for bad in (0, -1, 2**63):
+            self.assertIsNone(person_key.key_for(bad))
+
+    async def test_a_null_key_matches_no_row_that_has_none(self) -> None:
+        person_key.configure("")
+        self.assertTrue(await trial_jobs.claim(self.db, ALICE, "dm:trial-9", NOW))
+        sender = mail.Mailer(self.db, mail.MailSettings(), clock=lambda: NOW)
+        self.assertTrue(await sender.already_sent(ALICE, "dm:trial-9"))
+        self.assertFalse(await sender.already_sent(BOB, "dm:trial-9"))  # (NULL = NULL is not true)
+
+    async def test_already_sent_and_the_extension_notice_find_a_row_by_the_key_alone(self) -> None:
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO sent_emails (user_id, kind, sent_at, person_key)"
+                " VALUES (%s, %s, 1, %s)",
+                (BOB, "offer:7", person_key.key_for(ALICE)),
+            )
+            await conn.execute(
+                "INSERT INTO trial_extensions (user_id, extended_at, person_key)"
+                " VALUES (%s, 1, %s)",
+                (BOB, person_key.key_for(ALICE)),
+            )
+        sender = mail.Mailer(self.db, mail.MailSettings(), clock=lambda: NOW)
+        self.assertTrue(await sender.already_sent(ALICE, "offer:7"))
+        self.assertEqual(
+            await trial_jobs.take_extension_notice(self.db, ALICE, NOW), trial_jobs.EXTENSION_NOTICE
+        )
+        self.assertIsNone(
+            await trial_jobs.take_extension_notice(self.db, ALICE, NOW)
+        )  # (told once)
+
+    async def test_release_still_takes_the_old_two_argument_form(self) -> None:
+        await self.rows("SELECT dmbot_claim_email(%s, %s, false, 400, 300)", ALICE, "offer:8")
+        await self.rows("SELECT dmbot_release_email(%s, %s)", ALICE, "offer:8")
+        self.assertEqual(await self.rows("SELECT 1 FROM sent_emails WHERE kind = 'offer:8'"), [])

@@ -31,7 +31,9 @@ SQL = (
         WHERE person_key IS NOT NULL;
     CREATE UNIQUE INDEX sent_emails_by_key ON sent_emails (person_key, kind)
         WHERE person_key IS NOT NULL;
-    CREATE UNIQUE INDEX trial_extensions_by_key ON trial_extensions (person_key, extended_at)
+    -- (not unique: two extensions in one second would make the door fail; the table's own key
+    -- on user_id already keeps one per second, and a person is counted, not looked up, by it)
+    CREATE INDEX trial_extensions_by_key ON trial_extensions (person_key)
         WHERE person_key IS NOT NULL;
 """
     + r"""
