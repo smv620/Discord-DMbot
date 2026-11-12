@@ -8,14 +8,15 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
 /** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
+// The books step 6 offers, alphabetical by title for the screen. Core keeps its own order; that only affects how saved values are sorted.
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
-  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
+  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
   { code: "ravnica", title: "Guildmasters' Guide to Ravnica (2018)" },
+  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
   { code: "theros", title: "Mythic Odysseys of Theros (2020)" },
   { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
-  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
-  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
-  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
 
 export const wizardWords = {

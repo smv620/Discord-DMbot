@@ -576,7 +576,7 @@ describe("the wizard", () => {
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {
     // (core's wizard.py list: a code not on it is refused at the door)
-    expect(SUPPLEMENTS.map((s) => s.code)).toEqual(["xanathar", "ravnica", "theros", "tasha", "fizban", "mordenkainen", "bigby"]);
+    expect(SUPPLEMENTS.map((s) => s.code).sort()).toEqual(["bigby", "fizban", "mordenkainen", "ravnica", "tasha", "theros", "xanathar"]);
     const api = mockWizard();
     await api.start(G, "");
     await expect(api.set(G, 6, { supplements: ["tasha", "nope"] })).rejects.toMatchObject({ kind: "bad_value", key: "supplements" });
@@ -638,6 +638,28 @@ describe("the wizard", () => {
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":supplements"))).toBe(true));
     await waitFor(() => expect(box("Xanathar").checked).toBe(false));
     expect(box("Tasha").checked).toBe(true); // (turning one off did not turn the other off)
+  });
+
+  it("step 6 lists the books in alphabetical order by title", async () => {
+    await start();
+    for (let to = 2; to <= 6; to++) await next(to);
+    const titles = SUPPLEMENTS.map((s) => s.title);
+    const sorted = [
+      "Bigby Presents: Glory of the Giants (2023)",
+      "Fizban's Treasury of Dragons (2021)",
+      "Guildmasters' Guide to Ravnica (2018)",
+      "Mordenkainen Presents: Monsters of the Multiverse (2022)",
+      "Mythic Odysseys of Theros (2020)",
+      "Tasha's Cauldron of Everything (2020)",
+      "Xanathar's Guide to Everything (2017)",
+    ];
+    expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b))); // the data is in order, so a future book lands in place
+    // What the person sees: each book's checkbox label, top to bottom, against the literal sorted list.
+    const onScreen = [...document.querySelectorAll("label")]
+      .map((label) => label.textContent ?? "")
+      .map((text) => sorted.find((title) => text.includes(title)))
+      .filter((title): title is string => title !== undefined);
+    expect(onScreen).toEqual(sorted);
   });
 
   it("a saved answer for the books is shown as saved", async () => {
