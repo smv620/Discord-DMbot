@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
 import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
+import { campaignHref } from "./campaignLinks";
 import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
 import { WizardError, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
 import { problemWords } from "./wizard-problems";
@@ -17,9 +18,9 @@ const STALLED_AFTER = 120; // seconds without a move before the wait says it has
 const POLL_MS = 2000;
 
 /** Where the campaign's page is, from the ref the finish run gives (`<server>.<campaign>`). */
-const campaignHref = (ref: string): string => `/account/campaigns#${encodeURIComponent(ref)}`;
 
 export default function Wizard({ api, guild }: { api: WizardApi; guild: string }) {
+  const [pasted, setPasted] = useState(""); // the pasted campaign-page text, in memory only (#4204)
   const [draft, setDraft] = useState<WizardDraft | null | "loading">("loading");
   const [problem, setProblem] = useState("");
   const [skipping, setSkipping] = useState(false);
@@ -105,6 +106,8 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     draft: current,
     onPatch: (patch) => save(null, patch),
     onDraft: (next) => setDraft(next),
+    pasted,
+    onPasted: setPasted,
   };
 
   return (
