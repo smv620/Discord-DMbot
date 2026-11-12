@@ -75,7 +75,9 @@ async def waiting_counts(
 
 async def _count_kinds(bot: Any, guild_id: int, campaign_id: str) -> int:
     """The kind-of-connection offers waiting (a count that cannot be read is zero; the log gets the
-    error type only). Not part of `count_waiting`: that one is the upload message's four."""
+    error type only). Not part of `count_waiting`: that one is the upload message's four. The list
+    is a sweep that also drops answers whose words have left the campaign: idempotent bookkeeping
+    that the store accepts, so counting here is safe to repeat at every step of a walk."""
     if bot.memory is None:
         return 0
     try:

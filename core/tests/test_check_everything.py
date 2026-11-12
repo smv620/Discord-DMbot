@@ -353,3 +353,28 @@ class WithoutAWalkNothingChanges(unittest.TestCase):
 
 
 _ = partial  # (kept for the stand-in makers above)
+
+
+class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
+    async def test_the_count_reads_the_offers_and_a_broken_store_counts_zero(self) -> None:
+        memory = SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1, 2, 3]))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=memory), GUILD, CID), 3)
+        broken = SimpleNamespace(kind_offer_list=AsyncMock(side_effect=RuntimeError("down")))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=broken), GUILD, CID), 0)
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=None), GUILD, CID), 0)
+
+    async def test_the_walks_counts_include_the_kinds(self) -> None:
+        found = SimpleNamespace(names=1, people=0, claims=2, connections=3)
+        bot = SimpleNamespace(
+            count_waiting=AsyncMock(return_value=found),
+            memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
+        )
+        with patch("dmbot.ui.check_everything._bot", return_value=bot):
+            counts = await ce.waiting_counts(cast(Any, object()), GUILD, CID)
+        self.assertEqual(counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1})
+
+    async def test_the_kinds_part_opens_the_kinds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (KINDS,))
+        with patch("dmbot.ui.kind_offer.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()

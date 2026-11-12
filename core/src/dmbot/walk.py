@@ -17,7 +17,8 @@ from dmbot.dm_questions import CLAIMS, CONNECTIONS, KINDS, NAMES, ORDER, PEOPLE
 # names are answered, and a claim reads better once its names are settled (the owner's ruling,
 # #4192). Slice 1 had the first four; the second slice adds the rest of ORDER, a part at a time
 # (kinds of connection first; Supervisor's ruling on #4192: every check that waits for the DM's yes
-# or no after a session or an import belongs in the walk, and the own buttons stay as shortcuts).
+# or no after a session or an import belongs in the walk; the kind's own button still opens it from
+# its own question and on the DM screen).
 PARTS = tuple(kind for kind in ORDER if kind in (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS))
 
 LABELS = {

@@ -19,7 +19,7 @@ import discord
 
 from dmbot.memory.models import MemoryRuleError
 from dmbot.ui.check_everything import add_stop, next_part, progress
-from dmbot.ui.dmbot_commands import _Button, _Menu, _replace, _send, _tell
+from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
 from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
@@ -96,18 +96,24 @@ class WalkCards(_Menu):
     async def _answer(self, interaction: discord.Interaction, choice: Choice) -> None:
         item = self.shown
         if item is None:
-            return
+            return  # (a second press while the first is still being answered)
+        # An answer can be slow (moving many connections, reading what waits): answer Discord first
+        # (it gives up after 3 seconds, #537), and let a second press find nothing to answer.
+        await _answer_first(interaction, in_place=True)
+        self.shown = None
         if choice.later:
             self.later.add(self.kind.key(item))
             await self._next(interaction, LATER_DONE, None)
             return
         try:
             answer = await choice.do(item)
-        except MemoryRuleError:
-            await self._next(interaction, GONE, None)
+        except MemoryRuleError as exc:
+            # (usually "answered meanwhile"; any other rule says why, in the store's own words)
+            await self._next(interaction, str(exc) or GONE, None)
             return
         except Exception as exc:  # (the database was unreachable, say): the card must not hang
             log.warning("Check everything: an answer could not be saved (%s)", type(exc).__name__)
+            self.shown = item  # (still waiting: the DM may press again)
             await _tell(interaction, FAILED)
             return
         await self._next(interaction, answer.text, answer.undo)
@@ -125,13 +131,12 @@ class WalkCards(_Menu):
         if text is None:
             self.stop()
             await _replace(interaction, f"{head}\n\n{self.kind.finished}".strip(), None)
-            if undo_view is not None:
-                await interaction.followup.send(done, view=undo_view, ephemeral=True)
-            await next_part(interaction, self.walk)
-            return
-        await _replace(interaction, f"{head}\n\n{text}".strip(), self)
+        else:
+            await _replace(interaction, f"{head}\n\n{text}".strip(), self)
         if undo_view is not None:
-            await interaction.followup.send(done, view=undo_view, ephemeral=True)
+            await _tell(interaction, done, view=undo_view)
+        if text is None:
+            await next_part(interaction, self.walk)
 
 
 async def start(interaction: discord.Interaction, kind: Kind, walk: Walk) -> None:

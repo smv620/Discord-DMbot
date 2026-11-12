@@ -20,12 +20,23 @@ CID = "a" * 32
 GUILD = 4242
 
 
-def kind(items: list[str], answered: list[str], *, gone: str = "") -> walk_cards.Kind:
+def kind(
+    items: list[str],
+    answered: list[str],
+    *,
+    gone: str = "",
+    boom: str = "",
+    log: list[str] | None = None,
+) -> walk_cards.Kind:
     async def waiting() -> list[str]:
         return [i for i in items if i not in answered]
 
     def choice(label: str) -> walk_cards.Choice:
         async def do(item: str) -> walk_cards.Answer:
+            if log is not None:
+                log.append("answered")
+            if item == boom:
+                raise RuntimeError("database down")
             if item == gone:
                 raise MemoryRuleError("gone")
             answered.append(item)
@@ -64,7 +75,13 @@ class TheCards(unittest.IsolatedAsyncioTestCase):
         async def send(interaction: object, text: str, view: Any = None) -> None:
             self.shown.append((text, view))
 
+        self.events: list[str] = []
+
+        async def answer_first(interaction: object, **_: object) -> None:
+            self.events.append("deferred")
+
         for target, replacement in (
+            ("dmbot.ui.walk_cards._answer_first", answer_first),
             ("dmbot.ui.walk_cards._replace", replace),
             ("dmbot.ui.walk_cards._send", send),
             ("dmbot.ui.walk_cards._tell", tell),
@@ -115,7 +132,7 @@ class TheCards(unittest.IsolatedAsyncioTestCase):
         answered: list[str] = []
         await walk_cards.start(cast(Any, self.interaction), kind(["a", "b"], answered), self.walk)
         await self.press(self.shown[0][1], "Yes")
-        self.assertEqual(self.followups, ["Yes a"])
+        self.assertEqual(self.told, ["Yes a"])  # (the answer and its Undo, a message of their own)
         self.assertNotIn("Yes a", self.shown[-1][0])  # (the card is the next item, not the answer)
 
     async def test_later_skips_the_item_this_round_without_answering_it(self) -> None:
@@ -132,7 +149,42 @@ class TheCards(unittest.IsolatedAsyncioTestCase):
             cast(Any, self.interaction), kind(["a", "b"], answered, gone="a"), self.walk
         )
         await self.press(self.shown[0][1], "Yes")
-        self.assertIn(walk_cards.GONE, self.shown[-1][0])
+        self.assertIn("gone", self.shown[-1][0])  # (the store's words, or GONE when it gives none)
+
+    async def test_discord_is_answered_before_the_store_is_touched(self) -> None:
+        answered: list[str] = []
+        await walk_cards.start(
+            cast(Any, self.interaction), kind(["a", "b"], answered, log=self.events), self.walk
+        )
+        await self.press(self.shown[0][1], "Yes")
+        self.assertEqual(self.events[:2], ["deferred", "answered"])
+
+    async def test_a_second_press_while_answering_does_nothing(self) -> None:
+        answered: list[str] = []
+        await walk_cards.start(cast(Any, self.interaction), kind(["a", "b"], answered), self.walk)
+        view = self.shown[0][1]
+        view.shown = None  # (the first press has taken the card and is still at work)
+        await self.press(view, "Yes")
+        self.assertEqual(answered, [])
+        self.assertEqual(len(self.shown), 1)
+
+    async def test_a_store_failure_says_so_and_keeps_the_card_for_another_try(self) -> None:
+        answered: list[str] = []
+        await walk_cards.start(
+            cast(Any, self.interaction), kind(["a", "b"], answered, boom="a"), self.walk
+        )
+        view = self.shown[0][1]
+        await self.press(view, "Yes")
+        self.assertEqual(self.told, [walk_cards.FAILED])
+        self.assertEqual(len(self.shown), 1)  # (no move on)
+        self.assertEqual(view.shown, "a")
+
+    async def test_another_rule_error_is_shown_in_the_stores_words(self) -> None:
+        answered: list[str] = []
+        part = kind(["a", "b"], answered, gone="a")
+        await walk_cards.start(cast(Any, self.interaction), part, self.walk)
+        await self.press(self.shown[0][1], "Yes")
+        self.assertIn("gone", self.shown[-1][0])  # (the store's own words, here "gone")
 
     async def test_nothing_waiting_goes_straight_to_the_next_part(self) -> None:
         await walk_cards.start(cast(Any, self.interaction), kind([], []), self.walk)

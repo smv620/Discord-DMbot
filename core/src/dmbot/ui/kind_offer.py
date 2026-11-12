@@ -67,7 +67,7 @@ def ask_for(guild_id: int, campaign_id: str, offer: kind_offers.Offer) -> Ask:
         lambda: OpenButton(guild_id, campaign_id),
         lambda: OpenButton(guild_id, campaign_id),
         public,
-        count=1,  # (one offer is put to the DM at a time)
+        count=1,  # (one offer is put at a time; the walk counts what waits when it is pressed)
     )
 
 
@@ -243,8 +243,9 @@ async def answer(
         return
     try:
         text, undo = await apply_answer(memory, guild_id, campaign_id, offer, which)
-        view = discord.ui.View(timeout=None)
-        if undo is not None:
+        view: discord.ui.View | None = None
+        if undo is not None:  # (no empty view for Not now and Never: they never had one)
+            view = discord.ui.View(timeout=None)
             view.add_item(undo)
         await _tell(interaction, text, view=view)
     except MemoryRuleError as exc:
