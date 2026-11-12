@@ -297,6 +297,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
     "ears_port": "where the voice service is",
+    "person_key": "a secret, always needed once account records use it (#4145)",
     "dev_guild_id": "the test server's commands, not a feature",
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",

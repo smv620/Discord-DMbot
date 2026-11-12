@@ -207,6 +207,9 @@ class Settings:
     # key is set (scripts/set-key VOYAGE_API_KEY, by dev1 once the privacy page names Voyage).
     meaning_search: bool = False
     voyage_key: str = field(default="", repr=False)
+    # The server secret that keys the one-way hash kept for a person after their account is deleted
+    # (#4145, `dmbot.person_key`). Empty: the code that needs it refuses to run.
+    person_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     recap_audio_max_credits: int = 20000  # provider credits one recap may use (about $4; #3633)
@@ -728,6 +731,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         time_suggestions=suggestions_raw in ("1", "true", "on"),
         meaning_search=meaning_raw in ("1", "true", "on"),
         voyage_key=get("VOYAGE_API_KEY"),
+        person_key=get("DMBOT_PERSON_KEY"),
         voyage_embed_model=voyage_models[0],
         voyage_rerank_model=voyage_models[1],
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
