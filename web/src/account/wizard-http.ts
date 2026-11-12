@@ -108,6 +108,10 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
       const names = Array.isArray(got.characters) ? got.characters.map(String) : [];
       return { name: typeof got.name === "string" ? got.name : "", characters: names.map((full) => ({ full, partyName: full.split(" ")[0] ?? full })) };
     },
+    async members(guild) {
+      const got = (await call("GET", at(guild, "/members"))) as { members?: unknown };
+      return Array.isArray(got.members) ? (got.members as { userId: string; name: string; before: boolean }[]).map((m) => ({ userId: String(m.userId), name: String(m.name), before: m.before === true })) : [];
+    },
     async docAdd(guild, slot, input) {
       const body: Record<string, unknown> = { slot, name: input.name };
       if (input.data !== undefined) body["data"] = input.data;
