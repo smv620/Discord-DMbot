@@ -789,6 +789,28 @@ class MemoryStore:
             live = await _live_ids(scope, None if entity_id is None else [entity_id])
             return [_alias(r) for r in rows if r["entity_id"] in live]
 
+    async def drop_language_suggestions(self, guild_id: int, campaign_id: str) -> int:
+        """A waiting suggestion that is one of the SRD's languages ("Elvish") is turned down, just
+        as the DM's "Not a name" would (#4227), quote and all: suggested before the rule, it is
+        rules vocabulary, never a name in the game. Only a reader's suggestion: the DM's own entry,
+        a campaign's invented tongue kept as an idea, is never touched, and the DM brings one back
+        by adding the name again. Read again inside the change, under the campaign's lock, so a
+        name renamed meanwhile is looked at as it is now. Returns how many (the log gets
+        the count only)."""
+        waiting = " AND status = %s AND source <> %s"
+        async with self._read(guild_id, campaign_id) as scope:  # (most rounds find none: no write)
+            rows = await scope.select(ENTITIES, waiting, [PROPOSED, DM])
+        if not any(not_names.is_language(str(r["name"])) for r in rows):
+            return 0
+        async with self._write(guild_id, campaign_id, "scan") as w:  # (the name scan's rule)
+            rows = await w.select(ENTITIES, waiting, [PROPOSED, DM])
+            done = 0
+            for row in rows:
+                if not_names.is_language(str(row["name"])):
+                    await self._set_status_in(w, str(row["id"]), REJECTED, "scan")
+                    done += 1
+            return done
+
     async def suggested_names(self, guild_id: int, campaign_id: str) -> list[tuple[Alias, str]]:
         """The other names an AI read suggested for entries the DM confirmed, still waiting for
         a yes (#3034): each with its entry's name, oldest first. A DM-only reader."""
@@ -3440,31 +3462,36 @@ class MemoryStore:
     ) -> Written[Entity]:
         _check_choice(status, FACT_STATUSES, "entity status")
         async with self._write(guild_id, campaign_id, source) as w:
-            current = await _entity_row(w, entity_id, allow_rejected=True)
-            check_status_change(current["status"], status, source)
-            row = await w.update(
-                ENTITIES,
-                entity_id,
-                {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
-            )
-            if status == CONFIRMED and source == DM:
-                await self._confirm_group_memberships(w, entity_id)
-                # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
-                await knowers.apply_waiting_guesses(w, entity_id)
-            await _forget_quotes(
-                w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
-            )
-            if status == REJECTED:
-                # A rejected entry is not a name at the table any more, so the DM's word that it is
-                # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
-                # this change brings it back.
-                for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
-                    await w.delete(PLAN_SAME_AS, link["id"])
-            if current["role"] == PLAYER_CHARACTER:
-                await _sync_plays(w, entity_id)  # a rejected character has no player
-            if status == REJECTED:
-                await _let_go_of_anchored(w, entity_id)
-            return Written(_entity(row), w.batch)
+            return Written(await self._set_status_in(w, entity_id, status, source), w.batch)
+
+    async def _set_status_in(self, w: Changes, entity_id: str, status: str, source: str) -> Entity:
+        """`set_entity_status` inside a change already open, so one change can turn down several
+        (#4227) with everything a single "Not a name" does."""
+        current = await _entity_row(w, entity_id, allow_rejected=True)
+        check_status_change(current["status"], status, source)
+        row = await w.update(
+            ENTITIES,
+            entity_id,
+            {"status": status, **(_note_cleared(current) if status != PROPOSED else {})},
+        )
+        if status == CONFIRMED and source == DM:
+            await self._confirm_group_memberships(w, entity_id)
+            # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
+            await knowers.apply_waiting_guesses(w, entity_id)
+        await _forget_quotes(
+            w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
+        )
+        if status == REJECTED:
+            # A rejected entry is not a name at the table any more, so the DM's word that it is
+            # a book entry (#1715) goes, freeing that book entry for the right one; Undo of
+            # this change brings it back.
+            for link in await w.select(PLAN_SAME_AS, " AND entity_id = %s", [entity_id]):
+                await w.delete(PLAN_SAME_AS, link["id"])
+        if current["role"] == PLAYER_CHARACTER:
+            await _sync_plays(w, entity_id)  # a rejected character has no player
+        if status == REJECTED:
+            await _let_go_of_anchored(w, entity_id)
+        return _entity(row)
 
     async def split_waiting_name(
         self, guild_id: int, campaign_id: str, entity_id: str, *, source: str

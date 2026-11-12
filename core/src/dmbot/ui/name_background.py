@@ -771,6 +771,11 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A waiting suggestion that is an SRD language ("Elvish") is turned down first (#4227). (A
+    # stand-in bot in tests may not have it.)
+    drop = getattr(bot, "drop_language_suggestions", None)
+    if drop is not None:
+        await drop(guild, campaign.id)
     # A player character's first name the lore uses alone ("Cerric" for the wizard's Cerric
     # Vanya'elen) is their short name before the read looks (#3880): run only after the read, the
     # read had already made "Cerric" a name of its own, the rule could no longer give the word to
