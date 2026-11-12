@@ -30,7 +30,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
-from dmbot.memory import sheets
+from dmbot.memory import sheets, short_names
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
 from dmbot.memory.sheet_store import SheetRefused
 from dmbot.memory.sheet_waits import SheetWaits
@@ -480,7 +480,7 @@ async def _make_characters(
             entity_id = written.value.id
             have[name_key(name)] = entity_id
             made += 1
-        short = str(c.get("party_name", "")).strip()
+        short = str(c.get("party_name", "")).strip() or _first_name(name, characters)
         if short and name_key(short) != name_key(name):
             try:  # (already there is fine: the call returns the existing alias)
                 await memory.add_alias(
@@ -492,6 +492,29 @@ async def _make_characters(
     await memory.party_on_assignment(guild_id, campaign_id)
     log.info("A wizard run made %d player character(s)", made)  # counts only
     return made
+
+
+def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
+    """The first name of a character the DM typed in full and gave no short name for (#4224): the
+    lore says "Cerric" where the wizard has "Cerric Vanya'elen", and unless "Cerric" is already one
+    of the character's other names the lore read makes it a new entry beside them. It is the DM's
+    own word (they typed the character), but only a word that is a name (`could_be_short_name`)
+    and that no other wizard character also starts with or is called (two Miras: neither gets it;
+    another character's short name counts too). A name written surname first ("Vanya'elen Cerric")
+    gets its first word: accepted, the DM can remove it."""
+    parts = name.split()
+    first = short_names.first_word(name)
+    if len(parts) < 2 or not short_names.could_be_short_name(first):
+        return ""
+    key = name_key(first)
+    for other in characters:
+        full = str(other.get("full", "")).strip()
+        if name_key(full) == name_key(name):
+            continue  # (this character, or one written the same)
+        for text in (full, str(other.get("party_name", "")).strip()):
+            if text and key in (name_key(text), name_key(short_names.first_word(text))):
+                return ""
+    return first
 
 
 def _notes(counts: dict[str, int]) -> str:

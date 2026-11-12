@@ -4551,7 +4551,7 @@ class MemoryStore:
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
-        await _move_rule_links(w, keep_id, gone_id)
+        await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -6868,9 +6868,13 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
 # ---- helpers (inside a write) ----------------------------------------------------------
 
 
-async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_rule_links(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
     """A merged entry's links to the rules go with it, unless the kept entry already has
-    that species or creature type, or the very same link (then they stay behind, unseen)."""
+    that species or creature type, or the very same link (then they stay behind, unseen), or
+    the kept entry is no character (#4241: only a character is linked to the rules, and a
+    backup holding one on anything else would be refused)."""
+    if not to_character:
+        return
     mine = await w.select(RULE_LINKS, " AND entity_id = %s", [keep_id])
     has_one = {r["kind"] for r in mine if r["kind"] in (SPECIES, CREATURE_TYPE)}
     has_same = {(r["kind"], r["rules_source"], r["name"]) for r in mine}
