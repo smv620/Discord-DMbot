@@ -10,6 +10,7 @@ from typing import Any
 
 from dmbot.memory import link_edits
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import Relation
 from dmbot.web import all_names, relationships
 from dmbot.web.recaps import RecapError
 from dmbot.web.who_knows import who_text
@@ -164,6 +165,11 @@ class TheBotAppliesIt(Editing):
     card's own calls, with the website's whole list (NPCs included), and returns every change it
     made so the page's Undo takes all of them back."""
 
+    async def stored(self, link_id: str) -> Relation:
+        found = await self.memory.relation(self.g, self.one.id, link_id)
+        assert found is not None
+        return found
+
     async def knowers(self, link: str) -> list[str]:
         return (await self.memory.connection_knowers(self.g, self.one.id, [link])).get(link, [])
 
@@ -172,16 +178,16 @@ class TheBotAppliesIt(Editing):
         await self.edit(link, action="who", who="some", characters=[self.rook])
         done = await self.apply_all()
         self.assertEqual([o.error for o in done], [""])
-        self.assertTrue((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertTrue((await self.stored(link)).secret)
         self.assertEqual(await self.knowers(link), [self.rook])
         self.assertEqual(len(done[0].batches), 2)  # hidden, then who knows it: both, for Undo
         await self.edit(link, action="who", who="dm")
         await self.apply_all()
         self.assertEqual(await self.knowers(link), [])
-        self.assertTrue((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertTrue((await self.stored(link)).secret)
         await self.edit(link, action="who", who="everyone")
         await self.apply_all()
-        self.assertFalse((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertFalse((await self.stored(link)).secret)
 
     async def test_the_same_answer_again_writes_nothing(self) -> None:
         link = self.links["mira-rook"]
@@ -197,9 +203,9 @@ class TheBotAppliesIt(Editing):
         link = self.links["mira-rook"]
         await self.edit(link, action="who", who="dm")
         (done,) = await self.apply_all()
-        self.assertTrue((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertTrue((await self.stored(link)).secret)
         await self.memory.undo(self.g, self.one.id, done.batches[0])
-        self.assertFalse((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertFalse((await self.stored(link)).secret)
 
     async def test_the_websites_pick_is_the_whole_list(self) -> None:
         link = self.links["mira-rook"]
@@ -249,7 +255,7 @@ class TheBotAppliesIt(Editing):
 
     async def test_the_pages_undo_takes_back_both_changes(self) -> None:
         link = self.links["mira-rook"]
-        self.assertFalse((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertFalse((await self.stored(link)).secret)
         answer = await self.edit(link, action="who", who="some", characters=[self.rook])
         (done,) = await self.apply_all()
         self.assertEqual(len(done.batches), 2)  # hidden, then who knows it
@@ -257,11 +263,11 @@ class TheBotAppliesIt(Editing):
         undo = await relationships.queue_link_undo(self.web, self.session, self.cref, str(batch))
         self.assertEqual([o.error for o in await self.apply_all()], [""])
         self.assertTrue((await self.poll(undo))["undone"])
-        self.assertFalse((await self.memory.relation(self.g, self.one.id, link)).secret)
+        self.assertFalse((await self.stored(link)).secret)
         self.assertEqual(await self.knowers(link), [])
 
     async def test_only_the_dm_alone_has_a_change_to_undo(self) -> None:
-        link = await self.memory.relation(self.g, self.one.id, self.links["mira-rook"])
+        link = await self.stored(self.links["mira-rook"])
         written = await link_edits.set_who_knows(self.memory, self.g, self.one.id, link, "dm")
         self.assertIsNotNone(written.batch)  # (the name card's Undo has the hiding to take back)
 
