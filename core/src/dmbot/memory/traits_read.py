@@ -255,6 +255,7 @@ class Spoken:
 
     name: str
     language: str
+    quote: str = ""  # the reader's quote, for a question about an existing character (#4229 1c)
 
 
 def read_languages(
@@ -306,7 +307,7 @@ def read_languages(
             if key in seen:
                 continue
             seen.add(key)
-            found.append(Spoken(name, language))
+            found.append(Spoken(name, language, quote))
             if len(found) >= MAX_LANGUAGES:
                 return found
     return found

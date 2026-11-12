@@ -88,6 +88,7 @@ LINK_NAME_MAX = 100
 # A language a character knows from the story (#4229): as written, at most this long, given by
 # DMbot's read or by the DM. A character with a sheet keeps its languages there instead.
 STORY_LANGUAGE_MAX = 60
+LANGUAGE = "language"  # a lore language waiting as a question, like a lineage (#4229 slice 1c)
 GIVEN_BY = ("read", "dm")
 LINK_EDITIONS = ("2014", "2024")
 
