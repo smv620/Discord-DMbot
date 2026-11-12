@@ -1,0 +1,20 @@
+---
+import RememberedPlayersIsland from "../../account/RememberedPlayersIsland";
+import { rememberedWords } from "../../content/remembered-players-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="People you play with"
+  description="The players DMbot remembers for you, and the DMs who remember you."
+  noindex
+>
+  <div class="account">
+    <h1>{rememberedWords.heading}</h1>
+    <RememberedPlayersIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your lists. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

@@ -143,6 +143,7 @@ match. "In Discord" says where the DM finds it today.
 
 | Function | In Discord | Answer |
 |---|---|---|
+| Check everything after a session or an import (one walk through names, who is who, what was said and the connections, with progress, Stop for now and Carry on; #4192) | ✅ Check everything on the private after-session message (the old buttons stay when only one kind waits) | The Questions page in the same order with the same progress line (WebDev, #4193; until then it lists the kinds by count) |
 | Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
 | Uploads and imports add what DMbot is sure of (an import also adds the connections the DM's own lines state); Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
 | Who can see the campaign's channels (the people, or everyone) and the list added by hand | ⚙️ Manage DMbot → Who can see the channels, 👥 Who can see | The same setting and list on the campaign page (WebDev, #3894) |
@@ -170,6 +171,7 @@ match. "In Discord" says where the DM finds it today.
 | What the characters learned (Keep / Not this) | reveal card | #3863 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
 | Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | #4084 (the website's page; the bot already applies its actions) |
+| A DM's remembered players, with Forget this player, and a player's "DMs who remember you" with Clear | the website only on purpose: Discord has no list page to hold it (the data is kept by DMbot either way, #4226) | `/account/players`: built, switched off, `REMEMBERED_PLAYERS_LIVE` (#4226; core 0450) |
 | Private scenes (two player characters alone together while split): Not private | Names home → 📋 More lists → 🤫 Private scenes, or 🤫 Open the list on the after-session note (DM only, #2996 rule 5, #4103) | Names page → 🤫 Private scenes (DM only): built, switched off, `PRIVATE_SCENES_LIVE` (#4102; core 0439) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |

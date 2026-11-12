@@ -9,6 +9,7 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -96,6 +97,8 @@ from dmbot.memory.ontology import (
 )
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
+
+log = logging.getLogger(__name__)
 
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
@@ -962,9 +965,18 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     ):
         raise CampaignError(DAMAGED)
     _check_states(onto, by_tag)
+    # A link to the rules on an entry that is no character (#4241): a kind change once left them
+    # behind, and a backup downloaded then can't be fixed by a migration, so such a link is left out
+    # (and counted in the log) instead of refusing the file. A link to an entry the file doesn't
+    # hold is still damage.
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
-    if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
+    if any(r["entity_id"] not in kinds for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    kept = [r for r in by_tag["rule_link"] if r["entity_id"] in characters]
+    if len(kept) != len(by_tag["rule_link"]):
+        log.info("A restore left out %d rules links on entries that are no character",
+                 len(by_tag["rule_link"]) - len(kept))  # fmt: skip
+        by_tag["rule_link"] = kept
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
