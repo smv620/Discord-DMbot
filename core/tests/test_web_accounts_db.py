@@ -275,7 +275,8 @@ class WebAccounts(DatabaseTest):
 
     async def test_try_it_keeps_only_the_discord_id_and_its_keyed_hash(self) -> None:
         # Kept after a deletion, so it holds nothing but the id and the keyed one-way hash of it
-        # that lets a returning person be recognised once the id is gone (privacy page, #435, #4145).
+        # that lets a returning person be recognised once the id is gone (privacy page, #435,
+        # #4145).
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT column_name FROM information_schema.columns"
