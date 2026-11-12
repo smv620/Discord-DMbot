@@ -217,6 +217,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.transcript_keep.KeepYesButton",
             "dm_screen.transcript_keep.TranscriptsButton",
             "ui.claims_review.ClaimsReviewButton",
+            "ui.check_everything.WalkButton",  # `begin` asks `_campaign_for` first (#4192)
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
             "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
             "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
@@ -282,6 +283,7 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     "ui.name_card.UndoManyButton": [
         "dmbot.ui.names:_campaign_for"
     ],  # the same press as UndoButton: its callback asks it
+    "ui.check_everything.WalkButton": ["dmbot.ui.names:_campaign_for"],  # (via `begin`, #4192)
     "dm_screen.clock.ClockUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.CombatUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.SplitUndoButton": [
