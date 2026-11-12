@@ -7,6 +7,8 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+import psycopg
+
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import place_levels as pl
@@ -211,3 +213,25 @@ class TheLine(unittest.TestCase):
         self.assertEqual(place_size.form_line(None), "")
         self.assertEqual(place_size.form_line(pl.ROUTE), "\n🧭 **Kind of place:** a road or route")
         self.assertIn("DMbot read this", place_size.form_line(pl.WATER, read=True))
+
+
+class TheRules(MemoryTest):
+    async def test_the_table_refuses_a_bad_form(self) -> None:
+        maer = await self.add("Maer Dualdon", type="place", status=CONFIRMED)
+        for bad in ("form = 'water', form_from = NULL", "form = 'swamp', form_from = 'dm'",
+                    "form = NULL, form_from = 'read'"):  # fmt: skip
+            with self.subTest(bad=bad), self.assertRaises(psycopg.errors.CheckViolation):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(f"UPDATE memory_entities SET {bad} WHERE id = %s", (maer,))
+
+    async def test_undo_of_a_kind_change_is_refused_once_the_entry_changed_again(self) -> None:
+        maer = await self.add("Maer Dualdon", type="place", status=CONFIRMED)
+        await self.memory.set_place_form(GUILD_A, self.c, maer, pl.WATER, source=BY_DM)
+        changed = await self.memory.set_entity_type(GUILD_A, self.c, maer, "npc", source=BY_DM)
+        await self.memory.rename_entity(GUILD_A, self.c, maer, "Maera Dualdon", source=BY_DM)
+        assert changed.batch is not None
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo(GUILD_A, self.c, changed.batch)
+        found = await self.memory.entity(GUILD_A, self.c, maer)
+        assert found is not None
+        self.assertEqual((found.name, found.type, found.form), ("Maera Dualdon", "character", None))

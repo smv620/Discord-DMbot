@@ -163,7 +163,8 @@ def read_level(name: str, *texts: str) -> str | None:
 # "pass" or "way" are as often part of another name. A missing form is an area, the safe side; the
 # DM changes it in one tap.
 _FORM_WORDS: dict[str, tuple[str, ...]] = {
-    WATER: ("lake", "lac", "maer", "loch", "mere", "sea", "ocean", "bay", "gulf", "river",
+    # ("mere" is left out: the Mere of Dead Men is a marsh)
+    WATER: ("lake", "lac", "maer", "loch", "sea", "ocean", "bay", "gulf", "river",
             "strait", "fjord"),
     ROUTE: ("highway", "trail", "trade way", "trade route", "trade road"),
 }  # fmt: skip

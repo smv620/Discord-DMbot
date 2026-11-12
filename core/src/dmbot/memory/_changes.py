@@ -1165,12 +1165,18 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     pending = list(run)
     while pending:
         waiting = []
+        held: set[tuple[str, str]] = set()  # rows whose newer change waits: their older ones too
         for change in pending:
+            key = (change["table_name"], str(change["row_id"]))
+            if key in held:  # (a row's changes are undone newest first, never out of order)
+                waiting.append(change)
+                continue
             try:
                 async with changes.conn.transaction():  # a savepoint
                     await _undo_row(changes, change)
             except errors.UniqueViolation:
                 waiting.append(change)
+                held.add(key)
         if len(waiting) == len(pending):
             raise MemoryRuleError(CHANGED_SINCE)
         pending = waiting

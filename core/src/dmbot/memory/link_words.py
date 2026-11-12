@@ -47,6 +47,8 @@ CONNECTION_BACK = {
     "captive_of": "holds captive",
     "contains": "is inside",
     "disguised_as": "is impersonated by",
+    # (a one-way "on the shore of", read from the lake's card: still true and plain, #4173 6a)
+    "next_to": next_words.PLAIN,
 }
 # How two people know each other (#3881), on a `knows`: the words for "met", "aware" and "" (the
 # story doesn't say). Shown only where the caller passes the row's `knows_how`.
