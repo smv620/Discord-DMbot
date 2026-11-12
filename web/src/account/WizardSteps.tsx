@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
 import { problemWords } from "./wizard-problems";
-import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { maxBytesFor, toBase64, type DataChoice, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -18,6 +18,9 @@ export interface StepProps {
   onPatch(patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)): Promise<void>;
   /** Replace the draft with a newer one (after a document or the rights changed). */
   onDraft(draft: WizardDraft): void;
+  /** Step 9's pick (#4212): nothing is chosen until the DM picks. */
+  dataChoice?: DataChoice;
+  onDataChoice?(choice: "yes" | "no"): void;
 }
 
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
@@ -402,16 +405,17 @@ export function RulesStep(props: StepProps) {
 }
 
 /** Step 9: whether this campaign's story may be used to improve DMbot. */
-export function DataStep({ draft, onPatch }: StepProps) {
+export function DataStep({ dataChoice = "none", onDataChoice }: StepProps) {
   const t = w.data;
   return (
     <section>
       <h2>{t.heading}</h2>
       <p>{t.lead}</p>
       <div role="radiogroup" aria-label={t.heading}>
-        <label class="row"><input type="radio" name="wizard-data" checked={draft.answers.dataUse} onChange={() => void onPatch({ dataUse: true })} /> {t.yes}</label>
-        <label class="row"><input type="radio" name="wizard-data" checked={!draft.answers.dataUse} onChange={() => void onPatch({ dataUse: false })} /> {t.no}</label>
+        <label class="row"><input type="radio" name="wizard-data" checked={dataChoice === "yes"} onChange={() => onDataChoice?.("yes")} /> {t.yes}</label>
+        <label class="row"><input type="radio" name="wizard-data" checked={dataChoice === "no"} onChange={() => onDataChoice?.("no")} /> {t.no}</label>
       </div>
+      {dataChoice === "none" && <p class="small" role="status">{t.pick}</p>}
       <p class="small">{t.note}</p>
     </section>
   );

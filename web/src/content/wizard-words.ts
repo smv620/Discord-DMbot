@@ -180,6 +180,7 @@ export const wizardWords = {
     yes: "Yes, use this campaign's story",
     no: "No, keep it to this campaign",
     note: "Players still choose for themselves whether to be recorded.",
+    pick: "Pick Yes or No to go on.",
   },
 
   // Step 10: finish.
@@ -190,6 +191,8 @@ export const wizardWords = {
     summaryRules: "Rules",
     summaryFiles: (n: number): string => `${n} ${n === 1 ? "file" : "files"} added`,
     summarySkipped: "Skipped steps use the defaults.",
+    summaryData: (choice: "yes" | "no" | "none"): string =>
+      `Help improve DMbot: ${choice === "yes" ? "yes, use this campaign's story" : choice === "no" ? "no, keep it to this campaign" : "not chosen (off)"}`,
     button: "Make the campaign",
     retry: "Try again",
     stages: {

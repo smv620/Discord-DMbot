@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
 import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
 import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
-import { WizardError, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
+import { keepDataChoice, readDataChoice, WizardError, type DataChoice, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
 import { problemWords } from "./wizard-problems";
 import WorkProgress from "./WorkProgress";
 
@@ -25,6 +25,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
   const [skipping, setSkipping] = useState(false);
   const [discarding, setDiscarding] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<"yes" | "no" | null>(null); // step 9's pick this visit; else what this tab kept, else what the draft says (#4212)
   const live = useRef(true);
   const seq = useRef(0); // the newest save: an older answer arriving late is ignored, so the page never jumps back
   const latest = useRef<WizardDraft | null>(null);
@@ -99,12 +100,19 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     }
   }
   const go = (to: number) => save(to, {});
+  const dataChoice: DataChoice = picked ?? readDataChoice(guild, current.answers.dataUse);
   const props: StepProps = {
     api,
     guild,
     draft: current,
     onPatch: (patch) => save(null, patch),
     onDraft: (next) => setDraft(next),
+    dataChoice,
+    onDataChoice: (choice) => {
+      setPicked(choice);
+      keepDataChoice(guild, choice);
+      void save(null, { dataUse: choice === "yes" });
+    },
   };
 
   return (
@@ -132,7 +140,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
             {w.back}
           </button>
           {step < WIZARD_STEPS.length && (
-            <button type="button" class="button" disabled={busy} onClick={() => void go(step + 1)}>
+            <button type="button" class="button" disabled={busy || (id === "data" && dataChoice === "none")} onClick={() => void go(step + 1)}>
               {w.next}
             </button>
           )}
@@ -205,7 +213,7 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
 }
 
 /** The last page: a summary, the press, and the wait while the bot makes the campaign in stages. */
-function FinishStep({ api, guild, draft }: StepProps) {
+function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
   const t = w.finish;
   const [run, setRun] = useState<WizardFinish | null>(null);
   const [problem, setProblem] = useState("");
@@ -314,6 +322,7 @@ function FinishStep({ api, guild, draft }: StepProps) {
           {t.summaryRules}: {a.target === "2024" ? w.rules.current : w.rules.legacy}
         </li>
         <li>{t.summaryFiles(draft.documents.length)}</li>
+        <li>{t.summaryData(dataChoice)}</li>
         {a.skipped.length > 0 && <li>{t.summarySkipped}</li>}
       </ul>
       <button type="button" class="button" disabled={pressing || !a.name.trim()} onClick={() => void press()}>
