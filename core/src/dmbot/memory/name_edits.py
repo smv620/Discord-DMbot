@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from dmbot.memory.link_edits import EVERYONE, ONLY_THE_DM, SOME_CHARACTERS, WHO_KNOWS
+from dmbot.memory.link_edits import EVERYONE, ONLY_THE_DM, SOME_CHARACTERS, WHO_KNOWS, keep_batch
 from dmbot.memory.models import DM, Alias, MemoryRuleError, Written
 from dmbot.memory.store import MemoryStore
 
@@ -34,9 +34,13 @@ async def set_who_knows(
     characters: Sequence[str] = (),
     *,
     players_only: bool = False,
+    made: list[int] | None = None,
 ) -> Written[object]:
     """Set who knows this other name. Nothing is written when the pick is refused; showing the
-    name lets the characters who knew it go first and puts them back if it is refused."""
+    name lets the characters who knew it go first and puts them back if it is refused. Returns
+    the last change that wrote something; `made`, when given, gets every change's batch in order
+    (keeping it secret and saying who knows it can be two, #4159)."""
+    log = made if made is not None else []
     if who not in WHO_KNOWS:
         raise MemoryRuleError("Pick who knows it: only the DM, some characters, or everyone.")
     if who == SOME_CHARACTERS and not characters:
@@ -46,12 +50,16 @@ async def set_who_knows(
             return Written(None, None)  # already everyone's
         before = (await memory.alias_knowers(guild_id, campaign_id, [alias.id])).get(alias.id, [])
         if before:
-            await memory.set_alias_knowers(
-                guild_id, campaign_id, alias.id, [], source=DM, players_only=players_only
+            keep_batch(
+                log,
+                await memory.set_alias_knowers(
+                    guild_id, campaign_id, alias.id, [], source=DM, players_only=players_only
+                ),
             )
         try:
-            return await memory.update_alias(
-                guild_id, campaign_id, alias.id, secret=False, source=DM
+            return keep_batch(
+                log,
+                await memory.update_alias(guild_id, campaign_id, alias.id, secret=False, source=DM),
             )
         except MemoryRuleError:
             if before:
@@ -61,8 +69,17 @@ async def set_who_knows(
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
     await memory.check_knowers(guild_id, campaign_id, chosen)
+    hidden: Written[object] = Written(None, None)
     if not alias.secret:
-        await memory.update_alias(guild_id, campaign_id, alias.id, secret=True, source=DM)
-    return await memory.set_alias_knowers(
-        guild_id, campaign_id, alias.id, chosen, source=DM, players_only=players_only
+        hidden = keep_batch(
+            log,
+            await memory.update_alias(guild_id, campaign_id, alias.id, secret=True, source=DM),
+        )
+    knew = keep_batch(
+        log,
+        await memory.set_alias_knowers(
+            guild_id, campaign_id, alias.id, chosen, source=DM, players_only=players_only
+        ),
     )
+    # (keeping it secret with no one to know it is the only change: Undo takes that back, #4159)
+    return knew if knew.batch is not None else hidden
