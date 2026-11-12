@@ -193,16 +193,19 @@ class TheSummaryLink(WithImports):
         with_channel(me, summary)
         return summary
 
-    async def test_with_a_known_summary_the_two_buttons_are_link_buttons_to_it(self) -> None:
+    async def test_with_a_known_summary_two_kinds_make_exactly_one_check_button(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
         summary = self.known(me, 3)
         await self.told(me)
         _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
         links = rest[0] if rest else None
+        # Two kinds wait: exactly one check button, "✅ Check everything" (#4192). The summary's
+        # two links are gone (the walk opens Add all itself): one button, not three.
         self.assertEqual(
-            [c.label for c in view.children], ["📝 Check new names", "📜 Check the connections"]
+            [getattr(getattr(c, "item", c), "label", None) for c in view.children],
+            ["✅ Check everything (5)"],
         )
-        self.assertTrue(all(c.url == summary.jump_url for c in view.children))
+        self.assertFalse(any(getattr(c, "url", None) for c in view.children))
         # ...and "Open in Discord" points at the summary too, not at the question itself
         assert links is not None
         self.assertEqual(links.discord_url, summary.jump_url)
