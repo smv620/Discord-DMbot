@@ -1339,13 +1339,15 @@ async def store_languages(
     Returns how many were added. Never raises: the log gets counts and the error type only."""
     try:
         lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Lore languages couldn't be kept (%s)", type(exc).__name__)
         return 0
     whose: dict[str, set[str]] = {}
     for entry in lookup.names:
         who = lookup.entities.get(entry.entity_id)
-        if who is not None and who.type == "character":
+        # (a campaign's own kind under character counts: is_a, never the word itself)
+        if who is not None and onto.is_a(who.type, "character"):
             whose.setdefault(name_key(entry.text), set()).add(who.id)
     added = skipped = 0
     for one in spoken:
@@ -1388,10 +1390,15 @@ async def ask_languages(
     on_sheets: list[tuple[str, str]] = []
     try:
         lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
         whose: dict[str, set[str]] = {}
         for entry in lookup.names:
             who = lookup.entities.get(entry.entity_id)
-            if who is not None and who.status == CONFIRMED and who.type == "character":
+            if (
+                who is not None
+                and who.status == CONFIRMED
+                and onto.is_a(who.type, "character")  # (a campaign's own kinds too)
+            ):
                 whose.setdefault(name_key(entry.text), set()).add(who.id)
         ids = {s.name: next(iter(whose[name_key(s.name)])) for s in spoken
                if len(whose.get(name_key(s.name), ())) == 1}  # fmt: skip

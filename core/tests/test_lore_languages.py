@@ -8,6 +8,7 @@ from collections import Counter
 
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED
+from dmbot.memory.ontology import TypeTerm
 from dmbot.memory.traits_read import Spoken, read_languages, read_traits
 from dmbot.ui.name_background import store_languages
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -140,3 +141,20 @@ class Kept(MemoryTest):
         again = await store_languages(self.memory, campaign, [Spoken("Brewner", "dwarvish")])
         self.assertEqual(again, 0)
         self.assertEqual(len(await self.memory.story_languages(GUILD_A, self.c, brewner)), 1)
+
+    async def test_a_campaigns_own_kind_of_character_is_one(self) -> None:
+        await self.memory.add_type(
+            GUILD_A,
+            self.c,
+            TypeTerm("hireling", "character", "hireling", "A hired hand.", core=False),
+            examples=["a porter"],
+            reason="ours",
+            source="entitybot",
+        )
+        tom = await self.add("Tom", type="hireling")
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        added = await store_languages(self.memory, campaign, [Spoken("Tom", "Halfling")])
+        self.assertEqual(added, 1)
+        (kept,) = await self.memory.story_languages(GUILD_A, self.c, tom)
+        self.assertEqual(kept.name, "Halfling")
