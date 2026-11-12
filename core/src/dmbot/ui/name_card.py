@@ -1099,7 +1099,7 @@ class NameCard(_Menu):
             self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
         self.is_setting = bool(setting)
         if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
-            label = place_size.SETTING_OFF if setting else place_size.SETTING_ON
+            label = place_size.SETTING_OFF_BUTTON if setting else place_size.SETTING_ON_BUTTON
             for row in (3, 2, 1):
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
                     self.add_item(_Button(self._flip_setting, label=label, style=grey, row=row))

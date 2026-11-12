@@ -146,8 +146,8 @@ class SizeMenu(_Menu):
 
 # ---- 🌍 The campaign's setting (#4173 slice 2) ---------------------------------------------------
 
-SETTING_ON = "🌍 Make it the setting"
-SETTING_OFF = "🌍 Remove as setting"
+SETTING_ON_BUTTON = "🌍 Make it the setting"
+SETTING_OFF_BUTTON = "🌍 Remove as setting"
 ONLY_SETTING_DM = "Only the DM can change the campaign's setting."
 
 
