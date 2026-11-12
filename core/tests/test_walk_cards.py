@@ -12,8 +12,9 @@ from unittest.mock import AsyncMock, patch
 import discord
 
 from dmbot.dm_questions import KINDS
+from dmbot.memory.deed_proposals import GONE
 from dmbot.memory.models import MemoryRuleError
-from dmbot.ui import kind_offer, walk_cards
+from dmbot.ui import deed_card, kind_offer, walk_cards
 from dmbot.walk import Walk
 
 CID = "a" * 32
@@ -222,3 +223,53 @@ class TheKindsPart(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(await part.waiting()), 1)
         self.assertEqual(part.key(self.offer()), "made friends")
+
+
+class TheDeedsPart(unittest.IsolatedAsyncioTestCase):
+    def deed(self, id_: str = "d1") -> Any:
+        return SimpleNamespace(id=id_)
+
+    def bot(self, *, record: Any = None, dismiss: Any = None) -> Any:
+        proposals = SimpleNamespace(
+            record=record or AsyncMock(return_value=7), dismiss=dismiss or AsyncMock()
+        )
+        return SimpleNamespace(
+            memory=object(),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={1})),
+        ), proposals
+
+    async def test_record_keeps_the_deed_and_offers_an_undo_and_not_this_dismisses(self) -> None:
+        bot, proposals = self.bot()
+        with patch("dmbot.ui.deed_card.DeedProposals", return_value=proposals):
+            part = deed_card.walk_kind(bot, GUILD, CID)
+            record, not_this = part.choices()
+            recorded = await record.do(self.deed())
+            declined = await not_this.do(self.deed())
+        self.assertEqual(recorded.text, "✅ Recorded.")
+        assert recorded.undo is not None
+        self.assertEqual(cast(Any, recorded.undo).item.custom_id, f"dmbot:deedundo:{GUILD}:{CID}:7")
+        self.assertEqual((declined.text, declined.undo), ("Okay, not this one.", None))
+        proposals.record.assert_awaited_once()
+        proposals.dismiss.assert_awaited_once()
+
+    async def test_a_deed_that_was_already_answered_says_so_in_the_cards_words(self) -> None:
+        bot, proposals = self.bot(record=AsyncMock(side_effect=MemoryRuleError(GONE)))
+        with patch("dmbot.ui.deed_card.DeedProposals", return_value=proposals):
+            record = deed_card.walk_kind(bot, GUILD, CID).choices()[0]
+            answer = await record.do(self.deed())
+        self.assertEqual(answer.text, deed_card.ALREADY_ANSWERED)
+
+    async def test_another_rule_error_goes_up_to_be_shown(self) -> None:
+        bot, proposals = self.bot(record=AsyncMock(side_effect=MemoryRuleError("full")))
+        with patch("dmbot.ui.deed_card.DeedProposals", return_value=proposals):
+            record = deed_card.walk_kind(bot, GUILD, CID).choices()[0]
+            with self.assertRaises(MemoryRuleError):
+                await record.do(self.deed())
+
+    async def test_the_part_lists_the_deeds_after_the_consent_check(self) -> None:
+        bot, proposals = self.bot()
+        proposals.waiting = AsyncMock(return_value=[self.deed()])
+        with patch("dmbot.ui.deed_card.DeedProposals", return_value=proposals):
+            part = deed_card.walk_kind(bot, GUILD, CID)
+            self.assertEqual(len(await part.waiting()), 1)
+        proposals.waiting.assert_awaited_once_with(GUILD, CID, opted_in={1})

@@ -16,6 +16,7 @@ from dmbot import walk as walks
 from dmbot.dm_questions import (
     CLAIMS,
     CONNECTIONS,
+    DEEDS,
     FAMILY,
     KINDS,
     NAMES,
@@ -49,9 +50,9 @@ def labels(view: discord.ui.View) -> list[str | None]:
 
 class TheWalksOrderAndWords(unittest.TestCase):
     def test_the_parts_run_names_then_who_is_who_then_what_was_said_then_connections(self) -> None:
-        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS))
-        counts = {KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
-        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS))
+        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS))
+        counts = {DEEDS: 2, KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
+        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS, DEEDS))
 
     def test_nothing_waiting_is_no_walk(self) -> None:
         self.assertEqual(walks.parts_for({}), ())
@@ -369,12 +370,34 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
             count_waiting=AsyncMock(return_value=found),
             memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
         )
-        with patch("dmbot.ui.check_everything._bot", return_value=bot):
+        with (
+            patch("dmbot.ui.check_everything._bot", return_value=bot),
+            patch("dmbot.ui.deed_card.count_deeds", AsyncMock(return_value=4)),
+        ):
             counts = await ce.waiting_counts(cast(Any, object()), GUILD, CID)
-        self.assertEqual(counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1})
+        self.assertEqual(
+            counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1, DEEDS: 4}
+        )
 
     async def test_the_kinds_part_opens_the_kinds_cards(self) -> None:
         walk = Walk(CID, GUILD, 1, (KINDS,))
         with patch("dmbot.ui.kind_offer.start_walk_part", AsyncMock()) as start:
             await ce.run_part(cast(Any, object()), walk)
         start.assert_awaited_once()
+
+    async def test_a_deeds_count_that_cannot_be_read_is_zero(self) -> None:
+        with patch("dmbot.ui.deed_card.count_deeds", AsyncMock(side_effect=RuntimeError("down"))):
+            self.assertEqual(await ce._count_deeds(SimpleNamespace(), GUILD, CID), 0)
+
+    async def test_the_deeds_part_opens_the_deeds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (DEEDS,))
+        with patch("dmbot.ui.deed_card.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+
+    def test_deeds_beside_another_walked_kind_join_the_walk(self) -> None:
+        combined = combine(
+            [ask(DEEDS, 2), ask(CLAIMS, 8)], walk=lambda total: ce.WalkButton(GUILD, CID, total)
+        )
+        assert combined is not None
+        self.assertEqual(ids(combined[1]), [f"dmbot:walk:{GUILD}:{CID}"])
