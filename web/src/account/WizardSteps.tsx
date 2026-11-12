@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
+import PlayerPicker from "./PlayerPicker";
 import { problemWords } from "./wizard-problems";
-import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { maxBytesFor, toBase64, type DataChoice, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardMember, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -18,6 +19,9 @@ export interface StepProps {
   onPatch(patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)): Promise<void>;
   /** Replace the draft with a newer one (after a document or the rights changed). */
   onDraft(draft: WizardDraft): void;
+  /** Step 9's pick (#4212): nothing is chosen until the DM picks. */
+  dataChoice?: DataChoice;
+  onDataChoice?(choice: "yes" | "no"): void;
   /** The text of the campaign page the DM pasted in step 1, kept in the page's own memory while the wizard is open so Back shows it
    * again (#4204); never sent to the server except to be read, and gone on a reload. */
   pasted?: string;
@@ -227,36 +231,46 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   );
 }
 
-/** Step 3: who plays each character (optional; a character with no player is "pending"). */
-export function PlayersStep({ draft, onPatch }: StepProps) {
+/** Step 3: who plays each character (optional; a character with no player is "pending"). The player is picked from this server's
+ * members by name (#4204); text that matches no one stays in the box and the character stays "not set yet". */
+export function PlayersStep({ api, guild, draft, onPatch }: StepProps) {
   const t = w.players;
   const a = draft.answers;
+  const [members, setMembers] = useState<WizardMember[] | null | "failed">(null);
+  useEffect(() => {
+    let live = true;
+    api.members(guild).then(
+      (got) => live && setMembers(got),
+      () => live && setMembers("failed"),
+    );
+    return () => void (live = false);
+  }, [api, guild]);
+  const pending = a.characters.filter((c) => c.player === "pending").length;
   return (
     <section>
       <h2>{t.heading}</h2>
       <p>{t.lead}</p>
       {a.characters.length === 0 ? (
         <p class="muted">{t.none}</p>
+      ) : members === null ? (
+        <p class="muted" role="status">{t.loading}</p>
       ) : (
-        <ul>
-          {a.characters.map((c, i) => (
-            <li key={`${c.full}-${i}`}>
-              <label>
-                {c.full}
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder={t.pending}
-                  value={c.player === "pending" ? "" : c.player}
-                  onChange={(e) => {
-                    const v = (e.target as HTMLInputElement).value.trim();
-                    void onPatch((latest) => ({ characters: latest.characters.map((x, j) => (j === i ? { ...x, player: /^[1-9][0-9]{0,18}$/.test(v) ? v : "pending" } : x)) }));
-                  }}
+        <>
+          {(members === "failed" || members.length === 0) && <p role="status">{t.cannotSee}</p>}
+          <ul>
+            {a.characters.map((c, i) => (
+              <li key={`${c.full}-${i}`}>
+                <PlayerPicker
+                  label={c.full}
+                  members={members === "failed" ? [] : members}
+                  value={c.player}
+                  onPick={(id) => void onPatch((latest) => ({ characters: latest.characters.map((x, j) => (j === i ? { ...x, player: id } : x)) }))}
                 />
-              </label>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+          {pending > 0 && <p class="small" role="status">{t.noPlayerYet(pending)}</p>}
+        </>
       )}
     </section>
   );
@@ -458,16 +472,17 @@ export function RulesStep(props: StepProps) {
 }
 
 /** Step 9: whether this campaign's story may be used to improve DMbot. */
-export function DataStep({ draft, onPatch }: StepProps) {
+export function DataStep({ dataChoice = "none", onDataChoice }: StepProps) {
   const t = w.data;
   return (
     <section>
       <h2>{t.heading}</h2>
       <p>{t.lead}</p>
       <div role="radiogroup" aria-label={t.heading}>
-        <label class="row"><input type="radio" name="wizard-data" checked={draft.answers.dataUse} onChange={() => void onPatch({ dataUse: true })} /> {t.yes}</label>
-        <label class="row"><input type="radio" name="wizard-data" checked={!draft.answers.dataUse} onChange={() => void onPatch({ dataUse: false })} /> {t.no}</label>
+        <label class="row"><input type="radio" name="wizard-data" checked={dataChoice === "yes"} onChange={() => onDataChoice?.("yes")} /> {t.yes}</label>
+        <label class="row"><input type="radio" name="wizard-data" checked={dataChoice === "no"} onChange={() => onDataChoice?.("no")} /> {t.no}</label>
       </div>
+      {dataChoice === "none" && <p class="small" role="status">{t.pick}</p>}
       <p class="small">{t.note}</p>
     </section>
   );

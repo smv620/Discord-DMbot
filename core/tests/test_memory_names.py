@@ -3166,7 +3166,7 @@ class Review(NamesTest):
                 "🚫 Not a name",
                 "⏳ Later",
                 "✏️ Change the words",
-                "📜 Where was it said?",
+                # (no "Where was it said?": nothing is kept for a name added by hand, #4227)
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))

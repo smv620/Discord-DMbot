@@ -34,6 +34,7 @@ vi.mock("../src/content/wizard-switch", () => ({
 }));
 
 afterEach(() => {
+  window.sessionStorage.clear();
   flags.sheets = flags.house = flags.own = flags.drive = flags.links = false;
   cleanup();
   vi.useRealTimers();
@@ -112,6 +113,51 @@ describe("the wizard", () => {
     fireEvent.input(await screen.findByLabelText(w.where.pasteLabel), { target: { value: "nothing useful" } });
     fireEvent.click(screen.getByRole("button", { name: w.where.pasteRead }));
     expect(await screen.findByText(w.where.pasteNone)).toBeTruthy();
+  });
+
+  it("step 9 opens with neither option picked, Next waits for a pick and says why (#4212)", async () => {
+    await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    const yes = screen.getByLabelText(w.data.yes) as HTMLInputElement;
+    const no = screen.getByLabelText(w.data.no) as HTMLInputElement;
+    expect([yes.checked, no.checked]).toEqual([false, false]);
+    expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(w.data.pick)).toBeTruthy();
+    // yes comes first, then no (the order stays)
+    expect(yes.compareDocumentPosition(no) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a pick of Yes saves yes, a pick of No saves no, and Next goes on (#4212)", async () => {
+    const api = await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.yes));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(true));
+    expect(screen.queryByText(w.data.pick)).toBeNull();
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(false));
+    expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(false);
+    await next(10);
+    expect(screen.getByText(w.finish.summaryData("no"))).toBeTruthy();
+  });
+
+  it("Back and a reload show the earlier pick, and a No stays a No (#4212)", async () => {
+    const api = await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.back }));
+    await screen.findByText(w.step(8, 10));
+    await next(9);
+    expect((screen.getByLabelText(w.data.no) as HTMLInputElement).checked).toBe(true);
+    cleanup(); // (a reload: this tab still has its pick)
+    render(<Wizard api={api} guild={G} />);
+    await screen.findByText(w.step(9, 10));
+    expect((screen.getByLabelText(w.data.no) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(w.data.yes) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("with no pick the finish page would say not chosen (off) (#4212)", () => {
+    expect(w.finish.summaryData("none")).toBe("Help improve DMbot: not chosen (off)");
   });
 
   it("keeps the pasted page text when the DM goes Next and then Back (#4204)", async () => {
@@ -380,7 +426,8 @@ describe("the wizard", () => {
       await vi.advanceTimersByTimeAsync(2100);
     }
     expect(screen.getByText(w.finish.done)).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toContain("cmp-new");
+    // (the campaign's page reads its ref from the path, not from the hash: #4216)
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
   it("a finish that fails says what happened and offers another try", async () => {
@@ -467,6 +514,8 @@ describe("the wizard", () => {
     for (let i = 0; i < 20 && !screen.queryByRole("link", { name: w.finish.open }); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getAllByText(w.finish.errors["no-key"]!).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${encodeURIComponent(`${G}.nokey.cmp-new`)}`);
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).not.toContain("#");
   });
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {

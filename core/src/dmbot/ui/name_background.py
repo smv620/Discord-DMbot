@@ -81,6 +81,7 @@ from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -106,6 +107,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
+from dmbot.walk import Walk
 from dmbot.word_end import in_the_middle
 
 log = logging.getLogger(__name__)
@@ -769,6 +771,21 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A waiting suggestion that is an SRD language ("Elvish") is turned down first (#4227). (A
+    # stand-in bot in tests may not have it.)
+    drop = getattr(bot, "drop_language_suggestions", None)
+    if drop is not None:
+        await drop(guild, campaign.id)
+    # A player character's first name the lore uses alone ("Cerric" for the wizard's Cerric
+    # Vanya'elen) is their short name before the read looks (#3880): run only after the read, the
+    # read had already made "Cerric" a name of its own, the rule could no longer give the word to
+    # the character, and the lore's ties hung on the copy (#4224). Before the read it is only the
+    # DM's confirmed player characters, and a word the upload also writes before another name
+    # ("Cerric Dorn") waits for the run after the read, which sees both owners. (A stand-in bot in
+    # tests may not have it.)
+    short = getattr(bot, "add_short_names", None)
+    if short is not None:  # (player characters only, and never a namesake's word)
+        await short(guild, campaign.id, [upload.text], before_read=True)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -908,9 +925,8 @@ async def _read_background(
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     await _record_sources(memory, campaign, stored, upload, label)
-    # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
-    # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
-    short = getattr(bot, "add_short_names", None)
+    # ... and again for the people this read made ("Tran" for a new Tran Vosk), whatever the AI
+    # listed (#3880).
     if short is not None:
         await short(guild, campaign.id, [upload.text])
     await save_place_spellings(
@@ -2538,13 +2554,19 @@ async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
     return {p.key for p in onto.predicates.values() if p.symmetric}
 
 
-async def ask_connections(interaction: discord.Interaction, campaign_id: str) -> None:
+async def ask_connections(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> None:
     """The 📜 button (on the names summary, the 📇 Names card and the DM-screen notice): the "Which
-    one?" questions, then the connections that are ready, or why none is."""
+    one?" questions, then the connections that are ready, or why none is. Inside "Check
+    everything" (#4192) the walk is handed on to the connection cards."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
     asked = await offer_which(interaction, campaign_id)
-    if not await offer_ready(interaction, campaign_id) and not asked:
+    if not await offer_ready(interaction, campaign_id, walk=walk) and not asked:
+        if walk is not None:  # (nothing is ready: the walk is at its end)
+            await next_part(interaction, walk)
+            return
         await _tell(
             interaction,
             "None to check yet. Each connection waits until both its names are answered. "
@@ -2753,7 +2775,9 @@ class WhichOffer(_Menu):
             )
 
 
-async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> bool:
+async def offer_ready(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> bool:
     """The connections whose two names are answered, one at a time in a private message. Called
     when the DM has answered names (Add all, the end of 📝 Check new names) and by the 📜 button.
     Returns whether there was anything to ask."""
@@ -2767,7 +2791,7 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
         asked_names = await offer_worked_out(interaction, campaign_id) or asked_names
         asked_names = await offer_same_person(interaction, campaign_id) or asked_names
         asked_names = await offer_hand_over(interaction, campaign_id) or asked_names
-        view = ConnectionOffer(campaign_id)
+        view = ConnectionOffer(campaign_id, walk=walk)
         if not await view.load(interaction):
             return asked_names
         with contextlib.suppress(discord.HTTPException):
@@ -2822,9 +2846,10 @@ class ConnectionOffer(_Menu):
     the DM's word (never proposed). One that the text wrote with a secret spelling can only be kept
     as secret."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, *, walk: Walk | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): a part line and Stop for now
         self.kept = 0
         self.left_out = 0
         self.current: Waiting | None = None
@@ -2849,6 +2874,7 @@ class ConnectionOffer(_Menu):
         self.add_item(self.all_button)
         self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
         self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
+        add_stop(self, walk, row=1)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -2939,6 +2965,13 @@ class ConnectionOffer(_Menu):
         )
 
     def text(self) -> str:
+        """The card, with the walk's part line above it when this is inside "Check everything"."""
+        if self.walk is None or self.current is None:
+            return self._card()
+        done = self.kept + self.left_out + 1
+        return progress(self.walk, done, max(self.total, done)) + self._card()
+
+    def _card(self) -> str:
         c = self.current
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
@@ -3032,6 +3065,8 @@ class ConnectionOffer(_Menu):
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
+        if self.current is None and self.walk is not None:  # the last card: the walk goes on
+            await next_part(interaction, self.walk)
 
     async def _dm(self, interaction: discord.Interaction) -> Campaign | None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3222,6 +3257,8 @@ class ConnectionOffer(_Menu):
                     view=self,
                     allowed_mentions=NO_PINGS,
                 )
+            if self.walk is not None:  # (this card keeps its Undo; the walk goes on below it)
+                await next_part(interaction, self.walk)
 
     async def _undo_all(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -3267,9 +3304,17 @@ class BulkConfirm(_Menu):
     """Say yes to every name of a kind from this reading at once ("All 14 places"), undo it, or
     open the checking. Only the names this reading found: never an earlier reading's."""
 
-    def __init__(self, campaign_id: str, stored: dict[str, list[str]], queued: int = 0) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        stored: dict[str, list[str]],
+        queued: int = 0,
+        *,
+        walk: Walk | None = None,
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): its own Stop, and the walk goes on
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
         # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
@@ -3318,7 +3363,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
-        if self.queued:
+        if self.queued and self.walk is None:  # (a walk reaches the connections itself)
             self.add_item(
                 _Button(
                     self._connections,
@@ -3341,6 +3386,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
+        add_stop(self, self.walk, row=2)
 
     def _addable(self) -> dict[str, list[str]]:
         """The names a yes-to-all may cover: every kind but ideas, which need a look, and player
@@ -3377,11 +3423,11 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         if self.shared:
             # (the summary stays for the other game masters; the cards are this DM's, privately)
-            await start_review(interaction, self.campaign_id, bulk=False)
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
             return
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id, bulk=False)
+        await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)
@@ -3444,7 +3490,9 @@ class BulkConfirm(_Menu):
             text += f"\n{split}"
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
-        if total and self.queued:  # their names may be answered now
+        if self.walk is not None:  # the names left to look at one by one, then the next part
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
+        elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
     async def _undo(self, interaction: discord.Interaction) -> None:
