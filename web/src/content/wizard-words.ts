@@ -228,6 +228,12 @@ export const wizardWords = {
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
-    quiet: "Still working. You can leave this page: the campaign will be ready when it is done.",
+    // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.
+    told: "You can leave this page. When the campaign is ready, DMbot sends you a private message in Discord with what to check, and this page will say Ready. No email is sent.",
+    toldClosed: "If your Discord private messages are closed, look in your campaign's DM Bot channel.",
+    // The running clock, redrawn twice a second, and when the bot last moved (counts and times only, never a word of a document).
+    runningFor: (seconds: number): string => `Running for ${seconds >= 60 ? `${Math.floor(seconds / 60)} min ` : ""}${seconds % 60} s`,
+    lastProgress: (seconds: number): string => (seconds < 1 ? "Last progress just now" : `Last progress ${seconds} s ago`),
+    working: "Working…",
   },
 } as const;
