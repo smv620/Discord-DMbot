@@ -101,3 +101,72 @@ class ThePage(unittest.TestCase):
         self.assertEqual(wizard_page.read("\x00" * 5).characters, ())
         many = "x\nCharacters\n" + "\n".join(f"Hero{chr(97 + i)}" for i in range(26))
         self.assertEqual(len(wizard_page.read(many).characters), wizard_page.MAX_CHARACTERS)
+
+
+class ThePageShapes(unittest.TestCase):
+    """The other shapes a campaign page comes in (#4214); every page here is invented."""
+
+    def test_the_owners_sentence_gives_the_four_names_in_order(self) -> None:
+        text = (
+            "The Frost Road\nThe player characters in this adventure are Cerric, Belleros, "
+            "Claude, and Okthandom.\nNotes\nNothing.\n"
+        )
+        self.assertEqual(
+            wizard_page.read(text).characters, ("Cerric", "Belleros", "Claude", "Okthandom")
+        )
+
+    def test_a_short_sentence_with_and(self) -> None:
+        got = wizard_page.read("Winter\nThe characters are Tav and Shadowheart.\n")
+        self.assertEqual(got.characters, ("Tav", "Shadowheart"))
+
+    def test_and_an_oxford_comma_ampersand_and_or(self) -> None:
+        text = "x\nPlayer characters: Mira Dawn, Old Tam, & Sera Vale or Pip.\n"
+        self.assertEqual(
+            wizard_page.read(text).characters, ("Mira Dawn", "Old Tam", "Sera Vale", "Pip")
+        )
+
+    def test_a_long_clause_is_not_a_name(self) -> None:
+        text = "x\nThe characters are Cerric and heroes who have come a long way to help.\n"
+        self.assertEqual(wizard_page.read(text).characters, ())
+        long_name = "x\nThe characters are Cerric the Brave of the Northern Reach.\n"
+        self.assertEqual(wizard_page.read(long_name).characters, ())
+
+    def test_unrelated_prose_gives_nothing(self) -> None:
+        self.assertEqual(
+            wizard_page.read("Notes\ncharacters are what make a story\n").characters, ()
+        )
+        self.assertEqual(
+            wizard_page.read("Notes\nThe characters are what make a story.\n").characters, ()
+        )
+
+    def test_the_blocks_of_a_selected_page_skip_the_level_and_button_lines(self) -> None:
+        text = (
+            "Winter's Reach\nActive Characters\n"
+            "Okthandom\nLevel 3 Human Fighter\nView\nManage\n"
+            "Brannoc Stonebelt\nLevel 4 Dwarf Cleric\nView\nLeave\n"
+            "Remove\nNotes\nBring snacks\n"
+        )
+        got = wizard_page.read(text)
+        self.assertEqual(got.name, "Winter's Reach")
+        self.assertEqual(got.characters, ("Okthandom", "Brannoc Stonebelt"))
+
+    def test_the_old_heading_list_still_works(self) -> None:
+        self.assertEqual(
+            wizard_page.read("Camp\nCharacters\nIvy Quickfoot - Zed - Halfling Rogue\n").characters,
+            ("Ivy Quickfoot",),
+        )
+
+    def test_when_several_shapes_match_the_names_come_in_order_without_repeats(self) -> None:
+        text = (
+            "Camp\nThe characters are Cerric and Mira.\n"
+            "Characters\nMira Dawn\nCerric\nLevel 2 Elf Wizard\nSera\n"
+        )
+        # "Cerric" is in both; names keep the order they first appear in
+        self.assertEqual(wizard_page.read(text).characters, ("Cerric", "Mira", "Mira Dawn", "Sera"))
+
+    def test_the_most_it_will_take_is_twelve(self) -> None:
+        names = ", ".join(f"Hero{chr(65 + i)}" for i in range(20))
+        self.assertEqual(
+            len(wizard_page.read(f"x\nThe characters are {names}.\n").characters),
+            wizard_page.MAX_CHARACTERS,
+        )
