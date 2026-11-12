@@ -219,6 +219,8 @@ describe("no trademarks", () => {
     let text = readFileSync(join(root, relative), "utf8");
     // The same one allowance as the rendered page: the name inside the licence's attribution statements.
     if (relative === join("src", "content", "credits.ts")) text = text.replaceAll(licenceName, "");
+    // The owner (2026-11-12, #4204) allows "D&D Beyond" where it is a link to https://www.dndbeyond.com: the wizard's sheet-link label.
+    if (relative === join("src", "content", "wizard-words.ts") || relative === join("src", "account", "WizardSteps.tsx")) text = text.replaceAll("D&D Beyond", "");
     for (const pattern of banned) {
       expect(text, `found ${pattern}`).not.toMatch(pattern);
     }
