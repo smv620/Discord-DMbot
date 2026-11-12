@@ -591,6 +591,13 @@ terminal output or Discord screenshots copied to it.
     DMbot keeps one copy per address, and campaigns point to it. A pack may carry these pointers; a
     following campaign must approve each site first. Every entry records its source. See
     docs/PLAN.md, "Homebrew (part 2)".
+  - **Maps and pictures** (owner, 2026-11-12; `docs/design/mapbot_layers.md`, section 3): when a
+    map is found, in Discord or on the website, its uploader is asked once whether they may use it
+    and let DMbot keep it in this campaign. DMbot does no review of its own and goes by the answer;
+    who said yes and when is recorded on the map. No keeps nothing but the transcript line. A
+    player's yes stores the map, but DMbot reads it into the graph, positions or answers only after a
+    DM's yes. A map stays in that one campaign, a DM can remove it, and it goes with the campaign or
+    with its poster's own deletion. The terms page says the same (#4275).
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).
