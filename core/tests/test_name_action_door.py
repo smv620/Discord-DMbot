@@ -29,6 +29,8 @@ EVERY_ACTION = (
     "met-name", "met-join", "met-remove",  # "Met but not named" (#4084)
     "link-direction",  # A → B, B → A or A ↔ B (#4154)
     "place-size",  # how big a place is (#4173)
+    "place-setting",  # the campaign's setting (#4173 slice 2)
+    "place-form",  # land, water or a road (#4173 slice 6a)
 )  # fmt: skip
 
 

@@ -17,7 +17,7 @@ from typing import Any
 import discord
 
 from dmbot import walk as walks
-from dmbot.dm_questions import CLAIMS, CONNECTIONS, KINDS, NAMES, PEOPLE
+from dmbot.dm_questions import CLAIMS, CONNECTIONS, DEEDS, KINDS, NAMES, PEOPLE
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _tell
 from dmbot.walk import Walk
 
@@ -70,7 +70,29 @@ async def waiting_counts(
         CLAIMS: found.claims,
         CONNECTIONS: found.connections,
         KINDS: await _count_kinds(bot, guild_id, campaign_id),
+        DEEDS: await _count_deeds(bot, guild_id, campaign_id),
     }
+
+
+async def _count_deeds(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """The deeds waiting for a yes (a count that cannot be read is zero; the log gets the error
+    type only). Counted without changing anything, and only where the after-session question is
+    asked at all: the deeds switch is on and the campaign's plan has story memory (leftover
+    proposals of a lapsed plan are not offered)."""
+    from dmbot.ui.deed_card import count_deeds
+
+    try:
+        if not bot.settings.story_deeds_on:
+            return 0
+        campaign = await bot.campaigns.get(guild_id, campaign_id)
+        if campaign is None or not await bot.plan_allows(
+            "story", guild_id, campaign, fail_open=False
+        ):
+            return 0
+        return await count_deeds(bot, guild_id, campaign_id)
+    except Exception as exc:
+        log.warning("Check everything: couldn't count deeds (%s)", type(exc).__name__)
+        return 0
 
 
 async def _count_kinds(bot: Any, guild_id: int, campaign_id: str) -> int:
@@ -124,6 +146,10 @@ async def run_part(interaction: discord.Interaction, walk: Walk) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
         await start_claims_review(interaction, walk.campaign_id, walk=walk)
+    elif kind == DEEDS:
+        from dmbot.ui.deed_card import start_walk_part as start_deeds
+
+        await start_deeds(interaction, walk.guild_id, walk.campaign_id, walk)
     elif kind == KINDS:
         from dmbot.ui.kind_offer import start_walk_part
 
