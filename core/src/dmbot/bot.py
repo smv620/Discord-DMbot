@@ -14171,10 +14171,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
         try:
-            return await wizard_finish.run_round(self, guild_id)
+            taken = await wizard_finish.run_round(self, guild_id)
         except Exception as exc:
             log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
             return 0
+        try:  # a sheet link that waited for a player (#4205): one a round, after the run
+            await wizard_finish.run_sheet_waits(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard sheets: a server's round failed (%s)", type(exc).__name__)
+        return taken
 
     async def _wizard_finish_loop(self) -> None:
         """Every few seconds: answer the website's start-up wizard finish runs (#3955;
