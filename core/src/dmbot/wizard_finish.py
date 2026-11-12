@@ -32,6 +32,7 @@ from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
 from dmbot.memory import sheets
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
+from dmbot.memory.sheet_store import SheetRefused
 from dmbot.memory.store import INT64_MAX
 from dmbot.rules import optional
 
@@ -58,6 +59,7 @@ SHEET_BAD = "sheet_bad"  # not a D&D Beyond character link; nothing was kept
 # player), so a link on a character whose player is not known yet is not kept: the DM adds it on
 # the Sheets page once the character has its player.
 SHEET_NO_PLAYER = "sheet_no_player"
+SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
 # not read, and the draft is cleaned up, so the run says so and the page tells the DM to add them on
@@ -66,7 +68,7 @@ DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (
     DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT,
-    SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEETS_FAILED,
+    SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE, SHEETS_FAILED,
 )  # fmt: skip
 NOT_READ_YET = ("house", "homebrew", "ruleset")
 
@@ -494,7 +496,7 @@ async def _make_characters(
 def _notes(counts: dict[str, int]) -> str:
     """ "sheet_private:2 sheet_slow:1": the words in a fixed order with their counts (the row's
     check allows at most 8 pairs of up to 999)."""
-    order = (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER)
+    order = (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE)
     return " ".join(f"{w}:{min(counts[w], 999)}" for w in order if counts.get(w))
 
 
@@ -520,8 +522,13 @@ async def _read_sheets(
             for e in await memory.entities(guild_id, campaign_id)
             if e.role == PLAYER_CHARACTER
         }
+        done: set[str] = set()  # (two characters with one name are one entry: one link, one read)
         for number, c in enumerate(wanted, 1):
             await runs.move(guild_id, run, stage="sheets", part=number, of_parts=len(wanted))
+            key = name_key(str(c.get("full", "")).strip())
+            if key in done:
+                continue
+            done.add(key)
             word = await _read_one_sheet(bot, store, guild_id, campaign_id, have, c)
             if word:
                 counts[word] = counts.get(word, 0) + 1
@@ -533,7 +540,8 @@ async def _read_sheets(
         return SHEETS_FAILED
     run.notes = _notes(counts)
     log.info("A wizard run read %d sheet link(s): %s", len(wanted), run.notes or "all read")
-    for word in (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER):  # (the first is the row's)
+    for word in (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE):
+        # (the first problem's word is the row's)
         if counts.get(word):
             return word
     return ""
@@ -560,10 +568,22 @@ async def _read_one_sheet(
     try:
         await store.link(guild_id, campaign_id, entity_id, number)
         snapshot = await bot.fetch_sheet(number)
+    except SheetRefused:
+        return SHEET_NO_PLAYER  # (the entry changed since it was listed: no player, merged, gone)
     except sheets.SheetError as exc:
         log.info("A wizard sheet couldn't be read yet")  # (the link stays; read again later)
-        return SHEET_PRIVATE if exc.refused else SHEET_SLOW
-    kept = await store.save(guild_id, campaign_id, entity_id, snapshot, int(time.time()), url=url)
+        if exc.refused:
+            return SHEET_PRIVATE
+        # "slow" is only what a later try can fix: our own limit, D&D Beyond's 429/5xx, no answer
+        if exc.limited or exc.status is None or exc.status >= 500:
+            return SHEET_SLOW
+        return SHEET_UNREADABLE
+    try:
+        kept = await store.save(
+            guild_id, campaign_id, entity_id, snapshot, int(time.time()), url=url
+        )
+    except SheetRefused:
+        return SHEET_UNREADABLE  # (an answer that is not a sheet DMbot can keep)
     if kept:
         bot.sheets_changed(guild_id, campaign_id)  # (a new link drops the old names too)
     return ""

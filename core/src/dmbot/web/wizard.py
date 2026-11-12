@@ -155,10 +155,9 @@ def _characters(value: Any, finishing: bool = False) -> list[dict[str, Any]]:
         if player != "pending" and not (isinstance(player, str) and player.isdecimal()):
             raise RecapError("bad_characters")
         link = _text(item.get("sheet_url", ""), LINK_MAX, "characters")
+        # Only a D&D Beyond character link is ever fetched (#4205).
         if link and sheets.character_id(link) is None and not finishing:
-            raise RecapError(
-                "bad_sheet"
-            )  # only a D&D Beyond character link is ever fetched (#4205)
+            raise RecapError("bad_sheet")
         found.append(
             {
                 "full": _text(item.get("full", ""), NAME_MAX, "characters"),

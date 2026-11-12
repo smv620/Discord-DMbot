@@ -228,7 +228,7 @@ class TheAnswers(Wizard):
 
     async def test_the_finish_check_lets_a_wrong_link_through_for_the_stage_to_count(self) -> None:
         patch = {"name": "N", "characters": [{"full": "A", "sheet_url": "https://x.example/1"}]}
-        with self.assertRaises(wizard.RecapError):
+        with self.assertRaises(RecapError):
             wizard.check_patch(patch)
         kept = wizard.check_patch(patch, finishing=True)
         self.assertEqual(kept["characters"][0]["sheet_url"], "https://x.example/1")
