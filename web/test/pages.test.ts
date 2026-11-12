@@ -58,6 +58,7 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/help", "help.astro", "Help · DMbot", false],
   ["/players", "players.astro", "Playing at a table · DMbot", false],
   ["/whats-new", "whats-new.astro", "What&#39;s new · DMbot", false],
+  ["/whats-new/older", "whats-new/older.astro", "Older changes · DMbot", false],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
   ["/unsubscribe", "unsubscribe.astro", "Stop these emails · DMbot", true],

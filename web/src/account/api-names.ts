@@ -17,6 +17,7 @@ import type {
   KindOffer,
   MatchRow,
   MetItem,
+  PrivateScene,
   NamesPage,
   PlaceSpelling,
   ToldName,
@@ -224,6 +225,10 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         throw error;
       }
     },
+    // "Private scenes" (#4102): the list, and "Not private", which the door does itself (no queue: it is one flag on one row).
+    privateScenes: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes`)) as { items: PrivateScene[] }).items,
+    notPrivateScene: async (ref, id) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes/${encodeURIComponent(id)}/not-private`, {})) as { first: string; second: string },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the

@@ -19,7 +19,8 @@ NOW = 1_800_000_000
 
 FORGET_PERSON = import_module("dmbot.migrations.0431_forget_person")
 FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
-DELETED: tuple[tuple[str, str], ...] = FORGET_PERSON.DELETED
+FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
+DELETED: tuple[tuple[str, str], ...] = FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED
 ZEROED: tuple[tuple[str, str], ...] = FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -27,6 +28,9 @@ ZEROED: tuple[tuple[str, str], ...] = FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.Z
 EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
     (
         ("hand_over_answers", "user_id"),
+        ("move_codes", "user_id"),
+        ("name_answers", "user_id"),
+        ("web_sheet_actions", "user_id"),
         ("lore_uploads", "user_id"),
         ("member_directory", "user_id"),
         ("name_actions", "user_id"),
@@ -213,6 +217,18 @@ ROWS: dict[str, str] = {
         "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
         " VALUES (%(g)s, %(c)s, %(u)s, 1)"
     ),
+    "web_sheet_actions": (
+        "INSERT INTO web_sheet_actions (guild_id, campaign_id, id, user_id, action, state, stage,"
+        " created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, 'link', 'done', 'done', 1, 1)"
+    ),
+    "name_answers": (
+        "INSERT INTO name_answers (guild_id, campaign_id, id, entity_id, user_id, action, state,"
+        " created_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, %(u)s, 'confirm', 'done', 1)"
+    ),
+    "move_codes": (
+        "INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)"
+        " VALUES (%(u)s, %(f)s, 1, 2)"
+    ),
     "rule_set_editors": (
         "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by, added_at)"
         " VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(u)s, 1)"
@@ -242,8 +258,12 @@ ROWS: dict[str, str] = {
     ),
 }
 
-# The parent rows those tables need, written before ROWS (rule sets and transcript sessions).
+# The parent rows those tables need, written before ROWS (rule sets, transcript sessions, entries).
 PARENTS: dict[str, str] = {
+    "memory_entities": (  # (name_answers points at an entry)
+        "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description, status,"
+        " source, created_at) VALUES (%(g)s, %(c)s, %(k)s, 'npc', %(k)s, '', 'confirmed', 'dm', 1)"
+    ),
     "rule_sets": (
         "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
         " created_at) VALUES (%(g)s, %(c)s, %(k)s, 'house_rules', 'x', 'shared', %(u)s, 1)"
@@ -425,6 +445,8 @@ class AccountDeletionTables(DatabaseTest):
             "f": SECOND_FINGERPRINT,
         }
         async with self.db.guild(GUILD_A) as conn:
+            # (an entry for name_answers to point at: the only parent whose key does not clash)
+            await conn.execute(PARENTS["memory_entities"], params)
             for table, sql in ROWS.items():
                 if table in PARENTS or table in SAME_CAMPAIGN_SKIPS or "campaign_id" not in sql:
                     continue

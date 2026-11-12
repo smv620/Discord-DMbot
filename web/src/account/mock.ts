@@ -27,6 +27,7 @@ import type {
   ScriptOffer,
   MatchRow,
   MetItem,
+  PrivateScene,
   NamesQuery,
   SmartNamesAnswer,
   Offer,
@@ -848,6 +849,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "a".repeat(32), what: "barbarians", count: 2, sessionStartedAt: 1_700_000_000 },
     { id: "b".repeat(32), what: "rats", count: 0, sessionStartedAt: 1_700_000_000 },
     { id: "c".repeat(32), what: "a wolf", count: 1, sessionStartedAt: 1_699_000_000 },
+  ];
+  let scenesNow: PrivateScene[] = [
+    { id: "d".repeat(32), first: "Rook", second: "Mira Voss", sessionStartedAt: 1_700_000_000, into: 65, minutes: 12, lines: 9 },
+    { id: "e".repeat(32), first: "Brynn", second: "Rook", sessionStartedAt: 1_699_000_000, into: 7, minutes: 1, lines: 4 },
   ];
   let matchesNow: MatchRow[] =
     scenario === "table"
@@ -2650,6 +2655,24 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       onLook?.({ waits: null });
       await new Promise((ok) => setTimeout(ok, 200));
       metNow = metNow.filter((m) => m.id !== id);
+    },
+    // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
+    async privateScenes(ref): Promise<PrivateScene[]> {
+      calls.push(`privateScenes:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return scenesNow.map((x) => ({ ...x }));
+    },
+    async notPrivateScene(ref, id) {
+      calls.push(`notPrivateScene:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      const found = scenesNow.find((x) => x.id === id);
+      if (!found) throw new ApiError("gone");
+      scenesNow = scenesNow.filter((x) => x.id !== id);
+      return { first: found.first, second: found.second };
     },
     async answerMatch(ref, batch, answer, onLook) {
       calls.push(`answerMatch:${ref}:${batch}:${answer}`);

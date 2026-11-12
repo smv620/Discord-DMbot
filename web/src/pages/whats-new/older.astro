@@ -1,0 +1,17 @@
+---
+import EntryList from "../../components/EntryList.astro";
+import Base from "../../layouts/Base.astro";
+import { entries, olderHeading, olderIntro, splitEntries, whatsNewHeading } from "../../content/whats-new";
+
+// Everything the main page does not show (#4200), from the same entry files; held entries are in neither.
+const { older } = splitEntries(entries, new Date());
+---
+
+<Base title={olderHeading} description="Older changes to DMbot, newest first, in plain words.">
+  <h1>{olderHeading}</h1>
+  <p class="lead muted">{olderIntro}</p>
+
+  <EntryList entries={older} />
+
+  <p><a href="/whats-new">Back to {whatsNewHeading}</a></p>
+</Base>

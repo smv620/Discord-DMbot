@@ -20,6 +20,23 @@ export interface Entry {
 }
 
 export const whatsNewHeading = "What's new";
+export const olderHeading = "Older changes";
+export const olderIntro = "Everything that came before, newest first.";
+
+/** The main page shows what is from the last RECENT_DAYS days, and always at least the newest RECENT_MIN, whichever is more (#4200:
+ * the page lists every entry ever made, so it grew past its size budget; the rest is on /whats-new/older). Supervisor ruled 60 days,
+ * but at 2026-11-12 every entry is under 60 days old (the site is 4 weeks old and gains about 10 a day), so 60 days moved nothing and
+ * would have grown past the budget again within days; 14 days keeps the page near 20 KB at today's pace. */
+export const RECENT_DAYS = 14;
+export const RECENT_MIN = 30;
+
+/** Splits entries (newest first) into what the main page shows and what goes to the older page. Pure: `now` is the build day. */
+export function splitEntries(all: Entry[], now: Date): { recent: Entry[]; older: Entry[] } {
+  const cutoff = new Date(now.getTime() - RECENT_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const within = all.filter((e) => e.date >= cutoff).length;
+  const keep = Math.max(RECENT_MIN, within);
+  return { recent: all.slice(0, keep), older: all.slice(keep) };
+}
 export const whatsNewIntro =
   "What you can do with DMbot now, newest first. Only things that are live are here.";
 

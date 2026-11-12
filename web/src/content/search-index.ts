@@ -28,6 +28,7 @@ export const searchIndex: SearchEntry[] = [
   { path: "/help#snags-heading", title: "If something doesn't work", about: "What to try when something goes wrong.", words: ["broken", "error", "doesn't work", "fix", "bug", "wrong", "failed", "snag"] },
   { path: "/players", title: "For players", about: "What DMbot does and does not do with a player's voice.", words: ["player", "players", "my voice", "who hears", "safe", "private", "what is recorded", "consent"] },
   { path: "/whats-new", title: "What's new", about: "The latest changes to DMbot.", words: ["new", "latest", "changes", "changelog", "update", "updates", "release", "added"] },
+  { path: "/whats-new/older", title: "Older changes", about: "Everything that changed in DMbot before the latest.", words: ["older", "earlier", "past", "changelog", "history", "changes"] },
   { path: "/hello", title: "Say hello", about: "Write to the people who make DMbot.", words: ["contact", "write to us", "message us", "feedback", "email us", "get in touch", "hello", "suggestion"] },
   { path: "/legal/terms", title: "Terms of use", about: "The rules for using DMbot.", words: ["terms", "terms of service", "rules of use", "legal", "agreement", "conditions"] },
   { path: "/legal/privacy", title: "Privacy", about: "What DMbot keeps, why, and for how long.", words: ["privacy", "data", "personal data", "gdpr", "what do you store", "keep my data", "delete my data", "cookies"] },
