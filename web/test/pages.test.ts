@@ -57,6 +57,8 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/legal/refunds", "legal/refunds.astro", "Refunds · DMbot", false],
   ["/credits", "credits.astro", "Credits · DMbot", false],
   ["/help", "help.astro", "Help · DMbot", false],
+  ["/help/questions", "help/questions.astro", "Quick answers · DMbot", false],
+  ["/help/snags", "help/snags.astro", "If something doesn&#39;t work · DMbot", false],
   ["/players", "players.astro", "Playing at a table · DMbot", false],
   ["/whats-new", "whats-new.astro", "What&#39;s new · DMbot", false],
   ["/whats-new/older", "whats-new/older.astro", "Older changes · DMbot", false],

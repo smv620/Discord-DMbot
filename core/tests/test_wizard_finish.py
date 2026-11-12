@@ -453,6 +453,105 @@ class TheCharacters(FinishTest):
         self.assertIsNone(by_name["Mira Dawn"].played_by)  # (pending: answered later)
         self.assertEqual((await self.run_row())["state"], "done")
 
+    async def aliases_of(self, name: str) -> list[tuple[str, str, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        found = await self.bot.memory.aliases(GUILD, campaign.id, entity_id=entity.id)
+        return sorted((a.text, a.kind, a.status) for a in found)
+
+    async def test_a_full_name_with_no_short_name_gets_its_first_name_as_a_confirmed_one(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            await self.aliases_of("Cerric Vanya'elen"),
+            [("Cerric", "short", "confirmed"), ("Cerric Vanya'elen", "full", "confirmed")],
+        )
+
+    async def test_a_short_name_the_dm_typed_is_the_one_kept(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "Ric", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
+
+    async def test_two_characters_with_one_first_name_get_none(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Mira Vale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Mira Dawn", "Mira Vale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_one_word_name_a_title_or_a_name_another_character_has_gets_none(self) -> None:
+        chars = [
+            {"full": "Zed", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Captain Rook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Zed", "Captain Rook", "Dane Holt"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_creature_an_epithet_or_a_too_short_first_word_gets_none(self) -> None:
+        chars = [
+            {"full": "Goblin Sam", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Red Ilsa", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Al Brook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "jon Hale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Goblin Sam", "Red Ilsa", "Al Brook", "jon Hale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_another_characters_short_name_counts_as_taken(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Tom Vale", "party_name": "Mira", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Mira Dawn")], ["Mira Dawn"])
+        self.assertIn("Mira", [t for t, _, _ in await self.aliases_of("Tom Vale")])
+
+    async def test_an_ordinary_first_name_is_added(self) -> None:
+        chars = [{"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertIn("Wit", [t for t, _, _ in await self.aliases_of("Wit Sparrow")])
+
+    async def test_a_retried_run_adds_the_first_name_once(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts.count("Cerric"), 1)
+
     async def test_a_player_number_who_is_not_in_the_server_is_not_kept(self) -> None:
         chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "9999"}]
         await self.draft({"name": "Frostmaiden", "characters": chars})

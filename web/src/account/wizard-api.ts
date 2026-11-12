@@ -144,3 +144,29 @@ export function toBase64(bytes: Uint8Array): string {
 export function emptyAnswers(): WizardAnswers {
   return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
 }
+
+/** What the DM chose about helping improve DMbot (#4212): nothing is pre-selected, so there is a third state the draft's yes/no cannot hold.
+ * It is kept in this tab (sessionStorage, so a reload keeps it) and "not chosen" is sent to the server as off. */
+export type DataChoice = "yes" | "no" | "none";
+
+const dataKey = (guild: string): string => `dmbot.wizard.data.${guild}`;
+
+/** The pick kept in this tab for this server, or what the draft says when there is none (a yes is known to the server). */
+export function readDataChoice(guild: string, dataUse: boolean): DataChoice {
+  try {
+    const kept = window.sessionStorage.getItem(dataKey(guild));
+    if (kept === "yes" || kept === "no") return kept === "yes" && !dataUse ? "none" : kept;
+  } catch {
+    // (no storage here: the draft's yes still shows, a no shows as not chosen)
+  }
+  return dataUse ? "yes" : "none";
+}
+
+export function keepDataChoice(guild: string, choice: DataChoice): void {
+  try {
+    if (choice === "none") window.sessionStorage.removeItem(dataKey(guild));
+    else window.sessionStorage.setItem(dataKey(guild), choice);
+  } catch {
+    // (no storage here: the pick lasts while the wizard is open)
+  }
+}
