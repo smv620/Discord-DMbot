@@ -17,6 +17,10 @@ TEXT = (
 )
 
 
+def pairs(found: list[Spoken]) -> list[tuple[str, str]]:
+    return [(s.name, s.language) for s in found]
+
+
 def line(name: str, words: str, quote: str, kind: str = "language") -> str:
     return f'- {name} | {kind} | {words} | quote: "{quote}"'
 
@@ -32,13 +36,10 @@ class TheReader(unittest.TestCase):
             ["Brewner", "Mira"],
         )
         self.assertEqual(
-            got,
-            [
-                Spoken("Brewner", "Dwarvish"),
-                Spoken("Brewner", "Giant"),
-                Spoken("Mira", "Old tongue of Netheril"),
-            ],
+            pairs(got),
+            [("Brewner", "Dwarvish"), ("Brewner", "Giant"), ("Mira", "Old tongue of Netheril")],
         )
+        self.assertEqual(got[0].quote, "Brewner speaks Dwarvish and Giant")  # (for a question)
 
     def test_nothing_is_invented(self) -> None:
         counts: Counter[str] = Counter()
@@ -59,7 +60,7 @@ class TheReader(unittest.TestCase):
         got = read_languages(
             [line("Brewner", "Dwarvish", "Brewner speaks Dwarvish")], TEXT, [], existing=["brewner"]
         )
-        self.assertEqual(got, [Spoken("Brewner", "Dwarvish")])
+        self.assertEqual(pairs(got), [("Brewner", "Dwarvish")])
 
     def test_a_way_of_speaking_is_no_language_and_a_cant_keeps_its_apostrophe(self) -> None:
         text = "Mira speaks softly, in Thieves' Cant, and with animals."
@@ -70,7 +71,7 @@ class TheReader(unittest.TestCase):
             ["Mira"],
             counts,
         )
-        self.assertEqual(got, [Spoken("Mira", "Thieves' Cant")])
+        self.assertEqual(pairs(got), [("Mira", "Thieves' Cant")])
         self.assertEqual(counts["language_words"], 2)
 
     def test_a_language_is_never_read_as_a_lineage(self) -> None:

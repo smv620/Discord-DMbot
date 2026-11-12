@@ -17,7 +17,7 @@ from typing import Any
 
 import discord
 
-from dmbot.memory.models import SPECIES, MemoryRuleError, TooLateToUndo
+from dmbot.memory.models import LANGUAGE, SPECIES, MemoryRuleError, TooLateToUndo
 from dmbot.memory.trait_offers import NotWaiting, Offer, TraitOfferStore
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.family_ties import _dm_campaign
@@ -26,6 +26,7 @@ from dmbot.ui.names import _md, _memory
 log = logging.getLogger(__name__)
 
 HEADING = "🧬 **Lineage and class**"
+LANGUAGE_HEADING = "🗣️ **Languages**"  # a language question's own heading (#4229 slice 1c)
 LABEL = "🧬 Lineage and class"
 WHY = "DMbot never changes a character without asking you."
 # (not "Keep it": on DMbot's other cards that is the answer that changes nothing; ux-critic)
@@ -47,6 +48,8 @@ def _a(word: str) -> str:
 def _shown(offer: Offer) -> tuple[str, str, str]:
     """The character, the trait and what DMbot has now, safe for Discord."""
     who, what = _md(offer.entity_name), _md(offer.trait.name.lower())
+    if offer.trait.kind == LANGUAGE:  # (a language keeps its capital: Giant, Thieves' Cant)
+        return who, _md(offer.trait.name), ""
     if offer.trait.kind == SPECIES:
         now = _md(offer.current.lower())
     else:
@@ -69,6 +72,9 @@ def card_text(offer: Offer, waiting: int) -> str:
             no = f"{who} stays {now}"
         else:
             yes, no = f"{who} becomes {_a(what)}.", "nothing changes"
+    elif offer.trait.kind == LANGUAGE:  # (#4229 slice 1c)
+        lines = [f"{LANGUAGE_HEADING}{count}", f"Does **{who}** speak **{what}**?"]
+        yes, no = f"{what} is added to {who}'s languages.", "nothing changes"
     else:
         has = f"DMbot has {who} as **{now}**." if now else f"DMbot has no class for {who} yet."
         lines = [f"{HEADING}{count}", f"Add **{what}** to **{who}**'s classes? {has}"]
@@ -92,6 +98,8 @@ def card_text(offer: Offer, waiting: int) -> str:
 
 def kept_text(offer: Offer) -> str:
     who, what, _now = _shown(offer)
+    if offer.trait.kind == LANGUAGE:
+        return f"Done: **{who}** speaks **{what}**. ↩️ Undo takes it back."
     if offer.trait.kind == SPECIES:
         return f"Done: **{who}** is now {_a(f'**{what}**')}. ↩️ Undo takes it back."
     return f"Done: **{what}** added to **{who}**. ↩️ Undo takes it back."
