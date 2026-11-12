@@ -780,10 +780,15 @@ async def _read_house(
     """The house-rule documents of step 7, read into the campaign (#4211) with the House rules
     page's own reader. A document that holds no readable rule keeps its word in the notes and the
     campaign stands; so does a failure of the whole stage."""
-    docs = [d for d in docs if d["status"] == "ok" and str(d["text"]).strip()]
+    word = DRIVE_GONE if any(d["source"] == "drive" for d in docs) else ""
+    docs = [
+        d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
+    ]
     store = getattr(bot, "house_rules", None)
-    if not docs or store is None:
-        return ""
+    if docs and store is None:
+        return HOUSE_FAILED  # the DM adds them on the House rules page
+    if not docs:
+        return word
     await runs.move(guild_id, run, stage="house", part=1, of_parts=len(docs))
     try:
         _, _, unreadable = await wizard_house.read_documents(
@@ -791,13 +796,13 @@ async def _read_house(
         )
     except Exception as exc:  # the campaign is usable without them: say so, go on
         log.warning("A wizard run could not read its house rules (%s)", type(exc).__name__)
-        return HOUSE_FAILED
+        return word or HOUSE_FAILED
     if unreadable:
         pairs = [p for p in run.notes.split() if p]
         pairs.append(f"{wizard_house.HOUSE_UNREADABLE}:{min(unreadable, 999)}")
         run.notes = " ".join(pairs[:8])
-        return wizard_house.HOUSE_UNREADABLE
-    return ""
+        return word or wizard_house.HOUSE_UNREADABLE
+    return word
 
 
 async def _read_one(

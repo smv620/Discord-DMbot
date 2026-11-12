@@ -257,6 +257,35 @@ class TheHouseRules(FinishTest):
         self.assertIn("house_unreadable:1", row["notes"])
         self.assertEqual(await self.rules(), [(1, "One rule.")])
 
+    async def test_two_plain_documents_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "Flanking gives advantage.\nPotions are bonus."),
+            ("house", "Typed house rules", "Crits max the die.\nNo evil gods."),
+        ))  # fmt: skip
+        self.assertEqual(len(await self.rules()), 4)
+
+    async def test_two_numbered_files_with_the_same_numbers_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "1. First A.\n2. Second A."),
+            ("house", "b.txt", "1. First B.\n2. Second B."),
+        ))  # fmt: skip
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["First A.", "First B.", "Second A.", "Second B."],
+        )
+
+    async def test_bullets_and_numbers_with_a_bracket_are_dropped_from_a_plain_list(self) -> None:
+        await self.finish((("house", "t", "- Flanking gives advantage.\n1) Potions are bonus."),))
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["Flanking gives advantage.", "Potions are bonus."],
+        )
+
+    async def test_no_house_rules_store_gives_the_failed_word_and_the_campaign_stands(self) -> None:
+        self.bot.house_rules = None
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertEqual((row["state"], row["error"]), ("done", "house_failed"))
+
     async def test_a_retaken_run_adds_nothing_twice(self) -> None:
         docs = (("house", "rules.txt", "1. One rule.\n2. Another."),)
         await self.finish(docs)
