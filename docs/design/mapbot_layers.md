@@ -109,8 +109,8 @@ scale. Revision 2 keeps positions.
 | Way in | Who | Starts as |
 |---|---|---|
 | **Posted in the table's chat** in Discord | anyone who agreed to pictures | shown to the table (everyone there saw it) |
-| **Sent to DMbot privately** in Discord, or with a command | a DM | DM only |
-| **Added on the website,** on the campaign's Maps page | a DM | DM only |
+| **Sent to DMbot privately** in Discord, or with a command | a DM or a player | DM only |
+| **Added on the website,** on the campaign's Maps page | a DM or a player | DM only |
 | **Inside an uploaded document** (PLAN, "Pictures in uploaded documents") | a DM | DM only |
 | **A data file from a map tool** (section 10) | a DM, on the website | DM only |
 
@@ -130,8 +130,14 @@ Every time a map is found, DMbot asks the person who uploaded it, once for that 
 
 - **Where it is asked:** in Discord, in that person's private chat with DMbot (#3210). On the
   website, in the upload step itself, before anything is sent.
-- **Yes:** who said yes and when is recorded on the map. Only then is the map read closely, given
-  positions and used for answers.
+- **Yes from a DM:** who said yes and when is recorded on the map, and DMbot uses it as a map.
+- **Yes from a player** (owner, 2026-11-12) is the first of two steps:
+  1. **The player's yes stores it.** The picture is kept as a map, with who said yes and when. A
+     map posted in the table's chat is `table`, as today; any other is `dm`.
+  2. **A DM's yes lets DMbot use it.** Until then it is not read closely, gets no positions, makes
+     no links or layer rows, and is used in no answer. It waits in the DM's "❓ Questions for you"
+     as "A map from <player>: use it?", and on the Maps page. The DM's yes is recorded too.
+  - A DM's no leaves the picture kept and unused. Removing it is a separate tap.
 - **No:** the picture is removed from storage. Only its short transcript line stays, when it was
   posted in the table's chat.
 - **Not answered:** it is not used as a map: no close reading, no positions, no answers from it.
@@ -169,6 +175,7 @@ Every time a map is found, DMbot asks the person who uploaded it, once for that 
 | audience | `dm` or `table` (section 8) |
 | came from | discord, website, document or import, with the tool's name for an import |
 | right to use | who said yes, and when. Empty until answered |
+| used as a map | which DM said DMbot may use it, and when. Filled at once when the uploader is a DM; empty while a player's map waits |
 | as of | the story time the map shows, when it says or the DM sets one |
 | replaces | an older version of the same map, when the DM uploads a new one |
 
@@ -503,7 +510,9 @@ source of positions.
   A missing value is "not known", said plainly, with what would fix it.
 - **Never present a measurement as exact,** and never without the map it came from.
 - **Never put a coordinate on a place entry,** and never merge positions across maps.
-- **Never use a picture as a map before its uploader said yes** to the right-to-use question.
+- **Never keep a picture as a map before its uploader said yes** to the right-to-use question.
+- **Never read a player's map into the graph, positions, layers or answers before a DM said yes**
+  to using it.
 - **Never judge who owns a picture.** DMbot asks, records the answer and acts on it.
 - **Never make a map picture with AI.**
 - **Never show a player a `dm` map,** its link, or anything worked out from it.
@@ -539,8 +548,10 @@ source of positions.
 1. **Positions live on a map's features.** No coordinate on a place entry, and nothing measured is
    stored: distances, bearings and travel times are worked out when asked.
 2. **A layer row never states containment, adjacency or reachability.**
-3. **Nothing is treated as a map before the right-to-use yes,** and who said yes and when is on the
-   map.
+3. **Two yeses, two fields.** Nothing is kept as a map before its uploader's right-to-use yes.
+   Nothing reads a map (the close read, positions, links, layer rows, answers) before a DM's yes to
+   using it. A DM's own upload fills both at once. One function answers "may DMbot use this map?",
+   every map reader calls it, and a test covers a player's map that is waiting.
 4. **One reader function** for maps, features and layer rows applies section 8, with a CI test.
 5. **A `dm` map's link always needs a DM's sign-in.**
 6. **Vocabularies are fixed lists in code,** each with "other" plus words, and the read report
