@@ -8,6 +8,7 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
 /** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
+// The books step 6 offers, alphabetical by title for the screen. Core keeps its own order; that only affects how saved values are sorted.
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
   { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
   { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
