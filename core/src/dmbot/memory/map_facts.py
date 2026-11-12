@@ -114,7 +114,8 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
     - "the frozen north of Icewind Dale" or "the desert kingdom of Calimshan": a word from
       `WORD_FACTS` in the words just before "of";
     - "Icewind Dale, a frozen land": the same word right after the comma and its article.
-    Anything else says nothing. One fact per layer, the first found."""
+    Anything else says nothing, a phrase further on in the sentence included. One fact per layer,
+    the first found."""
     around = _sentence_of(name, text)
     if around is None:
         return []
@@ -122,7 +123,9 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
     out: dict[str, Found] = {}
     tail = " ".join(after.split()).casefold()
     for phrase, how in CONTROL_PHRASES.items():
-        at = re.search(r"(?<!\w)" + re.escape(phrase) + r"\s+", tail)
+        # right after the name: "Bryn Shander, ruled by …" or "Bryn Shander is held by …", never
+        # a phrase about something later in the sentence ("… traded with Luskan, ruled by …")
+        at = re.match(r"\s*,?\s*(?:(?:is|was|now)\s+)?" + re.escape(phrase) + r"\s+", tail)
         if at is None:
             continue
         rest = tail[at.end() :]
@@ -134,13 +137,11 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
         if CONTROL in out:
             break
     back = [w for w in (_bare(w) for w in before.split()[::-1]) if w]  # nearest first
-    if back and back[0] == "of":  # "the frozen north of", "the desert kingdom of"
-        for word in back[1:4]:
-            if word in _ARTICLES:
-                break
-            if word in WORD_FACTS:
-                layer, value = WORD_FACTS[word]
-                out.setdefault(layer, Found(layer, value))
+    # "the frozen north of", "the desert kingdom of": an article, the word, one noun, then "of"
+    # (so "a wooded hill east of Phandalin" places the hill, never Phandalin)
+    if len(back) >= 4 and back[0] == "of" and back[2] in WORD_FACTS and back[3] in _ARTICLES:
+        layer, value = WORD_FACTS[back[2]]
+        out.setdefault(layer, Found(layer, value))
     if after.startswith(","):  # "Icewind Dale, a frozen land"
         ahead = [w for w in (_bare(w) for w in after[1:].split()) if w][:3]
         if len(ahead) >= 2 and ahead[0] in _ARTICLES and ahead[1] in WORD_FACTS:
@@ -226,6 +227,6 @@ def meet(layer: str, old_source: str, old_status: str, new_source: str, changed:
         return NOTE  # (the DM's own row stands against everything but the DM)
     if layer in CORRECTED:
         return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
-    if changed:
+    if changed:  # (no reader says words of change yet: slice 2's phrases never do)
         return CLOSE
     return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE

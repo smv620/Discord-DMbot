@@ -95,9 +95,19 @@ async def _place(w: Changes, onto: Ontology, entity_id: str) -> dict[str, Any]:
 
 
 async def _check_value(
-    w: Changes, onto: Ontology, place: Mapping[str, Any], layer: str, value: str, how: str
+    w: Changes,
+    onto: Ontology,
+    place: Mapping[str, Any],
+    layer: str,
+    value: str,
+    how: str,
+    words: str = "",
 ) -> None:
+    # (the table's own checks, said in plain words first: "other" carries the text's words, at
+    # most WORDS_MAX, and nothing else does)
     if not mf.valid(layer, value, how) or (layer != mf.CONTROL and not value):
+        raise MemoryRuleError(BAD_WORD)
+    if (value == mf.OTHER) != bool(words.strip()) or len(words) > mf.WORDS_MAX:
         raise MemoryRuleError(BAD_WORD)
     if not mf.allowed_on(layer, form=place.get("form"), level=place.get("place_level")):
         raise MemoryRuleError(ONLY_LAND if layer == mf.TERRAIN else ONLY_BIG)
@@ -127,25 +137,37 @@ async def set_by_dm(
     how: str = "",
     words: str = "",
 ) -> None:
-    """The DM's word for a whole place in one layer (the edit screen): the open rows of that layer
-    for the whole place are rejected (the DM says what it is: a correction, §7.3), and the new one
-    is written confirmed, keeping whether the table knows it. None ("Not sure") only clears. The
-    same value again only confirms it, with its new shade."""
+    """The DM's word for a whole place in one layer (the edit screen), written confirmed. What it
+    replaces is rejected (the DM says what it is: a correction, §7.3):
+    - land and climate: every other open value of the layer;
+    - who rules it: another group that "rules" it when this one now rules it, and this group's own
+      row; a different group that only claims, occupies or protects it stays beside it (§6).
+    None ("Not sure") clears the whole layer. The same value again only confirms it, with its new
+    shade. Whether players see it follows the place's other rows (one 🙈 / 👁️ for the place)."""
     place = await _place(w, onto, place_id)
     if value is not None:
-        await _check_value(w, onto, place, layer, value, how)
-    now = await w.select(
-        MAP_FACTS, " AND entity_id = %s AND layer = %s AND part = ''" + _OPEN, [place_id, layer]
-    )
+        await _check_value(w, onto, place, layer, value, how, words)
+    every = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
+    known = any(bool(r["table_knows"]) for r in every)
+    now = [r for r in every if r["layer"] == layer and r["part"] == ""]
+
+    def replaced(f: mf.Fact) -> bool:
+        if value is None or layer != mf.CONTROL:
+            return True
+        return f.value == value or (how == "rules" and f.how == "rules")
+
     keeps = value is not None and any(_fact(r).value == value for r in now)
-    known = any(bool(r["table_knows"]) for r in now)
     for r in now:
-        if keeps and _fact(r).value == value:
-            change = {"status": mf.CONFIRMED, "source": mf.FROM_DM, "how": how, "words": words}
+        f = _fact(r)
+        if keeps and f.value == value:
+            change = {
+                "status": mf.CONFIRMED, "source": mf.FROM_DM, "how": how,
+                "words": words if value == mf.OTHER else "", "table_knows": known,
+            }  # fmt: skip
             if any(r[k] != v for k, v in change.items()):
-                await w.update(MAP_FACTS, str(r["id"]), change)
-        else:
-            await w.update(MAP_FACTS, str(r["id"]), {"status": mf.REJECTED})
+                await w.update(MAP_FACTS, f.id, change)
+        elif replaced(f):
+            await w.update(MAP_FACTS, f.id, {"status": mf.REJECTED})
     if value is None or keeps:
         return
     await w.insert(
@@ -160,6 +182,27 @@ async def set_by_dm(
     )  # fmt: skip
 
 
+async def prune(w: Changes, onto: Ontology, place_id: str) -> int:
+    """After a place's size, form or merge changes: its land or climate that the place can no
+    longer hold (land on what is now water, a climate on what is now a town) is rejected, in the
+    same change, so Undo of that change gives it back. How many."""
+    place = await w.get(ENTITIES, place_id)
+    if place is None:
+        return 0
+    rows = await w.select(
+        MAP_FACTS, " AND entity_id = %s AND layer <> 'control'" + _OPEN, [place_id]
+    )
+    gone = [
+        str(r["id"])
+        for r in rows
+        if not mf.allowed_on(
+            str(r["layer"]), form=place.get("form"), level=place.get("place_level")
+        )
+    ]
+    await w.update_rows(MAP_FACTS, {i: {"status": mf.REJECTED} for i in gone})
+    return len(gone)
+
+
 async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) -> int:
     """The DM's 🙈 / 👁️ for a place's land, climate and ruler, all at once: how many rows changed."""
     await _place(w, onto, place_id)
@@ -169,6 +212,18 @@ async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) 
     }
     await w.update_rows(MAP_FACTS, changed)
     return len(changed)
+
+
+async def keep_read(w: Changes, onto: Ontology, place_id: str) -> int:
+    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place becomes the DM's word,
+    keeping whether players see it. How many."""
+    await _place(w, onto, place_id)
+    rows = await w.select(MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id])
+    await w.update_rows(
+        MAP_FACTS,
+        {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
+    )
+    return len(rows)
 
 
 class Read(NamedTuple):
@@ -198,13 +253,15 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
         except MemoryRuleError:
             counts["not_allowed"] += 1
             continue
-        now = [
-            _fact(r)
-            for r in await w.select(
-                MAP_FACTS, " AND entity_id = %s AND layer = %s AND part = ''" + _OPEN,
-                [f.place_id, f.layer],
-            )
-        ]  # fmt: skip
+        rows = await w.select(
+            MAP_FACTS, " AND entity_id = %s AND layer = %s AND part = ''", [f.place_id, f.layer]
+        )
+        if any(
+            r["status"] == mf.REJECTED and _fact(r).value == f.value for r in rows
+        ):  # (the DM said no to it, or something surer did: it is never read again)
+            counts["rejected_before"] += 1
+            continue
+        now = [_fact(r) for r in rows if r["status"] != mf.REJECTED and r["to_session_at"] is None]
         same = [x for x in now if x.value == f.value]
         if same:
             counts["same"] += 1
@@ -249,22 +306,36 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
     return counts
 
 
-async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
-    """A merge of two places moves the gone one's rows to the kept one (and a group's control rows
-    to the kept group). Two that would land on one open key keep the higher source, the DM's word
-    first; the other is rejected first (so the one-open-row rule never trips), logged, so Undo
-    gives it back. One read for both."""
+async def move_on_merge(
+    w: Changes, onto: Ontology, keep_type: str, keep_id: str, gone_id: str
+) -> None:
+    """A merge moves the gone entry's rows to the kept one: a place's land, climate and ruler, and
+    a group's rule. What the kept entry can't hold goes as a kind change takes it (a place merged
+    into a person, a group into a person: deleted, logged, so Undo gives it back), and land or a
+    climate the kept place's size or form can't carry is rejected (`prune`). Two that would land on
+    one open key keep the higher source, the DM's word first; the other is rejected first (so the
+    one-open-row rule never trips). One read for both."""
     both = [keep_id, gone_id]
     rows = await w.select(
         MAP_FACTS, " AND (entity_id = ANY(%s) OR faction_id = ANY(%s))", [both, both]
     )
     if not any(gone_id in (r["entity_id"], r["faction_id"]) for r in rows):
         return
+    is_place, is_group = onto.is_a(keep_type, "place"), onto.is_a(keep_type, "faction")
+    dropped = {
+        str(r["id"])
+        for r in rows
+        if (r["entity_id"] == gone_id and not is_place)
+        or (r["faction_id"] == gone_id and not is_group)
+    }
+    for rid in sorted(dropped):
+        await w.delete(MAP_FACTS, rid)
+    rows = [r for r in rows if str(r["id"]) not in dropped]
 
     def moved(f: mf.Fact) -> tuple[str, ...]:
         place = keep_id if f.place_id == gone_id else f.place_id
         value = keep_id if f.layer == mf.CONTROL and f.value == gone_id else f.value
-        return (place, f.layer, value, f.part.casefold())
+        return (place, f.layer, value, f.part.lower())  # (as the index and the backup compare)
 
     live = [_fact(r) for r in rows if r["status"] != mf.REJECTED and r["to_session_at"] is None]
     best: set[tuple[str, ...]] = set()
@@ -277,6 +348,8 @@ async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
         change = {c: keep_id for c in ("entity_id", "faction_id") if r[c] == gone_id}
         if change:
             await w.update(MAP_FACTS, str(r["id"]), change)
+    if is_place:
+        await prune(w, onto, keep_id)
 
 
 async def drop_on_kind_change(

@@ -1233,6 +1233,8 @@ class MemoryStore:
                 if current.get("setting") and level not in SETTING_LEVELS:
                     change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
                 row = await w.update(ENTITIES, entity_id, change)
+                # (a climate only a region or bigger has: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
 
     async def set_place_form(
@@ -1253,8 +1255,8 @@ class MemoryStore:
             said = place_levels.BY_DM if form is not None else None
             if (current.get("form"), current.get("form_from")) != (form, said):
                 row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
-                if form is not None:  # (water or a road has no land type: #4256, in the same Undo)
-                    await map_fact_store.set_by_dm(w, onto, entity_id, mf.TERRAIN, None)
+                # (water or a road has no land type: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
 
     # ---- A place's land, climate and who rules it (#4256, MapBot layers slice 2) ----------------
@@ -1344,11 +1346,22 @@ class MemoryStore:
             changed = await map_fact_store.show_to_table(w, onto, place_id, shown)
             return Written(changed, w.batch)
 
+    async def keep_map_facts(
+        self, guild_id: int, campaign_id: str, place_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ Keep what DMbot read, for one place: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            kept = await map_fact_store.keep_read(w, onto, place_id)
+            return Written(kept, w.batch)
+
     async def add_read_map_facts(
         self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str
     ) -> Written[Counter[str]]:
         """What a text reader found about places, as `read` for the DM to check (§7.2), in one
-        change (one Undo with the upload). Counts only."""
+        change of its own (its own Undo). Counts only."""
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             counts = await map_fact_store.add_read(w, onto, found)
@@ -5008,7 +5021,9 @@ class MemoryStore:
         )
         await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_story_languages(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
-        await map_fact_store.move_on_merge(w, keep_id, gone_id)  # land, climate, ruler (#4256)
+        await map_fact_store.move_on_merge(  # land, climate, ruler (#4256)
+            w, onto, str(kept["type"]), keep_id, gone_id
+        )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:

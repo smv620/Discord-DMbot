@@ -27,6 +27,8 @@ ALL_BUTTON = "All or most of it"
 HIDE_BUTTON = "🙈 Hide from players"
 SHOW_BUTTON = "👁️ Show to players"
 TYPE_BUTTON = "✏️ Type a group"
+KEEP_BUTTON = "✅ Keep what DMbot read"
+NOTHING_TO_SHOW = "Nothing to show yet. Set the land, climate or ruler first."
 BACK_BUTTON = "↩ Back"
 READ_MARK = " (DMbot read this)"
 GROUPS_SHOWN = 23  # (Discord's 25 a menu, less "Not sure" and room for the current ruler)
@@ -107,7 +109,8 @@ def card_lines(
                 f"\n👑 **{RULED.get(how, 'Ruled by')}:** {' and '.join(groups)}"
                 f"{where(rule)}{mark(rule)}"
             )
-    if dm and any(f.status == mf.READ for h in held.values() for f in h.facts):
+    # (the hint only for this place's own: a bigger place's is checked on its own card)
+    if dm and any(f.status == mf.READ for h in held.values() if h.from_id is None for f in h.facts):
         lines.append(f"\nTap {BUTTON} to check.")
     return "".join(lines)
 
@@ -123,6 +126,16 @@ def _own(held: Mapping[str, mf.Held], layer: str) -> list[mf.Fact]:
     return list(h.facts) if h is not None and h.from_id is None else []
 
 
+def _main(facts: Sequence[mf.Fact]) -> mf.Fact | None:
+    """The one a menu shows as chosen (a menu takes one): the DM's own first, then a group that
+    rules it over one that only claims, occupies or protects it, then the oldest."""
+    if not facts:
+        return None
+    return min(
+        facts, key=lambda f: (f.status != mf.CONFIRMED, f.how not in ("", "rules", "mostly"))
+    )
+
+
 def screen_text(
     name: str,
     held: Mapping[str, mf.Held],
@@ -131,6 +144,8 @@ def screen_text(
     climate_here: bool,
     hidden: bool,
     note: str = "",
+    left_out: int = 0,
+    groups: int = 0,
 ) -> str:
     now = card_lines(held, names, dm=True).replace("\n", " ").strip()
     lines = [f"{note}\n" if note else "", f"🗺️ **What's {_md(name)} like?**"]
@@ -153,6 +168,9 @@ def screen_text(
             lines.append("Set the climate on the region it's in.")
     if _own(held, mf.CONTROL):
         lines.append("Claims = says it's theirs. Took it over = holds it by force.")
+    if left_out:
+        shown = groups - left_out
+        lines.append(f"Showing {shown} of {groups} groups. Not listed? Tap {TYPE_BUTTON}.")
     return "\n".join(x for x in lines if x)
 
 
@@ -186,7 +204,11 @@ async def show_world(
     hidden = not any(f.table_knows for f in own.get(entity_id, ()))
     climate_here = mf.allowed_on(mf.CLIMATE, form=place.form, level=place.place_level)
     land_here = mf.allowed_on(mf.TERRAIN, form=place.form, level=place.place_level)
-    text = screen_text(place.name, held, names, climate_here=climate_here, hidden=hidden, note=note)
+    left_out = ruler_options(held, names, [(g.id, g.name) for g in groups])[1]
+    text = screen_text(
+        place.name, held, names, climate_here=climate_here, hidden=hidden, note=note,
+        left_out=left_out, groups=len(groups),
+    )  # fmt: skip
     view = WorldMenu(
         campaign_id, entity_id, place.name, held, names,
         [(g.id, g.name) for g in groups], climate_here=climate_here, land_here=land_here,
@@ -199,13 +221,14 @@ def _same_as(held: Mapping[str, mf.Held], layer: str, names: Mapping[str, str]) 
     h = held.get(layer)
     if h is None or h.from_id is None or h.from_id not in names:
         return ""
-    return f"Same as {names[h.from_id]}"[:25]
+    return f"Same as {names[h.from_id]}"[:100]
 
 
 def land_options(
     held: Mapping[str, mf.Held], names: Mapping[str, str]
 ) -> list[discord.SelectOption]:
-    mine = {f.value for f in _own(held, mf.TERRAIN)}
+    main = _main(_own(held, mf.TERRAIN))
+    mine = {main.value} if main is not None else set()
     out = [
         discord.SelectOption(label=label, description=hint, value=key, default=key in mine)
         for key, (label, hint) in LAND.items()
@@ -223,7 +246,8 @@ def land_options(
 
 
 def climate_options(held: Mapping[str, mf.Held]) -> list[discord.SelectOption]:
-    mine = {f"{f.value}:{f.how}" for f in _own(held, mf.CLIMATE)}
+    main = _main(_own(held, mf.CLIMATE))
+    mine = {f"{main.value}:{main.how}"} if main is not None else set()
     out: list[discord.SelectOption] = []
     for key, word in WARMTH.items():
         for how in ("", "dry", "wet"):
@@ -247,13 +271,19 @@ def climate_options(held: Mapping[str, mf.Held]) -> list[discord.SelectOption]:
 def ruler_options(
     held: Mapping[str, mf.Held], names: Mapping[str, str], groups: Sequence[tuple[str, str]]
 ) -> tuple[list[discord.SelectOption], int]:
-    """The current ruler first, then the campaign's groups by name, at most GROUPS_SHOWN, then "Not
-    sure" (the bigger place's ruler, when it has one). Returns the options and how many groups
-    were left out."""
-    mine = [f.value for f in _own(held, mf.CONTROL)]
-    order = [g for g in mine if g in names] + [g for g, _ in groups if g not in mine]
+    """The current ruler first, then groups already tied to it (its other claimants, or the bigger
+    place's ruler), then the campaign's groups by name, at most GROUPS_SHOWN, then "Not sure" (the
+    bigger place's ruler, when it has one). Returns the options and how many groups were left out.
+    One is chosen at most (a menu takes one)."""
+    main = _main(_own(held, mf.CONTROL))
+    rule = held.get(mf.CONTROL)
+    tied = [f.value for f in (rule.facts if rule is not None else ()) if f.value in names]
+    first = ([main.value] if main is not None else []) + tied
+    order = list(dict.fromkeys([g for g in first if g in names] + [g for g, _ in groups]))
     shown = order[:GROUPS_SHOWN]
-    out = [discord.SelectOption(label=names[g][:100], value=g, default=g in mine) for g in shown]
+    chosen = main.value if main is not None else None
+    out = [discord.SelectOption(label=names[g][:100], value=g, default=g == chosen) for g in shown]
+    mine = [chosen] if chosen else []
     same = _same_as(held, mf.CONTROL, names)
     out.append(
         discord.SelectOption(
@@ -304,10 +334,10 @@ class WorldMenu(_Menu):
             self._ruler_picked, placeholder="Who rules it?", options=options, row=2
         )
         self.add_item(self.ruler)
-        rulers = _own(held, mf.CONTROL)
-        self.ruler_id = rulers[0].value if rulers else None
-        if self.ruler_id is not None:
-            now = rulers[0].how or "rules"
+        ruler = _main(_own(held, mf.CONTROL))  # (the one the menu shows: the buttons act on it)
+        self.ruler_id = ruler.value if ruler is not None else None
+        if ruler is not None:
+            now = ruler.how or "rules"
             for how, label in HOW_BUTTONS.items():
                 style = discord.ButtonStyle.success if how == now else discord.ButtonStyle.secondary
                 self.add_item(_Button(self._how(how), label=label, style=style, row=3))
@@ -318,7 +348,13 @@ class WorldMenu(_Menu):
             self.add_item(_Button(self._part, label=ALL_BUTTON if partly else PART_BUTTON, row=4))
             self.partly = partly
         self.hidden = hidden
+        self.has_own = any(_own(held, layer) for layer in mf.LAYERS)
         self.add_item(_Button(self._shown, label=SHOW_BUTTON if hidden else HIDE_BUTTON, row=4))
+        if any(f.status == mf.READ for layer in mf.LAYERS for f in _own(held, layer)):
+            # (picking what a menu already shows may send nothing: this keeps DMbot's read)
+            self.add_item(
+                _Button(self._keep, label=KEEP_BUTTON, style=discord.ButtonStyle.success, row=4)
+            )
         if self.left_out:
             self.add_item(_Button(self._type_group, label=TYPE_BUTTON, row=4))
         self.add_item(_Button(self._back, label=BACK_BUTTON, row=4))
@@ -412,6 +448,9 @@ class WorldMenu(_Menu):
             await _tell(interaction, ONLY_DM)
             return
         show = self.hidden
+        if not self.has_own:  # (nothing of its own to show: never claim it changed)
+            await show_world(interaction, self.campaign_id, self.entity_id, NOTHING_TO_SHOW)
+            return
         try:
             await memory.show_map_facts(
                 campaign.guild_id, campaign.id, self.entity_id, show, source=DM
@@ -429,6 +468,25 @@ class WorldMenu(_Menu):
         )
         await show_world(interaction, self.campaign_id, self.entity_id, note)
 
+    async def _keep(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+            await _tell(interaction, ONLY_DM)
+            return
+        try:  # every one DMbot read becomes the DM's word, in one change (one Undo)
+            await memory.keep_map_facts(campaign.guild_id, campaign.id, self.entity_id, source=DM)
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc} Tap {BACK_BUTTON} to see it.")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        note = f"✅ Noted: what DMbot read about **{_md(self.name)}** is right."
+        await show_world(interaction, self.campaign_id, self.entity_id, note)
+
     async def _type_group(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(
             TypeGroupForm(self.campaign_id, self.entity_id, self.name)
@@ -442,6 +500,7 @@ class WorldMenu(_Menu):
 
 
 NO_GROUP = "No group has that name. Check the spelling on the group's own card."
+TWO_GROUPS = "Two groups share that name. Pick the right one from the menu, or rename one first."
 
 
 class TypeGroupForm(discord.ui.Modal, title="Who rules it?"):
@@ -474,7 +533,7 @@ class TypeGroupForm(discord.ui.Modal, title="Who rules it?"):
             and " ".join(e.name.split()).casefold() == typed
         ]
         if len(found) != 1:
-            await _tell(interaction, NO_GROUP)
+            await _tell(interaction, TWO_GROUPS if found else NO_GROUP)
             return
         try:
             await memory.set_map_fact(

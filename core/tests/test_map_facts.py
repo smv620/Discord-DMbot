@@ -49,6 +49,11 @@ class TheWords(unittest.TestCase):
             "The frozen road. North of Icewind Dale.",  # across a full stop
             "the north of Icewind Dale",  # no list word
             "Snow fell on Targos.",
+            # (the reviewer on #4256: a phrase about something else in the sentence)
+            "Targos traded with Luskan, ruled by the Council of Speakers.",
+            "Targos sent soldiers to the fort held by the Arcane Brotherhood.",
+            "a wooded hill east of Targos",
+            "A sandy beach south of Targos",
         ):
             with self.subTest(text=text):
                 name = "Targos" if "Targos" in text else "Icewind Dale"
@@ -274,5 +279,135 @@ class TheStore(MemoryTest):
                 rows = [r for r in data["sections"]["memory"] if r["table"] == "map_fact"]
                 self.assertEqual(len(rows), 1)
                 rows[0].update(damage)
+                with self.assertRaisesRegex(CampaignError, "damaged"):
+                    await self.campaigns.import_backup(GUILD_B, data, DM)
+
+
+class AfterTheReview(TheStore):
+    """The reviewer's cases on #4256: backups that still load after a place changes, one 🙈 / 👁️
+    for the whole place, a DM's no that sticks, and the ruler's neighbours."""
+
+    async def round_trip(self) -> None:
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+
+    async def test_land_then_water_still_backs_up_and_undo_brings_the_land_back(self) -> None:
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.towns, mf.TERRAIN, "hill", source=BY_DM
+        )
+        made = await self.memory.set_place_form(GUILD_A, self.c, self.towns, "water", source=BY_DM)
+        self.assertEqual(await self.facts(self.towns), [])
+        await self.round_trip()
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch)
+        (back,) = await self.facts(self.towns)
+        self.assertEqual(back.value, "hill")
+
+    async def test_a_region_made_a_town_loses_its_climate_and_still_backs_up(self) -> None:
+        await self.memory.set_map_fact(GUILD_A, self.c, self.dale, mf.CLIMATE, "cold", source=BY_DM)
+        await self.memory.set_place_level(GUILD_A, self.c, self.dale, "settlement", source=BY_DM)
+        self.assertEqual(await self.facts(self.dale), [])
+        await self.round_trip()
+
+    async def test_a_place_merged_into_a_person_leaves_its_facts_behind(self) -> None:
+        mira = await self.add("Mira", type="npc", status=CONFIRMED)
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.towns, mf.TERRAIN, "hill", source=BY_DM
+        )
+        await self.memory.merge(GUILD_A, self.c, mira, self.towns, source=BY_DM, dm_said_same=True)
+        self.assertEqual(await self.facts(mira), [])
+        await self.round_trip()
+
+    async def test_two_lands_from_a_merge_are_both_kept(self) -> None:
+        twin = await self.add("Ten Towns", type="place", status=CONFIRMED)
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.towns, mf.TERRAIN, "hill", source=BY_DM
+        )
+        await self.memory.set_map_fact(GUILD_A, self.c, twin, mf.TERRAIN, "grassland", source=BY_DM)
+        await self.memory.merge(GUILD_A, self.c, self.towns, twin, source=BY_DM, dm_said_same=True)
+        self.assertEqual(
+            sorted(f.value for f in await self.facts(self.towns)), ["grassland", "hill"]
+        )
+        await self.round_trip()
+
+    async def test_shown_once_shows_what_the_dm_sets_next(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=9, status=CONFIRMED)
+        player = gate.Viewer.player([pc])
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.dale, mf.TERRAIN, "arctic", source=BY_DM
+        )
+        await self.memory.show_map_facts(GUILD_A, self.c, self.dale, True, source=BY_DM)
+        await self.memory.set_map_fact(GUILD_A, self.c, self.dale, mf.CLIMATE, "cold", source=BY_DM)
+        seen = {f.layer for f in await self.facts(self.dale, player)}
+        self.assertEqual(seen, {mf.TERRAIN, mf.CLIMATE})
+
+    async def test_a_player_reads_up_only_through_places_they_know(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=9, status=CONFIRMED)
+        await self.memory.set_map_fact(GUILD_A, self.c, self.dale, mf.CLIMATE, "cold", source=BY_DM)
+        await self.memory.show_map_facts(GUILD_A, self.c, self.dale, True, source=BY_DM)
+        held = await self.memory.map_facts_up(GUILD_A, self.c, self.bryn, gate.Viewer.player([pc]))
+        self.assertEqual(held[mf.CLIMATE].from_id, self.dale)
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.towns, True, source=BY_DM)
+        hidden = await self.memory.map_facts_up(
+            GUILD_A, self.c, self.bryn, gate.Viewer.player([pc]), shown={self.bryn, self.dale}
+        )
+        self.assertNotIn(mf.CLIMATE, hidden)  # (the way up goes through Ten-Towns, unknown to them)
+
+    async def test_a_dms_no_is_never_read_again(self) -> None:
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(self.dale, mf.CLIMATE, "hot")], source="background"
+        )
+        await self.memory.set_map_fact(GUILD_A, self.c, self.dale, mf.CLIMATE, None, source=BY_DM)
+        again = await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(self.dale, mf.CLIMATE, "hot")], source="background"
+        )
+        self.assertEqual(again.value["rejected_before"], 1)
+        self.assertEqual(await self.facts(self.dale), [])
+
+    async def test_a_new_ruler_leaves_another_groups_claim_beside_it(self) -> None:
+        other = await self.add("Arcane Brotherhood", type="faction", status=CONFIRMED)
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(self.bryn, mf.CONTROL, other, "claims")], source="background"
+        )
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.bryn, mf.CONTROL, self.council, how="rules", source=BY_DM
+        )
+        got = {(f.value, f.how) for f in await self.facts(self.bryn)}
+        self.assertEqual(got, {(self.council, "rules"), (other, "claims")})
+
+    async def test_keep_what_dmbot_read_is_one_undo(self) -> None:
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(self.dale, mf.CLIMATE, "arctic")], source="background"
+        )
+        kept = await self.memory.keep_map_facts(GUILD_A, self.c, self.dale, source=BY_DM)
+        (row,) = await self.facts(self.dale)
+        self.assertEqual((row.status, row.source), (mf.CONFIRMED, mf.FROM_DM))
+        assert kept.batch is not None
+        await self.memory.undo(GUILD_A, self.c, kept.batch)
+        (back,) = await self.facts(self.dale)
+        self.assertEqual(back.status, mf.READ)
+
+    async def test_other_needs_its_words_in_plain_words(self) -> None:
+        for words in ("", "x" * 61):
+            with self.subTest(words=len(words)), self.assertRaises(MemoryRuleError):
+                async with self.memory._write(GUILD_A, self.c, BY_DM) as w:
+                    from dmbot.memory import map_fact_store
+                    from dmbot.memory.store import _load_ontology
+
+                    onto = await _load_ontology(w)
+                    await map_fact_store.set_by_dm(
+                        w, onto, self.towns, mf.TERRAIN, mf.OTHER, words=words
+                    )
+
+    async def test_a_damaged_open_row_is_refused(self) -> None:
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.bryn, mf.TERRAIN, "hill", source=BY_DM
+        )
+        for damage in ({"entity_id": self.council}, {"layer": "climate", "value": "cold"}):
+            with self.subTest(damage=damage):
+                data = decode_backup(encode_backup(await self.campaigns.export(GUILD_A, self.c)))
+                assert isinstance(data, dict)
+                (row,) = [r for r in data["sections"]["memory"] if r["table"] == "map_fact"]
+                row.update(damage)  # (land on a group; a climate on a place too small for one)
                 with self.assertRaisesRegex(CampaignError, "damaged"):
                     await self.campaigns.import_backup(GUILD_B, data, DM)

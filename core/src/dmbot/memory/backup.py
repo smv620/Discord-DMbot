@@ -506,9 +506,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
-        elif (
-            table is MAP_FACTS
-        ):  # (its own words: `how`, `status`, `source` mean other things here)
+        elif table is MAP_FACTS:
+            # (its own check: its `how`, `status` and `source` mean other things than elsewhere)
             _check_map_fact(raw)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
@@ -1001,6 +1000,7 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     # a place's land, climate and ruler (#4256): on a place, ruled by a group, allowed there
     places = {r["id"]: r for r in by_tag["entity"] if onto.is_a(r["type"], "place")}
     groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}
+    every = {r["id"] for r in by_tag["entity"]}
     open_keys: set[tuple[str, ...]] = set()
     for r in by_tag["map_fact"]:
         place = places.get(r["entity_id"])
@@ -1010,6 +1010,10 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
             raise CampaignError(DAMAGED)  # (one open row per place, layer, value and part)
         if is_open:
             open_keys.add(key)
+        if not is_open:  # (history: its place or group may have changed since; it must exist)
+            if r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every:
+                raise CampaignError(DAMAGED)
+            continue
         if (
             place is None
             or (r["faction_id"] is not None and r["faction_id"] not in groups)
