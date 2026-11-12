@@ -80,10 +80,12 @@ class WizardMembers(Base):
         await self.member(ERIC, "Eric", guild=999)  # (a member of some other server)
         self.assertEqual(await self.listed(), [])
 
-    async def test_a_member_who_is_not_recorded_now_is_left_out(self) -> None:
+    async def test_a_member_with_no_consent_row_is_offered_too(self) -> None:
+        # (naming a character's player records nothing about the person: a new table's players
+        # mostly have not agreed yet)
         await self.member(ERIC, "Eric", agreed=False)
         await self.member(ADA, "Ada")
-        self.assertEqual([m["name"] for m in await self.listed()], ["Ada"])
+        self.assertEqual([m["name"] for m in await self.listed()], ["Ada", "Eric"])
 
     async def test_a_search_matches_the_name(self) -> None:
         await self.member(ERIC, "Eric the Red")

@@ -9,15 +9,15 @@ from __future__ import annotations
 # The wizard runs before a campaign exists, so no campaign's `campaign_dms` can vouch for the
 # caller; the door asks what the wizard's own doors ask (`dmbot_wizard_me`: the signed-in account,
 # a server in the session's own list). It lists, for that one server only, the members the bot has
-# seen (`member_directory`) who are recorded now (a consent row under the current wording, as the
-# import page's member search does), by display name or username. "Played with you before" is read
+# seen (`member_directory`), by display name or username. **Consent is not asked of them:** naming a
+# character's player records nothing about the person (consent covers voice and words), and a new
+# table's players mostly have not agreed yet (Supervisor, #4204). "Played with you before" is read
 # live from this server's campaigns the caller is a DM of (`memory_entities.played_by` on a
 # confirmed entry): nothing new is stored, and **nothing is read from any other server**: a person
-# who played with this DM only elsewhere is not marked (Supervisor, #4204: data never crosses
-# servers). Only people the bot has seen here are offered, so a name is always one the DM can
-# recognise. Names and ids only, at most 50, in the order: played before, then by name.
+# who played with this DM only elsewhere is not marked (data never crosses servers). Names and ids
+# only, at most 50, in the order: played before, then by name.
 SQL = r"""
-    CREATE FUNCTION dmbot_web_wizard_members(g BIGINT, terms INTEGER, q TEXT) RETURNS JSONB
+    CREATE FUNCTION dmbot_web_wizard_members(g BIGINT, q TEXT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
     DECLARE
         me BIGINT := dmbot_wizard_me(g);
@@ -46,9 +46,6 @@ SQL = r"""
                                      AND e.status = 'confirmed' AND m.user_id = me) AS before
                     FROM member_directory d
                     WHERE d.guild_id = g AND (d.display_name <> '' OR d.username <> '')
-                      AND EXISTS (SELECT 1 FROM consent x
-                                  WHERE x.guild_id = g AND x.user_id = d.user_id
-                                    AND x.terms_version = terms)
                       AND (needle = '' OR position(needle IN lower(d.display_name || ' '
                                                                   || d.username)) > 0)
                 ) u
@@ -60,15 +57,15 @@ SQL = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_wizard_members(BIGINT, INTEGER, TEXT)'
+            'ALTER FUNCTION dmbot_web_wizard_members(BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_wizard_members(BIGINT, INTEGER, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_wizard_members(BIGINT, TEXT) FROM PUBLIC;
 """
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_web_wizard_members", "dmbot_web_wizard_members(BIGINT, INTEGER, TEXT)"),
+    ("dmbot_web_wizard_members", "dmbot_web_wizard_members(BIGINT, TEXT)"),
 )
