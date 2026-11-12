@@ -16,6 +16,7 @@ import type {
   NameSource,
   KindOffer,
   MatchRow,
+  MetItem,
   PrivateScene,
   NamesPage,
   PlaceSpelling,
@@ -205,6 +206,24 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) =>
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
+    },
+    // "Met but not named" (#4084): the list, and each answer queued for the bot (202 {answer}) and read where every name action's is.
+    metList: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/met`)) as { items: MetItem[] }).items,
+    answerMet: async (ref, id, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/met/${encodeURIComponent(id)}`, answer)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      // (the bot's word "met_waiting" has no kind in the shared map, which would cost the first download bytes: it is read off the answer here)
+      let word = "";
+      try {
+        await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+          word = look.error ?? "";
+          onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) });
+        });
+      } catch (error) {
+        if (word === "met_waiting") throw new ApiError("met-waiting");
+        throw error;
+      }
     },
     // "Private scenes" (#4102): the list, and "Not private", which the door does itself (no queue: it is one flag on one row).
     privateScenes: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes`)) as { items: PrivateScene[] }).items,

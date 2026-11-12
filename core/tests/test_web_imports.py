@@ -808,6 +808,27 @@ class TheStore(WithImports):
             [(m["userId"], m["agreed"]) for m in got["members"]], [(str(stranger), True)]
         )
 
+    async def test_the_members_search_marks_and_lists_first_the_players_the_dm_played_with(
+        self,
+    ) -> None:
+        early, late = 9201, 9202  # (by name "Zed Adams" sorts before "Zed Young")
+        for who, name in ((early, "Zed Adams"), (late, "Zed Young")):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+            user = SimpleNamespace(id=who, name=name, email=None)
+            await web_sessions.sign_in(self.web, cast(Any, user), [THURSDAY], now=NOW, days=30)
+        async with self.db.unscoped() as conn:  # (the table has no writer but its own trigger)
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'dm_players_note', true)")
+            await conn.execute(
+                "INSERT INTO dm_players (dm_user_id, player_user_id, last_name, first_played_at,"
+                " last_played_at, campaigns) VALUES (%s, %s, 'Zed Young', 1, 1, 1)",
+                (self.session.user_id, late),
+            )
+        got = await imports.search_members(self.web, self.session, self.ref_c, "zed", **self.kw)
+        self.assertEqual(
+            [(m["name"], m["before"]) for m in got["members"]],
+            [("Zed Young", True), ("Zed Adams", False)],
+        )
+
     async def test_a_second_file_the_door_refuses_stores_nothing_at_all(self) -> None:
         await ConsentStore(self.db).grant(THURSDAY.id, TOMAS)
         original = imports._plans

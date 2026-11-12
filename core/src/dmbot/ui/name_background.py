@@ -64,6 +64,7 @@ from dmbot.memory.models import (
     CONFIRMED,
     DESCRIPTION_MAX,
     DM,
+    LANGUAGE,
     NEEDS_A_LOOK,
     PLAYER_CHARACTER,
     PROPOSED,
@@ -665,6 +666,13 @@ class BackgroundOffer(_Menu):
                     guild, campaign.id, key, posted, sum(map(len, stored.values()))
                 )
             await bot.tell_dm_waiting(guild, campaign.id, key, where="your upload")
+            if done.sheet_languages:  # (#4229 1c) to this DM alone: never the DM Bot channel,
+                # which the campaign's people read and which only ever gets counts; sent after
+                # either kind of note, so neither path loses it
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.followup.send(
+                        sheet_languages_line(done.sheet_languages).strip(), ephemeral=True
+                    )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -710,6 +718,9 @@ class BackgroundRead:
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
     # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
     trait_questions: int = 0
+    # A lore language a player character's sheet lacks (#4229 slice 1c, Supervisor's ruling): one
+    # plain line on the note naming each, never a row or a question (the sheet is the truth).
+    sheet_languages: tuple[tuple[str, str], ...] = ()
     # The ids of the names read from its pictures that its text did not plainly resolve (#4003):
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
@@ -771,6 +782,11 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A waiting suggestion that is an SRD language ("Elvish") is turned down first (#4227). (A
+    # stand-in bot in tests may not have it.)
+    drop = getattr(bot, "drop_language_suggestions", None)
+    if drop is not None:
+        await drop(guild, campaign.id)
     # A player character's first name the lore uses alone ("Cerric" for the wizard's Cerric
     # Vanya'elen) is their short name before the read looks (#3880): run only after the read, the
     # read had already made "Cerric" a name of its own, the rule could no longer give the word to
@@ -894,6 +910,15 @@ async def _read_background(
         read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
         offers=trait_offers,
     )  # fmt: skip
+    # The languages the text says a character speaks (#4229 slice 1b): checked like the traits,
+    # stored after the names, as DMbot's read until the DM checks them.
+    spoken = traits_read.read_languages(
+        read.trait_lines,
+        upload.text,
+        [n for f in found for n in (f.name, *f.also)],
+        read.stats.dropped,
+        existing=known,
+    )
     # A player character's backstory written into campaign lore is known to that character
     # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
     # guess only (see `_backstory_owners`).
@@ -1043,6 +1068,15 @@ async def _read_background(
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
+    if spoken:
+        await store_languages(memory, campaign, spoken, known)
+        notice_id = done.notice.id if done.notice is not None else None
+        asked, on_sheets = await ask_languages(
+            memory, campaign, [s for s in spoken if name_key(s.name) in known], label, notice_id
+        )
+        done.sheet_languages = tuple(on_sheets)
+        done.trait_questions += asked
+        done.questions_left += asked
     return done
 
 
@@ -1261,13 +1295,143 @@ def picture_held_line(n: int) -> str:
 
 
 def trait_questions_line(n: int) -> str:
-    """The count line for an upload whose lineage questions wait (#3926); "" for none."""
+    """The count line for an upload whose questions about characters wait: lineage, class
+    (#3926) or language (#4229); "" for none."""
     if not n:
         return ""
     return (
-        f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
-        " in ❓ Questions for you."
+        f"\n🧬 **{n} question{'' if n == 1 else 's'} about your characters** "
+        f"wait{'s' if n == 1 else ''} for you in ❓ Questions for you."
     )
+
+
+SHEET_LANGUAGES_SHOWN = 5  # the note names a few; the rest are counted
+
+
+def sheet_languages_line(found: Sequence[tuple[str, str]]) -> str:
+    """One plain line for the lore languages that player characters' sheets lack (#4229 slice 1c):
+    named, never stored, since the sheet is the truth: "🗣️ Your lore says Testa speaks Elvish,
+    which isn't on their sheet." "" for none."""
+    if not found:
+        return ""
+    shown = found[:SHEET_LANGUAGES_SHOWN]
+    said = "; ".join(f"**{_md(who)}** speaks **{_md(lang)}**" for who, lang in shown)
+    more = len(found) - len(shown)
+    rest = f" (and {more} more)" if more > 0 else ""
+    return (
+        f"\n🗣️ Your lore says {said}{rest}, but the sheet doesn't list it. Add it on the sheet "
+        "if it's right."
+    )
+
+
+async def store_languages(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spoken: Sequence[traits_read.Spoken],
+    known: Collection[str] = (),
+) -> int:
+    """The languages the lore says a character speaks (#4229 slice 1b), kept beside the sheets as
+    DMbot's read ("not checked yet" on the DM's card) until the DM checks them. Only for a character
+    this read is making: a name the campaign had before it (`known`, keys) is never written to
+    silently, as #3926 rules for lineage and class; asking about those is its own step. A character
+    with a sheet keeps its languages there, so the store skips it; a name two entries share is
+    skipped (DMbot can't tell whose). One language that can't be kept never stops the rest.
+    Returns how many were added. Never raises: the log gets counts and the error type only."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Lore languages couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    whose: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        # (a campaign's own kind under character counts: is_a, never the word itself)
+        if who is not None and onto.is_a(who.type, "character"):
+            whose.setdefault(name_key(entry.text), set()).add(who.id)
+    added = skipped = 0
+    for one in spoken:
+        ids = whose.get(name_key(one.name), set())
+        if name_key(one.name) in known or len(ids) != 1:
+            skipped += 1
+            continue
+        entity_id = next(iter(ids))
+        try:
+            had = {
+                name_key(r.name)
+                for r in await memory.story_languages(campaign.guild_id, campaign.id, entity_id)
+            }
+            written = await memory.add_story_language(
+                campaign.guild_id, campaign.id, entity_id, one.language, source="background"
+            )
+        except Exception as exc:  # the type only; the next language still gets its turn
+            log.warning("A lore language couldn't be kept (%s)", type(exc).__name__)
+            continue
+        added += written.value is not None and name_key(one.language) not in had
+    if added or skipped:
+        log.info("Lore languages: %d added as DMbot's read, %d left for later", added, skipped)
+    return added
+
+
+async def ask_languages(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spoken: Sequence[traits_read.Spoken],
+    upload: str,
+    notice_id: str | None,
+) -> tuple[int, list[tuple[str, str]]]:
+    """The languages the lore gives characters the campaign already had (#4229 slice 1c,
+    Supervisor's ruling): one with no sheet that doesn't know it yet gets a question, as #3926 does
+    for a lineage ("Does Brewner speak Giant?"); a player character whose sheet lacks it is named
+    to the DM alone instead (a private line after the upload's note), with nothing stored. Only a
+    confirmed character, and never a name two entries share. Returns the new questions and the
+    sheet lines. Never raises."""
+    offers: list[trait_offers_mod.Offer] = []
+    on_sheets: list[tuple[str, str]] = []
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        whose: dict[str, set[str]] = {}
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if (
+                who is not None
+                and who.status == CONFIRMED
+                and onto.is_a(who.type, "character")  # (a campaign's own kinds too)
+            ):
+                whose.setdefault(name_key(entry.text), set()).add(who.id)
+        ids = {s.name: next(iter(whose[name_key(s.name)])) for s in spoken
+               if len(whose.get(name_key(s.name), ())) == 1}  # fmt: skip
+        if not ids:
+            return 0, []
+        everyone = sorted(set(ids.values()))
+        known = await memory.languages_known(campaign.guild_id, campaign.id, everyone)
+        for s in spoken:
+            entity_id = ids.get(s.name)
+            if entity_id is None:
+                continue
+            has = known.get(entity_id, [])
+            if any(name_key(k.name) == name_key(s.language) for k in has):
+                continue  # already known: nothing to ask or say
+            if await memory.has_sheet(campaign.guild_id, campaign.id, entity_id):
+                on_sheets.append((lookup.entities[entity_id].name, s.language))
+                continue
+            offers.append(
+                trait_offers_mod.Offer(
+                    entity_id, Trait(LANGUAGE, s.language, "", None, False), s.quote, upload
+                )
+            )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Language questions couldn't be read (%s)", type(exc).__name__)
+        return 0, []
+    if not offers:
+        return 0, on_sheets
+    try:
+        store = trait_offers_mod.TraitOfferStore(memory._db)
+        return await store.offer(campaign.guild_id, campaign.id, offers, notice_id), on_sheets
+    except Exception as exc:  # (the sheet lines are kept: they need no write)
+        log.warning("Language questions couldn't be kept (%s)", type(exc).__name__)
+        return 0, on_sheets
 
 
 async def ask_traits(

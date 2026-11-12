@@ -26,6 +26,7 @@ import type {
   UploadUndo,
   ScriptOffer,
   MatchRow,
+  MetItem,
   PrivateScene,
   NamesQuery,
   SmartNamesAnswer,
@@ -844,6 +845,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
+  let metNow: MetItem[] = [
+    { id: "a".repeat(32), what: "barbarians", count: 2, sessionStartedAt: 1_700_000_000 },
+    { id: "b".repeat(32), what: "rats", count: 0, sessionStartedAt: 1_700_000_000 },
+    { id: "c".repeat(32), what: "a wolf", count: 1, sessionStartedAt: 1_699_000_000 },
+  ];
   let scenesNow: PrivateScene[] = [
     { id: "d".repeat(32), first: "Rook", second: "Mira Voss", sessionStartedAt: 1_700_000_000, into: 65, minutes: 12, lines: 9 },
     { id: "e".repeat(32), first: "Brynn", second: "Rook", sessionStartedAt: 1_699_000_000, into: 7, minutes: 1, lines: 4 },
@@ -1906,7 +1912,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const all = [
         { userId: "1", name: "Stormy", agreed: true },
         { userId: "2", name: "Ash", agreed: false },
-        { userId: "3", name: "Mira", agreed: true },
+        { userId: "3", name: "Mira", agreed: true, before: true },
         // Said Stop recording me: can never be ticked in (#3306).
         { userId: "4", name: "Dax", agreed: false, blocked: "said_no" as const },
       ];
@@ -2624,6 +2630,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       return matchesNow.map((m) => ({ ...m }));
+    },
+    // "Met but not named" (#4084): three in the table scenario; naming a name the campaign already has answers `name-exists`.
+    async metList(ref): Promise<MetItem[]> {
+      calls.push(`metList:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return metNow.map((m) => ({ ...m }));
+    },
+    async answerMet(ref, id, answer, onLook) {
+      calls.push(`answerMet:${ref}:${id}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      const found = metNow.find((m) => m.id === id);
+      if (!found) throw new ApiError("gone");
+      if (answer.action === "name") {
+        const name = answer.name.trim();
+        if (name === "") throw new ApiError("bad-name");
+        if (/^waiting\b/i.test(name)) throw new ApiError("met-waiting");
+        if (/^mira\b/i.test(name)) throw new ApiError("name-exists");
+      }
+      onLook?.({ waits: null });
+      await new Promise((ok) => setTimeout(ok, 200));
+      metNow = metNow.filter((m) => m.id !== id);
     },
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
     async privateScenes(ref): Promise<PrivateScene[]> {

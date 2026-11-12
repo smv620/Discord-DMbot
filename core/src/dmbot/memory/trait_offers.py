@@ -1,5 +1,5 @@
-"""A lore upload's lineage or class for a character the campaign already has, waiting for the DM
-(#3926, Supervisor's ruling of 2026-11-09).
+"""A lore upload's lineage, class or language for a character the campaign already has, waiting for
+the DM (#3926, Supervisor's ruling of 2026-11-09; languages, #4229 slice 1c).
 
 A trait for an existing character is never written silently: it becomes a question, asked only in
 the DM's private chat ("Your lore says Torvin is a dwarf. Keep it?"), because it may spoil a
@@ -21,6 +21,7 @@ from dmbot.db import Database
 from dmbot.memory.models import (
     CLASS,
     DM,
+    LANGUAGE,
     LINK_NAME_MAX,
     LINK_SOURCE_MAX,
     SPECIES,
@@ -35,12 +36,19 @@ if TYPE_CHECKING:
 QUOTE_MAX = 240  # the reader's quote of the DM's own text, as `memory_link_sources.quote`
 UPLOAD_MAX = 200  # the upload's label, as `upload_notices.label`
 WAITING, NEVER = "waiting", "never"
-# A question whose answer is already true (the DM set that lineage or class since) is not shown or
-# counted: the same rows `waiting` and `count` read.
+# A question whose answer is already true (the DM set that lineage or class since, or the
+# character knows that language now) is not shown or counted, nor a language question for a
+# character that has a sheet since (its languages are the sheet's, #4229): the same rows `waiting`
+# and `count` read.
 _STILL_OPEN = (
     " AND NOT EXISTS (SELECT 1 FROM memory_rule_links l WHERE l.guild_id = o.guild_id"
     " AND l.campaign_id = o.campaign_id AND l.entity_id = o.entity_id AND l.kind = o.kind"
     " AND lower(l.name) = lower(o.name))"
+    " AND NOT (o.kind = 'language' AND (EXISTS (SELECT 1 FROM memory_story_languages s"
+    " WHERE s.guild_id = o.guild_id AND s.campaign_id = o.campaign_id"
+    " AND s.entity_id = o.entity_id AND s.name_key = o.name_key)"
+    " OR EXISTS (SELECT 1 FROM character_sheets h WHERE h.guild_id = o.guild_id"
+    " AND h.campaign_id = o.campaign_id AND h.entity_id = o.entity_id)))"
 )
 
 
@@ -100,7 +108,7 @@ class TraitOfferStore:
                 t = o.trait
                 name, key = t.name[:LINK_NAME_MAX].strip(), o.key[:LINK_NAME_MAX]
                 source = t.rules_source[:LINK_SOURCE_MAX] if t.known else ""
-                if t.kind not in (SPECIES, CLASS) or not name or not key:
+                if t.kind not in (SPECIES, CLASS, LANGUAGE) or not name or not key:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO memory_trait_offers (guild_id, campaign_id, entity_id, kind, name,"
@@ -191,6 +199,11 @@ class TraitOfferStore:
             raise NotWaiting("That question was already answered.")
         t = offer.trait
         try:
+            if t.kind == LANGUAGE:  # (beside the sheets, never a rules link: #4229)
+                spoken = await memory.add_story_language(
+                    guild_id, campaign_id, offer.entity_id, t.name, source=DM
+                )
+                return spoken.batch
             written = await memory.set_rule_link(
                 guild_id, campaign_id, offer.entity_id, t.kind, t.name, source=DM,
                 rules_source=t.rules_source, edition=t.edition, known=t.known,
