@@ -251,7 +251,7 @@ async def settle_kind(
     flagged = await w.select(
         ENTITIES,
         " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL"
-        " OR setting)"
+        " OR setting OR form IS NOT NULL)"
         " AND id = ANY(%s)",
         [ids],
     )
@@ -267,6 +267,9 @@ async def settle_kind(
         if r.get("place_level") is not None and not onto.is_a(type_key, "place"):
             undo["place_level"] = None  # only a place has a size (#4173)
             undo["place_level_from"] = None
+        if r.get("form") is not None and not onto.is_a(type_key, "place"):
+            undo["form"] = None  # only a place has a form (#4173 slice 6a)
+            undo["form_from"] = None
         if r.get("setting") and not onto.is_a(type_key, "place"):
             undo["setting"] = False  # only a place is the campaign's setting (#4173)
         if undo:

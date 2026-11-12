@@ -1060,6 +1060,12 @@ async def _do(
         except MemoryRuleError as exc:  # gone since it was queued, or not a place
             return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
         return Outcome(result_id=entity_id)
+    if a.action == "place-form":  # land, water or a road (#4173 slice 6a); a blank is land
+        try:
+            await memory.set_place_form(guild_id, cid, entity_id, a.text or None, source=DM)
+        except MemoryRuleError as exc:  # gone since it was queued, or not a place
+            return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+        return Outcome(result_id=entity_id)
     if a.action in TOLD_ACTIONS:
         return await _told(memory, guild_id, cid, entity_id, a)
     if a.action == ALIAS_WHO:

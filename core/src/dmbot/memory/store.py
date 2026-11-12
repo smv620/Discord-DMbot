@@ -232,7 +232,7 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 # The campaign's setting (#4173 slice 2): a confirmed place no smaller than a region
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
-SETTING_SIZE = "Tap 📏 Size first and pick Region or bigger."
+SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
@@ -392,6 +392,15 @@ ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole
 # ---- conversions ---------------------------------------------------------------------
 
 
+def _merged_form(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
+    """A merged place's form (#4173 slice 6a): the DM's word over DMbot's read, then the kept
+    entry's, as for its size."""
+    for row in sorted((kept, gone), key=lambda r: r.get("form_from") != place_levels.BY_DM):
+        if row.get("form") is not None:
+            return {"form": row["form"], "form_from": row["form_from"]}
+    return {"form": None, "form_from": None}
+
+
 def _merged_size(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
     """How big a merged place is (#4173): the DM's word over DMbot's read, then the kept entry's."""
     for row in sorted((kept, gone), key=lambda r: r.get("place_level_from") != place_levels.BY_DM):
@@ -409,6 +418,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
         r.get("players_text"), place_level=r.get("place_level"),
         place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
+        form=r.get("form"), form_from=r.get("form_from"),
     )  # fmt: skip
 
 
@@ -1220,6 +1230,26 @@ class MemoryStore:
                 if current.get("setting") and level not in SETTING_LEVELS:
                     change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
                 row = await w.update(ENTITIES, entity_id, change)
+            return Written(_entity(row), w.batch)
+
+    async def set_place_form(
+        self, guild_id: int, campaign_id: str, entity_id: str, form: str | None, *, source: str
+    ) -> Written[Entity]:
+        """A place's form, the DM's one tap (#4173 slice 6a): "water", "route", or None for an
+        area. One change, so one Undo. The same form again writes nothing."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        if form is not None and form not in place_levels.FORMS:
+            raise MemoryRuleError(NOT_FOUND)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            current = await _entity_row(w, entity_id)
+            if not onto.is_a(current["type"], "place"):
+                raise MemoryRuleError(ONLY_PLACES)
+            row = current
+            said = place_levels.BY_DM if form is not None else None
+            if (current.get("form"), current.get("form_from")) != (form, said):
+                row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
             return Written(_entity(row), w.batch)
 
     async def set_unique(
@@ -2687,6 +2717,11 @@ class MemoryStore:
                             place_levels.READ
                             if n.place_level and onto.is_a(kind, "place")
                             else None
+                        ),
+                        # a place's form, from its own name (#4173 slice 6a): a place only
+                        "form": n.form if onto.is_a(kind, "place") else None,
+                        "form_from": (
+                            place_levels.READ if n.form and onto.is_a(kind, "place") else None
                         ),
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
@@ -4846,6 +4881,7 @@ class MemoryStore:
                 ),
                 # and how big a place is, the same way (#4173)
                 **_merged_size(kept, gone),
+                **_merged_form(kept, gone),
                 # A clue only some people know stays so if either was (#1649).
                 "audience_limited": kept["audience_limited"] or gone["audience_limited"],
                 # And so does an entry the players don't know yet (#2321).

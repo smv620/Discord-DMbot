@@ -1,7 +1,9 @@
 """How big a place is, on the DM's place card (#4173 slice 1): one menu of sizes, from a plane down
 to a room, so DMbot can tell a building from the town it stands in. DMbot reads the size from the
 words beside a name ("the town of Targos"); the DM sets or changes it here, and "Not sure" clears
-it. For the campaign's DMs only, checked on every press. Nothing here goes to players."""
+it. A second menu says whether the place is land, water or a road (its form, #4173 slice 6a), so
+"on the shore of" points at a lake. For the campaign's DMs only, checked on every press. Nothing
+here goes to players."""
 
 from __future__ import annotations
 
@@ -16,8 +18,8 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-BUTTON = "📏 Size"
-ONLY_DM = "Only the DM can change a place's size."
+BUTTON = "📏 Size and kind"
+ONLY_DM = "Only the DM can change a place's size or kind."
 NOT_SURE = "not_sure"  # the menu's value for "no size" (a level is never this word)
 HOLDER = "Pick a size"
 # The menu's choices: a short name and an example each, so "Region" or "District" is plain
@@ -31,6 +33,27 @@ CHOICES = {
     "building": ("Building", "Inn, temple, shop, castle"),
     "room": ("Room", "Also a cellar or vault"),
 }
+
+
+FORM_HOLDER = "Land, water or a road?"
+AREA = "area"  # the form menu's value for land (no form is stored: an area is every other place)
+# The form menu's choices (#4173 slice 6a), land first: what most places are
+FORM_CHOICES = {
+    AREA: ("Land or a building", "A town, a forest, an inn"),
+    place_levels.WATER: ("Water", "A lake, sea, bay or river"),
+    place_levels.ROUTE: ("A road or route", "A named road, trail or pass"),
+}
+FORM_LABELS = {place_levels.WATER: "water", place_levels.ROUTE: "a road or route"}
+
+
+def form_line(form: str | None, read: bool = False) -> str:
+    """The card's line for a place that is water or a road, or "" for land (most places)."""
+    if form not in FORM_LABELS:
+        return ""
+    label = FORM_LABELS[form]
+    if read:
+        return f"\n🧭 **Kind of place:** {label} (DMbot read this; tap {BUTTON} to change)"
+    return f"\n🧭 **Kind of place:** {label}"
 
 
 def size_line(level: str | None, read: bool = False) -> str:
@@ -55,7 +78,10 @@ def ask_text(name: str, level: str | None, read: bool = False) -> str:
     return (
         f"📏 **How big is {_md(name)}?**{said}\n"
         'Then DMbot won\'t flag someone as "in two places" for being in a building and the town '
-        "around it. Players who can see this place see its size too."
+        "around it.\n"
+        '🧭 **Second menu: is it land, water or a road?** Then a town "on the shore of" it '
+        "means a lake.\n"
+        "Players who can see this place see both."
     )
 
 
@@ -76,7 +102,7 @@ async def show_sizes(interaction: discord.Interaction, campaign_id: str, entity_
     await _replace(
         interaction,
         ask_text(entity.name, entity.place_level, entity.place_level_read),
-        SizeMenu(campaign_id, entity_id, entity.place_level),
+        SizeMenu(campaign_id, entity_id, entity.place_level, entity.form),
     )
 
 
@@ -99,13 +125,58 @@ def options(level: str | None) -> list[discord.SelectOption]:
     return out
 
 
+def form_options(form: str | None) -> list[discord.SelectOption]:
+    """Land, water or a road; the current one is marked as chosen (land when there is none)."""
+    return [
+        discord.SelectOption(
+            label=label, description=example, value=key, default=key == (form or AREA)
+        )
+        for key, (label, example) in FORM_CHOICES.items()
+    ]
+
+
 class SizeMenu(_Menu):
-    def __init__(self, campaign_id: str, entity_id: str, level: str | None) -> None:
+    def __init__(
+        self, campaign_id: str, entity_id: str, level: str | None, form: str | None = None
+    ) -> None:
         super().__init__()
         self.campaign_id, self.entity_id = campaign_id, entity_id
         self.pick = _Select(self._picked, placeholder=HOLDER, options=options(level))
         self.add_item(self.pick)
-        self.add_item(_Button(self._back, label="↩ Back", row=1))
+        self.form_pick = _Select(
+            self._form_picked, placeholder=FORM_HOLDER, options=form_options(form), row=1
+        )
+        self.add_item(self.form_pick)
+        self.add_item(_Button(self._back, label="↩ Back", row=2))
+
+    async def _form_picked(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_card import show_card
+
+        await _answer_first(interaction, in_place=True)
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        memory = _memory(interaction)
+        if campaign is None or memory is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+            await _tell(interaction, ONLY_DM)
+            return
+        value = self.form_pick.values[0]
+        form = None if value == AREA else value
+        try:  # (one change, so one Undo; the same form again writes nothing)
+            written = await memory.set_place_form(
+                campaign.guild_id, campaign.id, self.entity_id, form, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc} Tap ↩ Back to see it.")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        name = _md(written.value.name)
+        what = FORM_LABELS.get(form or "", "land or a building")
+        await show_card(
+            interaction, self.campaign_id, self.entity_id, replace=True,
+            note=f"🧭 Noted: **{name}** is {what}.",
+        )  # fmt: skip
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card

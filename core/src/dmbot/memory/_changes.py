@@ -88,6 +88,8 @@ ENTITIES = Table(
         "place_level",
         "place_level_from",
         "setting",
+        "form",
+        "form_from",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -106,6 +108,8 @@ ENTITIES = Table(
         "place_level": None,  # how big a place is: nobody knows until said (#4173)
         "place_level_from": None,  # ... and who said it: DMbot read it, or the DM
         "setting": False,  # the campaign's setting (#4173): one place at most
+        "form": None,  # an area, until said to be water or a route (#4173 slice 6a)
+        "form_from": None,  # ... and who said it
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -911,6 +915,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "place_level": None,  # no place had a size before #4173
         "place_level_from": None,
         "setting": False,
+        "form": None,  # every place was an area before #4173 slice 6a
+        "form_from": None,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
@@ -1139,24 +1145,38 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     another takes its words to E). Rows written in one statement are logged in key
     order, not in the order such a chain needs, so a row that trips a unique rule waits
     for the others and is tried again (#342 review). A row with nothing left to wait
-    for has really been blocked since: CHANGED_SINCE."""
-    for change in run:
+    for has really been blocked since: CHANGED_SINCE.
+
+    The same row may be changed twice in one batch (a kind change, then the size or form only a
+    place has cleared from it, #4173): the newest change is checked against the row as it is now,
+    and each older one against the "before" of the change after it, which is what the row will
+    hold once that one is undone."""
+    expected: dict[tuple[str, str], dict[str, Any] | None] = {}
+    for change in run:  # (newest first)
         table = BY_NAME[change["table_name"]]
-        current = await changes.get(table, change["row_id"])
+        key = (table.name, str(change["row_id"]))
+        current = expected[key] if key in expected else await changes.get(table, change["row_id"])
         if not _unchanged_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
+        expected[key] = _filled(table, change["before"])
     if len(run) == 1:
         await _undo_row(changes, run[0])
         return
     pending = list(run)
     while pending:
         waiting = []
+        held: set[tuple[str, str]] = set()  # rows whose newer change waits: their older ones too
         for change in pending:
+            key = (change["table_name"], str(change["row_id"]))
+            if key in held:  # (a row's changes are undone newest first, never out of order)
+                waiting.append(change)
+                continue
             try:
                 async with changes.conn.transaction():  # a savepoint
                     await _undo_row(changes, change)
             except errors.UniqueViolation:
                 waiting.append(change)
+                held.add(key)
         if len(waiting) == len(pending):
             raise MemoryRuleError(CHANGED_SINCE)
         pending = waiting

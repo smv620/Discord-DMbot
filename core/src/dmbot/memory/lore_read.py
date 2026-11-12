@@ -313,6 +313,10 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "is disguised as (a second character posing as another), "
         "travels with (a companion that goes along with a player character: a familiar, a "
         "hired guide; the second name is the player character, never 'the party'), "
+        "is next to (two places beside each other, never one inside the other: a town on a "
+        "lake's shore, lands that share a border, a village at the foot of a mountain, a town on "
+        "a named road; say which: borders, on the shore of, on the coast of, at the foot of or "
+        "on), "
         "is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES (or one of that name's other or secret names, as the "
@@ -455,7 +459,11 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
         "a chest); disguised as = a is disguised as b (a second character posing as b, never the "
         "same person under another name); travels with = a travels with b (a companion that goes "
-        "along with b, a player character: a familiar, a guide); worships = a worships b. A "
+        "along with b, a player character: a familiar, a guide); worships = a worships b; "
+        "next to = a is next to b (two places beside each other, never one inside the other: "
+        'that is in; in "words" put exactly one of borders, on the shore of, on the coast of, at '
+        "the foot of or on (a town on a named road or river), as the text says it, else leave "
+        '"words" empty). A '
         "family line that names a role uses that role's word; use 'family' only when the line "
         "names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
