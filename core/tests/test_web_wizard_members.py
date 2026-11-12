@@ -11,7 +11,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.web import wizard
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import ALICE, THURSDAY
 
 ERIC, ADA, ZOE, CARL = 4101, 4102, 4103, 4104
 
@@ -70,6 +70,33 @@ class WizardMembers(Base):
             [(m["name"], m["before"]) for m in got],
             [("Zoe", True), ("Ada", False), ("Eric", False)],
         )
+
+    async def remember(self, dm: int, player: int) -> None:
+        """A row of the DM's remembered players (0450) for someone from a campaign elsewhere: the
+        table is written by the database's own trigger, so the test opens its gate the same way."""
+        async with self.db.unscoped() as conn:
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'dm_players_note', true)")
+            await conn.execute(
+                "INSERT INTO dm_players (dm_user_id, player_user_id, last_name, first_played_at,"
+                " last_played_at, campaigns) VALUES (%s, %s, 'Elsewhere', 1, 1, 1)",
+                (dm, player),
+            )
+
+    async def test_someone_the_dm_played_with_in_another_server_is_marked_and_first(self) -> None:
+        await self.member(ADA, "Ada")
+        await self.member(ZOE, "Zoe")
+        await self.remember(ALICE.id, ZOE)  # (a campaign on some other server)
+        got = await self.listed()
+        self.assertEqual([(m["name"], m["before"]) for m in got], [("Zoe", True), ("Ada", False)])
+
+    async def test_another_dms_remembered_player_is_not_marked_for_this_dm(self) -> None:
+        await self.member(ZOE, "Zoe")
+        await self.remember(BOB.id, ZOE)
+        self.assertEqual([m["before"] for m in await self.listed()], [False])
+
+    async def test_a_remembered_player_who_is_not_in_this_server_is_never_listed(self) -> None:
+        await self.remember(ALICE.id, ZOE)  # (no member row for Zoe here)
+        self.assertEqual(await self.listed(), [])
 
     async def test_someone_who_played_in_another_dms_campaign_is_not_marked(self) -> None:
         await self.member(CARL, "Carl")
