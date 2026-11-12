@@ -14,8 +14,12 @@ describe("memberLabel", () => {
 
   it("never shows Player and four digits: it says Unknown member and the end of the id", () => {
     expect(memberLabel("111111111111111520", "Player 1520")).toBe("Unknown member (…1520)");
-    expect(memberLabel("999", "Player 3 (no Discord)")).toBe("Unknown member (…999)");
     expect(memberLabel("111111111111111520", "Player 1520", "someone")).toBe("Unknown member (…1520)");
+  });
+
+  it("leaves a person who is not in Discord as the DM named them", () => {
+    expect(memberLabel("-3", "Player 3 (no Discord)")).toBe("Player 3 (no Discord)");
+    expect(memberLabel("-3", "Old Tam")).toBe("Old Tam");
   });
 
   it("leaves a real name that starts with Player alone", () => {

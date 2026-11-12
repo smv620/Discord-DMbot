@@ -2035,6 +2035,18 @@ class TheMemberDirectory(WithImports):
         self.assertNotIn("Player 0", names)
         self.assertTrue(any(n.startswith("Unknown member (…") for n in names), names)
 
+    async def test_a_person_who_is_not_in_discord_keeps_the_name_the_dm_gave(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by, role) VALUES (%s, %s, %s, 'person',"
+                " 'Player 3 (no Discord)', '', 'confirmed', 'dm', 700, -3, 'npc')",
+                (THURSDAY.id, self.one.id, f"{700:032x}"),
+            )
+        names = [n for n, _ in await self.find("")]
+        self.assertIn("Player 3 (no Discord)", names)
+        self.assertFalse(any("-3" in n for n in names))
+
     async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
         from dmbot.members import MemberDirectory
 

@@ -1,4 +1,4 @@
-"""0442_import_member_names
+"""0445_import_member_names
 
 The import page's member search shows a Discord name, never "Player 1520" (#4225).
 """
@@ -13,8 +13,9 @@ from __future__ import annotations
 # can show "Eric (eric_92)". A person who has not agreed is still listed (the page marks them), as
 # before. The door is read back from the database as it is (many migrations have changed it) and
 # each anchor must be found exactly once, so a drift stops the migration (the 0434 way). No row is
-# changed.
-_PLACEHOLDER = "e.name ~ '^Player [0-9]+( \\(no Discord\\))?$'"
+# changed. "Player 3 (no Discord)" is a person the DM added who is not in Discord (a negative id):
+# a name the DM can recognise, so it is left alone (Supervisor, #4228).
+_PLACEHOLDER = "e.name ~ '^Player [0-9]+$'"
 _SWAPS = (
     (
         "SELECT e.played_by AS user_id, e.name, 0 AS rank, e.name AS hay",
