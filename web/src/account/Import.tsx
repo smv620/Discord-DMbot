@@ -724,7 +724,8 @@ export default function Import({
 
   const memberOptions = Object.values(known);
   const label = (m: ImportMember): string => {
-    const who = memberLabel(m.userId, m.name, m.username);
+    const named = memberLabel(m.userId, m.name, m.username);
+    const who = m.before === true ? `${named} · ${words.playedBeforeMark}` : named;
     return m.agreed === false ? `${who} (${words.notAgreedMark})` : who;
   };
 

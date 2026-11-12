@@ -1218,6 +1218,8 @@ export interface ImportMember {
   name: string;
   /** Their Discord username when the bot has seen them (#4225): shown after the name when it differs. */
   username?: string | null;
+  /** The DM has played with them before, in any campaign or server (#4226): listed first and marked. */
+  before?: boolean;
   /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
    * only a suggestion has named them: Check says what is dropped. */
   agreed?: boolean;
