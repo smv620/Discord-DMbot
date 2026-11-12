@@ -1145,12 +1145,20 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     another takes its words to E). Rows written in one statement are logged in key
     order, not in the order such a chain needs, so a row that trips a unique rule waits
     for the others and is tried again (#342 review). A row with nothing left to wait
-    for has really been blocked since: CHANGED_SINCE."""
-    for change in run:
+    for has really been blocked since: CHANGED_SINCE.
+
+    The same row may be changed twice in one batch (a kind change, then the size or form only a
+    place has cleared from it, #4173): the newest change is checked against the row as it is now,
+    and each older one against the "before" of the change after it, which is what the row will
+    hold once that one is undone."""
+    expected: dict[tuple[str, str], dict[str, Any] | None] = {}
+    for change in run:  # (newest first)
         table = BY_NAME[change["table_name"]]
-        current = await changes.get(table, change["row_id"])
+        key = (table.name, str(change["row_id"]))
+        current = expected[key] if key in expected else await changes.get(table, change["row_id"])
         if not _unchanged_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
+        expected[key] = _filled(table, change["before"])
     if len(run) == 1:
         await _undo_row(changes, run[0])
         return

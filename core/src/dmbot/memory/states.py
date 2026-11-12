@@ -251,7 +251,7 @@ async def settle_kind(
     flagged = await w.select(
         ENTITIES,
         " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL"
-        " OR setting)"
+        " OR setting OR form IS NOT NULL)"
         " AND id = ANY(%s)",
         [ids],
     )

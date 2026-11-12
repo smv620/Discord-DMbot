@@ -158,6 +158,36 @@ def read_level(name: str, *texts: str) -> str | None:
     return None
 
 
+# The words in a place's own name that say its form (#4173 slice 6a), matched whole, in any case.
+# Kept short on purpose, as the levels are: "road" stays a street (a town has roads), and "sound",
+# "pass" or "way" are as often part of another name. A missing form is an area, the safe side; the
+# DM changes it in one tap.
+_FORM_WORDS: dict[str, tuple[str, ...]] = {
+    WATER: ("lake", "lac", "maer", "loch", "mere", "sea", "ocean", "bay", "gulf", "river",
+            "strait", "fjord"),
+    ROUTE: ("highway", "trail", "trade way", "trade route", "trade road"),
+}  # fmt: skip
+_FORM_BY_WORD = {w: form for form, words in _FORM_WORDS.items() for w in words}
+_FORM_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(w) for w in sorted(_FORM_BY_WORD, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def read_form(name: str) -> str | None:
+    """The form a place's own name says: "Maer Dualdon" and "Lac Dinneshere" are water, "the
+    Northern Trail" a route, and "the Black Road" a street still; None is an area. Only the part
+    before the first "of" counts, as for a level ("Bay of Chult" is water, "Lord of the Lake" says
+    nothing), and the first word found wins. A name that also says a size says no form ("Lake
+    Town" is a town). Nothing is read from the words around the name: a town "by the lake" is no
+    lake."""
+    if level_from_name(name) is not None:
+        return None
+    head = _OF.split(name, maxsplit=1)[0]
+    found = _FORM_PATTERN.search(head)
+    return _FORM_BY_WORD[" ".join(found.group(0).split()).casefold()] if found else None
+
+
 def bigger(a: str, b: str) -> bool:
     """Is level `a` larger than level `b`? (For the "where the story is" chain, slices 3 and 4.)"""
     return RANK[a] < RANK[b]

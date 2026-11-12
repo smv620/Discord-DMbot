@@ -244,6 +244,7 @@ class NewName:
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
     place_level: str | None = None  # how big a place is, as the reader found it (#4173)
+    form: str | None = None  # a place's form, water or route, as the reader found it (#4173 6a)
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False

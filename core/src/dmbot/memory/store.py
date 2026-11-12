@@ -2718,6 +2718,11 @@ class MemoryStore:
                             if n.place_level and onto.is_a(kind, "place")
                             else None
                         ),
+                        # a place's form, from its own name (#4173 slice 6a): a place only
+                        "form": n.form if onto.is_a(kind, "place") else None,
+                        "form_from": (
+                            place_levels.READ if n.form and onto.is_a(kind, "place") else None
+                        ),
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
