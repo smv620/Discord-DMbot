@@ -400,9 +400,7 @@ class AfterTheReview(TheStore):
                     )
 
     async def test_a_damaged_open_row_is_refused(self) -> None:
-        await self.memory.set_map_fact(
-            GUILD_A, self.c, self.bryn, mf.TERRAIN, "hill", source=BY_DM
-        )
+        await self.memory.set_map_fact(GUILD_A, self.c, self.bryn, mf.TERRAIN, "hill", source=BY_DM)
         for damage in ({"entity_id": self.council}, {"layer": "climate", "value": "cold"}):
             with self.subTest(damage=damage):
                 data = decode_backup(encode_backup(await self.campaigns.export(GUILD_A, self.c)))
