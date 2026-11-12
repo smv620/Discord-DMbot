@@ -29,17 +29,23 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
     if (REMEMBERED_PLAYERS_LIVE) void load();
   }, [api]);
 
-  async function act(run: () => Promise<void>, ok: string, gone?: string): Promise<void> {
+  async function act(run: () => Promise<void>, ok: string, fail: string, gone?: string): Promise<void> {
     setBusy(true);
     setSaid("");
     try {
       await run();
       setSaid(ok);
     } catch (e) {
-      setSaid(e instanceof PlayersError && e.kind === "gone" && gone ? gone : words.actionFailed);
+      setSaid(e instanceof PlayersError && e.kind === "gone" && gone ? gone : fail);
     }
     setBusy(false);
-    await load();
+    // A reload that fails keeps the lists already on the page, so the line above is not lost with them.
+    try {
+      const [mine, by] = await Promise.all([api.mine(), api.by()]);
+      setLists({ mine, by });
+    } catch {
+      setSaid((was) => `${was} ${words.failed}`.trim());
+    }
   }
 
   if (!REMEMBERED_PLAYERS_LIVE) return <p class="muted">{words.notOpen}</p>;
@@ -61,6 +67,9 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
 
   return (
     <div class="stack">
+      <p role="status" aria-live="polite">
+        {said}
+      </p>
       <section aria-labelledby="rp-mine">
         <h2 id="rp-mine">{words.mine.heading}</h2>
         <p>{words.mine.intro}</p>
@@ -73,7 +82,7 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
               return (
                 <li key={p.player}>
                   <strong>{name}</strong> <span class="muted">{words.mine.row(p.campaigns, p.since)}</span>{" "}
-                  <button type="button" class="button secondary" disabled={busy} aria-label={words.mine.forget(name)} onClick={() => void act(() => api.forget(p.player), words.mine.forgotten(name), words.mine.already)}>
+                  <button type="button" class="button secondary" disabled={busy} aria-label={words.mine.forget(name)} onClick={() => void act(() => api.forget(p.player), words.mine.forgotten(name), words.actionFailed, words.mine.already)}>
                     {words.mine.forgetButton}
                   </button>
                 </li>
@@ -85,7 +94,7 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
       </section>
       <section aria-labelledby="rp-by">
         <h2 id="rp-by">{words.by.heading}</h2>
-        <p>{words.by.intro}</p>
+        {lists.by.length > 0 && <p>{words.by.intro}</p>}
         {lists.by.length === 0 ? (
           <p class="muted">{words.by.none}</p>
         ) : (
@@ -96,7 +105,7 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
                 return (
                   <li key={d.dm}>
                     <strong>{name}</strong> <span class="muted">{words.by.row(d.campaigns, d.since)}</span>{" "}
-                    <button type="button" class="button secondary" disabled={busy} aria-label={words.by.clear(name)} onClick={() => void act(() => api.clear(d.dm), words.by.cleared(name))}>
+                    <button type="button" class="button secondary" disabled={busy} aria-label={words.by.clear(name)} onClick={() => void act(() => api.clear(d.dm), words.by.cleared(name), words.actionFailedBy)}>
                       {words.by.clearButton}
                     </button>
                   </li>
@@ -104,17 +113,14 @@ export default function RememberedPlayers({ api }: { api: PlayersApi }) {
               })}
             </ul>
             {lists.by.length > 1 && (
-              <button type="button" class="button secondary" disabled={busy} onClick={() => void act(() => api.clear("all"), words.by.clearedAll)}>
+              <button type="button" class="button secondary" disabled={busy} onClick={() => void act(() => api.clear("all"), words.by.clearedAll, words.actionFailedBy)}>
                 {words.by.clearAll}
               </button>
             )}
           </>
         )}
-        <p class="small muted">{words.by.note}</p>
+        {lists.by.length > 0 && <p class="small muted">{words.by.note}</p>}
       </section>
-      <p role="status" aria-live="polite">
-        {said}
-      </p>
     </div>
   );
 }

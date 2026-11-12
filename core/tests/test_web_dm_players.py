@@ -65,7 +65,7 @@ class RememberedPlayers(Web):
         self.assertEqual(await dm_players.clear(self.web, self.player, "all"), {"removed": 0})
 
     async def test_a_malformed_address_never_reaches_the_database(self) -> None:
-        for bad in ("x", "-5", "0", "١٢٣", "9" * 30, ""):
+        for bad in ("x", "-5", "0", "١٢٣", "9" * 30, "9" * 5000, ""):
             self.assertEqual(
                 await self.refusal(dm_players.forget_player(self.web, self.session, bad)),
                 "not_found",

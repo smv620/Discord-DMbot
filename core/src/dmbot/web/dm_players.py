@@ -17,7 +17,8 @@ _MAX_ID = 2**63 - 1
 
 def _id(raw: str) -> int:
     """A Discord id from the address, or `not_found` (a bad one never reaches the database)."""
-    if not raw.isascii() or not raw.isdigit() or not 0 < int(raw) <= _MAX_ID:
+    # (the length is checked first: Python refuses to read a run of thousands of digits as a number)
+    if len(raw) > 19 or not raw.isascii() or not raw.isdigit() or not 0 < int(raw) <= _MAX_ID:
         raise RecapError("not_found")
     return int(raw)
 

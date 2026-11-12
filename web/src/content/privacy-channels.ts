@@ -51,5 +51,5 @@ export const pcIconsLine = {
 export const rememberedPlayersLine = {
   live: REMEMBERED_PLAYERS_LIVE,
   lead: "Who you have played with.",
-  text: "A DM you play with remembers that you played together, by your Discord name, so they can add you to their next campaign. You can clear it any time. It holds only your name and when and how many campaigns, never a character or a story, and only that DM can see it.",
+  text: "A DM you play with keeps your Discord name on a list, so they can add you to their next campaign. You can remove yourself at any time. The list holds only your name, when you first played and how many campaigns, never a character or a story, and only that DM can see it.",
 };
