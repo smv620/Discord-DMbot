@@ -44,5 +44,11 @@ export function cardOf(q: HandOverQuestion): { said: string; ask: string; noMean
 export const handBracket = (how: string, from: string): string =>
   ({ sold: `${from} sold it`, gave: `${from} gave it`, traded: `${from} traded it`, stolen: `taken from ${from}`, lost: `${from} lost it` } as Record<string, string>)[how] ?? "";
 
-/** Why a hand-over has no Keep on the website yet: keeping it ends what the one before held, and Discord's card says so. */
-export const handKeepInDiscord = "Keep this one in Discord, where the card shows how the item changed hands.";
+/** What Keep does to the one before, in Discord's words (core ui/name_background.py HAND_OVER_KEEP): a sale, gift or trade ends their part; a
+ * theft or loss ends only their having it with them; kept as secret, the players still see the one before as they did. */
+export const handKeeps = (how: string, from: string, secret: boolean): string =>
+  secret
+    ? `Players don't know this yet, so to them ${from} still has it. Once they do, you can change that on the item's name card.`
+    : how === "stolen" || how === "lost"
+      ? `Keep also means ${from} no longer has it with them. Who owns it doesn't change.`
+      : `Keep also means ${from} no longer has it.`;
