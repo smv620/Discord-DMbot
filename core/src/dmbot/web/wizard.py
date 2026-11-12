@@ -21,6 +21,7 @@ from psycopg.types.json import Jsonb
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import FALLBACK_NONE, RULESETS, CampaignError
 from dmbot.db import Database
+from dmbot.memory import sheets
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
@@ -93,9 +94,11 @@ def _count(value: Any, key: str) -> int:
     return value
 
 
-def check_patch(patch: dict[str, Any]) -> dict[str, Any]:
+def check_patch(patch: dict[str, Any], *, finishing: bool = False) -> dict[str, Any]:
     """The answers a page may send, each checked; anything else is refused by name. The door
-    keeps the key list and the size; this is where the shapes live."""
+    keeps the key list and the size; this is where the shapes live. `finishing`: the bot checking
+    a saved draft at Finish, where a sheet link of the wrong shape does not fail the run (the
+    stage counts it, #4205); the page's save refuses it so a typo is caught at the step."""
     clean: dict[str, Any] = {}
     for key, value in patch.items():
         if key == "name":
@@ -126,7 +129,7 @@ def check_patch(patch: dict[str, Any]) -> dict[str, Any]:
                 raise RecapError("bad_supplements")
             clean[key] = sorted(set(value), key=SUPPLEMENTS.index)
         elif key == "characters":
-            clean[key] = _characters(value)
+            clean[key] = _characters(value, finishing)
         elif key == "skipped":
             if not isinstance(value, list) or any(
                 not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 9 for v in value
@@ -141,7 +144,7 @@ def check_patch(patch: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
-def _characters(value: Any) -> list[dict[str, Any]]:
+def _characters(value: Any, finishing: bool = False) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) > CHARACTERS_MAX:
         raise RecapError("bad_characters")
     found: list[dict[str, Any]] = []
@@ -151,11 +154,15 @@ def _characters(value: Any) -> list[dict[str, Any]]:
         player = item.get("player", "pending")
         if player != "pending" and not (isinstance(player, str) and player.isdecimal()):
             raise RecapError("bad_characters")
+        link = _text(item.get("sheet_url", ""), LINK_MAX, "characters")
+        # Only a D&D Beyond character link is ever fetched (#4205).
+        if link and sheets.character_id(link) is None and not finishing:
+            raise RecapError("bad_sheet")
         found.append(
             {
                 "full": _text(item.get("full", ""), NAME_MAX, "characters"),
                 "party_name": _text(item.get("party_name", ""), NAME_MAX, "characters"),
-                "sheet_url": _text(item.get("sheet_url", ""), LINK_MAX, "characters"),
+                "sheet_url": link,
                 "player": player,
             }
         )
@@ -308,3 +315,23 @@ async def finish_state(db: Database, session: Session, guild_id: int) -> dict[st
     return await _door(
         db, session, guild_id, "SELECT dmbot_web_wizard_finish_state(%s) AS found", ()
     )
+
+
+async def members(db: Database, session: Session, guild_id: int, q: str) -> list[dict[str, Any]]:
+    """This server's members the wizard's step 3 can offer as a character's player (#4204):
+    `[{userId, name, before}]`, those who played with this DM in this server's earlier campaigns
+    first (`before`), then by name; at most 50, matched by name when `q` is given. Only this one
+    server is read. Anyone not allowed to use the wizard here gets
+    "not found"."""
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute("SELECT dmbot_web_wizard_members(%s, %s) AS r", (guild_id, q[:60]))
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return [
+        {"userId": str(m["userId"]), "name": str(m["name"]), "before": bool(m["before"])}
+        for m in got
+    ]

@@ -1,0 +1,41 @@
+---
+// "If something doesn't work", moved off /help to keep that page under its size budget (#4235). The section keeps the id
+// it always had (snags), and every step its address (snags-N).
+import Base from "../../layouts/Base.astro";
+import HelpShell from "../../components/HelpShell.astro";
+import { aliasesFor, sectionIds, stepCounter } from "../../content/help-anchors";
+import { backToTop, snags, snagsHeading } from "../../content/help";
+
+const step = stepCounter(sectionIds.snags);
+---
+
+<Base title="If something doesn't work" description="What to try when something goes wrong with DMbot.">
+  <HelpShell>
+    <Fragment slot="top">
+      <h1 id="top">{snagsHeading}</h1>
+      <p class="muted"><a href="/help">Back to all of Help</a>.</p>
+    </Fragment>
+    <section aria-labelledby="snags-heading" id={sectionIds.snags}>
+      {aliasesFor(sectionIds.snags).map((a) => <span id={a} />)}
+      <h2 id="snags-heading" class="visually-hidden">{snagsHeading}</h2>
+      <ol>
+        {
+          snags.map((s) => (
+            <li id={step()}>
+              <strong>{s.question}</strong>
+              <br />
+              {s.text}
+              {s.link && (
+                <>
+                  {" "}
+                  <a href={s.link.href}>{s.link.text}</a>.
+                </>
+              )}
+            </li>
+          ))
+        }
+      </ol>
+      <p class="back"><a href="#top">{backToTop}</a></p>
+    </section>
+  </HelpShell>
+</Base>

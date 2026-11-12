@@ -907,6 +907,11 @@ export const dmSteps: Step[] = [
   },
   // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
   ...liveFeatureSteps("gameMaster"),
+  {
+    text: DM_BOT_CHANNEL_LIVE
+      ? `After you set up a campaign: open your campaign's DM Bot channel. Start DMbot at the table with /dmbot start, ask each player to press "${consent}", and watch for DMbot's private message when something needs checking.`
+      : `After you set up a campaign: start DMbot at the table with /dmbot start, ask each player to press "${consent}", and watch for DMbot's private message when something needs checking.`,
+  },
 ];
 
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
@@ -1127,7 +1132,7 @@ const whatsOnSnag: Snag = {
   question: "Something on What's new isn't there for me.",
   text: "Press ℹ️ What's switched on in ⚙️ Manage DMbot to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
   names: [{ name: "What's switched on", file: "features.py" }],
-  link: { text: "Getting help", href: "#getting-help" },
+  link: { text: "Getting help", href: "/help#getting-help" },
 };
 
 export const snags: Snag[] = [
@@ -1135,7 +1140,7 @@ export const snags: Snag[] = [
     question: "I typed /dmbot start and nothing happened.",
     text: "Pick /dmbot start from the list that pops up, then send it. If no list shows, wait a minute, or fully close and reopen Discord, then try again.",
     names: [{ name: "/dmbot start", file: "bot.py" }],
-    link: { text: "The first steps for the game master", href: "#dm-heading" },
+    link: { text: "The first steps for the game master", href: "/help#dm-heading" },
   },
   {
     question: "DMbot isn't hearing someone.",
@@ -1145,7 +1150,7 @@ export const snags: Snag[] = [
   {
     question: "A button says \"This interaction failed\".",
     text: "That is Discord's own message: DMbot didn't answer in time. Wait a few seconds and press the button again. If it keeps happening, tell us.",
-    link: { text: "Getting help", href: "#getting-help" },
+    link: { text: "Getting help", href: "/help#getting-help" },
   },
   {
     question: "DMbot left the voice channel or stopped listening.",
@@ -1206,6 +1211,13 @@ export const playerHeading = "For players";
 export const accountHeading = "Your account";
 export const emailsHeading = "Emails from DMbot";
 export const onThisPageHeading = "On this page";
+
+/** The two pages the Help page was split into (#4235), linked from the top of /help. */
+export const otherHelpPages = [
+  { href: "/help/questions", label: "Quick answers" },
+  { href: "/help/snags", label: "If something doesn't work" },
+] as const;
+export const movedNote = "Quick answers and the fixes for snags have their own pages now:";
 export const backToTop = "Back to top";
 
 /** The "On this page" list: each section that is shown, in page order, linking to its heading.
@@ -1213,12 +1225,10 @@ export const backToTop = "Back to top";
 export function onThisPage(recapsLive: boolean, recapsHeading: string): { id: string; label: string }[] {
   return [
     { id: "dm-heading", label: dmHeading },
-    { id: "quick-heading", label: quickAnswersHeading },
     ...(recapsLive ? [{ id: "recaps-heading", label: recapsHeading }] : []),
     { id: "player-heading", label: playerHeading },
     { id: "account-heading", label: accountHeading },
     { id: "emails-heading", label: emailsHeading },
-    { id: "snags-heading", label: snagsHeading },
     { id: gettingHelp.id, label: gettingHelp.heading },
   ];
 }
