@@ -718,6 +718,7 @@ WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answ
 WIZARD_FINISH_EVERY_S = 5
 MEMBER_NAMES_FIRST_S = 45  # people known only by number are given their Discord names (#4225)
 MEMBER_NAMES_EVERY_S = 60
+MEMBER_LOOKUP_FIRST_S = 20
 MEMBER_LOOKUP_EVERY_S = 3  # a typed Discord ID is answered while the DM waits (#4225)
 DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
@@ -14178,7 +14179,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Every few seconds: answer the website's "who is this Discord ID?" questions, a few in
         each server (#4225, point 5; `member_lookups`). A server's trouble never stops the
         others."""
-        await asyncio.sleep(MEMBER_NAMES_FIRST_S)
+        await asyncio.sleep(MEMBER_LOOKUP_FIRST_S)
         while not self._closing:
             for guild in list(self.guilds):
                 try:

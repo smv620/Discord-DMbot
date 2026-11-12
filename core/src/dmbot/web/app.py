@@ -3623,7 +3623,7 @@ def create_app(
 
     # Who is this Discord ID? (#4225, point 5): a person picker's typed id, looked up by the bot in
     # the server; the page shows the name before the id is used. No campaign is touched.
-    member_lookup_limit = RateLimit(30, count=30)  # questions asked, per account
+    member_lookup_limit = RateLimit(60, count=30)  # questions asked: 30 a minute, per account
 
     @app.post("/me/member-lookup/{guild}")
     async def me_member_lookup(guild: int, body: dict[str, Any], signed: Signed) -> JSONResponse:

@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 PER_ROUND = 3  # questions answered in a server each round
 GIVE_UP_S = 600  # the door reads a question older than this as lost
 RETAKE_AFTER_S = 120  # a claim that stopped moving this long ago is taken again
+KEEP_S = 3600  # an answer is read in seconds: a row an hour old is gone, name and all
+SWEEP_EVERY_S = 3600.0
+_swept: dict[int, float] = {}  # when each server's old rows were last cleared
 
 
 class MemberLookups:
@@ -68,13 +71,25 @@ class MemberLookups:
             )
 
     async def waiting(self, guild_id: int) -> bool:
+        """Is there a question `claim` would take now (the same test, so an idle server costs one
+        cheap read and no claim)."""
+        now_ms = int(self._now() * 1000)
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT 1 FROM member_lookups WHERE guild_id = %s AND state IN ('waiting',"
-                " 'working') LIMIT 1",
-                (guild_id,),
+                "SELECT 1 FROM member_lookups WHERE guild_id = %s AND created_at >= %s"
+                " AND (state = 'waiting' OR (state = 'working' AND claimed_at < %s)) LIMIT 1",
+                (guild_id, now_ms // 1000 - GIVE_UP_S, now_ms - RETAKE_AFTER_S * 1000),
             )
             return await cur.fetchone() is not None
+
+    async def sweep(self, guild_id: int) -> int:
+        """Remove rows older than `KEEP_S`, whatever their state: the name goes with them."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM member_lookups WHERE guild_id = %s AND created_at < %s",
+                (guild_id, int(self._now()) - KEEP_S),
+            )
+            return cur.rowcount
 
 
 async def run(bot: Any, guild_id: int) -> int:
@@ -83,27 +98,42 @@ async def run(bot: Any, guild_id: int) -> int:
     if guild is None:
         return 0
     lookups = MemberLookups(bot.campaigns.db)
+    stamp = time.monotonic()
+    if stamp - _swept.get(guild_id, float("-inf")) >= SWEEP_EVERY_S:
+        _swept[guild_id] = stamp
+        await lookups.sweep(guild_id)
     if not await lookups.waiting(guild_id):
         return 0  # (the common case: one cheap read)
     found = notfound = failed = 0
-    for lookup_id, target, stamp in await lookups.claim(guild_id):
+    for lookup_id, target, claim in await lookups.claim(guild_id):
         try:
             member = guild.get_member(target) or await guild.fetch_member(target)
+            if getattr(member, "bot", False):  # (no person)
+                outcome, name = "not_here", ""
+            else:
+                outcome, name = "found", shown_name(member.display_name, member.name)
         except discord.NotFound:
-            await lookups.answer(guild_id, lookup_id, stamp, outcome="not_here")
-            notfound += 1
-            continue
+            outcome, name = "not_here", ""
         except Exception as exc:  # Discord could not say: the page is told, never left spinning
-            await lookups.fail(guild_id, lookup_id, stamp)
             failed += 1
             log.info("A member lookup failed (%s)", type(exc).__name__)
+            await _settle(lookups.fail(guild_id, lookup_id, claim))
             continue
-        if getattr(member, "bot", False):
-            await lookups.answer(guild_id, lookup_id, stamp, outcome="not_here")  # (no person)
+        if outcome == "found":
+            found += 1
+        else:
             notfound += 1
-            continue
-        name = shown_name(member.display_name, member.name)
-        await lookups.answer(guild_id, lookup_id, stamp, outcome="found", shown=name)
-        found += 1
-    log.info("Member lookups: %d found, %d not here, %d failed", found, notfound, failed)
-    return found + notfound + failed
+        await _settle(lookups.answer(guild_id, lookup_id, claim, outcome=outcome, shown=name))
+    total = found + notfound + failed
+    if total:
+        log.info("Member lookups: %d found, %d not here, %d failed", found, notfound, failed)
+    return total
+
+
+async def _settle(write: Any) -> None:
+    """One question's answer is written on its own: a database trouble loses that one (it is taken
+    again after `RETAKE_AFTER_S`), never the others in the round."""
+    try:
+        await write
+    except Exception as exc:
+        log.warning("A member lookup answer could not be written (%s)", type(exc).__name__)

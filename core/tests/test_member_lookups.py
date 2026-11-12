@@ -14,7 +14,7 @@ import psycopg
 
 from dmbot import member_lookups
 from dmbot.consent import ConsentStore
-from dmbot.web import member_lookup, sessions
+from dmbot.web import member_lookup, sessions, wizard
 from dmbot.web.discord import DiscordUser
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
@@ -98,6 +98,30 @@ class TheDoors(Lookups):
         with self.assertRaises(RecapError):
             await self.read(lid, who=self.bob)
 
+    async def a_plain_member(self) -> Any:
+        token = await sessions.sign_in(
+            self.web,
+            DiscordUser(id=3003, name="Carl", email="carl@example.com"),
+            [THURSDAY],
+            now=NOW,
+            days=30,
+        )
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+    async def test_a_member_who_is_no_dm_and_has_no_wizard_may_not_ask(self) -> None:
+        # (the answer says whether someone agreed to be recorded: for DMs, not every member)
+        carl = await self.a_plain_member()
+        with self.assertRaises(RecapError):
+            await self.ask(str(ERIC), who=carl)
+
+    async def test_someone_with_a_live_wizard_may_ask(self) -> None:
+        carl = await self.a_plain_member()
+        await wizard.start(self.web, carl, self.g, "Carl's")
+        lid = await self.ask(str(ERIC), who=carl)
+        self.assertEqual((await self.read(lid, who=carl))["state"], "waiting")
+
     async def test_a_server_not_in_the_session_is_refused(self) -> None:
         with self.assertRaises(RecapError):
             await member_lookup.ask(self.web, self.session, 999, str(ERIC))
@@ -179,6 +203,45 @@ class TheBot(Lookups):
         self.assertTrue(await lookups.answer(self.g, row, stamp, outcome="found", shown="Eric"))
         self.assertFalse(await lookups.answer(self.g, row, stamp, outcome="found", shown="Other"))
         self.assertEqual((await self.read(lid))["name"], "Eric")
+
+    async def test_a_claim_not_moved_for_two_minutes_is_taken_again_and_the_old_one_loses(
+        self,
+    ) -> None:
+        lid = await self.ask(str(ERIC))
+        t = [1_000_000.0]
+        first = member_lookups.MemberLookups(self.db, clock=lambda: t[0])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE member_lookups SET created_at = %s", (int(t[0]),))
+        [(row, _target, old)] = await first.claim(self.g)
+        t[0] += member_lookups.RETAKE_AFTER_S + 5
+        [(again, _t, new)] = await first.claim(self.g)
+        self.assertEqual((row, again), (lid, lid))
+        self.assertFalse(await first.answer(self.g, lid, old, outcome="found", shown="Late"))
+        self.assertTrue(await first.answer(self.g, lid, new, outcome="found", shown="Eric"))
+
+    async def test_a_question_older_than_ten_minutes_is_not_claimed_or_waited_for(self) -> None:
+        await self.ask(str(ERIC))
+        lookups = member_lookups.MemberLookups(self.db, clock=lambda: NOW + 3 * 3600)
+        self.assertFalse(await lookups.waiting(self.g))
+        self.assertEqual(await lookups.claim(self.g), [])
+
+    async def test_a_round_with_nothing_to_do_says_nothing(self) -> None:
+        with self.assertNoLogs("dmbot.member_lookups", level="INFO"):
+            await member_lookups.run(self.bot, self.g)
+
+    async def test_old_rows_and_their_names_are_swept_after_an_hour(self) -> None:
+        self.members[ERIC] = person("Eric", "eric_92")
+        await self.answered(str(ERIC))
+        lookups = member_lookups.MemberLookups(self.db)
+        self.assertEqual(await lookups.sweep(self.g), 0)  # (fresh: kept)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE member_lookups SET created_at = created_at - 7200")
+        self.assertEqual(await lookups.sweep(self.g), 1)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_lookups")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
 
     async def test_nothing_waiting_means_no_lookup(self) -> None:
         self.assertEqual(await member_lookups.run(self.bot, self.g), 0)

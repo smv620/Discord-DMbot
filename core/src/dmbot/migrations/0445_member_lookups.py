@@ -8,16 +8,17 @@ from __future__ import annotations
 
 from dmbot.migrations._shared import _isolate
 
-# One row per question. `target` is the id the DM typed: a Discord id the person has already seen in
-# Discord, kept only while the answer is wanted (rows go after a day). The bot looks the member up
-# in THIS server (`fetch_member`, no privileged intent) and writes `shown` ("Eric (eric_92)") and
-# `outcome`: 'found', or 'not_here' (not in the server, or a bot). The row holds the name for the
-# asker's page and nothing else; it is never written into a campaign. The door checks the caller
-# is signed in with this server in their session's list and asks no more than 20 a minute; the id
-# must be a 17 to 19 digit number (a Discord snowflake fits a BIGINT). `claimed_at` is the bot's
-# own stamp in milliseconds, moved as it works; a question waiting or working 10 minutes without
-# moving is taken as lost, as the door reads it too. `agreed` is read when the page asks, never
-# stored: whether this person has agreed to be recorded in this server.
+# One row per question. `target` is the id the DM typed: a Discord id the person has already seen
+# in Discord, kept only while the answer is wanted (the bot sweeps rows an hour old, the add door
+# a day). The bot looks the member up in THIS server (`fetch_member`, no privileged intent) and
+# writes `shown` ("Eric (eric_92)") and `outcome`: 'found', or 'not_here' (not in the server, or
+# a bot). The row holds the name for the asker's page and nothing else; it is never written into
+# a campaign. The door checks the caller may ask (a DM here, or someone with a live wizard) and
+# asks no more than 20 a minute; the id must be a 17 to 19 digit number (a Discord snowflake fits
+# a BIGINT). `claimed_at` is the bot's own stamp in milliseconds, moved as it works; a question
+# waiting or working 10 minutes without moving is taken as lost, as the door reads it too.
+# `agreed` is read when the page asks, never stored: whether this person has agreed to be
+# recorded in this server.
 SQL = (
     r"""
     CREATE TABLE member_lookups (
@@ -37,7 +38,19 @@ SQL = (
     """
     + _isolate("member_lookups")
     + r"""
-    -- Ask who a Discord id is (NULL unless the caller is signed in with this server in their list).
+    -- Who may ask: a DM of a campaign in this server, or someone with a live start-up wizard here
+    -- (the person pickers are DM tools, and the answer says whether the person has agreed to be
+    -- recorded, which is not for every member of the server to read). Internal: the doors call it.
+    CREATE FUNCTION dmbot_may_look_up_members(g BIGINT) RETURNS BOOLEAN
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT dmbot_current_user() IS NOT NULL AND (
+            EXISTS (SELECT 1 FROM campaign_dms d
+                    WHERE d.guild_id = g AND d.user_id = dmbot_current_user())
+            OR EXISTS (SELECT 1 FROM wizard_drafts w
+                       WHERE w.guild_id = g AND w.user_id = dmbot_current_user()
+                         AND w.expires_at > floor(extract(epoch FROM clock_timestamp()))::BIGINT))
+    $fn$;
+    -- Ask who a Discord id is (NULL unless the caller may, see above).
     -- 'bad_id' for anything but a 17 to 19 digit number; 'too_soon' past 20 questions a minute.
     CREATE FUNCTION dmbot_web_member_lookup_add(g BIGINT, who BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -47,7 +60,7 @@ SQL = (
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
-           OR dmbot_current_user() IS NULL THEN
+           OR NOT dmbot_may_look_up_members(g) THEN
             RETURN NULL;
         END IF;
         IF who IS NULL OR who < 10000000000000000 THEN
@@ -77,7 +90,7 @@ SQL = (
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
-           OR dmbot_current_user() IS NULL THEN
+           OR NOT dmbot_may_look_up_members(g) THEN
             RETURN NULL;
         END IF;
         SELECT m.* INTO r FROM member_lookups m
@@ -101,6 +114,9 @@ SQL = (
     DO $do$
     BEGIN
         EXECUTE format(
+            'ALTER FUNCTION dmbot_may_look_up_members(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
             'ALTER FUNCTION dmbot_web_member_lookup_add(BIGINT, BIGINT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
@@ -108,6 +124,7 @@ SQL = (
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
+    REVOKE ALL ON FUNCTION dmbot_may_look_up_members(BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_member_lookup_add(BIGINT, BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_member_lookup_read(BIGINT, TEXT) FROM PUBLIC;
 """
