@@ -213,6 +213,16 @@ export const wizardWords = {
     } as Record<string, string>,
     done: "Your campaign is ready.",
     open: "Open the campaign",
+    openDiscord: "Open in Discord",
+    noChannels: "DMbot couldn't make the campaign's channels. In Discord, type /dmbot start in your server to set them up.",
+    // What to do next in Discord (#4219), one line each; the bold words are the buttons and commands as Discord shows them.
+    nextHeading: "Next, in Discord",
+    next: [
+      "Open your campaign's DM Bot channel. Your menu is there, with ⚙️ Manage DMbot.",
+      "When you play, join your table's voice channel and type /dmbot start. DMbot asks which voice channel is the table the first time.",
+      "Each player presses Agree on DMbot's message to be recorded. Nobody is recorded until they do.",
+      "DMbot sends you a private message when there is something to check, like ✅ Check everything after a session.",
+    ] as readonly string[],
     // The finish run's failure words (docs/WIZARD_DESIGN.md, 4.4).
     errors: {
       plan: "Your plan has no room for another campaign.",

@@ -138,6 +138,7 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
         ofParts: Number(got["ofParts"] ?? 0),
         error: String(got["error"] ?? ""),
         campaignRef: campaign ? `${guild}.${campaign}` : "",
+        dmBotChannel: typeof got["dmBotChannel"] === "string" && /^[0-9]{1,20}$/.test(got["dmBotChannel"]) ? got["dmBotChannel"] : "",
         createdAt: Number(got["createdAt"] ?? 0),
         movedAt: Number(got["movedAt"] ?? 0),
         serverNow: Number(got["now"] ?? 0),

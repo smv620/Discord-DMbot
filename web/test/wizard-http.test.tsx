@@ -78,7 +78,7 @@ describe("the routes", () => {
       [`POST /me/wizard/${G}/rights`]: { body: { status: "ok" } },
       [`POST /me/wizard/${G}/page-text`]: { body: { name: "Winter", characters: ["Brannoc Stonebelt"] } },
       [`POST /me/wizard/${G}/finish`]: { body: { id: "f1" } },
-      [`GET /me/wizard/${G}/finish`]: [{ body: {} }, { body: { id: "f1", state: "working", stage: "lore", part: 1, ofParts: 2, campaign: "c9", error: "", createdAt: 10, movedAt: 20, now: 30 } }],
+      [`GET /me/wizard/${G}/finish`]: [{ body: {} }, { body: { id: "f1", state: "working", stage: "lore", part: 1, ofParts: 2, campaign: "c9", dmBotChannel: "400000000000000009", error: "", createdAt: 10, movedAt: 20, now: 30 } }],
       [`DELETE /me/wizard/${G}`]: { body: { status: "ok" } },
     });
     await api.docRemove(G, "d1");
@@ -86,7 +86,7 @@ describe("the routes", () => {
     expect(await api.pageText(G, "Characters:\nBrannoc Stonebelt")).toEqual({ name: "Winter", characters: [{ full: "Brannoc Stonebelt", partyName: "Brannoc" }] });
     expect(await api.finish(G)).toBe("f1");
     expect(await api.finishState(G)).toBeNull(); // ({} is "not started")
-    expect(await api.finishState(G)).toMatchObject({ state: "working", stage: "lore", part: 1, ofParts: 2, campaignRef: `${G}.c9`, createdAt: 10, movedAt: 20, serverNow: 30 });
+    expect(await api.finishState(G)).toMatchObject({ state: "working", stage: "lore", part: 1, ofParts: 2, campaignRef: `${G}.c9`, dmBotChannel: "400000000000000009", createdAt: 10, movedAt: 20, serverNow: 30 });
     await api.discard(G);
     expect(seen.find((s) => s.key === `POST /me/wizard/${G}/rights`)?.body).toEqual({ kind: "shared" });
   });

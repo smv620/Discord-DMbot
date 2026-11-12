@@ -334,6 +334,41 @@ describe("the wizard", () => {
     expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
+  async function finishedRun(guild = G) {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={guild} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "The Frostmaiden" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByText(w.finish.done)).toBeTruthy();
+  }
+
+  it("a finished run offers Open in Discord, to the campaign's DM Bot channel in a new tab (#4219)", async () => {
+    await finishedRun();
+    const link = screen.getByRole("link", { name: w.finish.openDiscord });
+    expect(link.getAttribute("href")).toBe(`https://discord.com/channels/${G}/400000000000000009`);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(screen.queryByText(w.finish.noChannels)).toBeNull();
+  });
+
+  it("with no channel there is no button, and a line says what to do (#4219)", async () => {
+    await finishedRun(`${G}.nochannel`);
+    expect(screen.queryByRole("link", { name: w.finish.openDiscord })).toBeNull();
+    expect(screen.getByText(w.finish.noChannels)).toBeTruthy();
+  });
+
+  it("the finish page lists what to do next in Discord (#4219)", async () => {
+    await finishedRun();
+    expect(screen.getByRole("heading", { name: w.finish.nextHeading })).toBeTruthy();
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    for (const line of w.finish.next) expect(items).toContain(line);
+    expect(w.finish.next).toHaveLength(4);
+  });
+
   it("a finish that fails says what happened and offers another try", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockWizard();
