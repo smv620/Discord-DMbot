@@ -137,6 +137,7 @@ export const wizardWords = {
     addDrive: "Choose from Google Drive",
     linkLabel: "A link",
     linkBad: "A link must start with https://.",
+    linkTooLong: "That link is too long for DMbot to keep. Use a shorter one.",
     remove: "Remove",
     none: "Nothing added.",
     // Step 8's homebrew links (#4211): only pages published on dndbeyond.com can be read.
@@ -252,6 +253,7 @@ export const wizardWords = {
       house_failed: "Your campaign is ready, but DMbot couldn't add your house rules. Add them again from the campaign's House rules page.",
       homebrew_unreadable: "Your campaign is ready, but DMbot couldn't read your homebrew. Add it again from the campaign's Homebrew page.",
       homebrew_link_failed: "Your campaign is ready, but DMbot couldn't read a homebrew link. Add it again from the campaign's Homebrew page.",
+      doc_link_failed: "Your campaign is ready, but DMbot couldn't read a link you added. Add it again from the campaign's pages.",
       homebrew_failed: "Your campaign is ready, but DMbot couldn't add your homebrew. Add it again from the campaign's Homebrew page.",
       docs_left: "Your campaign is ready. Add your house rules and homebrew on the campaign's House rules and Homebrew pages.",
       bad_answers: "Some of your answers couldn't be used. Go back, check them, and try again.",
@@ -262,6 +264,7 @@ export const wizardWords = {
     notes: {
       house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
       homebrew_unreadable: (n: number): string => `${n} ${n === 1 ? "homebrew file" : "homebrew files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+      doc_link_failed: (n: number): string => `${n} ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the campaign's pages.`,
       homebrew_link_failed: (n: number): string => `${n} homebrew ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
     } as Record<string, (n: number) => string>,
     quiet: "Still working. You can leave this page: the campaign will be ready when it is done.",

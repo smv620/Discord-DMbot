@@ -402,13 +402,14 @@ export function DocsStep({ api, guild, draft, onDraft, onPatch, slot, heading, l
           </button>
         </div>
       )}
-      {WIZARD_LINKS_LIVE && (
+      {WIZARD_LINKS_LIVE && slot !== "homebrew" && (
       <div class="row">
         <label>
           {t.linkLabel}
           <input type="url" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} />
         </label>
-        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
+        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad);
+            if (url.length > LINK_MAX) return setProblem(t.linkTooLong); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
           {t.addLink}
         </button>
       </div>
@@ -537,3 +538,4 @@ function HomebrewLinks({ draft, onPatch, ticked, busy }: { draft: WizardDraft; o
   );
 }
 const MAX_HOMEBREW_LINKS = 20; // the server's own limit
+const LINK_MAX = 2000; // the server's limit for one address (#4206)
