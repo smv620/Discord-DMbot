@@ -1056,7 +1056,7 @@ async def _read_background(
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
     if spoken:
-        await store_languages(memory, campaign, spoken)
+        await store_languages(memory, campaign, spoken, known)
     return done
 
 
@@ -1285,36 +1285,50 @@ def trait_questions_line(n: int) -> str:
 
 
 async def store_languages(
-    memory: MemoryStore, campaign: Campaign, spoken: Sequence[traits_read.Spoken]
+    memory: MemoryStore,
+    campaign: Campaign,
+    spoken: Sequence[traits_read.Spoken],
+    known: Collection[str] = (),
 ) -> int:
     """The languages the lore says a character speaks (#4229 slice 1b), kept beside the sheets as
-    DMbot's read ("DMbot read" on the DM's card) until the DM checks them: on a new character of
-    this read, or one the campaign has. A character with a sheet keeps its languages there, so the
-    store skips it; a name two entries share is skipped (DMbot can't tell whose). Adding one only
-    adds: nothing the DM said is changed, and the DM takes one away on the card. Returns how many
-    were kept. Never raises: the read is done; the log gets counts and the error type only."""
+    DMbot's read ("not checked yet" on the DM's card) until the DM checks them. Only for a character
+    this read is making: a name the campaign had before it (`known`, keys) is never written to
+    silently, as #3926 rules for lineage and class; asking about those is its own step. A character
+    with a sheet keeps its languages there, so the store skips it; a name two entries share is
+    skipped (DMbot can't tell whose). One language that can't be kept never stops the rest.
+    Returns how many were added. Never raises: the log gets counts and the error type only."""
     try:
         lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
-        whose: dict[str, set[str]] = {}
-        for entry in lookup.names:
-            who = lookup.entities.get(entry.entity_id)
-            if who is not None and who.type == "character":
-                whose.setdefault(name_key(entry.text), set()).add(who.id)
-        kept = 0
-        for one in spoken:
-            ids = whose.get(name_key(one.name), set())
-            if len(ids) != 1:
-                continue
-            written = await memory.add_story_language(
-                campaign.guild_id, campaign.id, next(iter(ids)), one.language, source="background"
-            )
-            kept += written.value is not None
-        if kept:
-            log.info("Lore languages: %d kept as DMbot's read", kept)
-        return kept
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Lore languages couldn't be kept (%s)", type(exc).__name__)
         return 0
+    whose: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if who is not None and who.type == "character":
+            whose.setdefault(name_key(entry.text), set()).add(who.id)
+    added = skipped = 0
+    for one in spoken:
+        ids = whose.get(name_key(one.name), set())
+        if name_key(one.name) in known or len(ids) != 1:
+            skipped += 1
+            continue
+        entity_id = next(iter(ids))
+        try:
+            had = {
+                name_key(r.name)
+                for r in await memory.story_languages(campaign.guild_id, campaign.id, entity_id)
+            }
+            written = await memory.add_story_language(
+                campaign.guild_id, campaign.id, entity_id, one.language, source="background"
+            )
+        except Exception as exc:  # the type only; the next language still gets its turn
+            log.warning("A lore language couldn't be kept (%s)", type(exc).__name__)
+            continue
+        added += written.value is not None and name_key(one.language) not in had
+    if added or skipped:
+        log.info("Lore languages: %d added as DMbot's read, %d left for later", added, skipped)
+    return added
 
 
 async def ask_traits(

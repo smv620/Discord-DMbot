@@ -27,7 +27,9 @@ class TheLine(unittest.TestCase):
 
     def test_the_ones_dmbot_read_are_marked(self) -> None:
         line = lc.languages_line([Known("Elvish", BY_DM), Known("Sylvan", "read")])
-        self.assertEqual(line, "\n🗣️ **Languages:** Elvish, Sylvan (DMbot read)")
+        self.assertEqual(line, "\n🗣️ **Languages:** Elvish · not checked yet: Sylvan")
+        only = lc.languages_line([Known("Sylvan", "read")])
+        self.assertEqual(only, "\n🗣️ **Languages:** not checked yet: Sylvan")
 
     def test_a_long_list_is_cut_short(self) -> None:
         line = lc.languages_line([Known("x" * 50, BY_DM) for _ in range(10)])
@@ -90,15 +92,46 @@ class OnTheCard(NamesTest):
             GUILD, self.campaign.id, self.npc.id, "Sylvan", source="background"
         )
         text, view = await self.screen()
-        self.assertIn("Sylvan (DMbot read)", text)
+        self.assertIn("not checked yet: Sylvan", text)
         self.assertIn(lc.CHECKED_BUTTON, self.labels(view))
-        await view._checked(self.it())
+        it = self.it()
+        await view._checked(it)
+        self.assertIn("Marked as right: Sylvan", it.response.edited[-1][0])
         (row,) = await self.stored()
         self.assertEqual(row.given_by, BY_DM)
+
+    async def test_a_press_by_a_manager_who_is_not_a_dm_is_refused(self) -> None:
+        await self.memory.add_story_language(
+            GUILD, self.campaign.id, self.npc.id, "Sylvan", source="background"
+        )
+        _text, view = await self.screen()
+        view.pick._values = [view.pick.options[0].value]
+        for press in (view._remove, view._checked):
+            it = self.it(MANAGER)
+            await press(it)
+            self.assertEqual(it.response.sent[-1][0], lc.ONLY_DM)
+        (row,) = await self.stored()
+        self.assertEqual(row.given_by, "read")  # nothing changed
+
+    async def test_a_character_with_a_sheet_is_told_to_change_it_there(self) -> None:
+        pc = await ui.save_name(self.memory, self.campaign, "Testa", "player_character", [], [])
+        async with self.db.guild(GUILD) as conn:  # (a typed sheet with no languages on it)
+            await conn.execute(
+                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, sheet, source,"
+                " fetched_at, player_id) VALUES (%s, %s, %s, '{}'::jsonb, 'typed', 1, 5)",
+                (GUILD, self.campaign.id, pc.id),
+            )
+        it = self.it()
+        await lc.show_languages(it, self.campaign.id, pc.id)
+        text, view = it.response.edited[-1]
+        self.assertEqual(text, lc.HAS_SHEET)
+        self.assertNotIn(lc.ADD_BUTTON, self.labels(view))
 
     async def test_the_dm_takes_one_away(self) -> None:
         await self.add("Dwarvish")
         _text, view = await self.screen()
         view.pick._values = [view.pick.options[0].value]  # (as Discord sets it on a pick)
-        await view._remove(self.it())
+        it = self.it()
+        await view._remove(it)
+        self.assertIn("Removed: **Dwarvish**", it.response.edited[-1][0])
         self.assertEqual(await self.stored(), [])

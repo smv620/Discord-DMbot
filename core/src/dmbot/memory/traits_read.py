@@ -28,6 +28,7 @@ from dmbot.memory.models import (
     Trait,
     name_key,
 )
+from dmbot.names import not_names
 
 # The classes the rules give by name (SRD 5.2, CC-BY-4.0), plus the one a published adventure often
 # names that the SRD lacks; "not in DMbot's rules" for that one. A word that is not one of these is
@@ -148,6 +149,8 @@ def _lineage(words: str, resolve: Resolve) -> Trait | None:
     plain = _plain(words)
     if not 0 < len(plain) <= LINEAGE_WORDS or any(w.casefold() in _CLASSES for w in plain):
         return None  # (a phrase, or "half-elf paladin" written as one: the class is its own line)
+    if not_names.is_language(words):  # "Elvish" is what someone speaks, never their lineage (#4229)
+        return None
     said = " ".join(plain)
     hit = resolve(said)
     if hit is None:
@@ -229,6 +232,22 @@ def read_traits(
     return found
 
 
+_ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.I)
+_TONGUE = frozenset({"tongue", "speech", "cant", "language", "dialect", "sign"})
+
+
+def _names_a_language(part: str) -> bool:
+    """Do these words name a language, not a way of speaking ("speaks softly", "speaks with
+    animals")? One of the SRD's, a name written with a capital ("Netherese"), or a phrase with a
+    language word in it ("the old tongue of Netheril"). The quote check still has to pass."""
+    words = _plain(part)
+    if " ".join(w.casefold() for w in words) in not_names.LANGUAGES:
+        return True
+    if any(w.casefold() in _TONGUE for w in words):
+        return True
+    return all(w[:1].isupper() for w in words if w.casefold() not in ("of", "the"))
+
+
 @dataclass(frozen=True, slots=True)
 class Spoken:
     """One checked language: whose (the name as the read wrote it) and the language, as the text
@@ -252,7 +271,8 @@ def read_languages(
     "Elvish and Sylvan" on one line is two languages. A line is
     dropped, and counted under its reason, when it is about no name (`language_no_name`), its quote
     doesn't hold the name and the words (`language_not_in_text`), or the words are no name of a
-    language (`language_words`). Pure; counts only."""
+    language (`language_words`: too long, or a way of speaking, `_names_a_language`). A language
+    keeps the text's own spelling ("Thieves' Cant"). Pure; counts only."""
     counts = dropped if dropped is not None else Counter()
     haystack = bg._squash(text)
     keys = {name_key(n) for n in names} | set(existing)
@@ -274,13 +294,13 @@ def read_languages(
             words = _plain(part)
             if not words:
                 continue
-            if len(words) > LANGUAGE_WORDS:
+            if len(words) > LANGUAGE_WORDS or not _names_a_language(part):
                 counts["language_words"] += 1
                 continue
             if not all(bg._in_quote(said, w) for w in words):
                 counts["language_not_in_text"] += 1
                 continue
-            language = " ".join(words)
+            language = _ARTICLE.sub("", part.strip(" .;:\"'")).strip()  # as written: Thieves' Cant
             language = language[:1].upper() + language[1:]
             key = (name_key(name), name_key(language))
             if key in seen:

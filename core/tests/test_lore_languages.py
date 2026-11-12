@@ -61,6 +61,27 @@ class TheReader(unittest.TestCase):
         )
         self.assertEqual(got, [Spoken("Brewner", "Dwarvish")])
 
+    def test_a_way_of_speaking_is_no_language_and_a_cant_keeps_its_apostrophe(self) -> None:
+        text = "Mira speaks softly, in Thieves' Cant, and with animals."
+        counts: Counter[str] = Counter()
+        got = read_languages(
+            [line("Mira", "softly, Thieves' Cant, with animals", text.rstrip("."))],
+            text,
+            ["Mira"],
+            counts,
+        )
+        self.assertEqual(got, [Spoken("Mira", "Thieves' Cant")])
+        self.assertEqual(counts["language_words"], 2)
+
+    def test_a_language_is_never_read_as_a_lineage(self) -> None:
+        got = read_traits(
+            [line("Brewner", "Elvish", "Brewner speaks Dwarvish", kind="lineage")],
+            "Brewner speaks Dwarvish. Elvish too.",
+            ["Brewner"],
+            lambda _w: ("Elf", "SRD 5.2.1", "2024"),
+        )
+        self.assertEqual(got, [])
+
     def test_the_traits_reader_leaves_language_lines_alone(self) -> None:
         counts: Counter[str] = Counter()
         got = read_traits(
@@ -75,6 +96,7 @@ class TheReader(unittest.TestCase):
     def test_the_read_is_asked_for_them_and_never_a_guess(self) -> None:
         asked = lore_read.read_instructions()
         self.assertIn("'language' as its kind", asked)
+        self.assertIn("lineage, class or language |", asked)
         self.assertIn("Never a guess from a name, a look, a lineage or a homeland", asked)
 
 
@@ -97,3 +119,23 @@ class Kept(MemoryTest):
         self.assertEqual((dwarvish.name, dwarvish.given_by), ("Dwarvish", "read"))
         for tom in (twin_a, twin_b):  # two entries share "Tom": DMbot can't tell whose
             self.assertEqual(await self.memory.story_languages(GUILD_A, self.c, tom), [])
+
+    async def test_a_name_the_campaign_had_before_the_read_is_left_alone(self) -> None:
+        # (#3926's rule: an existing character's traits are never written silently)
+        brewner = await self.add("Brewner", status=CONFIRMED)
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        kept = await store_languages(
+            self.memory, campaign, [Spoken("Brewner", "Dwarvish")], known=["brewner"]
+        )
+        self.assertEqual(kept, 0)
+        self.assertEqual(await self.memory.story_languages(GUILD_A, self.c, brewner), [])
+
+    async def test_one_already_kept_is_not_counted_again(self) -> None:
+        brewner = await self.add("Brewner")
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        await store_languages(self.memory, campaign, [Spoken("Brewner", "Dwarvish")])
+        again = await store_languages(self.memory, campaign, [Spoken("Brewner", "dwarvish")])
+        self.assertEqual(again, 0)
+        self.assertEqual(len(await self.memory.story_languages(GUILD_A, self.c, brewner)), 1)

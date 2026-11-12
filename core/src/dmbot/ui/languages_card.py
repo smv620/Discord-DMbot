@@ -35,41 +35,53 @@ ADD_BUTTON = "➕ Add a language"
 CHECKED_BUTTON = "✅ These are right"
 BACK_BUTTON = "↩ Back"
 ONLY_DM = "Only the DM can change a character's languages."
-HOLDER = "Take one away"
+HOLDER = "Remove a language…"
 HAS_SHEET = (
-    "This character has a sheet, so its languages are on the sheet. Change them there and "
-    "DMbot reads them from it."
+    "This character has a sheet, so its languages come from the sheet. To change them, edit "
+    "the sheet."
 )
+UNCHECKED = "not checked yet"  # the ones DMbot found in the DM's notes and the DM hasn't confirmed
+LOOK_AGAIN = f"Tap {BACK_BUTTON}, then {LANGUAGES_BUTTON}, to see the list as it is now."
 LINE_MAX = 300  # the card's line, so a long list never pushes the rest of the card out
 
 
 def languages_line(known: Sequence[Known]) -> str:
     """The card's line, or "" when DMbot knows none: "🗣️ Languages: Common, Dwarvish (from the
-    sheet)", or the story's, each one DMbot read and the DM hasn't checked marked so."""
+    sheet)", or the story's, the ones DMbot found in the DM's notes and the DM hasn't confirmed
+    grouped once at the end ("· not checked yet: Giant")."""
     if not known:
         return ""
     if all(k.source == "sheet" for k in known):
         words = ", ".join(_md(k.name) for k in known)
         line = f"\n🗣️ **Languages:** {words} (from the sheet)"
     else:
-        words = ", ".join(
-            _md(k.name) + (" (DMbot read)" if k.source == "read" else "") for k in known
-        )
-        line = f"\n🗣️ **Languages:** {words}"
-    return line if len(line) <= LINE_MAX else line[: LINE_MAX - 1] + "…"
+        line = "\n🗣️ **Languages:** " + _story(known)
+    if len(line) <= LINE_MAX:
+        return line
+    cut = line[: LINE_MAX - 1]
+    return cut[: cut.rfind(", ")] + "…" if ", " in cut else cut + "…"  # (at a whole language)
+
+
+def _story(known: Sequence[Known]) -> str:
+    sure = ", ".join(_md(k.name) for k in known if k.source != "read")
+    found = ", ".join(_md(k.name) for k in known if k.source == "read")
+    if not found:
+        return sure
+    return f"{sure} · {UNCHECKED}: {found}" if sure else f"{UNCHECKED}: {found}"
 
 
 def screen_text(name: str, known: Sequence[Known]) -> str:
-    said = ", ".join(_md(k.name) + (" (DMbot read)" if k.source == "read" else "") for k in known)
-    now = f" Now: {said}." if said else " None yet."
+    now = f" Now: {_story(known)}." if known else " None yet."
     unchecked = (
-        f" Tap {CHECKED_BUTTON} if the ones DMbot read are right."
+        f" Tap {CHECKED_BUTTON} if what DMbot found in your notes is correct, or remove a wrong "
+        "one."
         if any(k.source == "read" for k in known)
         else ""
     )
     return (
         f"🗣️ **What languages does {_md(name)} know?**{now}{unchecked}\n"
-        "DMbot uses them to tell you who at the table understands something. Only you see them."
+        "DMbot will use them to tell you who understands what's said. Only the campaign's DMs "
+        "see them."
     )
 
 
@@ -89,15 +101,13 @@ async def show_languages(
     if entity is None:
         await _replace(interaction, GONE, None)
         return
-    known = (await memory.languages_known(campaign.guild_id, campaign.id, [entity_id])).get(
-        entity_id, []
-    )
-    if any(k.source == "sheet" for k in known):
+    if await memory.has_sheet(campaign.guild_id, campaign.id, entity_id):
         await _replace(
             interaction, HAS_SHEET, LanguagesMenu(campaign_id, entity_id, [], [], can_add=False)
         )
         return
     rows = await memory.story_languages(campaign.guild_id, campaign.id, entity_id)
+    known = [Known(r.name, r.given_by) for r in rows]
     text = screen_text(entity.name, known)
     await _replace(
         interaction,
@@ -127,13 +137,14 @@ class LanguagesMenu(_Menu):
         super().__init__()
         self.campaign_id, self.entity_id = campaign_id, entity_id
         self.unchecked = unchecked
+        self.names = dict(rows)  # (the note after a removal names it, so a wrong pick shows)
         if rows:
             self.pick = _Select(
                 self._remove,
                 placeholder=HOLDER,
                 options=[
                     discord.SelectOption(label=name[:100], value=row_id)
-                    for row_id, name in rows[:25]
+                    for row_id, name in rows[:25]  # (Discord's limit for a menu; rarely near it)
                 ],
             )
             self.add_item(self.pick)
@@ -176,11 +187,13 @@ class LanguagesMenu(_Menu):
                 source=DM,
             )
         except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't take it away. {exc} Tap {BACK_BUTTON} to see it.")
+            await _tell(interaction, f"Couldn't remove that language. {exc} {LOOK_AGAIN}")
             return
         changed(interaction, campaign)
         self.stop()
-        await show_languages(interaction, self.campaign_id, self.entity_id, "🗣️ Taken away.")
+        gone = self.names.get(self.pick.values[0], "")
+        note = f"🗣️ Removed: **{_md(gone)}**." if gone else "🗣️ Removed."
+        await show_languages(interaction, self.campaign_id, self.entity_id, note)
 
     async def _add(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(AddLanguageForm(self.campaign_id, self.entity_id))
@@ -191,28 +204,18 @@ class LanguagesMenu(_Menu):
         if found is None:
             return
         campaign, memory = found
-        rows = await memory.story_languages(
-            campaign.guild_id,
-            campaign.id,
-            self.entity_id,
-        )
-        try:
-            for row in rows:
-                if row.id in self.unchecked and row.given_by == "read":
-                    # the DM's word on one DMbot read checks it (one change for each)
-                    await memory.add_story_language(
-                        campaign.guild_id,
-                        campaign.id,
-                        self.entity_id,
-                        row.name,
-                        source=DM,
-                    )
+        try:  # every one DMbot read becomes the DM's word, in one change (one Undo)
+            written = await memory.check_story_languages(
+                campaign.guild_id, campaign.id, self.entity_id, source=DM
+            )
         except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't save it. {exc} Tap {BACK_BUTTON} to see it.")
+            await _tell(interaction, f"Couldn't save that. {exc} {LOOK_AGAIN}")
             return
         changed(interaction, campaign)
         self.stop()
-        await show_languages(interaction, self.campaign_id, self.entity_id, "🗣️ Checked.")
+        words = ", ".join(_md(n) for n in written.value)
+        note = f"🗣️ Marked as right: {words}." if words else "🗣️ Nothing left to check."
+        await show_languages(interaction, self.campaign_id, self.entity_id, note)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
@@ -253,13 +256,10 @@ class AddLanguageForm(discord.ui.Modal, title="Add a language"):
             written = await memory.add_story_language(
                 campaign.guild_id, campaign.id, self.entity_id, self.name.value, source=DM
             )
-        except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't add it. {exc} Try again.")
+        except MemoryRuleError as exc:  # (the store's words say what to do: no "try again")
+            await _tell(interaction, f"Couldn't add that language. {exc}")
             return
         changed(interaction, campaign)
-        note = (
-            f"🗣️ Added: **{_md(written.value.name)}**."
-            if written.value is not None
-            else "🗣️ Not added: this character has a sheet."
-        )
+        added = written.value  # (the DM's word is never skipped: a sheet is refused above)
+        note = f"🗣️ Added: **{_md(added.name)}**." if added is not None else ""
         await show_languages(interaction, self.campaign_id, self.entity_id, note)
