@@ -43,7 +43,9 @@ GIVE_UP_S = 30 * 60  # as the door's: a run that has not moved this long ago was
 RETAKE_AFTER_S = 10 * 60  # a claim that stopped moving this long ago (the bot restarted)
 MAX_TRIES = 3
 LORE_POLL_S = 3.0
-PROGRESS_EVERY_S = 1.0  # at most one progress write a second for a run (#4213)
+# At most one progress write a second for a run (#4213). `move()` writes the row on every poll
+# too, so LORE_POLL_S must stay above this or the cap no longer holds.
+PROGRESS_EVERY_S = 1.0
 _NO_COUNTS = ("", 0, 0, 0, 0)  # (pass word, done, total, names found, connections found)
 LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 
@@ -89,6 +91,7 @@ class Run:
     tries: int = 1
     started_at: int = 0  # when the page queued it (seconds)
     notes: str = ""  # "word:count word:count": what the run has to say about several things
+    last_counts: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)  # as last written
     progress_at: float = 0.0  # when the reader's counts were last copied (the 1 a second cap)
 
 
@@ -119,7 +122,8 @@ class WizardFinishes:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE wizard_finishes SET state = 'working', claimed_at = %s, tries = tries + 1,"
-                " moved_at = %s WHERE (guild_id, id) = (SELECT guild_id, id FROM wizard_finishes"
+                " moved_at = %s, pass_word = '', pass_done = 0, pass_total = 0, found_names = 0,"
+                " found_links = 0 WHERE (guild_id, id) = (SELECT guild_id, id FROM wizard_finishes"
                 " WHERE guild_id = %s AND created_at >= %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
@@ -183,6 +187,8 @@ class WizardFinishes:
         most one write a second for a run: a call within a second of the last one is dropped (the
         next poll brings the newer numbers). Raises `Lost` like `move`."""
         now = self._now()
+        if counts == run.last_counts:
+            return  # (nothing new to say)
         if counts != _NO_COUNTS and now - run.progress_at < PROGRESS_EVERY_S:
             return  # (clearing the counts between documents always goes through)
         word, done, total, names, links = counts
@@ -197,6 +203,7 @@ class WizardFinishes:
             if not cur.rowcount:
                 raise Lost
         run.progress_at = now
+        run.last_counts = counts
 
     async def end(
         self, guild_id: int, run: Run, *, ok: bool, error: str = "", notes: str = ""
