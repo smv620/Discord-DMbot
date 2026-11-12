@@ -5,13 +5,20 @@ names."""
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import place_levels as pl
+from dmbot.memory.lookup import LookupCache
 from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName
 from dmbot.memory.models import DM as BY_DM
 from dmbot.memory.store import ONLY_PLACES
+from dmbot.ui import names as ui
+from dmbot.ui import place_size
+from tests.test_memory_names import DM as NAMES_DM
+from tests.test_memory_names import GUILD as NAMES_GUILD
+from tests.test_memory_names import MANAGER, NamesTest
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
 
 
@@ -146,3 +153,61 @@ class TheStore(MemoryTest):
                 data = {**data, "sections": {**data["sections"], "memory": damaged}}
                 with self.assertRaises(CampaignError):
                     await self.campaigns.import_backup(GUILD_B, data, DM)
+
+
+class OnTheCard(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.lookup = LookupCache(self.memory)
+        self.maer = await ui.save_name(self.memory, self.campaign, "Maer Dualdon", "place", [], [])
+
+    async def screen(self, user: int = NAMES_DM) -> tuple[str, Any]:
+        it = self.it(user)
+        await place_size.show_sizes(it, self.campaign.id, self.maer.id)
+        if not it.response.edited:
+            return str(it.response.sent[-1][0]), None
+        text, view = it.response.edited[-1]
+        return str(text), view
+
+    async def pick(self, view: Any, value: str, user: int = NAMES_DM) -> Any:
+        view.form_pick._values = [value]  # (as Discord sets it on a pick)
+        it = self.it(user)
+        await view._form_picked(it)
+        return it
+
+    async def test_the_dm_marks_it_water_and_the_card_says_so(self) -> None:
+        text, view = await self.screen()
+        self.assertIn("land, water or a road", text)
+        self.assertEqual([o.value for o in view.form_pick.options if o.default], [place_size.AREA])
+        it = await self.pick(view, pl.WATER)
+        card = str(it.response.edited[-1][0])
+        self.assertIn("🧭 Noted: **Maer Dualdon** is water.", card)
+        self.assertIn("🧭 **Kind of place:** water", card)
+        self.assertNotIn("DMbot read this", card)  # the DM's own word
+        found = await self.memory.entity(NAMES_GUILD, self.campaign.id, self.maer.id)
+        assert found is not None
+        self.assertEqual((found.form, found.form_from), (pl.WATER, BY_DM))
+
+    async def test_land_takes_the_form_away(self) -> None:
+        _text, view = await self.screen()
+        await self.pick(view, pl.ROUTE)
+        _text, view = await self.screen()
+        await self.pick(view, place_size.AREA)
+        found = await self.memory.entity(NAMES_GUILD, self.campaign.id, self.maer.id)
+        assert found is not None
+        self.assertIsNone(found.form)
+
+    async def test_a_manager_who_is_not_a_dm_is_refused(self) -> None:
+        _text, view = await self.screen()
+        it = await self.pick(view, pl.WATER, user=MANAGER)
+        self.assertEqual(it.response.sent[-1][0], place_size.ONLY_DM)
+        found = await self.memory.entity(NAMES_GUILD, self.campaign.id, self.maer.id)
+        assert found is not None
+        self.assertIsNone(found.form)
+
+
+class TheLine(unittest.TestCase):
+    def test_land_has_no_line_and_a_read_one_says_so(self) -> None:
+        self.assertEqual(place_size.form_line(None), "")
+        self.assertEqual(place_size.form_line(pl.ROUTE), "\n🧭 **Kind of place:** a road or route")
+        self.assertIn("DMbot read this", place_size.form_line(pl.WATER, read=True))

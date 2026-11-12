@@ -240,8 +240,9 @@ NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "
 # Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
 # is full. A companion travels with a player character or the party (#3176): the session readers
 # and the DM's own button propose it, not this menu.
-# Not in the generic menu: a companion's is proposed by the readers, and two places beside each
-# other (#4173 slice 6a) have their own control on a place's card (Discord's menu holds 25).
+# Not in the generic menu: a companion's is proposed by the readers, and so are two places beside
+# each other (#4173 slice 6a), which the DM confirms like any suggestion; a place card's own control
+# for them follows (Discord's menu holds 25, and this one is full).
 NOT_IN_MENU = frozenset({"travels_with", "next_to"})
 
 
@@ -804,6 +805,10 @@ async def show_card(
     )
     if size and len(text) + len(size) <= CARD_MAX:  # how big a place is (#4173): not a secret
         text += size
+    # water or a road (#4173 slice 6a): not a secret either, like the size
+    form = place_size.form_line(entity.form, entity.form_read) if entity.type == "place" else ""
+    if form and len(text) + len(form) <= CARD_MAX:
+        text += form
     # the campaign's setting (#4173 slice 2): a mark left on a removed place says nothing
     whole = place_size.setting_line(entity.setting and entity.status == CONFIRMED)
     if whole and len(text) + len(whole) <= CARD_MAX:
