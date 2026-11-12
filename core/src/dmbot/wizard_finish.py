@@ -473,21 +473,21 @@ def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
     lore says "Cerric" where the wizard has "Cerric Vanya'elen", and unless "Cerric" is already one
     of the character's other names the lore read makes it a new entry beside them. It is the DM's
     own word (they typed the character), but only a word that is a name (`could_be_short_name`)
-    and that no other wizard character also starts with (two Miras: neither gets it)."""
+    and that no other wizard character also starts with or is called (two Miras: neither gets it;
+    another character's short name counts too). A name written surname first ("Vanya'elen Cerric")
+    gets its first word: accepted, the DM can remove it."""
     parts = name.split()
     first = short_names.first_word(name)
     if len(parts) < 2 or not short_names.could_be_short_name(first):
         return ""
     key = name_key(first)
-    others = [
-        str(c.get("full", "")).strip()
-        for c in characters
-        if name_key(str(c.get("full", "")).strip()) != name_key(name)
-    ]
-    if any(
-        name_key(other) == key or name_key(short_names.first_word(other)) == key for other in others
-    ):
-        return ""
+    for other in characters:
+        full = str(other.get("full", "")).strip()
+        if name_key(full) == name_key(name):
+            continue  # (this character, or one written the same)
+        for text in (full, str(other.get("party_name", "")).strip()):
+            if text and key in (name_key(text), name_key(short_names.first_word(text))):
+                return ""
     return first
 
 

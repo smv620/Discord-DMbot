@@ -491,22 +491,48 @@ class TheCharacters(FinishTest):
         for name in ("Mira Dawn", "Mira Vale"):
             self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
 
-    async def test_a_one_word_name_or_a_title_or_a_name_another_character_has_gets_none(
-        self,
-    ) -> None:
+    async def test_a_one_word_name_a_title_or_a_name_another_character_has_gets_none(self) -> None:
         chars = [
             {"full": "Zed", "party_name": "", "sheet_url": "", "player": "pending"},
             {"full": "Captain Rook", "party_name": "", "sheet_url": "", "player": "pending"},
-            {"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"},
             {"full": "Dane", "party_name": "", "sheet_url": "", "player": "pending"},
             {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
         ]
         await self.draft({"name": "Frostmaiden", "characters": chars})
         await self.queue()
         await wizard_finish.run_round(self.bot, GUILD)
-        self.assertEqual([t for t, _, _ in await self.aliases_of("Zed")], ["Zed"])
-        self.assertEqual([t for t, _, _ in await self.aliases_of("Captain Rook")], ["Captain Rook"])
-        self.assertEqual([t for t, _, _ in await self.aliases_of("Dane Holt")], ["Dane Holt"])
+        for name in ("Zed", "Captain Rook", "Dane Holt"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_creature_an_epithet_or_a_too_short_first_word_gets_none(self) -> None:
+        chars = [
+            {"full": "Goblin Sam", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Red Ilsa", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Al Brook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "jon Hale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Goblin Sam", "Red Ilsa", "Al Brook", "jon Hale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_another_characters_short_name_counts_as_taken(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Tom Vale", "party_name": "Mira", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Mira Dawn")], ["Mira Dawn"])
+        self.assertIn("Mira", [t for t, _, _ in await self.aliases_of("Tom Vale")])
+
+    async def test_an_ordinary_first_name_is_added(self) -> None:
+        chars = [{"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
         self.assertIn("Wit", [t for t, _, _ in await self.aliases_of("Wit Sparrow")])
 
     async def test_a_retried_run_adds_the_first_name_once(self) -> None:
