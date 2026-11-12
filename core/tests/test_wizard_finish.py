@@ -16,8 +16,11 @@ import discord
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import channel_sync
+from dmbot.memory import sheets
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from tests.pg import DatabaseTest
+from tests.test_sheets import answer as sheet_answer
 
 GUILD = 111
 DM = 1001
@@ -675,3 +678,167 @@ class TheDocumentsNotReadYet(FinishTest):
         ):
             await wizard_finish.run_round(self.bot, GUILD)
         self.assertEqual((await self.run_row())["error"], "lore_failed")
+
+
+NUMBER, OTHER_NUMBER, THIRD = 12345678, 87654321, 5550001
+LINK = sheets.sheet_url(NUMBER)
+
+
+class TheSheets(FinishTest):
+    """Public D&D Beyond links given in the wizard (#4205): linked and read once, whatever D&D
+    Beyond says, and the campaign stands."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.reads: list[int] = []
+        self.errors: dict[int, sheets.SheetError] = {}
+
+        async def fetch_sheet(character: int) -> dict[str, Any]:
+            self.reads.append(character)
+            if character in self.errors:
+                raise self.errors[character]
+            return sheets.parse(sheet_answer())
+
+        self.store = SheetStore(self.db)
+        self.changed: list[str] = []
+        self.bot.sheets = self.store
+        self.bot.fetch_sheet = fetch_sheet
+        self.bot.sheets_changed = lambda g, c: self.changed.append(c)
+
+    def party(self, *links: str) -> dict[str, Any]:
+        names = ("Cerric Vale", "Mira Dawn", "Wit Sparrow")
+        return {
+            "name": "Frostmaiden",
+            "characters": [
+                {"full": n, "party_name": "", "sheet_url": link, "player": str(DM)}
+                for n, link in zip(names, links, strict=False)
+            ],
+        }
+
+    async def finish(self, answers: dict[str, Any]) -> dict[str, Any]:
+        await self.draft(answers)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def made(self) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        found = await self.bot.memory.entities(GUILD, campaign.id)
+        return [e for e in found if e.role == "player_character"]
+
+    async def sheet_of(self, name: str) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        return await self.store.sheet(GUILD, campaign.id, entity.id)
+
+    async def test_a_public_link_is_linked_and_read_once_and_the_row_is_clean(self) -> None:
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"], row["notes"]), ("done", "", ""))
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(len(self.changed), 1)
+
+    async def test_a_private_sheet_keeps_the_link_and_the_campaign_stands(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_private"))
+        self.assertEqual(row["notes"], "sheet_private:1")
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))  # (read again later)
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_a_slow_or_busy_read_keeps_the_link_with_its_own_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("later", limited=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual(
+            (row["state"], row["error"], row["notes"]), ("done", "sheet_slow", "sheet_slow:1")
+        )
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_each_word_has_its_count_and_the_first_problem_is_the_rows_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.errors[OTHER_NUMBER] = sheets.SheetError("later", limited=True)
+        self.errors[THIRD] = sheets.SheetError("no", refused=True)
+        links = (LINK, sheets.sheet_url(OTHER_NUMBER), sheets.sheet_url(THIRD))
+        row = await self.finish(self.party(*links))
+        self.assertEqual(row["error"], "sheet_private")
+        self.assertEqual(row["notes"], "sheet_private:2 sheet_slow:1")
+
+    async def test_a_link_that_is_not_a_dndbeyond_character_is_never_fetched(self) -> None:
+        row = await self.finish(self.party("https://evil.example.com/characters/12345678"))
+        self.assertEqual((row["error"], row["notes"]), ("sheet_bad", "sheet_bad:1"))
+        self.assertEqual(self.reads, [])
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+
+    async def test_only_the_normalised_character_is_fetched(self) -> None:
+        row = await self.finish(self.party(f"{LINK}/share?x=1"))
+        self.assertEqual(row["error"], "")
+        self.assertEqual(self.reads, [NUMBER])
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_a_retaken_run_reads_nothing_twice(self) -> None:
+        answers = self.party(LINK)
+        await self.finish(answers)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.queue("b" * 32)  # (the retake: a new run on the same campaign)
+        run = await self.runs.claim_next(GUILD)
+        assert run is not None
+        word = await wizard_finish._read_sheets(
+            self.bot, self.runs, GUILD, run, campaign.id, answers
+        )
+        self.assertEqual((word, self.reads), ("", [NUMBER]))  # (still the one read)
+
+    async def test_a_link_on_a_character_with_no_player_yet_is_counted_not_kept(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["player"] = "pending"
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_no_player"))
+        self.assertEqual(row["notes"], "sheet_no_player:1")
+        self.assertEqual(self.reads, [])  # (nothing is fetched for a sheet that cannot be kept)
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+
+    async def test_a_character_that_was_not_made_is_skipped(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["full"] = ""  # (nothing to make: refused as empty)
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(self.reads, [])
+
+    async def test_the_stage_breaking_never_stops_the_run(self) -> None:
+        self.bot.fetch_sheet = AsyncMock(side_effect=RuntimeError("boom"))
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheets_failed"))
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_the_progress_row_holds_the_stage_and_counts_only(self) -> None:
+        moves: list[tuple[str, int, int]] = []
+        real = wizard_finish.WizardFinishes.move
+
+        async def spy(
+            self_: Any,
+            guild_id: int,
+            run: Any,
+            *,
+            stage: str,
+            part: int = 0,
+            of_parts: int = 0,
+            **kw: Any,
+        ) -> None:
+            moves.append((stage, part, of_parts))
+            await real(self_, guild_id, run, stage=stage, part=part, of_parts=of_parts, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "move", spy):
+            await self.finish(self.party(LINK, sheets.sheet_url(OTHER_NUMBER)))
+        self.assertIn(("sheets", 1, 2), moves)
+        self.assertIn(("sheets", 2, 2), moves)
+        self.assertIn("sheets", wizard_finish.STAGES)
+
+    async def test_no_log_line_holds_a_link(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        with self.assertLogs(level="INFO") as logged:
+            await self.finish(self.party(LINK))
+        text = "\n".join(logged.output)
+        self.assertNotIn("dndbeyond", text)
+        self.assertNotIn(str(NUMBER), text)
