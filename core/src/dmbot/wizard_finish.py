@@ -46,6 +46,7 @@ RETAKE_AFTER_S = 10 * 60  # a claim that stopped moving this long ago (the bot r
 MAX_TRIES = 3
 LORE_POLL_S = 3.0
 LINK_TEXT_MAX: int = 262_144  # a linked page's text, as a document (the lore queue's own limit)
+LINK_MAX = 2000  # the longest link a lore upload may name (migration 0288), not a message
 _LINK = re.compile(r"https://\S+")  # the lore queue's own check for a link upload
 # At most one progress write a second for a run (#4213). `move()` writes the row on every poll
 # too, so LORE_POLL_S must stay above this or the cap no longer holds.
@@ -828,7 +829,7 @@ async def _link_texts(
             out.append(doc)
             continue
         address = str(doc["text"]).strip()
-        if not _LINK.fullmatch(address) or len(address) > 2000:
+        if not _LINK.fullmatch(address) or len(address) > LINK_MAX:
             bad += 1
             continue
         upload = None
@@ -948,7 +949,7 @@ async def _read_one(
     link = ""
     if doc["source"] == "link":
         link = str(doc["text"]).strip()  # (the page stores a link document's address as its text)
-        if not _LINK.fullmatch(link) or len(link) > 2000:
+        if not _LINK.fullmatch(link) or len(link) > LINK_MAX:
             return "failed"  # (checked before anything waits or is queued)
     waited = 0.0
     while (open_one := await runs.open_upload(guild_id, campaign_id)) != "":
