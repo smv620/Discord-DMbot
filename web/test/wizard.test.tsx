@@ -34,6 +34,7 @@ vi.mock("../src/content/wizard-switch", () => ({
 }));
 
 afterEach(() => {
+  window.sessionStorage.clear();
   flags.sheets = flags.house = flags.own = flags.drive = flags.links = false;
   cleanup();
   vi.useRealTimers();
@@ -112,6 +113,112 @@ describe("the wizard", () => {
     fireEvent.input(await screen.findByLabelText(w.where.pasteLabel), { target: { value: "nothing useful" } });
     fireEvent.click(screen.getByRole("button", { name: w.where.pasteRead }));
     expect(await screen.findByText(w.where.pasteNone)).toBeTruthy();
+  });
+
+  it("step 9 opens with neither option picked, Next waits for a pick and says why (#4212)", async () => {
+    await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    const yes = screen.getByLabelText(w.data.yes) as HTMLInputElement;
+    const no = screen.getByLabelText(w.data.no) as HTMLInputElement;
+    expect([yes.checked, no.checked]).toEqual([false, false]);
+    expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(w.data.pick)).toBeTruthy();
+    // yes comes first, then no (the order stays)
+    expect(yes.compareDocumentPosition(no) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a pick of Yes saves yes, a pick of No saves no, and Next goes on (#4212)", async () => {
+    const api = await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.yes));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(true));
+    expect(screen.queryByText(w.data.pick)).toBeNull();
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(false));
+    expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(false);
+    await next(10);
+    expect(screen.getByText(w.finish.summaryData("no"))).toBeTruthy();
+  });
+
+  it("Back and a reload show the earlier pick, and a No stays a No (#4212)", async () => {
+    const api = await start();
+    for (let to = 2; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(async () => expect((await api.get(G))?.answers.dataUse).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.back }));
+    await screen.findByText(w.step(8, 10));
+    await next(9);
+    expect((screen.getByLabelText(w.data.no) as HTMLInputElement).checked).toBe(true);
+    cleanup(); // (a reload: this tab still has its pick)
+    render(<Wizard api={api} guild={G} />);
+    await screen.findByText(w.step(9, 10));
+    expect((screen.getByLabelText(w.data.no) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText(w.data.yes) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("with no pick the finish page would say not chosen (off) (#4212)", () => {
+    expect(w.finish.summaryData("none")).toBe("Help improve DMbot: not chosen (off)");
+  });
+
+  it("keeps the pasted page text when the DM goes Next and then Back (#4204)", async () => {
+    await start();
+    fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
+    fireEvent.input(await screen.findByLabelText(w.where.pasteLabel), { target: { value: "Brannoc Stonebelt\nSera Dunmoor" } });
+    fireEvent.click(screen.getByRole("button", { name: w.where.pasteRead }));
+    await screen.findByText(w.where.pasteFound(2));
+    await next(2);
+    fireEvent.click(screen.getByRole("button", { name: w.back }));
+    await screen.findByText(w.step(1, 10));
+    expect((screen.getByLabelText(w.where.pasteLabel) as HTMLTextAreaElement).value).toBe("Brannoc Stonebelt\nSera Dunmoor");
+  });
+
+  it("after a reload the box is empty and one line says the text was used, with the count (#4204)", async () => {
+    const api = await start();
+    fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
+    fireEvent.input(await screen.findByLabelText(w.where.pasteLabel), { target: { value: "Brannoc Stonebelt\nSera Dunmoor" } });
+    fireEvent.click(screen.getByRole("button", { name: w.where.pasteRead }));
+    await screen.findByText(w.where.pasteFound(2));
+    cleanup(); // (a reload: the page's memory is gone, the server's draft is not)
+    render(<Wizard api={api} guild={G} />);
+    await screen.findByText(w.step(1, 10)); // (the draft is there, so it opens on its step)
+    fireEvent.click(screen.getByLabelText(w.where.dndbeyond));
+    expect((await screen.findByLabelText(w.where.pasteLabel) as HTMLTextAreaElement).value).toBe("");
+    expect(screen.getByText(w.where.pastedEarlier(2))).toBeTruthy();
+  });
+
+  it("step 2 says the fields are about the character (#4204)", async () => {
+    await start();
+    await next(2);
+    expect(screen.getByLabelText(new RegExp(w.confirm.fullLabel))).toBeTruthy();
+    expect(screen.getByLabelText(new RegExp(w.confirm.partyLabel))).toBeTruthy();
+    expect(screen.getByText(w.confirm.partyHint)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.confirm.add })).toBeTruthy();
+    expect(w.confirm.fullLabel).toBe("Character's full name");
+    expect(w.confirm.add).toBe("Add this character to the campaign");
+    expect(screen.queryByLabelText(w.confirm.sheetLabel)).toBeNull(); // (the sheet field waits for its switch)
+  });
+
+  it("the sheet link sits in the character's row once its switch is on, and is kept with the character (#4204)", async () => {
+    flags.sheets = true;
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    fireEvent.input(screen.getByLabelText(w.confirm.sheetLabel), { target: { value: "https://www.dndbeyond.com/characters/3333333" } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    expect((await api.get(G))?.answers.characters[0]?.sheetUrl).toBe("https://www.dndbeyond.com/characters/3333333");
+  });
+
+  it("\"dndbeyond.com\" in the sheet label links to its site in a new tab, and the label still names the box (#4204)", async () => {
+    flags.sheets = true;
+    await start();
+    await next(2);
+    const box = screen.getByLabelText(w.confirm.sheetLabel) as HTMLInputElement;
+    const link = box.closest("label")!.querySelector("a")!;
+    expect(link.textContent).toBe("dndbeyond.com");
+    expect(link.getAttribute("href")).toBe("https://www.dndbeyond.com");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
   });
 
   it("Skip uses PLAN's words, asks only for the name, then makes the campaign with the defaults", async () => {
@@ -269,7 +376,8 @@ describe("the wizard", () => {
       await vi.advanceTimersByTimeAsync(2100);
     }
     expect(screen.getByText(w.finish.done)).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toContain("cmp-new");
+    // (the campaign's page reads its ref from the path, not from the hash: #4216)
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
   it("a finish that fails says what happened and offers another try", async () => {
@@ -356,6 +464,8 @@ describe("the wizard", () => {
     for (let i = 0; i < 20 && !screen.queryByRole("link", { name: w.finish.open }); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getAllByText(w.finish.errors["no-key"]!).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${encodeURIComponent(`${G}.nokey.cmp-new`)}`);
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).not.toContain("#");
   });
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {

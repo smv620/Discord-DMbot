@@ -42,6 +42,7 @@ from dmbot.memory.models import (
     UNKNOWN,
     MemoryRuleError,
 )
+from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
 
@@ -968,7 +969,12 @@ RULES_WORDS = frozenset(
         "difficulty class", "damage type", "spell slot", "concentration", "advantage",
         "disadvantage", "attunement", "inspiration", "short rest", "long rest", "cover",
         "ability check", "level", "experience points", "stat block", "creature type", "round",
+        # "language" is the rules word for the lot (#4227), so no campaign makes it a kind
+        "language",
     }
+    # The SRD's languages that are nothing else (#4227), from the one list the readers use; the
+    # ones that are also a name or a creature ("Sylvan", "Giant") stay free as a kind.
+    | not_names.ONLY_LANGUAGES
 )  # fmt: skip
 # Plain-English words that mean a rules word in the game, so a proposal named like this is the
 # rules concept, not a story relationship. Each says why (the value is the rules word it is).
