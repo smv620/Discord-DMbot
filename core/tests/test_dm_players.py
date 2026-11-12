@@ -33,14 +33,6 @@ class Players(MemoryTest):
         )  # fmt: skip
         return str(written.value.id)
 
-    async def rows(self) -> list[dict[str, Any]]:
-        async with self.db.unscoped() as conn:
-            # (the table is forced-RLS: only the functions below ever see its rows, so a test
-            # reads it through the doors, as the website does)
-            cur = await conn.execute("SELECT 1")
-            await cur.fetchall()
-        return []
-
     async def door(self, sql: str, user: int, *args: Any) -> Any:
         async with self.db.user(user) as conn:
             cur = await conn.execute(f"SELECT {sql} AS found", args)
@@ -117,6 +109,31 @@ class TheTrigger(Players):
         await ConsentStore(self.db).revoke(GUILD_A, ALICE)
         await self.memory.forget_learned(GUILD_A, ALICE)
         self.assertEqual([r["player"] for r in await self.listed()], [str(ALICE)])
+
+    async def test_an_npc_changed_to_a_player_character_is_remembered(self) -> None:
+        npc = await self.add("Belleros")
+        await self.memory.confirm_entity(GUILD_A, self.c, npc, "npc", source="dm")
+        self.assertEqual(await self.listed(), [])
+        await self.memory.confirm_entity(
+            GUILD_A, self.c, npc, "player_character", source="dm", played_by=ALICE
+        )
+        self.assertEqual([r["player"] for r in await self.listed()], [str(ALICE)])
+
+    async def test_the_gate_is_closed_again_after_the_trigger(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS v")
+            before = (await cur.fetchone() or {})["v"]
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by, role, needs_look)"
+                " VALUES (%s, %s, %s, 'character', 'Gate', '', 'confirmed', 'dm', 5, %s,"
+                " 'player_character', false)",
+                (GUILD_A, self.c, "d" * 32, ALICE),
+            )
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS v")
+            self.assertEqual((await cur.fetchone() or {})["v"], before)
+            cur = await conn.execute("SELECT * FROM dm_players")
+            self.assertEqual(await cur.fetchall(), [])  # (nothing opened for this session)
 
 
 class TheDoors(Players):

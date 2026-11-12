@@ -118,7 +118,8 @@ SQL = (
         r"""
         INSERT INTO dm_players (dm_user_id, player_user_id, last_name, first_played_at,
                                 last_played_at, campaigns)
-            SELECT m.user_id, NEW.played_by, COALESCE(d.display_name, ''), now_s, now_s, 1
+            SELECT m.user_id, NEW.played_by, left(COALESCE(d.display_name, ''), 100),
+                   now_s, now_s, 1
             FROM campaign_dms m
             LEFT JOIN member_directory d
                 ON d.guild_id = NEW.guild_id AND d.user_id = NEW.played_by
@@ -128,8 +129,8 @@ SQL = (
                 last_played_at = GREATEST(dm_players.last_played_at, EXCLUDED.last_played_at),
                 last_name = CASE WHEN EXCLUDED.last_name <> '' THEN EXCLUDED.last_name
                                  ELSE dm_players.last_name END,
-                campaigns = dm_players.campaigns + CASE WHEN another THEN 0 ELSE 1 END;
-        RETURN NEW;""",
+                campaigns = dm_players.campaigns + CASE WHEN another THEN 0 ELSE 1 END;""",
+        result="NEW",  # (returned after the gate is put back, or it would stay open)
         declare=r"""
         now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
         another BOOLEAN;""",
@@ -138,7 +139,9 @@ SQL = (
            OR NOT (COALESCE(NEW.type = 'player_character', false)
                    OR COALESCE(NEW.role = 'player_character', false))
            OR (TG_OP = 'UPDATE' AND OLD.played_by IS NOT DISTINCT FROM NEW.played_by
-               AND OLD.status IS NOT DISTINCT FROM NEW.status) THEN
+               AND OLD.status IS NOT DISTINCT FROM NEW.status
+               AND OLD.type IS NOT DISTINCT FROM NEW.type
+               AND OLD.role IS NOT DISTINCT FROM NEW.role) THEN
             RETURN NEW;
         END IF;
         -- (a NULL role must not make the test NULL: DMbot's own 'person' rows have none)
@@ -153,7 +156,7 @@ SQL = (
     )
     + r"""
     CREATE TRIGGER memory_entities_dm_players
-        AFTER INSERT OR UPDATE OF played_by, status ON memory_entities
+        AFTER INSERT OR UPDATE OF played_by, status, type, role ON memory_entities
         FOR EACH ROW EXECUTE FUNCTION dmbot_dm_players_trigger();
 
     -- The campaigns that already exist (CLAUDE.md, #704: a migration that changes rows opens
@@ -164,8 +167,8 @@ SQL = (
     CREATE POLICY migrate_backfill ON dm_players FOR ALL USING (true) WITH CHECK (true);
     INSERT INTO dm_players (dm_user_id, player_user_id, last_name, first_played_at,
                             last_played_at, campaigns)
-        SELECT m.user_id, e.played_by, COALESCE(max(d.display_name), ''), min(e.created_at),
-               max(e.created_at), count(DISTINCT (e.guild_id, e.campaign_id))
+        SELECT m.user_id, e.played_by, left(COALESCE(max(d.display_name), ''), 100),
+               min(e.created_at), max(e.created_at), count(DISTINCT (e.guild_id, e.campaign_id))
         FROM memory_entities e
         JOIN campaign_dms m ON m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id
         LEFT JOIN member_directory d ON d.guild_id = e.guild_id AND d.user_id = e.played_by
