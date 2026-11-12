@@ -73,7 +73,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.standing import dm_line_word
-from dmbot.memory.store import SAID_AS_MAX, MemoryStore
+from dmbot.memory.store import SAID_AS_MAX, SETTING_LEVELS, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
@@ -794,6 +794,10 @@ async def show_card(
     )
     if size and len(text) + len(size) <= CARD_MAX:  # how big a place is (#4173): not a secret
         text += size
+    # the campaign's setting (#4173 slice 2): a mark left on a removed place says nothing
+    whole = place_size.setting_line(entity.setting and entity.status == CONFIRMED)
+    if whole and len(text) + len(whole) <= CARD_MAX:
+        text += whole
     if secrets and entity.players_text:  # the DM sees what the players are told (#2967)
         line = (
             f"\n💬 **Line for the players:** {_md(entity.players_text)} "
@@ -867,6 +871,16 @@ async def show_card(
         ),
         # (the card's own kinds: a place is the core kind "place", as `standing` reads it above)
         size=entity.type == "place" and sees_secrets(campaign, interaction.user.id),
+        # the campaign's setting (#4173 slice 2): a confirmed place, a region or bigger, or the
+        # setting itself (so the DM can always undo it); None draws no button
+        setting=(
+            entity.setting
+            if entity.type == "place"
+            and sees_secrets(campaign, interaction.user.id)
+            and entity.status == CONFIRMED
+            and (entity.setting or entity.place_level in SETTING_LEVELS)
+            else None
+        ),
         undo_connection=undo_connection,
         undo_spelling=undo_spelling,
         finish_past=finish_past,
@@ -1004,6 +1018,7 @@ class NameCard(_Menu):
         deed: bool = False,
         companion: bool = False,
         size: bool = False,
+        setting: bool | None = None,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -1082,6 +1097,13 @@ class NameCard(_Menu):
             self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if size:  # a place: how big it is (#4173), beside its standing button
             self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
+        self.is_setting = bool(setting)
+        if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
+            label = place_size.SETTING_OFF if setting else place_size.SETTING_ON
+            for row in (3, 2, 1):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._flip_setting, label=label, style=grey, row=row))
+                    break
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if players_line:  # the DM's line for the players (#2967), on the first row with room
@@ -1186,6 +1208,12 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _flip_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.flip_setting(
+            interaction, self.campaign_id, self.entity_id, not self.is_setting
+        )
 
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()

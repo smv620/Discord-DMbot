@@ -107,7 +107,14 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         w.ids,
     )
     levels = {str(r["id"]): str(r["place_level"]) for r in await cur.fetchall()}
-    return Nesting(pairs, levels)
+    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it
+    cur = await w.conn.execute(
+        "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND setting"
+        " AND status = 'confirmed'",
+        w.ids,
+    )
+    row = await cur.fetchone()
+    return Nesting(pairs, levels, str(row["id"]) if row else None)
 
 
 async def load_extras(w: Scope, onto: Ontology, facts: Sequence[Relation]) -> Extras:
@@ -233,7 +240,8 @@ async def settle_kind(
     # for each.
     flagged = await w.select(
         ENTITIES,
-        " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL)"
+        " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL"
+        " OR setting)"
         " AND id = ANY(%s)",
         [ids],
     )
@@ -249,6 +257,8 @@ async def settle_kind(
         if r.get("place_level") is not None and not onto.is_a(type_key, "place"):
             undo["place_level"] = None  # only a place has a size (#4173)
             undo["place_level_from"] = None
+        if r.get("setting") and not onto.is_a(type_key, "place"):
+            undo["setting"] = False  # only a place is the campaign's setting (#4173)
         if undo:
             clears[r["id"]] = undo
     if clears:

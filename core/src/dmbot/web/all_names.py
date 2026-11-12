@@ -283,6 +283,7 @@ ACTIONS = (
     "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
     "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
     "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
+    "place-setting",  # the campaign's setting (#4173 slice 2): {setting: true | false}
 )
 
 KIND_WORD = re.compile(
@@ -414,6 +415,10 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_name")
         if len(text) > PLAYERS_TEXT_MAX:
             raise RecapError("too_long")
+    elif action == "place-setting":  # make it the setting, or stop it being one (the flag)
+        if not isinstance(body.get("setting"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["setting"])
     elif action == "place-size":  # one size word, or null for "Not sure" (the door checks too)
         size = body.get("size")
         if size is not None and size not in place_levels.LEVELS:

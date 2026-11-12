@@ -346,6 +346,9 @@ class Entity:
     # DM), so a size the DM never checked is shown as DMbot's read, never as a fact.
     place_level: str | None = None
     place_level_from: str | None = None
+    # The campaign's setting (#4173 slice 2a): the one place the whole story is in (Faerûn). A new,
+    # smaller place sits inside it unless something says otherwise.
+    setting: bool = False
 
     @property
     def place_level_read(self) -> bool:

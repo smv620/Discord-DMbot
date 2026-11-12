@@ -253,6 +253,7 @@ def _valid(column: str, value: object) -> bool:
         "pinned",
         "added_entry",
         "both_ways",
+        "setting",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -650,6 +651,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_what": None,
                 "place_level": None,  # from before #4173: no place had a size
                 "place_level_from": None,
+                "setting": False,  # from before #4173: no campaign had a setting
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
@@ -1028,6 +1030,12 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
     parties = [r for r in by_tag["entity"] if r["party"]]
     if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
         raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    settings = [r for r in by_tag["entity"] if r.get("setting")]
+    if len(settings) > 1 or any(
+        not onto.is_a(r["type"], "place") or r.get("place_level") not in place_levels.SETTING_LEVELS
+        for r in settings
+    ):
+        raise CampaignError(DAMAGED)  # at most one setting, and it is a place (#4173)
     _check_standing(by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:

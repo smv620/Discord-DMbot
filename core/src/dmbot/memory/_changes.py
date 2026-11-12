@@ -87,6 +87,7 @@ ENTITIES = Table(
         "players_text",
         "place_level",
         "place_level_from",
+        "setting",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -104,6 +105,7 @@ ENTITIES = Table(
         "players_text": None,  # the players' line (#2967): none until the DM writes one
         "place_level": None,  # how big a place is: nobody knows until said (#4173)
         "place_level_from": None,  # ... and who said it: DMbot read it, or the DM
+        "setting": False,  # the campaign's setting (#4173): one place at most
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -900,6 +902,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "players_text": None,  # no line before #2967
         "place_level": None,  # no place had a size before #4173
         "place_level_from": None,
+        "setting": False,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
