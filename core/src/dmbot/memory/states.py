@@ -14,7 +14,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory._changes import ENTITIES, FLAGS, STATES, Changes, Scope
+from dmbot.memory._changes import ENTITIES, FLAGS, RULE_LINKS, STATES, Changes, Scope
 from dmbot.memory.checks import (
     ACTING,
     ACTS_AFTER_END,
@@ -219,7 +219,8 @@ async def settle_kind(
     """After ANY write that gives entries a new kind: a condition the new kind can't have is
     closed (an item made a character is no longer `intact`; the history stays) and
     `unique_item` is cleared unless the new kind is an item, `audience_limited` unless it is
-    a clue, and a size (#4173) unless it is a place. Without it a backup of the campaign would be
+    a clue, a size (#4173) unless it is a place, and the links to the rules (species, class…, #4241)
+    unless it is a character. Without it a backup of the campaign would be
     refused as damaged when restored."""
     ids = sorted(set(entity_ids))
     if not ids:
@@ -253,6 +254,8 @@ async def settle_kind(
             clears[r["id"]] = undo
     if clears:
         await w.update_rows(ENTITIES, clears)
+    if not onto.is_a(type_key, "character"):  # only a character is linked to the rules (#4241)
+        await w.delete_where_in(RULE_LINKS, "entity_id", ids)  # (logged: Undo gives them back)
 
 
 async def move_states(
