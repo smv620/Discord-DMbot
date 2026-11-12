@@ -163,13 +163,13 @@ describe("the wizard", () => {
     expect((await api.get(G))?.answers.characters[0]?.sheetUrl).toBe("https://www.dndbeyond.com/characters/3333333");
   });
 
-  it("\"D&D Beyond\" in the sheet label links to its site in a new tab, and the label still names the box (#4204)", async () => {
+  it("\"dndbeyond.com\" in the sheet label links to its site in a new tab, and the label still names the box (#4204)", async () => {
     flags.sheets = true;
     await start();
     await next(2);
     const box = screen.getByLabelText(w.confirm.sheetLabel) as HTMLInputElement;
     const link = box.closest("label")!.querySelector("a")!;
-    expect(link.textContent).toBe("D&D Beyond");
+    expect(link.textContent).toBe("dndbeyond.com");
     expect(link.getAttribute("href")).toBe("https://www.dndbeyond.com");
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toContain("noopener");
