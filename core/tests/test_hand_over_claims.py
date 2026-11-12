@@ -197,6 +197,44 @@ class TheCard(NamesTest):
         await self.press(view, "✅ Keep")
         self.assertIsNone((await self.row(owns)).to_session_at)
 
+    async def keep_on_the_website(self, *, secret: bool = False) -> str:
+        """The website's single ✅ Keep on the waiting hand-over (#4122): the bot's own answer."""
+        from dmbot.memory import web_actions as wa
+        from dmbot.memory.claims import ClaimStore
+
+        onto = await self.memory.ontology(GUILD, self.campaign.id)
+        symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+        (link,) = [
+            x for x in await self.store.waiting(GUILD, self.campaign.id, symmetric=symmetric)
+            if x.hand_over
+        ]  # fmt: skip
+
+        async def everyone() -> set[int]:
+            return {DM}
+
+        action = wa.Action(
+            "a" * 32, self.campaign.id, "", DM, "backstory-keep", target_id=link.id, flag=secret
+        )
+        waiting = wa.Waiting(claims=ClaimStore(self.memory), backstory=self.store,
+                             opted_in=everyone)  # fmt: skip
+        return (await wa.apply(self.memory, GUILD, {DM}, action, waiting)).error
+
+    async def test_the_websites_keep_ends_the_sellers_part_as_discord_does(self) -> None:
+        owns = await self.tie(self.claude, "owns")
+        carries = await self.tie(self.claude, "carries")
+        await self.read(handed("owns", "sold"))
+        self.assertEqual(await self.keep_on_the_website(), "")
+        for tie in (owns, carries):
+            got = await self.row(tie)
+            self.assertEqual((got.to_session_at is not None, got.end_reason), (True, "sold"))
+        self.assertIsNone((await self.row(self.found)).to_session_at)  # "found" stays
+
+    async def test_the_websites_hidden_keep_never_ends_what_the_players_see(self) -> None:
+        owns = await self.tie(self.claude, "owns", unrevealed=False)  # (said at the table)
+        await self.read(handed("owns", "sold"))
+        self.assertEqual(await self.keep_on_the_website(secret=True), "")
+        self.assertIsNone((await self.row(owns)).to_session_at)
+
     async def test_keep_all_ends_it_and_undo_brings_it_back(self) -> None:
         owns = await self.tie(self.claude, "owns")
         await self.read(handed("owns", "sold"))

@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-11 UTC by dev1 (after deploy 19)
+Last updated: 2026-11-11 UTC by dev1 (after deploy 20)
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,7 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at 527ee907 (deploy 19: migrations 0421, 0424, 0425, 0427 to 0432 and 0434). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 19 exit 0 (counts on #3545); recap kept as a draft. Found in the sample: a Keep on one waiting connection is refused with no reason in the log (#4161, for CloudDev). Full entry: docs/testing-history.log.
+core + web-api at f624c4b8 (deploy 20: migrations 0423, 0435, 0436; the figurine fix #4129/#4171, rivals wording #4166, Stop recording me #4163, refused-Keep log #4165). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 20 exit 0 (counts on #3545); recap kept as a draft. Deploy 20 check 2 (Stop recording me, a test account) and check 3 (a Keep press in Discord) are not done yet; they need a Discord test. Full entry: docs/testing-history.log.
 READY TO DEPLOY
 ------------------------------------------------------------------------------
 Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all of them run together, in order. Nothing to deploy yet.
@@ -17,6 +17,7 @@ Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all 
 ------------------------------------------------------------------------------
 OWNER CHECKS (not done yet)
 ------------------------------------------------------------------------------
+Deploy 20 (f624c4b8), owner checks (not done yet): A. In Discord, a rivals connection on a name card reads "X and Y are rivals". B. On the website's Story Graph, the same pair reads the same way in the details panel. C. On the waiting list, an item that changed hands shows the "(... sold it)" bracket, if the sample makes one. D. The wolf figurine (#4170) now reads as sold to Belleros, not carried by Claude (deploy 18's check, retried on this deploy).
 Deploy 16 (7db2efd0), owner checks: DONE by the owner, the sample recap draft on the website works for review (2026-11-11). the Keep-all card's new line on an upload with connections from other files; a PDF with picture-only pages (the note). DONE by the owner: a PDF with pictures and text uploaded as lore, accepted and worked (size and the note not yet confirmed). Deploy 15, owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF
   upload in the names menu, dev1 checks the counts). Then: recap notices in the DM Bot channel with no title or writer name;
   a player with two characters sees both names on transcript lines.

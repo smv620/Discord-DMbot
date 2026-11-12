@@ -28,8 +28,10 @@ from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
     back_after,
     back_words,
+    for_reader,
     link_words,
     own_words,
+    pair_words,
     quoted,
     reads_both_ways,
 )
@@ -109,7 +111,8 @@ def edges_from(
         a, b = sorted((str(row["a"]), str(row["b"])))
         subject_kind = kinds.get(str(row["a"]), "")  # (the words read from row["a"])
         directional = bool(row.get("directional", False))
-        if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional):
+        both_ways = row.get("both_ways")  # (the DM's direction for it, #4154: None is the default)
+        if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional, both_ways):
             direction = "both"
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
@@ -147,12 +150,25 @@ def edges_from(
                 "back": f"is linked ({quoted(str(row['detail']))}) to"
                 if own
                 else back_words(
-                    str(row["predicate"]),
+                    # (as this reader is shown it: a non-DM never reads an old friend or enemy
+                    # line's feeling, not even from the other end, #3611)
+                    for_reader(str(row["predicate"]), "", feeling=is_dm)[0],
                     str(row["detail"] or ""),
                     directional,
                     subject_kind,
                     knows_how=how,
+                    both_ways=both_ways,
                 ),
+                # "are rivals" for a line that reads both ways, said of the two names together
+                # (#4154): the page writes "Cerric ↔ Wit · are rivals" and never works words out.
+                # From the words this reader is shown, so a non-DM's old friend line is "know each
+                # other", as its `words` are plain "knows" (#3611)
+                "pairWords": pair_words(
+                    *for_reader(str(row["predicate"]), str(row["detail"] or ""), feeling=is_dm),
+                    knows_how=how,
+                )
+                if direction == "both"
+                else None,
                 # whether two people have met, for the page's "Have they met?" (#3882)
                 "knowsHow": how,  # None: not a knows line, and the field is not sent
                 # the words that follow the name for the two place readings that need them ("is
@@ -199,6 +215,7 @@ def edges_from(
                         "pinned": x["pinned"] if can_edit else False,
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
+                        **({"pairWords": x["pairWords"]} if x["pairWords"] is not None else {}),
                         "kind": x["kind"],
                         # (a knows line only, one this reader is shown, #3882)
                         **({"knowsHow": x["knowsHow"]} if x["knowsHow"] is not None else {}),
@@ -905,8 +922,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "feeling", feeling}`
     (one of the nine words, #3606), `{action: "secret", secret}`, `{action: "who", who,
-    characters}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
-    answer's id."""
+    characters}`, `{action: "pin", pinned}`, `{action: "direction", direction}` ("a-b", "b-a" or
+    "both", #4154) or `{action: "remove", confirm: true}`. Returns the answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -946,6 +963,13 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-pin", target=link_id,
             text="", flag=bool(body["pinned"]),
+        )  # fmt: skip
+    if action == "direction":  # A → B, B → A or A ↔ B (#4154), named as the page's edge names them
+        if body.get("direction") not in web_actions.DIRECTIONS:
+            raise RecapError("bad_action")
+        return await _queue(
+            db, session, ref, entity=None, action=web_actions.DIRECTION_ACTION, target=link_id,
+            text=str(body["direction"]), flag=False,
         )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:
