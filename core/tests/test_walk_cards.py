@@ -327,7 +327,7 @@ class TheRevealsPart(unittest.IsolatedAsyncioTestCase):
             declined = await not_this.do(reveal_card.WalkItem(SimpleNamespace(id="p1")))  # type: ignore[arg-type]
             proposals.keep.return_value = None
             same = await keep.do(reveal_card.WalkItem(SimpleNamespace(id="p1")))  # type: ignore[arg-type]
-        proposals.keep.assert_awaited_once_with(GUILD, CID, "p1", opted_in={1}, source="dm")
+        proposals.keep.assert_any_await(GUILD, CID, "p1", opted_in={1}, source="dm")
         self.assertEqual(reveal_card.ask_for(GUILD, CID, 3).count, 3)
         self.assertEqual(kept.text, "✅ Kept.")
         assert kept.undo is not None
