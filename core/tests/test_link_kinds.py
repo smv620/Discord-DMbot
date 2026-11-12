@@ -105,10 +105,12 @@ class TheGraphLinks(unittest.TestCase):
                 "pinned",
                 "check",
                 "direction",
+                "pairWords",  # (a two-way line said of both, #4154)
                 "kind",
             },
         )
         self.assertFalse(link["secret"])  # (still masked for a player)
+        self.assertEqual(link["pairWords"], "know each other")  # (no feeling for a player, #3611)
 
 
 if __name__ == "__main__":

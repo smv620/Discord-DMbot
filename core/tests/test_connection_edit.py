@@ -274,7 +274,8 @@ class Cards(base.NamesTest):
         it = self.it()
         await page.words.callback(it)
         self.assertIn(
-            "Changed to: Belleros is an enemy of Kesh. Wrong? Press **Undo**",
+            # (#4154: a two-way line is said of both names)
+            "Changed to: Belleros and Kesh are enemies. Wrong? Press **Undo**",
             it.response.edited[0][0],
         )
         (now,) = await self.relations()
@@ -300,7 +301,8 @@ class Cards(base.NamesTest):
             it = self.it()
             await page.words.callback(it)
             self.assertIn(
-                f"Changed to: Belleros is an enemy of {other.name}. Wrong?",
+                # (#4154: a two-way line is said of both, the card's name first)
+                f"Changed to: Belleros and {other.name} are enemies. Wrong?",
                 it.response.edited[0][0],
             )
 

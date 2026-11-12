@@ -487,6 +487,9 @@ class Relation:
     # Why an `owns` or `carries` ended (#4115): one of END_REASONS, or None when the story didn't
     # say. Only on an ended tie.
     end_reason: str | None = None
+    # The DM's direction for it (#4154): None reads as its kind's default (`link_words.BOTH_WAYS`),
+    # True both ways (A ↔ B), False one way, from the first name.
+    both_ways: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)

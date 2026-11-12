@@ -8,7 +8,7 @@
 // is read again after, so what shows is always the API's own.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { handBracket, handKeepInDiscord } from "../content/hand-over-words";
+import { handBracket, handKeeps } from "../content/hand-over-words";
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
@@ -499,12 +499,9 @@ export default function WebWaiting({
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
+                    {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
                     {b.ready ? (
                       <div class="row">
-                        {handOf(b) ? (
-                          // (keeping it ends what someone else holds, so it is kept in Discord until this page says so too)
-                          <p class="small">{handKeepInDiscord}</p>
-                        ) : (
                         <button
                           type="button"
                           class="button"
@@ -514,8 +511,7 @@ export default function WebWaiting({
                         >
                           {b.secret ? w.keepIsSecret : w.keep}
                         </button>
-                        )}
-                        {!b.secret && !handOf(b) && (
+                        {!b.secret && (
                           <button
                             type="button"
                             class="button secondary"
