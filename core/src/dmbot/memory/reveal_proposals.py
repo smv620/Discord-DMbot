@@ -136,7 +136,10 @@ def place(
             and (
                 r["subject_id"] == start
                 or reads_both_ways(
-                    str(r["predicate"]), str(r.get("detail") or ""), bool(r.get("directional"))
+                    str(r["predicate"]),
+                    str(r.get("detail") or ""),
+                    bool(r.get("directional")),
+                    r.get("both_ways"),  # (the DM's direction for it, #4154)
                 )
             )
         ]

@@ -10,14 +10,15 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import link_edits
+from dmbot.memory import kin, link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
@@ -125,6 +126,51 @@ async def website(interaction: discord.Interaction, campaign_id: str) -> None:
         await interaction.response.send_message(
             WEBSITE_LINE, view=view, ephemeral=True, allowed_mentions=NO_PINGS
         )
+
+
+# Which way a connection reads, the DM's choice (#4154): the same three as the website's toggle.
+DIRECTION_PLACEHOLDER = "Which way does it read?"
+BOTH = "both"  # (the other two values are the id of the name it reads from)
+BOTH_LABEL = "Both ways ↔"
+
+
+def direction_choices(
+    r: Relation, first: str, second: str, said: Callable[[Relation], str]
+) -> list[discord.SelectOption]:
+    """ "Cerric → Wit", "Wit → Cerric", "Both ways ↔", the one it reads now chosen. A chosen menu
+    never shows its placeholder, so each choice's second line is the sentence it would give
+    (`said`: "Cerric is a rival of Wit"). Names are cut to a menu's name length first, so both ends
+    and the arrow always show. A family role true of one name only ("niece") keeps its word and
+    has no both-ways choice once it has a direction: the arrow says who holds the role."""
+    a, b = logic.name_label(first), logic.name_label(second)
+    role = kin.role_of(r.detail) if r.predicate == "kin_of" else None
+    one_way_role = role is not None and kin.directional(role)
+
+    def one_way(x: Relation) -> Relation:
+        # (a role takes the arrow as its direction; any other kind is marked one way)
+        return (
+            dataclasses.replace(x, directional=True)
+            if one_way_role
+            else dataclasses.replace(x, both_ways=False)
+        )
+
+    turned = one_way(dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id))
+    both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways)
+    choices = [
+        (f"{a} → {b}", r.subject_id, not both, said(one_way(r))),
+        (f"{b} → {a}", r.object_id, False, said(turned)),
+    ]
+    if not (one_way_role and r.directional):
+        choices.append((BOTH_LABEL, BOTH, both, said(dataclasses.replace(r, both_ways=True))))
+    return [
+        discord.SelectOption(
+            label=logic.shorten(label, logic.OPTION_LABEL_MAX),
+            value=value,
+            default=now,
+            description=logic.shorten(line, logic.DESCRIPTION_MAX) if line else None,
+        )
+        for label, value, now, line in choices
+    ]
 
 
 @dataclass
@@ -297,6 +343,19 @@ class OneConnection(_Menu):
                 row=3,
             )
             self.add_item(self.how)
+        if found.secrets and subject is not None and other is not None:  # (the DM's word, #4154)
+            self.direction = _Select(
+                self._direction_picked,
+                placeholder=DIRECTION_PLACEHOLDER,
+                options=direction_choices(
+                    r,
+                    subject.name,
+                    other.name,
+                    lambda x: sentence(found.names, x, feeling=True) or "",
+                ),
+                row=4,
+            )
+            self.add_item(self.direction)
 
     async def _changed(
         self, interaction: discord.Interaction, found: Found, note: str, *, undo: int | None = None
@@ -354,10 +413,11 @@ class OneConnection(_Menu):
         # connection with no direction ("is an enemy of") is said from the card the DM is on,
         # whichever way round the row happens to be stored, as the card itself reads it.
         first, second = stored.subject_id, stored.object_id
-        if second == card_id and reads_both_ways(
-            stored.predicate, stored.detail, stored.directional
-        ):
-            first, second = second, first
+        if reads_both_ways(stored.predicate, stored.detail, stored.directional, stored.both_ways):
+            # said of the two together, from the card's name: "Cerric and Wit are rivals" (#4154)
+            if second == card_id:
+                stored = dataclasses.replace(stored, subject_id=second, object_id=first)
+            return sentence(found.names, stored, feeling=True) or "?"
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
         words = link_words(
@@ -392,6 +452,35 @@ class OneConnection(_Menu):
             return
         if written.batch is None:
             await _tell(interaction, "It already says that. Press Back to see the card.")
+            return
+        reads = _md(self._now_reads(found, written.value, self.entity_id))
+        await self._changed(
+            interaction, found, f"Changed to: {reads}. {UNDO_NOTE}", undo=written.batch
+        )
+
+    async def _direction_picked(self, interaction: discord.Interaction) -> None:
+        picked = self.direction.values[0]
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # (only the campaign's DMs say this; checked again on every press)
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        r = found.relation
+        if picked != BOTH and picked not in (r.subject_id, r.object_id):
+            await _tell(interaction, NOTHING_MORE)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.set_direction(
+                c.guild_id, c.id, r.id, None if picked == BOTH else picked, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, "It already reads that way. Press Back to see the card.")
             return
         reads = _md(self._now_reads(found, written.value, self.entity_id))
         await self._changed(

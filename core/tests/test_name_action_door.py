@@ -27,6 +27,7 @@ EVERY_ACTION = (
     "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
     "link-undo",  # the page's Undo of a connection edit (#4156)
     "met-name", "met-join", "met-remove",  # "Met but not named" (#4084)
+    "link-direction",  # A → B, B → A or A ↔ B (#4154)
 )  # fmt: skip
 
 
