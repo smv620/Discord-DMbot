@@ -348,16 +348,14 @@ async def undo(
     await _tell(interaction, "↩️ Undone. Back to how it was before you pressed Keep.")
 
 
-__all__ = ["KeepButton", "NotButton", "OpenButton", "UndoButton", "ask_for", "card"]
-
-
 WALK_FINISHED = "✅ What the characters learned: checked."  # (the line a walk leaves)
 
 
 @dataclass(frozen=True, slots=True)
 class WalkItem:
     """A waiting proposal in a walk: the first one is described (its words are read from memory
-    when it is shown); the others wait their turn with ids only."""
+    when it is shown); the others wait their turn with ids only. The reveals part has no Later
+    button on purpose: a card that is skipped would leave the next item undescribed."""
 
     proposal: Waiting
     shown: Shown | None = None
@@ -379,7 +377,9 @@ async def waiting_reveals(bot: Any, guild_id: int, campaign_id: str) -> list[Wal
 
 
 async def count_reveals(bot: Any, guild_id: int, campaign_id: str) -> int:
-    """How many wait, counted without changing anything."""
+    """How many wait, counted without changing anything. It can be a little higher than what the
+    cards show: a proposal whose character or statement is gone is turned down when its card
+    loads (as the question's own card does)."""
     if bot.memory is None:
         return 0
     agreed = await bot.consent.consenting(guild_id)
