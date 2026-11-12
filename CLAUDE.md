@@ -243,6 +243,15 @@ dev1 as a note on the issue.
   CloudDev-lead keeps the rest of `core/`. Before working in a file the other owns, each checks
   the other's open PRs there and agrees the order on the issue.
 
+- **Expert** (owner, 2026-11-12; label `session: Expert`): an **on-demand design consultant** on the
+  most capable (and most expensive) model, for important design questions where a wrong choice
+  would mean rework: the MapBot map layers (terrain, climate, routes, political control, culture),
+  graph and data modelling, ML pipelines. **It has no schedule and is woken only by Supervisor's
+  message**; no other session messages it. It answers with one design note on the issue Supervisor
+  names ("Expert design note: …"); Supervisor rules on it as for any design note. It writes no
+  code, opens no PRs, reviews or merges nothing and manages nobody. Supervisor uses it sparingly
+  (design guidance, never management or routine reviews) and still oversees the project.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
