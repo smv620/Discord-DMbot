@@ -907,13 +907,7 @@ export const dmSteps: Step[] = [
   },
   // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
   ...liveFeatureSteps("gameMaster"),
-  {
-    text: "After you set up a campaign: open your campaign's DM Bot channel. Your menu is there, with ⚙️ Manage DMbot.",
-    names: [{ name: "⚙️ Manage DMbot", file: "ui/logic.py" }],
-  },
-  { text: "When you play, join your table's voice channel and type /dmbot start. DMbot asks which voice channel is the table the first time." },
-  { text: "Each player presses Agree on DMbot's message to be recorded. Nobody is recorded until they do." },
-  { text: "DMbot sends you a private message when there is something to check, like ✅ Check everything after a session." },
+  { text: "After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press Agree, and watch for DMbot's private message when something needs checking." },
 ];
 
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new

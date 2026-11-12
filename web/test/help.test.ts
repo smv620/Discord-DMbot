@@ -59,13 +59,7 @@ describe("Help", () => {
   });
 
   it("the DM steps end with what to do after setting up a campaign", () => {
-    const last = dmSteps.slice(-4).map((s) => s.text);
-    expect(last).toEqual([
-      "After you set up a campaign: open your campaign's DM Bot channel. Your menu is there, with ⚙️ Manage DMbot.",
-      "When you play, join your table's voice channel and type /dmbot start. DMbot asks which voice channel is the table the first time.",
-      "Each player presses Agree on DMbot's message to be recorded. Nobody is recorded until they do.",
-      "DMbot sends you a private message when there is something to check, like ✅ Check everything after a session.",
-    ]);
+    expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press Agree, and watch for DMbot's private message when something needs checking.");
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
