@@ -163,6 +163,7 @@ NOT_STAMPED: dict[str, str] = {
         (
             "name_actions",
             "setting_actions",
+            "sheet_waits",  # the DM's wizard sheet link, waiting for its character's player
             "said_as_hears",
             "said_as_listens",
             "script_makes",

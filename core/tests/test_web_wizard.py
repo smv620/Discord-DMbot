@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import psycopg
+from psycopg.errors import CheckViolation
 from psycopg.types.json import Jsonb
 
 from dmbot.web import sessions, wizard
@@ -207,12 +208,30 @@ class TheAnswers(Wizard):
             ({"target": "2024", "fallback": "2024"}, "bad_fallback"),
             ({"supplements": ["necronomicon"]}, "bad_supplements"),
             ({"characters": [{"full": "x" * 101}]}, "bad_characters"),
+            # (only a D&D Beyond character link is ever fetched, #4205)
+            ({"characters": [{"full": "A", "sheet_url": "https://example.com/c/1"}]}, "bad_sheet"),
             ({"name": "x" * 101}, "bad_name"),
             ({"data_use": "yes"}, "bad_data_use"),
             ({"password": "hunter2"}, "bad_key"),
         ]
         for patch, code in bad:
             self.assertEqual(await self.refused(wizard.update, 2, patch), code)
+
+    async def test_a_sheet_link_of_the_right_shape_is_kept_and_an_empty_one_too(self) -> None:
+        await self.draft()
+        link = "https://www.dndbeyond.com/characters/12345678"
+        await self.call(
+            wizard.update, 2, {"characters": [{"full": "A", "sheet_url": link}, {"full": "B"}]}
+        )
+        got = await self.call(wizard.get)
+        self.assertEqual([c["sheet_url"] for c in got["answers"]["characters"]], [link, ""])
+
+    async def test_the_finish_check_lets_a_wrong_link_through_for_the_stage_to_count(self) -> None:
+        patch = {"name": "N", "characters": [{"full": "A", "sheet_url": "https://x.example/1"}]}
+        with self.assertRaises(RecapError):
+            wizard.check_patch(patch)
+        kept = wizard.check_patch(patch, finishing=True)
+        self.assertEqual(kept["characters"][0]["sheet_url"], "https://x.example/1")
 
     async def test_the_door_keeps_the_key_list_even_if_the_wrapper_is_skipped(self) -> None:
         await self.draft()
@@ -296,6 +315,22 @@ class TheFinish(Wizard):
             (state["id"], state["state"], state["stage"]), (first, "waiting", "waiting")
         )
         self.assertIsNone(await self.call(wizard.finish_state, who=self.bob))  # not Bob's
+
+    async def test_the_state_carries_the_runs_notes_and_the_row_refuses_anything_but_counts(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.call(wizard.finish)
+        state = await self.call(wizard.finish_state)
+        self.assertEqual(state["notes"], "")  # (a new run has none)
+        await self.rows(
+            "UPDATE wizard_finishes SET notes = 'sheet_private:2 sheet_slow:1' RETURNING 1"
+        )
+        state = await self.call(wizard.finish_state)
+        self.assertEqual(state["notes"], "sheet_private:2 sheet_slow:1")
+        for bad in ("Cerric Vale", "sheet_private:x", "sheet_private:1234", "a:1 " * 9):
+            with self.assertRaises(CheckViolation):
+                await self.rows("UPDATE wizard_finishes SET notes = %s RETURNING 1", bad)
 
     async def test_a_run_that_has_not_moved_for_half_an_hour_is_lost_and_can_be_pressed_again(
         self,
