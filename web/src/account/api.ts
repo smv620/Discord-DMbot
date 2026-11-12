@@ -1216,6 +1216,8 @@ export interface ImportPreview {
 export interface ImportMember {
   userId: string;
   name: string;
+  /** Their Discord username when the bot has seen them (#4225): shown after the name when it differs. */
+  username?: string | null;
   /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
    * only a suggestion has named them: Check says what is dropped. */
   agreed?: boolean;
