@@ -376,6 +376,16 @@ class Entity:
     # The campaign's setting (#4173 slice 2a): the one place the whole story is in (Faerûn). A new,
     # smaller place sits inside it unless something says otherwise.
     setting: bool = False
+    # A place's form (#4173 slice 6a): None for an area (the default), "water" (a lake, bay, sea or
+    # river) or "route" (a named road, trade route or pass). Water and route places stand outside
+    # the size order. `form_from` says who said it, as for the size.
+    form: str | None = None
+    form_from: str | None = None
+
+    @property
+    def form_read(self) -> bool:
+        """Is the form DMbot's own read, not yet the DM's word?"""
+        return self.form is not None and self.form_from != "dm"
 
     @property
     def place_level_read(self) -> bool:

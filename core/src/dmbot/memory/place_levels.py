@@ -22,6 +22,11 @@ SETTING_LEVELS = ("plane", "world", "region")
 # Who said how big a place is: DMbot read it from the words, or the DM set it (the DM wins).
 READ, BY_DM = "read", "dm"
 FROM = (READ, BY_DM)
+# A place's form (#4173 slice 6a): water (a lake, bay, sea or river) or a route (a named road,
+# trade route or pass); None is an area, every other place. Water and route places stand outside
+# the size order above, so being "on the Eastway" is never a rival of being in a town.
+WATER, ROUTE = "water", "route"
+FORMS = (WATER, ROUTE)
 
 # What the DM's menu calls each level (plain words; "settlement" is a town or city to a DM).
 LABELS = {
