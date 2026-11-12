@@ -281,6 +281,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   const t = w.docs;
   const mine = draft.documents.filter((d) => d.slot === slot);
   const [link, setLink] = useState("");
+  const [typed, setTyped] = useState(""); // house rules typed in, one per line (#4211)
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const [ticking, setTicking] = useState(false);
@@ -376,6 +377,30 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           </button>
         )}
       </div>
+      {slot === "house" && (
+        <div class="stack">
+          <label>
+            {t.typedLabel}
+            <textarea rows={5} value={typed} disabled={!ticked} aria-describedby="typed-note" onInput={(e) => setTyped((e.target as HTMLTextAreaElement).value)} />
+          </label>
+          <span id="typed-note" class="small muted">
+            {t.typedNote}
+          </span>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy || !ticked}
+            onClick={() => {
+              const text = typed.trim();
+              if (!text) return setProblem(t.typedEmpty);
+              setTyped("");
+              void refresh(api.docAdd(guild, slot, { name: t.typedName, source: "upload", text }));
+            }}
+          >
+            {t.typedAdd}
+          </button>
+        </div>
+      )}
       {WIZARD_LINKS_LIVE && (
       <div class="row">
         <label>
@@ -402,20 +427,56 @@ export function RulesStep(props: StepProps) {
   // Until the person changes a box, nothing is sent and the campaign keeps its default: the books whose rules are on by default
   // show ticked, so a change to one box never turns another off unseen (#4014).
   const shown = a.supplements ?? DEFAULT_BOOKS;
-  const set = (target: "2024" | "2014") => void onPatch({ target, fallback: target === "2024" ? "2014" : "2024" });
+  // The two sets and "none". "Upload your own" (behind WIZARD_OWN_RULESET_LIVE) opens the file box under the dropdown that holds it; one
+  // own set per campaign, so the other dropdown does not offer it. Core takes only the two sets as the primary today, so choosing it does
+  // not change what is saved (the follow-up that turns the switch on decides that, #3953).
+  const [own, setOwn] = useState<"primary" | "secondary" | null>(null);
+  const label = (v: "2024" | "2014"): string => (v === "2024" ? t.current : t.legacy);
+  const other = (v: "2024" | "2014"): "2024" | "2014" => (v === "2024" ? "2014" : "2024");
+  const setPrimary = (v: string): void => {
+    if (v === "own") return setOwn("primary");
+    setOwn((o) => (o === "primary" ? null : o));
+    const target = v === "2014" ? "2014" : "2024";
+    // the secondary never repeats the primary: a repeat turns into the other set (or stays none)
+    void onPatch({ target, ...(a.fallback === target ? { fallback: other(target) } : {}) });
+  };
+  const setSecondary = (v: string): void => {
+    if (v === "own") return setOwn("secondary");
+    setOwn((o) => (o === "secondary" ? null : o));
+    void onPatch({ fallback: v === "none" ? "none" : v === "2014" ? "2014" : "2024" });
+  };
+  const ownBox = WIZARD_OWN_RULESET_LIVE;
   return (
     <>
       <section>
         <h2>{t.heading}</h2>
         <p>{t.lead}</p>
-        <div role="radiogroup" aria-label={t.targetLabel}>
-          <strong>{t.targetLabel}</strong>
-          <label class="row"><input type="radio" name="wizard-target" checked={a.target === "2024"} onChange={() => set("2024")} /> {t.current}</label>
-          <label class="row"><input type="radio" name="wizard-target" checked={a.target === "2014"} onChange={() => set("2014")} /> {t.legacy}</label>
-        </div>
-        <p class="small">
-          {t.fallbackLabel}: {a.fallback === "2024" ? t.current : t.legacy}
+        <label>
+          {t.primaryLabel}
+          <select value={own === "primary" ? "own" : a.target} onChange={(e) => setPrimary((e.target as HTMLSelectElement).value)}>
+            <option value="2024">{t.current}</option>
+            <option value="2014">{t.legacy}</option>
+            {ownBox && own !== "secondary" && <option value="own">{t.uploadOwn}</option>}
+          </select>
+        </label>
+        {ownBox && own === "primary" && <DocsStep {...props} slot="ruleset" heading={t.ownLabel} lead={t.ownLead} />}
+        <label>
+          {t.secondaryLabel}
+          <select
+            value={own === "secondary" ? "own" : a.fallback}
+            aria-describedby="wizard-secondary-hint"
+            onChange={(e) => setSecondary((e.target as HTMLSelectElement).value)}
+          >
+            <option value="none">{t.none}</option>
+            <option value={other(a.target)}>{label(other(a.target))}</option>
+            {ownBox && own !== "primary" && <option value="own">{t.uploadOwn}</option>}
+          </select>
+        </label>
+        <p class="small" id="wizard-secondary-hint">
+          {t.secondaryHint}
         </p>
+        {ownBox && own === "secondary" && <DocsStep {...props} slot="ruleset" heading={t.ownLabel} lead={t.ownLead} />}
+        <p class="small">{t.houseNote}</p>
         <fieldset>
           <legend>{t.supplementsLabel}</legend>
           {SUPPLEMENTS.map((s) => (
@@ -431,7 +492,6 @@ export function RulesStep(props: StepProps) {
         </fieldset>
         <p class="small">{t.supplementsNote}</p>
       </section>
-      {WIZARD_OWN_RULESET_LIVE && <DocsStep {...props} slot="ruleset" heading={t.ownLabel} lead={t.ownLead} />}
     </>
   );
 }
