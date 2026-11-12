@@ -79,6 +79,13 @@ def _shaped(word: str) -> bool:
     )
 
 
+def could_be_short_name(word: str) -> bool:
+    """Whether this first word is shaped like a name someone could be called alone (a capital,
+    enough letters, not a title, creature kind, epithet or rules word). The caller decides the
+    rest (#4224: the wizard's characters, whose names the DM typed)."""
+    return _shaped(word)
+
+
 def _owners(names: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
     """Each name key, and the key of each name's first word, to the entries that use it."""
     owners: dict[str, set[str]] = {}
