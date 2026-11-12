@@ -1,6 +1,6 @@
 """Where the story is set, worked out from the shared adventure (#4173 slice 2b; Supervisor's
 ruling on #4173, 2026-11-12): the names-only list, DMbot's guess and the DM's keep or no, the guess
-placing nothing until kept, backups, and migration 0458 run over a campaign that has a setting.
+placing nothing until kept, backups, and migration 0459 run over a campaign that has a setting.
 Invented names, published titles and world names only."""
 
 from __future__ import annotations
@@ -148,17 +148,17 @@ class TheGuess(MemoryTest):
         data = decode_backup(encode_backup(await self.campaigns.export(GUILD_A, self.c)))
         assert isinstance(data, dict)
         for row in data["sections"]["memory"]:
-            row.pop("setting_from", None)  # (written before 0458)
+            row.pop("setting_from", None)  # (written before 0459)
         restored = await self.campaigns.import_backup(GUILD_B, data, DM)
         copy = await self.snapshot(GUILD_B, restored.id)
         self.assertEqual([r["setting_from"] for r in copy["memory_entities"]], ["dm"])
 
 
 class TheMigration(unittest.IsolatedAsyncioTestCase):
-    """0458 run over a campaign that already has a setting: it becomes the DM's (CLAUDE.md, #704:
+    """0459 run over a campaign that already has a setting: it becomes the DM's (CLAUDE.md, #704:
     a migration that changes rows opens row-level security for itself, proven on real rows)."""
 
-    NAME = "0458_setting_from"
+    NAME = "0459_setting_from"
 
     async def asyncSetUp(self) -> None:
         if not TEST_URL:

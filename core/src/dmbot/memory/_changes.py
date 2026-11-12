@@ -950,7 +950,7 @@ def _filled(table: Table, snapshot: Any) -> Any:
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
     if table.name == "memory_entities" and "setting_from" not in snapshot:
-        # (#4173 slice 2b: a setting from before `setting_from` was the DM's own, as 0458 set it)
+        # (#4173 slice 2b: a setting from before `setting_from` was the DM's own, as 0459 set it)
         snapshot = {**snapshot, "setting_from": "dm" if snapshot.get("setting") else None}
     if table.name == "memory_entities" and snapshot.get("role") == "god":
         # a god is an NPC now (#2562), with the word kept in its description
