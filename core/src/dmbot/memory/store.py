@@ -31,7 +31,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, LiteralString
 
 from psycopg import errors, sql
 
@@ -87,7 +87,9 @@ from dmbot.memory._changes import (
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
+    SHEETS,
     STATES,
+    STORY_LANGUAGES,
     TYPES,
     Changes,
     Scope,
@@ -154,6 +156,7 @@ from dmbot.memory.models import (
     SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
+    STORY_LANGUAGE_MAX,
     WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
@@ -165,6 +168,7 @@ from dmbot.memory.models import (
     GroupJoined,
     Heard,
     HeardCount,
+    Known,
     MemoryRuleError,
     MoreNames,
     NewName,
@@ -176,6 +180,7 @@ from dmbot.memory.models import (
     SaidAsSuggestion,
     SplitName,
     State,
+    StoryLanguage,
     TooLateToUndo,
     Trait,
     WaitingJoin,
@@ -401,6 +406,28 @@ def _entity(r: dict[str, Any]) -> Entity:
         r.get("players_text"), place_level=r.get("place_level"),
         place_level_from=r.get("place_level_from"),
     )  # fmt: skip
+
+
+def _story_language(r: dict[str, Any]) -> StoryLanguage:
+    return StoryLanguage(r["id"], r["entity_id"], r["name"], r["srd"], r["given_by"])
+
+
+# Who understands this? (#4229): a sheet's languages in its own order, then (only for a character
+# with no sheet) the story's, oldest first. A sheet whose `languages` is not a list counts as none.
+_LANGUAGES_KNOWN: LiteralString = (
+    "SELECT s.entity_id, lang.name, 'sheet' AS given_by, lang.n AS seq"
+    " FROM character_sheets s,"
+    " jsonb_array_elements_text(CASE WHEN jsonb_typeof(s.sheet->'languages') = 'array'"
+    "   THEN s.sheet->'languages' ELSE '[]'::jsonb END) WITH ORDINALITY AS lang(name, n)"
+    " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = ANY(%s)"
+    " UNION ALL"
+    " SELECT l.entity_id, l.name, l.given_by, l.created_at AS seq"
+    " FROM memory_story_languages l"
+    " WHERE l.guild_id = %s AND l.campaign_id = %s AND l.entity_id = ANY(%s)"
+    "   AND NOT EXISTS (SELECT 1 FROM character_sheets s2 WHERE s2.guild_id = l.guild_id"
+    "     AND s2.campaign_id = l.campaign_id AND s2.entity_id = l.entity_id)"
+    " ORDER BY 1, 4, 2"
+)
 
 
 def _rule_link(r: dict[str, Any]) -> RuleLink:
@@ -2800,6 +2827,116 @@ class MemoryStore:
             )
             return Written(_rule_link(row), w.batch)
 
+    async def add_story_language(
+        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+    ) -> Written[StoryLanguage | None]:
+        """A language a character knows from the story (#4229): the DM's word ("dm"), or DMbot's
+        read of the lore or a session ("read", until the DM checks it). Never in the graph: a
+        character with a sheet keeps its languages there, so the DM is told to change the sheet and
+        a read is skipped (None). Kept once per character; the DM's word on one DMbot read checks
+        it."""
+        name = clean_text(name, STORY_LANGUAGE_MAX)
+        key = name_key(name)  # (can come out longer than the name: "ß" is "ss")
+        if not key:
+            raise MemoryRuleError("Give the language a name.")
+        if len(key) > STORY_LANGUAGE_MAX:
+            raise MemoryRuleError("That language's name is too long.")
+        given_by = DM if source == DM else "read"
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            entity = await _entity_row(w, entity_id)
+            if not onto.is_a(entity["type"], "character"):
+                raise MemoryRuleError("Only a character knows languages.")
+            if await w.get(SHEETS, entity_id, lock=False) is not None:
+                if source == DM:
+                    raise MemoryRuleError("This character has a sheet: change its languages there.")
+                return Written(None, w.batch)
+            for old in await w.select(
+                STORY_LANGUAGES, " AND entity_id = %s AND name_key = %s", [entity_id, key]
+            ):
+                if given_by == DM and old["given_by"] != DM:
+                    old = await w.update(STORY_LANGUAGES, old["id"], {"given_by": DM})
+                return Written(_story_language(old), w.batch)
+            row = await w.insert(
+                STORY_LANGUAGES,
+                {
+                    "id": new_id(),
+                    "entity_id": entity_id,
+                    "name": name,
+                    "name_key": key,
+                    "srd": not_names.is_language(name),
+                    "given_by": given_by,
+                    "created_at": w.now,
+                },
+            )
+            return Written(_story_language(row), w.batch)
+
+    async def remove_story_language(
+        self, guild_id: int, campaign_id: str, language_id: str, *, source: str
+    ) -> Written[None]:
+        """Take a language from the story away (the DM's call, #4229); Undo brings it back."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            if await w.get(STORY_LANGUAGES, language_id) is None:
+                raise MemoryRuleError("That language is gone already.")
+            await w.delete(STORY_LANGUAGES, language_id)
+            return Written(None, w.batch)
+
+    async def check_story_languages(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[list[str]]:
+        """The DM's "these are right" (#4229): every language DMbot read for this character
+        becomes the DM's word, in one change (one Undo). Returns their names."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            rows = await w.select(
+                STORY_LANGUAGES,
+                " AND entity_id = %s AND given_by = 'read' ORDER BY created_at, id",
+                [entity_id],
+            )
+            for row in rows:
+                await w.update(STORY_LANGUAGES, row["id"], {"given_by": DM})
+            return Written([str(r["name"]) for r in rows], w.batch)
+
+    async def has_sheet(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
+        """Does this character have a sheet (#4229)? Then its languages are the sheet's, never the
+        story's. Read from the sheets themselves, so one listing no languages still counts."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await scope.get(SHEETS, entity_id, lock=False) is not None
+
+    async def story_languages(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[StoryLanguage]:
+        """One character's languages from the story, in the order they were given (#4229), as
+        stored: a character that has a sheet since keeps them, hidden ("Who understands this?"
+        reads the sheet). The caller shows them to the campaign's DMs only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                STORY_LANGUAGES, " AND entity_id = %s ORDER BY created_at, id", [entity_id]
+            )
+        return [_story_language(r) for r in rows]
+
+    async def languages_known(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, list[Known]]:
+        """Who understands this? (#4229): each character's languages, from its sheet when it has
+        one (the source of truth) and else from the story, in one query. A character that knows
+        none is left out. DM-only: the caller checks it."""
+        if not entity_ids:
+            return {}
+        ids = list(entity_ids)
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(_LANGUAGES_KNOWN, (*scope.ids, ids, *scope.ids, ids))
+            rows = await cur.fetchall()
+        out: dict[str, list[Known]] = {}
+        for r in rows:
+            name = str(r["name"]).strip()
+            if name:
+                out.setdefault(str(r["entity_id"]), []).append(Known(name, str(r["given_by"])))
+        return out
+
     async def remove_rule_link(
         self, guild_id: int, campaign_id: str, link_id: str, *, source: str
     ) -> Written[None]:
@@ -4673,6 +4810,7 @@ class MemoryStore:
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
         await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
+        await _move_story_languages(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -7011,6 +7149,26 @@ async def _move_rule_links(w: Changes, to_character: bool, keep_id: str, gone_id
         if link["kind"] in (SPECIES, CREATURE_TYPE):
             has_one.add(link["kind"])
         has_same.add((link["kind"], link["rules_source"], link["name"]))
+
+
+async def _move_story_languages(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
+    """A merged entry's languages from the story (#4229) go with it, unless the kept entry is not a
+    character (only a character knows languages), has a sheet (the sheet is the source of truth) or
+    already knows that language (then the DM's word wins over DMbot's read). What isn't moved stays
+    behind on the merged entry, unseen. The sheet moves later in a merge, so a kept entry may hold
+    story rows and a sheet at once: "Who understands this?" then reads only the sheet. One read of
+    both entries' rows, so a merge with none costs one statement."""
+    rows = await w.select(STORY_LANGUAGES, " AND entity_id = ANY(%s)", [[keep_id, gone_id]])
+    moving = [r for r in rows if r["entity_id"] == gone_id]
+    if not moving or not to_character or await w.get(SHEETS, keep_id, lock=False) is not None:
+        return
+    mine = {r["name_key"]: r for r in rows if r["entity_id"] == keep_id}
+    for row in moving:
+        have = mine.get(row["name_key"])
+        if have is None:
+            await w.update(STORY_LANGUAGES, row["id"], {"entity_id": keep_id})
+        elif have["given_by"] == "read" and row["given_by"] == DM:
+            await w.update(STORY_LANGUAGES, have["id"], {"given_by": DM})
 
 
 async def _move_plan_links(w: Changes, keep_id: str, gone_id: str) -> None:

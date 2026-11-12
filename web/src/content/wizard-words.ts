@@ -8,14 +8,15 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
 /** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
+// The books step 6 offers, alphabetical by title for the screen. Core keeps its own order; that only affects how saved values are sorted.
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
-  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
+  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
   { code: "ravnica", title: "Guildmasters' Guide to Ravnica (2018)" },
+  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
   { code: "theros", title: "Mythic Odysseys of Theros (2020)" },
   { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
-  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
-  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
-  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
 
 export const wizardWords = {
@@ -139,6 +140,12 @@ export const wizardWords = {
     linkBad: "A link must start with https://.",
     remove: "Remove",
     none: "Nothing added.",
+    // Step 7 also takes house rules typed in, so a DM with no file isn't sent away (#4211): kept as one document.
+    typedLabel: "Or type your house rules here",
+    typedNote: "One rule per line. Numbers are optional. DMbot reads them when you press \"Make the campaign\".",
+    typedAdd: "Add these rules",
+    typedName: "Typed house rules",
+    typedEmpty: "Type at least one rule first.",
     // Pages that are only pictures (#4030): DMbot cannot read them, so the person types the text that matters into a file.
     picturePages: (n: number): string =>
       n === 1
@@ -165,11 +172,15 @@ export const wizardWords = {
   // Step 6: rules.
   rules: {
     heading: "Which rules do you play?",
-    lead: "Pick the rules to use first. DMbot uses the other set only when the first has no answer.",
+    lead: "Pick the rules DMbot uses first. You can pick a second set for when the first has no answer.",
     current: "5e current (2024)",
     legacy: "5e legacy (2014)",
-    targetLabel: "Play with",
-    fallbackLabel: "If it has nothing, use",
+    primaryLabel: "Primary rule set",
+    secondaryLabel: "Secondary rule set (optional)",
+    secondaryHint: "Used only when the primary rule set has no answer.",
+    none: "None",
+    uploadOwn: "Upload your own rule set…",
+    houseNote: "House rules and homebrew come in the next steps. Don't add them here.",
     same: "The two sets must be different.",
     supplementsLabel: "Books your table uses",
     supplementsNote: "Choosing a book only tells DMbot's rules advisor which books you use. No book's text is stored.",

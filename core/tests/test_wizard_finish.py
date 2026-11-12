@@ -20,7 +20,13 @@ from dmbot.dm_screen import channel_sync
 from dmbot.memory import sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.rules.homebrew import HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
+from dmbot.rules.homebrew_sources import SourceStore
+from dmbot.rules.house import HouseRuleStore
 from tests.pg import DatabaseTest
+from tests.test_homebrew_import import URL as HOMEBREW_URL
+from tests.test_homebrew_import import Fetches
 from tests.test_sheets import answer as sheet_answer
 
 GUILD = 111
@@ -49,6 +55,12 @@ class FinishTest(DatabaseTest):
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             memory=MemoryStore(self.db),
+            house_rules=HouseRuleStore(self.db),
+            homebrew=HomebrewStore(self.db),
+            sources=SourceStore(self.db),
+            importer=HomebrewImporter(
+                HomebrewStore(self.db), SourceStore(self.db), fetch=Fetches()
+            ),
             get_guild=lambda gid: self.guild if gid == GUILD else None,
             create_refusal=AsyncMock(return_value=None),
         )
@@ -210,6 +222,325 @@ class TheProgress(FinishTest):
         await self.queue()
         with self.assertRaises(psycopg.errors.CheckViolation):  # (a sentence is not a pass word)
             await self.sql("UPDATE wizard_finishes SET pass_word = 'Belleros sold it'")
+
+
+class TheHouseRules(FinishTest):
+    """Step 7's house-rule documents are read into the campaign (#4211) through the House rules
+    page's own reader; the typed box is stored by the page as a document and read the same way."""
+
+    async def rules(self) -> list[tuple[int, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        return sorted(
+            (r.number, r.rule) for r in await self.bot.house_rules.list(GUILD, campaign.id)
+        )
+
+    async def finish(self, docs: tuple[tuple[str, str, str], ...]) -> dict[str, Any]:
+        await self.draft(docs=docs)
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_numbered_file_is_added_with_its_numbers(self) -> None:
+        text = (
+            "House rules\n3. Potions are bonus.\n"
+            "7. Crits max the die. (instead of: Crits double the dice.)"
+        )
+        row = await self.finish((("house", "rules.txt", text),))
+        self.assertEqual((row["state"], row["error"], row["stage"]), ("done", "", "clean"))
+        self.assertEqual(await self.rules(), [(3, "Potions are bonus."), (7, "Crits max the die.")])
+
+    async def test_a_typed_list_with_no_numbers_is_numbered_in_order(self) -> None:
+        text = "# my rules\nFlanking gives advantage.\n\nHealing potions are a bonus action."
+        await self.finish((("house", "Typed house rules", text),))
+        self.assertEqual(
+            await self.rules(),
+            [(1, "Flanking gives advantage."), (2, "Healing potions are a bonus action.")],
+        )
+
+    async def test_a_document_with_no_rule_keeps_its_word_and_the_campaign_stands(self) -> None:
+        row = await self.finish((("house", "empty.txt", "# only a note\n"),
+                                 ("house", "ok.txt", "1. One rule.")))  # fmt: skip
+        self.assertEqual(row["state"], "done")
+        self.assertEqual(row["error"], "house_unreadable")
+        self.assertIn("house_unreadable:1", row["notes"])
+        self.assertEqual(await self.rules(), [(1, "One rule.")])
+
+    async def test_two_plain_documents_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "Flanking gives advantage.\nPotions are bonus."),
+            ("house", "Typed house rules", "Crits max the die.\nNo evil gods."),
+        ))  # fmt: skip
+        self.assertEqual(len(await self.rules()), 4)
+
+    async def test_two_numbered_files_with_the_same_numbers_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "1. First A.\n2. Second A."),
+            ("house", "b.txt", "1. First B.\n2. Second B."),
+        ))  # fmt: skip
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["First A.", "First B.", "Second A.", "Second B."],
+        )
+
+    async def test_bullets_and_numbers_with_a_bracket_are_dropped_from_a_plain_list(self) -> None:
+        await self.finish((("house", "t", "- Flanking gives advantage.\n1) Potions are bonus."),))
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["Flanking gives advantage.", "Potions are bonus."],
+        )
+
+    async def test_no_house_rules_store_gives_the_failed_word_and_the_campaign_stands(self) -> None:
+        self.bot.house_rules = None
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertEqual((row["state"], row["error"]), ("done", "house_failed"))
+
+    async def test_a_retaken_run_adds_nothing_twice(self) -> None:
+        docs = (("house", "rules.txt", "1. One rule.\n2. Another."),)
+        await self.finish(docs)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        from dmbot import wizard_house
+
+        again = await wizard_house.read_documents(
+            self.bot.house_rules, GUILD, campaign.id, DM, [{"text": docs[0][2], "name": "r"}]
+        )
+        self.assertEqual(again[0], 0)
+        self.assertEqual(len(await self.rules()), 2)
+
+    async def test_house_is_a_stage_and_nothing_is_left_for_the_pages(self) -> None:
+        self.assertIn("house", wizard_finish.STAGES)
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertNotEqual(row["error"], wizard_finish.DOCS_LEFT)
+
+    async def test_a_homebrew_file_is_loaded_and_a_file_with_no_entry_keeps_its_word(self) -> None:
+        row = await self.finish((
+            ("homebrew", "h.txt", "## Hollow King (monster)\n\nIt rules the crypt.\n"),
+            ("homebrew", "empty.txt", "# a note only\n"),
+        ))  # fmt: skip
+        self.assertEqual((row["state"], row["error"]), ("done", "homebrew_unreadable"))
+        self.assertIn("homebrew_unreadable:1", row["notes"])
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(
+            [e.name for e in await self.bot.homebrew.list(GUILD, campaign.id)], ["Hollow King"]
+        )
+
+    async def test_a_homebrew_link_is_added_and_a_bad_one_is_counted(self) -> None:
+        await self.draft(
+            {"name": "Frostmaiden", "data_use": True,
+             "homebrew_links": [HOMEBREW_URL, "https://example.com/x"]},
+        )  # fmt: skip
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "homebrew_link_failed"))
+        self.assertIn("homebrew_link_failed:1", row["notes"])
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(len(await self.bot.homebrew.list(GUILD, campaign.id)), 1)
+
+    async def test_links_without_the_right_to_use_confirmation_read_nothing(self) -> None:
+        await self.draft({"name": "Frostmaiden", "homebrew_links": [HOMEBREW_URL]}, rights=0)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("failed", "no_rights"))
+        self.assertEqual(await self.sql("SELECT 1 FROM site_approvals"), [])
+
+    async def test_a_homebrew_document_without_the_confirmation_reads_nothing(self) -> None:
+        await self.draft(docs=(("homebrew", "h.txt", "## Hollow King (monster)\n\nWords.\n"),),
+                         rights=0)  # fmt: skip
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["error"], "no_rights")
+
+    async def test_a_second_run_does_not_double_the_notes(self) -> None:
+        notes = wizard_finish._with_pairs("homebrew_unreadable:1", {"homebrew_unreadable": 1})
+        self.assertEqual(notes, "homebrew_unreadable:1")
+
+    async def test_the_door_refuses_finish_for_links_without_the_confirmation(self) -> None:
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_finish'"
+        )
+        self.assertIn("jsonb_array_length(d.answers->'homebrew_links')", door["d"])
+
+    async def test_homebrew_is_a_stage_and_the_door_takes_the_links_key(self) -> None:
+        self.assertIn("homebrew", wizard_finish.STAGES)
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_set'"
+        )
+        self.assertIn("'homebrew_links'", door["d"])
+        from dmbot.web import wizard
+
+        self.assertEqual(
+            wizard.check_patch({"homebrew_links": [" https://a.example/x ", ""]}),
+            {"homebrew_links": ["https://a.example/x"]},
+        )
+
+
+class TheLinks(FinishTest):
+    """A web link in a document step (#4206): lore links go to the lore reader as link uploads (its
+    own guarded fetch); house and homebrew links are opened once with the same guarded fetch, and a
+    link that cannot be read keeps its word while the campaign stands."""
+
+    async def add_doc(
+        self, slot: str, address: str, name: str = "A page", source: str = "link"
+    ) -> None:
+        await self.sql(
+            "INSERT INTO wizard_documents (guild_id, user_id, id, slot, name, source, text, status,"
+            " created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, 'ok', %s)",
+            GUILD, DM, f"{abs(hash((slot, address))) % 10**30:032x}", slot, name, source, address,
+            NOW,
+        )  # fmt: skip
+
+    async def finish(self) -> dict[str, Any]:
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_lore_link_is_queued_as_a_link_upload_with_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        # (the stand-in reader blanks the text and keeps the link until it ends: checked at queue)
+        [up] = await self.sql("SELECT source, text, link, choice FROM lore_uploads")
+        self.assertEqual((up["source"], up["text"], up["choice"]), ("link", "", "world"))
+        self.assertTrue(up["link"].startswith("https://docs.google.com/"))
+
+    async def test_a_bad_address_in_a_lore_step_is_a_failed_read_and_nothing_is_queued(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("lore", "http://example.com/page")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "lore_failed"))
+        self.assertEqual(await self.sql("SELECT 1 FROM lore_uploads"), [])
+
+    async def test_a_house_link_is_read_once_and_its_rules_are_added(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return SimpleNamespace(text="1. Flanking gives advantage."), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(len(calls), 1)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        rules = await self.bot.house_rules.list(GUILD, campaign.id)
+        self.assertEqual([r.rule for r in rules], ["Flanking gives advantage."])
+
+    async def test_a_house_link_that_cannot_be_read_keeps_its_word_and_the_campaign_stands(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://example.com/private")
+
+        async def nothing(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, "That page needs a sign-in."
+
+        with patch("dmbot.ui.name_lists.read_link_once", nothing):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+        self.assertIn("doc_link_failed:1", row["notes"])
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+
+class TheBusyLinks(TheLinks):
+    """Another link being opened for the server (a DM's paste in Discord) is waited for, not
+    counted as a failed link; a document with a bad address never reaches the fetch."""
+
+    DOC = "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+
+    async def test_a_busy_server_is_waited_for_and_the_rules_are_added(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+        answers: list[Any] = [(None, LINK_BUSY), (SimpleNamespace(text="1. One rule."), None)]
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            result: tuple[Any, str | None] = answers.pop(0)
+            return result
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(len(await self.bot.house_rules.list(GUILD, campaign.id)), 1)
+
+    async def test_busy_for_too_long_is_a_failed_link_and_the_campaign_stands(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+
+        async def busy(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, LINK_BUSY
+
+        with (
+            patch("dmbot.ui.name_lists.read_link_once", busy),
+            patch.object(wizard_finish, "LORE_WAIT_S", 0.05),
+        ):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+
+    async def test_a_bad_address_never_reaches_the_fetch(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "http://example.com/page")
+        await self.add_doc("homebrew", "https://example.com/" + "x" * 2100)
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return None, None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual(calls, [])
+        self.assertIn("doc_link_failed:2", row["notes"])
+
+    async def test_a_homebrew_link_document_is_read_and_loaded(self) -> None:
+        await self.draft()
+        await self.add_doc(
+            "homebrew", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+        )
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return SimpleNamespace(text="## Hollow King (monster)\n\nIt rules the crypt.\n"), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(
+            [e.name for e in await self.bot.homebrew.list(GUILD, campaign.id)], ["Hollow King"]
+        )
+
+    async def test_a_lore_link_is_queued_with_its_exact_address_and_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", self.DOC)
+        seen: list[tuple[str, str]] = []
+        real = wizard_finish.WizardFinishes.queue_lore
+
+        async def spy(self_: Any, *args: Any, **kw: Any) -> str:
+            seen.append((args[3], kw.get("link", "")))
+            return await real(self_, *args, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "queue_lore", spy):
+            await self.finish()
+        self.assertEqual(seen, [(self.DOC, self.DOC)])  # (the text argument is dropped for a link)
 
 
 class TheRun(FinishTest):
@@ -840,12 +1171,8 @@ class TheSupplements(FinishTest):
 
 
 class TheDocumentsNotReadYet(FinishTest):
-    async def test_house_homebrew_and_ruleset_documents_are_not_dropped_in_silence(self) -> None:
-        docs = (
-            ("house", "h.txt", "No flanking."),
-            ("homebrew", "b.txt", "A hollow king."),
-            ("ruleset", "r.txt", "My rules."),
-        )
+    async def test_ruleset_documents_are_not_dropped_in_silence(self) -> None:
+        docs = (("ruleset", "r.txt", "My rules."),)
         await self.draft(docs=docs)
         await self.queue()
         await wizard_finish.run_round(self.bot, GUILD)
