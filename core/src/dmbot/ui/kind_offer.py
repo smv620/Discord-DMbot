@@ -21,7 +21,9 @@ import discord
 from dmbot.dm_questions import KINDS, Ask
 from dmbot.memory import kind_offers
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
+from dmbot.ui import walk_cards
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ def ask_for(guild_id: int, campaign_id: str, offer: kind_offers.Offer) -> Ask:
         lambda: OpenButton(guild_id, campaign_id),
         lambda: OpenButton(guild_id, campaign_id),
         public,
+        count=1,  # (one offer is put at a time; the walk counts what waits when it is pressed)
     )
 
 
@@ -192,6 +195,31 @@ async def open_question(interaction: discord.Interaction, guild_id: int, campaig
     await _tell(interaction, question(offer), view=view)
 
 
+async def apply_answer(
+    memory: Any, guild_id: int, campaign_id: str, offer: kind_offers.Offer, which: str
+) -> tuple[str, UndoButton | None]:
+    """What Yes, Not now or Never does, and the words to show for it (and an Undo for a Yes).
+    The one place the answer is made: the question's own buttons and the "Check everything" walk
+    both come here, so an answer in either is the same answer. Raises `MemoryRuleError`."""
+    if which == "yes":
+        made = await memory.make_kind_of_words(guild_id, campaign_id, offer.words_key, source=DM)
+        log.info("Kind offer: made a kind, %d connection(s) moved", offer.count)
+        undo = UndoButton(guild_id, campaign_id, made.batch) if made.batch is not None else None
+        return (
+            f"🔗 Done. {offer.count} connections now read “{offer.words}” as a kind of their own.",
+            undo,
+        )
+    state = kind_offers.NEVER if which == "never" else kind_offers.LATER
+    await memory.answer_kind_offer(guild_id, campaign_id, offer.words_key, state, seen=offer.count)
+    log.info("Kind offer: answered %s", state)
+    return (
+        "🔗 Okay, DMbot won't ask about these words again."
+        if which == "never"
+        else "🔗 Okay. DMbot will ask again once the table has said them 3 more times.",
+        None,
+    )
+
+
 async def answer(
     interaction: discord.Interaction, guild_id: int, campaign_id: str, which: str, words: str
 ) -> None:
@@ -214,32 +242,12 @@ async def answer(
         await _tell(interaction, GONE)
         return
     try:
-        if which == "yes":
-            made = await memory.make_kind_of_words(
-                guild_id, campaign_id, offer.words_key, source=DM
-            )
-            log.info("Kind offer: made a kind, %d connection(s) moved", offer.count)
+        text, undo = await apply_answer(memory, guild_id, campaign_id, offer, which)
+        view: discord.ui.View | None = None
+        if undo is not None:  # (no empty view for Not now and Never: they never had one)
             view = discord.ui.View(timeout=None)
-            if made.batch is not None:
-                view.add_item(UndoButton(guild_id, campaign_id, made.batch))
-            await _tell(
-                interaction,
-                f"🔗 Done. {offer.count} connections now read “{offer.words}” as a kind of "
-                "their own.",
-                view=view,
-            )
-        else:
-            state = kind_offers.NEVER if which == "never" else kind_offers.LATER
-            await memory.answer_kind_offer(
-                guild_id, campaign_id, offer.words_key, state, seen=offer.count
-            )
-            log.info("Kind offer: answered %s", state)
-            await _tell(
-                interaction,
-                "🔗 Okay, DMbot won't ask about these words again."
-                if which == "never"
-                else "🔗 Okay. DMbot will ask again once the table has said them 3 more times.",
-            )
+            view.add_item(undo)
+        await _tell(interaction, text, view=view)
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't do that. {exc}")
     except Exception:  # (the database was unreachable, say): the reply must not hang
@@ -265,3 +273,41 @@ async def undo(
         await _tell(interaction, FAILED)
         return
     await _tell(interaction, "↩️ Undone. The connections read as they did before.")
+
+
+WALK_FINISHED = "✅ Kinds of connection: checked."  # (the line a "Check everything" walk leaves)
+
+
+def walk_kind(memory: Any, guild_id: int, campaign_id: str) -> walk_cards.Kind:
+    """The kinds-of-connection offers as a part of "✅ Check everything" (#4192): the same
+    question, the same three answers and Undo, one offer at a time."""
+
+    def choice(label: str, style: discord.ButtonStyle, which: str) -> walk_cards.Choice:
+        async def do(offer: kind_offers.Offer) -> walk_cards.Answer:
+            text, undo = await apply_answer(memory, guild_id, campaign_id, offer, which)
+            return walk_cards.Answer(text, undo)
+
+        return walk_cards.Choice(label, style, do)
+
+    return walk_cards.Kind(
+        waiting=lambda: memory.kind_offer_list(guild_id, campaign_id),
+        key=lambda offer: offer.words_key,
+        text=lambda offer, left: question(offer),
+        choices=lambda: [
+            choice(YES, discord.ButtonStyle.success, "yes"),
+            choice(LATER, discord.ButtonStyle.secondary, "later"),
+            choice(NEVER, discord.ButtonStyle.secondary, "never"),
+        ],
+        finished=WALK_FINISHED,
+    )
+
+
+async def start_walk_part(
+    interaction: discord.Interaction, guild_id: int, campaign_id: str, walk: Walk
+) -> None:
+    """The kinds part of a walk. The presser was checked as a DM when the walk began."""
+    memory = _bot(interaction).memory
+    if memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    await walk_cards.start(interaction, walk_kind(memory, guild_id, campaign_id), walk)

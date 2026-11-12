@@ -18,6 +18,7 @@ interface DraftWire {
 export function draftFrom(wire: DraftWire): WizardDraft {
   const answers = { ...emptyAnswers(), ...(wire.answers ?? {}) } as WizardDraft["answers"];
   if (!Array.isArray(answers.characters)) answers.characters = [];
+  if (!Array.isArray(answers.homebrew_links)) answers.homebrew_links = [];
   if (!Array.isArray(answers.skipped)) answers.skipped = [];
   return {
     step: typeof wire.step === "number" ? wire.step : 1,
@@ -141,6 +142,7 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
         part: Number(got["part"] ?? 0),
         ofParts: Number(got["ofParts"] ?? 0),
         error: String(got["error"] ?? ""),
+        notes: String(got["notes"] ?? ""),
         campaignRef: campaign ? `${guild}.${campaign}` : "",
         createdAt: Number(got["createdAt"] ?? 0),
         movedAt: Number(got["movedAt"] ?? 0),

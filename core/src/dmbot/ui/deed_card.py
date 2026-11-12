@@ -23,7 +23,9 @@ from dmbot.memory.deed_proposals import GONE, DeedProposals, Waiting
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.memory.standing import DEED_VERB
 from dmbot.mentions import NO_PINGS
+from dmbot.ui import walk_cards
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ def ask_for(guild_id: int, campaign_id: str, count: int) -> Ask:
         lambda: OpenButton(guild_id, campaign_id),
         lambda: OpenButton(guild_id, campaign_id),
         text,
+        count=count,
     )
 
 
@@ -222,6 +225,29 @@ async def open_first(interaction: discord.Interaction, guild_id: int, campaign_i
     )
 
 
+ALREADY_ANSWERED = (
+    "That one was already answered, or someone it came from has stopped being recorded."
+)
+
+
+async def apply_answer(
+    bot: Any, guild_id: int, campaign_id: str, proposal_id: str, *, record: bool
+) -> tuple[str, int | None]:
+    """What Record or Not this does: the words to show, and the change's batch for an Undo (a
+    recorded deed). The one place the answer is made: the card's own buttons and the "Check
+    everything" walk both come here. Consent is asked again for a record (a deed whose speaker has
+    stopped is gone). Raises `MemoryRuleError` (the store's `GONE` when it is no longer waiting)."""
+    deeds = DeedProposals(bot.memory)
+    if record:
+        agreed = await bot.consent.consenting(guild_id)
+        batch = await deeds.record(guild_id, campaign_id, proposal_id, opted_in=agreed, source=DM)
+        log.info("Deeds: one recorded by the DM")
+        return "✅ Recorded.", batch
+    await deeds.dismiss(guild_id, campaign_id, proposal_id, source=DM)
+    log.info("Deeds: one turned down by the DM")
+    return "Okay, not this one.", None
+
+
 async def answer(
     interaction: discord.Interaction,
     guild_id: int,
@@ -236,26 +262,15 @@ async def answer(
     bot = await _checked(interaction, guild_id, campaign_id)
     if bot is None:
         return
-    deeds = DeedProposals(bot.memory)
     note = ""
     batch: int | None = None
     try:
-        if record:
-            agreed = await bot.consent.consenting(guild_id)
-            batch = await deeds.record(
-                guild_id, campaign_id, proposal_id, opted_in=agreed, source=DM
-            )
-            log.info("Deeds: one recorded by the DM")
-            note = "✅ Recorded."
-        else:
-            await deeds.dismiss(guild_id, campaign_id, proposal_id, source=DM)
-            log.info("Deeds: one turned down by the DM")
-            note = "Okay, not this one."
+        note, batch = await apply_answer(bot, guild_id, campaign_id, proposal_id, record=record)
     except MemoryRuleError as exc:
         if str(exc) != GONE:
             await _tell(interaction, f"Couldn't do that. {exc}")
             return
-        note = "That one was already answered, or someone it came from has stopped being recorded."
+        note = ALREADY_ANSWERED
     except Exception:  # (the database was unreachable, say): the reply must not hang
         log.exception("Deeds: the answer could not be saved")
         await _tell(interaction, FAILED)
@@ -302,3 +317,60 @@ async def undo(
         await _tell(interaction, FAILED)
         return
     await _tell(interaction, "↩️ Undone. That deed is not recorded.")
+
+
+WALK_FINISHED = "✅ Deeds: checked."  # (the line a "Check everything" walk leaves)
+
+
+async def waiting_deeds(bot: Any, guild_id: int, campaign_id: str) -> list[Waiting]:
+    """The deeds waiting for a yes, after the consent re-check (see `_next`)."""
+    agreed = await bot.consent.consenting(guild_id)
+    return await DeedProposals(bot.memory).waiting(guild_id, campaign_id, opted_in=agreed)
+
+
+async def count_deeds(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """How many wait, counted without changing anything."""
+    if bot.memory is None:
+        return 0
+    agreed = await bot.consent.consenting(guild_id)
+    return await DeedProposals(bot.memory).count_waiting(guild_id, campaign_id, opted_in=agreed)
+
+
+def walk_kind(bot: Any, guild_id: int, campaign_id: str) -> walk_cards.Kind:
+    """The deeds as a part of "✅ Check everything" (#4192): the same card, Record and Not this
+    and the Undo, one deed at a time."""
+
+    def choice(label: str, style: discord.ButtonStyle, record: bool) -> walk_cards.Choice:
+        async def do(deed: Waiting) -> walk_cards.Answer:
+            try:
+                note, batch = await apply_answer(bot, guild_id, campaign_id, deed.id, record=record)
+            except MemoryRuleError as exc:
+                if str(exc) != GONE:
+                    raise
+                return walk_cards.Answer(ALREADY_ANSWERED)
+            undo = UndoButton(guild_id, campaign_id, batch) if batch is not None else None
+            return walk_cards.Answer(note, undo)
+
+        return walk_cards.Choice(label, style, do)
+
+    return walk_cards.Kind(
+        waiting=lambda: waiting_deeds(bot, guild_id, campaign_id),
+        key=lambda deed: deed.id,
+        text=lambda deed, left: card(deed, left),
+        choices=lambda: [
+            choice("✅ Record", discord.ButtonStyle.success, True),
+            choice("Not this", discord.ButtonStyle.secondary, False),
+        ],
+        finished=WALK_FINISHED,
+    )
+
+
+async def start_walk_part(
+    interaction: discord.Interaction, guild_id: int, campaign_id: str, walk: Walk
+) -> None:
+    """The deeds part of a walk. The presser was checked as a DM when the walk began."""
+    bot = _bot(interaction)
+    if bot.memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    await walk_cards.start(interaction, walk_kind(bot, guild_id, campaign_id), walk)

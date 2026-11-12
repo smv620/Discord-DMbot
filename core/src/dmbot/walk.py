@@ -11,18 +11,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from dmbot.dm_questions import CLAIMS, CONNECTIONS, NAMES, ORDER, PEOPLE
+from dmbot.dm_questions import CLAIMS, CONNECTIONS, DEEDS, KINDS, NAMES, ORDER, PEOPLE
 
 # The parts the walk goes through, in `dm_questions.ORDER`: a connection is only asked once both its
 # names are answered, and a claim reads better once its names are settled (the owner's ruling,
-# #4192). Slice 1 has these four; the rest of ORDER joins in the second slice.
-PARTS = tuple(kind for kind in ORDER if kind in (NAMES, PEOPLE, CLAIMS, CONNECTIONS))
+# #4192). Slice 1 had the first four; the second slice adds the rest of ORDER, a part at a time
+# (kinds of connection first; Supervisor's ruling on #4192: every check that waits for the DM's yes
+# or no after a session or an import belongs in the walk; the kind's own button still opens it from
+# its own question and on the DM screen).
+PARTS = tuple(kind for kind in ORDER if kind in (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS))
 
 LABELS = {
     NAMES: "Names",
     PEOPLE: "Who is who",
     CLAIMS: "What was said",
     CONNECTIONS: "Connections",
+    KINDS: "Kinds of connection",
+    DEEDS: "Deeds",
 }
 
 
