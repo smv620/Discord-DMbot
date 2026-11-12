@@ -22,6 +22,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_predicates",
         "memory_entities",
         "memory_rule_links",
+        "memory_story_languages",  # an NPC's languages from the story (#4229)
         "memory_states",
         "memory_claims",
         "memory_aliases",
