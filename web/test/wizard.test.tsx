@@ -360,7 +360,7 @@ describe("the wizard", () => {
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {
     // (core's wizard.py list: a code not on it is refused at the door)
-    expect(SUPPLEMENTS.map((s) => s.code)).toEqual(["xanathar", "ravnica", "theros", "tasha", "fizban", "mordenkainen", "bigby"]);
+    expect(SUPPLEMENTS.map((s) => s.code).sort()).toEqual(["bigby", "fizban", "mordenkainen", "ravnica", "tasha", "theros", "xanathar"]);
     const api = mockWizard();
     await api.start(G, "");
     await expect(api.set(G, 6, { supplements: ["tasha", "nope"] })).rejects.toMatchObject({ kind: "bad_value", key: "supplements" });
@@ -422,6 +422,17 @@ describe("the wizard", () => {
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":supplements"))).toBe(true));
     await waitFor(() => expect(box("Xanathar").checked).toBe(false));
     expect(box("Tasha").checked).toBe(true); // (turning one off did not turn the other off)
+  });
+
+  it("step 6 lists the books in alphabetical order by title", async () => {
+    await start();
+    for (let to = 2; to <= 6; to++) await next(to);
+    const titles = SUPPLEMENTS.map((s) => s.title);
+    expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b)));
+    const page = document.body.textContent ?? "";
+    const at = titles.map((t) => page.indexOf(t));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
   });
 
   it("a saved answer for the books is shown as saved", async () => {
