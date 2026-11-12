@@ -248,7 +248,7 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
           misses.current += 1;
           if (misses.current >= 5) {
             const now = Math.floor(Date.now() / 1000);
-            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
+            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", notes: old?.notes ?? "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
           } else setTick((n) => n + 1);
         },
       );
@@ -278,6 +278,11 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
     return (
       <section>
         <h2>{t.done}</h2>
+        {notesOf(run.notes).map(([word, n]) => (
+          <p key={word} class="small" role="status">
+            {t.notes[word]?.(n)}
+          </p>
+        ))}
         <a class="button" href={run.campaignRef ? campaignHref(run.campaignRef) : "/account/campaigns"}>{t.open}</a>
       </section>
     );
@@ -347,6 +352,15 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
       {problem && <p role="alert">{problem}</p>}
     </section>
   );
+}
+
+/** The finish row's notes ("house_unreadable:2 homebrew_link_failed:1") as [word, count] pairs, only the words this page has a line for. */
+function notesOf(notes: string): [string, number][] {
+  return notes
+    .split(" ")
+    .map((pair) => pair.split(":"))
+    .filter((p): p is [string, string] => p.length === 2 && w.finish.notes[p[0]!] !== undefined)
+    .map(([word, n]) => [word, Number(n)]);
 }
 
 /** The motion of the wait (#4213): a clock redrawn every half second from the server's own times, "Last progress N s ago" on the same

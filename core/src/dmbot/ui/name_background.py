@@ -1739,6 +1739,8 @@ async def store(
                 # how big a place is, from its name or the words beside it (#4173 slice 1): the
                 # store keeps it only for a place, and no word means no level, never a guess
                 place_level=place_levels.read_level(item.name, item.quote, item.about, text),
+                # its form, water or route, from its own name only (#4173 slice 6a)
+                form=place_levels.read_form(item.name) if item.kind == "place" else None,
             )
         )
         items.append(item)

@@ -16,7 +16,9 @@ from dmbot import walk as walks
 from dmbot.dm_questions import (
     CLAIMS,
     CONNECTIONS,
+    DEEDS,
     FAMILY,
+    KINDS,
     NAMES,
     PEOPLE,
     WALK_PRESS,
@@ -48,9 +50,9 @@ def labels(view: discord.ui.View) -> list[str | None]:
 
 class TheWalksOrderAndWords(unittest.TestCase):
     def test_the_parts_run_names_then_who_is_who_then_what_was_said_then_connections(self) -> None:
-        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS))
-        counts = {CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
-        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS))
+        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS))
+        counts = {DEEDS: 2, KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
+        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS, DEEDS))
 
     def test_nothing_waiting_is_no_walk(self) -> None:
         self.assertEqual(walks.parts_for({}), ())
@@ -94,6 +96,14 @@ class TheButtonOnTheMessage(unittest.TestCase):
         self.assertEqual(labels(view), ["✅ Check everything (40)"])
         self.assertTrue(text.endswith(WALK_PRESS))
         self.assertIn("• names line", text)  # (the count lines keep their words)
+
+    def test_a_kinds_offer_beside_another_walked_kind_joins_the_walk(self) -> None:
+        combined = combine([ask(CLAIMS, 8), ask(KINDS, 1)], walk=self.walk_button)
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])
+        self.assertEqual(labels(view), ["✅ Check everything (9)"])
+        self.assertIn("• kinds line", text)
 
     def test_one_kind_keeps_its_own_button_and_words(self) -> None:
         combined = combine([ask(CLAIMS, 8)], walk=self.walk_button)
@@ -344,3 +354,72 @@ class WithoutAWalkNothingChanges(unittest.TestCase):
 
 
 _ = partial  # (kept for the stand-in makers above)
+
+
+class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
+    async def test_the_count_reads_the_offers_and_a_broken_store_counts_zero(self) -> None:
+        memory = SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1, 2, 3]))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=memory), GUILD, CID), 3)
+        broken = SimpleNamespace(kind_offer_list=AsyncMock(side_effect=RuntimeError("down")))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=broken), GUILD, CID), 0)
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=None), GUILD, CID), 0)
+
+    async def test_the_walks_counts_include_the_kinds(self) -> None:
+        found = SimpleNamespace(names=1, people=0, claims=2, connections=3)
+        bot = SimpleNamespace(
+            count_waiting=AsyncMock(return_value=found),
+            memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
+            settings=SimpleNamespace(story_deeds_on=True),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object())),
+            plan_allows=AsyncMock(return_value=True),
+        )
+        with (
+            patch("dmbot.ui.check_everything._bot", return_value=bot),
+            patch("dmbot.ui.deed_card.count_deeds", AsyncMock(return_value=4)),
+        ):
+            counts = await ce.waiting_counts(cast(Any, object()), GUILD, CID)
+        self.assertEqual(
+            counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1, DEEDS: 4}
+        )
+
+    async def test_the_kinds_part_opens_the_kinds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (KINDS,))
+        with patch("dmbot.ui.kind_offer.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+
+    def deeds_bot(self, *, on: bool = True, plan: bool = True, campaign: bool = True) -> Any:
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_deeds_on=on),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object() if campaign else None)),
+            plan_allows=AsyncMock(return_value=plan),
+        )
+
+    async def test_a_deeds_count_that_cannot_be_read_is_zero(self) -> None:
+        with patch("dmbot.ui.deed_card.count_deeds", AsyncMock(side_effect=RuntimeError("down"))):
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 0)
+
+    async def test_deeds_are_counted_only_where_they_are_asked(self) -> None:
+        counted = AsyncMock(return_value=3)
+        with patch("dmbot.ui.deed_card.count_deeds", counted):
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 3)
+            for bot in (
+                self.deeds_bot(on=False),
+                self.deeds_bot(plan=False),
+                self.deeds_bot(campaign=False),
+            ):
+                self.assertEqual(await ce._count_deeds(bot, GUILD, CID), 0)
+        counted.assert_awaited_once()  # (the three refusals never counted)
+
+    async def test_the_deeds_part_opens_the_deeds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (DEEDS,))
+        with patch("dmbot.ui.deed_card.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+
+    def test_deeds_beside_another_walked_kind_join_the_walk(self) -> None:
+        combined = combine(
+            [ask(DEEDS, 2), ask(CLAIMS, 8)], walk=lambda total: ce.WalkButton(GUILD, CID, total)
+        )
+        assert combined is not None
+        self.assertEqual(ids(combined[1]), [f"dmbot:walk:{GUILD}:{CID}"])

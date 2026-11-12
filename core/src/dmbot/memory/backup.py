@@ -175,6 +175,8 @@ _CHOICES: dict[str, Sequence[str]] = {
     "end_reason": END_REASONS,
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
+    "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
+    "form_from": place_levels.FROM,
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -204,6 +206,7 @@ _NULLABLE = {
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
     "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
     "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
+    "form", "form_from",  # (a place's form and who said it, #4173 slice 6a)
     "both_ways",  # (the DM's direction, #4154: None is the kind's default)
 }  # fmt: skip
 
@@ -262,6 +265,7 @@ def _valid(column: str, value: object) -> bool:
         "pinned",
         "added_entry",
         "both_ways",
+        "setting",
         "srd",
     ):
         return isinstance(value, bool)
@@ -660,6 +664,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_what": None,
                 "place_level": None,  # from before #4173: no place had a size
                 "place_level_from": None,
+                "setting": False,  # from before #4173: no campaign had a setting
+                "form": None,  # from before #4173 slice 6a: every place an area
+                "form_from": None,
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
@@ -1057,6 +1064,9 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         (r.get("place_level") is not None and not onto.is_a(r["type"], "place"))
         # a size and who said it come together (#4173)
         or (r.get("place_level") is None) != (r.get("place_level_from") is None)
+        # only a place has a form, and a form and who said it come together (#4173 slice 6a)
+        or (r.get("form") is not None and not onto.is_a(r["type"], "place"))
+        or (r.get("form") is None) != (r.get("form_from") is None)
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
@@ -1065,6 +1075,12 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
     parties = [r for r in by_tag["entity"] if r["party"]]
     if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
         raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    settings = [r for r in by_tag["entity"] if r.get("setting")]
+    if len(settings) > 1 or any(
+        not onto.is_a(r["type"], "place") or r.get("place_level") not in place_levels.SETTING_LEVELS
+        for r in settings
+    ):
+        raise CampaignError(DAMAGED)  # at most one setting, and it is a place (#4173)
     _check_standing(by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:

@@ -652,6 +652,43 @@ describe("the wizard", () => {
     expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).value).toBe(""); // (the box empties once it is added)
   });
 
+  it("step 8 takes dndbeyond.com links only, after the right-to-use box, and keeps them in the draft (#4211)", async () => {
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 8; to++) await next(to);
+    const box = () => screen.getByLabelText(w.docs.homebrewLinkLabel) as HTMLInputElement;
+    expect(box().disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect(box().disabled).toBe(false));
+    fireEvent.input(box(), { target: { value: "https://example.com/homebrew/1" } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(w.docs.homebrewLinkBad)).toBeTruthy();
+    fireEvent.input(box(), { target: { value: "http://www.dndbeyond.com/homebrew/1" } }); // (not https)
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(w.docs.homebrewLinkBad)).toBeTruthy();
+    const good = "https://www.dndbeyond.com/homebrew/creations/1234-a-test";
+    fireEvent.input(box(), { target: { value: good } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(good)).toBeTruthy();
+    await waitFor(async () => expect((await api.get(G))?.answers.homebrew_links).toEqual([good]));
+    fireEvent.click(screen.getByRole("button", { name: w.docs.remove }));
+    await waitFor(async () => expect((await api.get(G))?.answers.homebrew_links).toEqual([]));
+  });
+
+  it("the finish page says, in plain counts, what could not be used when the campaign was made anyway (#4211)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={`${G}.notes`} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByText(w.finish.notes["house_unreadable"]!(2))).toBeTruthy();
+    expect(screen.getByText(w.finish.notes["homebrew_link_failed"]!(1))).toBeTruthy();
+    expect(screen.queryByText(/homebrew_/)).toBeNull(); // (words and counts, never the raw note)
+  });
+
   it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {
     flags.house = true;
     await start();

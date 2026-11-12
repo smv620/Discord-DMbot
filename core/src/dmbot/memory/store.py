@@ -229,6 +229,10 @@ PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
 # Only a place has a size (#4173)
 ONLY_PLACES = "Only a place has a size, and this isn't a place now."
+# The campaign's setting (#4173 slice 2): a confirmed place no smaller than a region
+SETTING_LEVELS = place_levels.SETTING_LEVELS
+SETTING_PLACE = "Confirm this place first, then make it the setting."
+SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
@@ -388,6 +392,15 @@ ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole
 # ---- conversions ---------------------------------------------------------------------
 
 
+def _merged_form(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
+    """A merged place's form (#4173 slice 6a): the DM's word over DMbot's read, then the kept
+    entry's, as for its size."""
+    for row in sorted((kept, gone), key=lambda r: r.get("form_from") != place_levels.BY_DM):
+        if row.get("form") is not None:
+            return {"form": row["form"], "form_from": row["form_from"]}
+    return {"form": None, "form_from": None}
+
+
 def _merged_size(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
     """How big a merged place is (#4173): the DM's word over DMbot's read, then the kept entry's."""
     for row in sorted((kept, gone), key=lambda r: r.get("place_level_from") != place_levels.BY_DM):
@@ -404,7 +417,8 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["manipulated_by"],
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
         r.get("players_text"), place_level=r.get("place_level"),
-        place_level_from=r.get("place_level_from"),
+        place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
+        form=r.get("form"), form_from=r.get("form_from"),
     )  # fmt: skip
 
 
@@ -1150,6 +1164,50 @@ class MemoryStore:
         rows = await states.flag_acting_after_end(w, onto, touching, ended)
         return new, [_flag(r) for r in rows]
 
+    async def setting(self, guild_id: int, campaign_id: str) -> Entity | None:
+        """The campaign's setting (#4173 slice 2): the confirmed place the whole story is in, or
+        None when nobody has said."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(ENTITIES, " AND setting AND status = %s", [CONFIRMED])
+        return _entity(rows[0]) if rows else None
+
+    async def set_setting(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str | None,
+        *,
+        source: str,
+        only_if: str | None = None,
+    ) -> Written[Entity | None]:
+        """The DM's word on the campaign's setting (#4173 slice 2): this confirmed place, of a
+        size no smaller than a region, or None for no setting. One change, so one Undo; the same
+        place again writes nothing. A smaller place with no stated parent then counts as inside it
+        (`checks.Nesting`): nothing else is written. `only_if` (with None): clear it only while that
+        place is the setting, so a stale card or page never clears another place's mark."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            now = await w.select(ENTITIES, " AND setting", [])
+            if entity_id is None and only_if is not None and [r["id"] for r in now] != [only_if]:
+                return Written(None, None)
+            row: dict[str, Any] | None = None
+            if entity_id is not None:
+                onto = await _load_ontology(w)
+                row = await _entity_row(w, entity_id)
+                if row["status"] != CONFIRMED or not onto.is_a(row["type"], "place"):
+                    raise MemoryRuleError(SETTING_PLACE)
+                level = row.get("place_level")
+                if level not in SETTING_LEVELS:
+                    raise MemoryRuleError(SETTING_SIZE)
+            if [r["id"] for r in now] == ([entity_id] if entity_id else []):
+                return Written(_entity(row) if row else None, None)
+            for r in now:  # (first: one setting at most)
+                await w.update(ENTITIES, r["id"], {"setting": False})
+            if entity_id is not None:
+                row = await w.update(ENTITIES, entity_id, {"setting": True})
+            return Written(_entity(row) if row else None, w.batch)
+
     async def set_place_level(
         self, guild_id: int, campaign_id: str, entity_id: str, level: str | None, *, source: str
     ) -> Written[Entity]:
@@ -1168,9 +1226,30 @@ class MemoryStore:
             said = place_levels.BY_DM if level is not None else None
             # (the DM saying what DMbot read is a change too: it is the DM's word now)
             if (current.get("place_level"), current.get("place_level_from")) != (level, said):
-                row = await w.update(
-                    ENTITIES, entity_id, {"place_level": level, "place_level_from": said}
-                )
+                change: dict[str, Any] = {"place_level": level, "place_level_from": said}
+                if current.get("setting") and level not in SETTING_LEVELS:
+                    change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
+                row = await w.update(ENTITIES, entity_id, change)
+            return Written(_entity(row), w.batch)
+
+    async def set_place_form(
+        self, guild_id: int, campaign_id: str, entity_id: str, form: str | None, *, source: str
+    ) -> Written[Entity]:
+        """A place's form, the DM's one tap (#4173 slice 6a): "water", "route", or None for an
+        area. One change, so one Undo. The same form again writes nothing."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        if form is not None and form not in place_levels.FORMS:
+            raise MemoryRuleError(NOT_FOUND)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            current = await _entity_row(w, entity_id)
+            if not onto.is_a(current["type"], "place"):
+                raise MemoryRuleError(ONLY_PLACES)
+            row = current
+            said = place_levels.BY_DM if form is not None else None
+            if (current.get("form"), current.get("form_from")) != (form, said):
+                row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
             return Written(_entity(row), w.batch)
 
     async def set_unique(
@@ -2639,6 +2718,11 @@ class MemoryStore:
                             if n.place_level and onto.is_a(kind, "place")
                             else None
                         ),
+                        # a place's form, from its own name (#4173 slice 6a): a place only
+                        "form": n.form if onto.is_a(kind, "place") else None,
+                        "form_from": (
+                            place_levels.READ if n.form and onto.is_a(kind, "place") else None
+                        ),
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
@@ -3367,8 +3451,11 @@ class MemoryStore:
                 confirmed += await w.update_where(
                     ENTITIES,
                     {**fields, **extra},
-                    # (a person the story never named is not retyped in bulk: #2790)
-                    " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
+                    # (a person the story never named is not retyped in bulk: #2790; nor an entry
+                    # with a player, which would keep its player on a kind that has none and a
+                    # backup refuses: it waits for its own card, #4244)
+                    " AND status = 'proposed' AND NOT unnamed AND played_by IS NULL"
+                    " AND id = ANY(%s)",
                     [group],
                 )
             heard = not_told = 0  # (said only while split: the group knows it / nobody does)
@@ -4794,6 +4881,7 @@ class MemoryStore:
                 ),
                 # and how big a place is, the same way (#4173)
                 **_merged_size(kept, gone),
+                **_merged_form(kept, gone),
                 # A clue only some people know stays so if either was (#1649).
                 "audience_limited": kept["audience_limited"] or gone["audience_limited"],
                 # And so does an entry the players don't know yet (#2321).
@@ -4806,6 +4894,16 @@ class MemoryStore:
                 merged["hidden_from_players"] = kept["hidden_from_players"]
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
+        if gone.get("setting"):  # the campaign's setting follows the place it is (#4173)
+            await w.update(ENTITIES, gone_id, {"setting": False})  # (first: one setting at most)
+            now = await _entity_row(w, keep_id)  # (with the merged size: a setting stays big)
+            if (
+                not now.get("setting")
+                and now["status"] == CONFIRMED
+                and onto.is_a(now["type"], "place")
+                and now.get("place_level") in SETTING_LEVELS
+            ):
+                await w.update(ENTITIES, keep_id, {"setting": True})
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
@@ -6982,6 +7080,7 @@ class MemoryStore:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
+                await _settle_kinds_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -8625,6 +8724,29 @@ async def _live_led_to(w: Changes, *, skip: str | None = None) -> list[tuple[str
         [],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:
+    """An Undo that gives an entry back an older kind skips the rule every other kind change keeps
+    (`states.settle_kind`): something added since for the newer kind would stay on the older one
+    (a species link on what is a place again), and a backup would be refused (#4244). So the
+    entries whose kind this undo changed are settled here, in the undo's own change, so a redo
+    brings everything back. One statement when no kind changed."""
+    cur = await w.conn.execute(
+        "SELECT DISTINCT row_id FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND batch = %s AND table_name = %s AND op = 'update'"
+        " AND (before->>'type') IS DISTINCT FROM (after->>'type')",
+        (*w.ids, batch, ENTITIES.name),
+    )
+    ids = [str(r["row_id"]) for r in await cur.fetchall()]
+    if not ids:
+        return
+    onto = await _load_ontology(w)
+    by_type: dict[str, list[str]] = {}
+    for row in await w.select(ENTITIES, " AND id = ANY(%s)", [ids]):
+        by_type.setdefault(str(row["type"]), []).append(str(row["id"]))
+    for type_key, group in by_type.items():
+        await states.settle_kind(w, onto, group, type_key)
 
 
 async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:
