@@ -10,7 +10,11 @@ import type { WizardMember } from "./wizard-api";
 
 const PENDING = "pending";
 
-export default function PlayerPicker({ label, members, value, onPick }: { label: string; members: WizardMember[]; value: string; onPick(id: string): void }) {
+const ELSEWHERE = "elsewhere";
+
+/** `elsewhere`: a last row for someone who is not in the list ("Someone else: type their Discord ID…", #4225); choosing it calls
+ * `onChoose` and picks nobody, so the caller can show a box for the ID. */
+export default function PlayerPicker({ label, members, value, onPick, elsewhere }: { label: string; members: WizardMember[]; value: string; onPick(id: string): void; elsewhere?: { label: string; onChoose(): void } }) {
   const t = w.players;
   const id = useId();
   const chosen = value === PENDING ? undefined : members.find((m) => m.userId === value);
@@ -22,15 +26,17 @@ export default function PlayerPicker({ label, members, value, onPick }: { label:
   const needle = (typed ?? "").trim().toLowerCase();
   const rows = useMemo(() => {
     const matching = members.filter((m) => needle === "" || m.name.toLowerCase().includes(needle));
-    return [{ userId: PENDING, name: t.pending, before: false }, ...matching];
-  }, [members, needle, t.pending]);
-  const unmatched = typed !== null && needle !== "" && !members.some((m) => m.name.toLowerCase() === needle) && rows.length === 1;
+    const last = elsewhere ? [{ userId: ELSEWHERE, name: elsewhere.label, before: false }] : [];
+    return [{ userId: PENDING, name: t.pending, before: false }, ...matching, ...last];
+  }, [members, needle, t.pending, elsewhere?.label]);
+  const unmatched = typed !== null && needle !== "" && !members.some((m) => m.name.toLowerCase() === needle) && rows.length === (elsewhere ? 2 : 1);
 
   function pick(row: WizardMember): void {
     setTyped(null);
     setOpen(false);
     setActive(0);
-    onPick(row.userId);
+    if (row.userId === ELSEWHERE) elsewhere?.onChoose();
+    else onPick(row.userId);
   }
   function key(e: KeyboardEvent): void {
     if (e.key === "ArrowDown") {

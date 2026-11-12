@@ -835,6 +835,8 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
   // Who plays it, for a player character: a Discord ID, or empty for "not yet" (#2985).
   const [player, setPlayer] = useState("");
   const [playerInfo, setPlayerInfo] = useState(false);
+  // The player is picked by name; the typed Discord ID is for "Someone else", or when the members can't be listed (#4225).
+  const [typeId, setTypeId] = useState(!api.importMembers);
   // Who Discord says the typed ID is, shown for the DM to confirm before anything is linked (#3004).
   const [lookup, setLookup] = useState<{ id: string; name: string; inServer: boolean } | null>(null);
   const [looking, setLooking] = useState(false);
@@ -1080,7 +1082,28 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
             ))}
           </select>
         </label>
-        {kindKey === PLAYER && (
+        {kindKey === PLAYER && !typeId && (
+          <LazyPanel
+            load={() => import("./NamesPlayerField")}
+            what="the players"
+            props={{
+              api,
+              refId,
+              value: playerId,
+              onPick: (picked: string) => {
+                setPlayer(picked);
+                setLookup(null);
+              },
+              onElsewhere: () => {
+                setPlayer("");
+                setLookup(null);
+                setTypeId(true);
+              },
+              onFailed: () => setTypeId(true),
+            }}
+          />
+        )}
+        {kindKey === PLAYER && typeId && (
           <div class="field">
             <label for={`${id}-player`}>{words.playerLabel}</label>
             <span class="row info-tip-row">
