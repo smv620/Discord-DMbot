@@ -168,9 +168,9 @@ export const wizardWords = {
     } as Record<string, string>,
     full: "A setup holds up to 20 files. Remove one to add another.",
     // The right-to-use confirmation (CLAUDE.md, IP): required before DMbot reads shared material.
-    rights: "I have the right to use what I add here.",
-    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files stay in this campaign only.",
-    rightsNeeded: "Tick the box to say you have the right to use these files.",
+    rights: "I have the right to use what I add here, including any homebrew pages I link to.",
+    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files and links stay in this campaign only.",
+    rightsNeeded: "Tick the box to say you have the right to use these files and links.",
   },
 
   // Step 6: rules.
