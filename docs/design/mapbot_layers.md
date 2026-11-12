@@ -632,9 +632,8 @@ and 2.
 
 1. **The terms wording** that DMbot relies on the uploader's answer and does no review of its own
    is a legal sign-off: for the owner (`needs: owner`).
-2. **A player's yes.** As written, whoever uploads answers, so a player who posts a map in the
-   table's chat answers for it, and a DM can remove it. If only a DM's yes should count, a player's
-   map waits for a DM. For the owner.
+2. **A player's yes: answered** (owner, 2026-11-12). A player's yes stores the map; a DM's yes
+   lets DMbot use it (section 3.3).
 3. **The unasked DM-screen line** (slice 9): on by default, or a setting the DM turns on? Proposed:
    on, with one tap to turn it off for the campaign. For Supervisor.
 4. **Storage.** Maps are large and DMs will want them kept for good. Proposed: a map with a yes is
