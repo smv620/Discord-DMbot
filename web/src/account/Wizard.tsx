@@ -20,6 +20,7 @@ const POLL_MS = 2000;
 const campaignHref = (ref: string): string => `/account/campaigns#${encodeURIComponent(ref)}`;
 
 export default function Wizard({ api, guild }: { api: WizardApi; guild: string }) {
+  const [pasted, setPasted] = useState(""); // the pasted campaign-page text, in memory only (#4204)
   const [draft, setDraft] = useState<WizardDraft | null | "loading">("loading");
   const [problem, setProblem] = useState("");
   const [skipping, setSkipping] = useState(false);
@@ -105,6 +106,8 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     draft: current,
     onPatch: (patch) => save(null, patch),
     onDraft: (next) => setDraft(next),
+    pasted,
+    onPasted: setPasted,
   };
 
   return (

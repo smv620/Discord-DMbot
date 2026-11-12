@@ -18,6 +18,10 @@ export interface StepProps {
   onPatch(patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)): Promise<void>;
   /** Replace the draft with a newer one (after a document or the rights changed). */
   onDraft(draft: WizardDraft): void;
+  /** The text of the campaign page the DM pasted in step 1, kept in the page's own memory while the wizard is open so Back shows it
+   * again (#4204); never sent to the server except to be read, and gone on a reload. */
+  pasted?: string;
+  onPasted?(text: string): void;
 }
 
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
@@ -26,13 +30,15 @@ const DEFAULT_BOOKS = ["xanathar", "tasha"];
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
-export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
+export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }: StepProps) {
   const a = draft.answers;
   const [invite, setInvite] = useState(a.invite);
   const [inviteBad, setInviteBad] = useState(false);
   const [sheet, setSheet] = useState("");
   const [sheetNote, setSheetNote] = useState("");
-  const [paste, setPaste] = useState("");
+  const [local, setLocal] = useState(pasted); // (the wizard keeps the text across steps; a lone step keeps its own)
+  const paste = onPasted ? pasted : local;
+  const setPaste = (text: string): void => (onPasted ? onPasted(text) : setLocal(text));
   const [pasteNote, setPasteNote] = useState("");
   const [working, setWorking] = useState(false);
   const mounted = useRef(true);
@@ -83,8 +89,7 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
         ...(latest.name ? {} : { name: got.name }),
         characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyName: c.partyName, sheetUrl: "", player: "pending" }))].slice(0, 12),
       }));
-      setPaste("");
-      setPasteNote(t.pasteFound(got.characters.length));
+      setPasteNote(t.pasteFound(got.characters.length)); // (the text stays in the box, so Back shows it again)
     } catch {
       setPasteNote(w.failed);
     } finally {
@@ -137,6 +142,7 @@ export function WhereStep({ api, guild, draft, onPatch }: StepProps) {
             {t.pasteRead}
           </button>
           {pasteNote && <p role="status">{pasteNote}</p>}
+          {!paste && !pasteNote && a.pageTextUsed && <p class="small">{t.pastedEarlier(a.characters.filter((c) => !c.sheetUrl).length)}</p>}
         </>
       )}
     </section>
@@ -150,15 +156,17 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   const [name, setName] = useState(a.name);
   const [full, setFull] = useState("");
   const [party, setParty] = useState("");
+  const [sheetUrl, setSheetUrl] = useState("");
   const [adding, setAdding] = useState(false);
   const add = async () => {
     const f = full.trim();
     if (!f || adding || a.characters.length >= 12) return;
     setAdding(true);
     try {
-      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyName: party.trim() || f, sheetUrl: "", player: "pending" }].slice(0, 12) }));
+      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyName: party.trim() || f, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
       setFull("");
       setParty("");
+      setSheetUrl("");
     } finally {
       setAdding(false);
     }
@@ -195,8 +203,21 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
           </label>
           <label>
             {t.partyLabel}
-            <input type="text" maxLength={100} value={party} onInput={(e) => setParty((e.target as HTMLInputElement).value)} />
+            <input type="text" maxLength={100} value={party} onInput={(e) => setParty((e.target as HTMLInputElement).value)} aria-describedby="wizard-party-hint" />
+            <span class="small" id="wizard-party-hint">
+              {t.partyHint}
+            </span>
           </label>
+          {WIZARD_SHEETS_LIVE && (
+            <label>
+              {t.sheetLabelBefore}
+              <a href="https://www.dndbeyond.com" target="_blank" rel="noopener noreferrer">
+                {t.sheetLabelLink}
+              </a>
+              {t.sheetLabelAfter}
+              <input type="url" value={sheetUrl} onInput={(e) => setSheetUrl((e.target as HTMLInputElement).value)} />
+            </label>
+          )}
           <button type="button" class="button secondary" disabled={adding || !full.trim()} onClick={() => void add()}>
             {t.add}
           </button>
