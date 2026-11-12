@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.invite import parse_invite
 from dmbot.campaigns.models import FALLBACK_NONE, RULESETS, CampaignError
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -308,3 +309,25 @@ async def finish_state(db: Database, session: Session, guild_id: int) -> dict[st
     return await _door(
         db, session, guild_id, "SELECT dmbot_web_wizard_finish_state(%s) AS found", ()
     )
+
+
+async def members(db: Database, session: Session, guild_id: int, q: str) -> list[dict[str, Any]]:
+    """This server's members the wizard's step 3 can offer as a character's player (#4204):
+    `[{userId, name, before}]`, those who played with this DM in this server's earlier campaigns
+    first (`before`), then by name; at most 50, matched by name when `q` is given. Only this one
+    server is read, and only members recorded now. Anyone not allowed to use the wizard here gets
+    "not found"."""
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_wizard_members(%s, %s, %s) AS r", (guild_id, TERMS_VERSION, q[:60])
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return [
+        {"userId": str(m["userId"]), "name": str(m["name"]), "before": bool(m["before"])}
+        for m in got
+    ]
