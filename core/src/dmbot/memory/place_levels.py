@@ -17,6 +17,8 @@ import re
 # Largest first: the order is what "bigger than" means.
 LEVELS = ("plane", "world", "region", "settlement", "district", "street", "building", "room")
 RANK = {level: i for i, level in enumerate(LEVELS)}
+# The sizes the campaign's setting may be (#4173 slice 2): a region or bigger
+SETTING_LEVELS = ("plane", "world", "region")
 # Who said how big a place is: DMbot read it from the words, or the DM set it (the DM wins).
 READ, BY_DM = "read", "dm"
 FROM = (READ, BY_DM)
