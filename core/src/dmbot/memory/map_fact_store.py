@@ -6,7 +6,7 @@ rules of a value, the readers' phrases and reading up the tree are in `map_facts
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from dmbot.memory import gate
@@ -43,13 +43,18 @@ _OPEN = " AND status <> 'rejected' AND to_session_at IS NULL"
 
 
 async def facts_for(
-    scope: Scope, place_ids: Sequence[str], viewer: gate.Viewer
+    scope: Scope,
+    place_ids: Sequence[str],
+    viewer: gate.Viewer,
+    shown: Collection[str] | None = None,
 ) -> dict[str, list[mf.Fact]]:
     """THE reader of `memory_map_facts` (the CI test `test_map_fact_readers` holds every other file
     to it): each place's open rows, in layer order. The DM sees them all. A player sees a row only
     when the place and its group are entries that player knows (the gate), the DM has confirmed it,
     and it is marked as known to the table: a value DMbot read from the DM's notes is the DM's
-    until the DM confirms it (the ux-critic on #4256; stricter than §8.3, on the safe side)."""
+    until the DM confirms it (the ux-critic on #4256; stricter than §8.3, on the safe side).
+    `shown`: the entries the caller's own list already shows this viewer (a card's names for a
+    player), used instead of asking the gate again; never wider, since the caller filtered it."""
     if not place_ids:
         return {}
     rows = await scope.select(
@@ -58,14 +63,21 @@ async def facts_for(
     )  # fmt: skip
     facts = [_fact(r) for r in rows]
     if not viewer.dm:
-        seen = await gate.visible_to(scope, viewer)
+        if shown is None:
+            seen = await gate.visible_to(scope, viewer)
+            known = {f.place_id for f in facts if seen.knows(gate.ENTRY, f.place_id)}
+            known |= {
+                f.value for f in facts if f.layer == mf.CONTROL and seen.knows(gate.ENTRY, f.value)
+            }
+        else:
+            known = set(shown)
         facts = [
             f
             for f in facts
             if f.table_knows
             and f.status == mf.CONFIRMED
-            and seen.knows(gate.ENTRY, f.place_id)
-            and (f.layer != mf.CONTROL or seen.knows(gate.ENTRY, f.value))
+            and f.place_id in known
+            and (f.layer != mf.CONTROL or f.value in known)
         ]
     out: dict[str, list[mf.Fact]] = {}
     for f in sorted(facts, key=lambda f: mf.LAYERS.index(f.layer)):

@@ -1260,36 +1260,51 @@ class MemoryStore:
     # ---- A place's land, climate and who rules it (#4256, MapBot layers slice 2) ----------------
 
     async def map_facts(
-        self, guild_id: int, campaign_id: str, place_ids: Sequence[str], viewer: gate.Viewer
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
     ) -> dict[str, list[mf.Fact]]:
         """Each place's open land, climate and ruler rows, as `viewer` may see them: the one reader
-        (`map_fact_store.facts_for`, the players' rule of design §8.3)."""
+        (`map_fact_store.facts_for`, the players' rule of design §8.3). `shown`: the entries the
+        caller's own list shows that viewer, if it has one."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await map_fact_store.facts_for(scope, place_ids, viewer)
+            return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
 
     async def map_facts_up(
-        self, guild_id: int, campaign_id: str, place_id: str, viewer: gate.Viewer
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
     ) -> dict[str, mf.Held]:
         """For one place, each layer's value: its own, or the nearest bigger place's, read up the
-        place tree and never stored (§6). Only places the viewer may see are read up through."""
+        place tree and never stored (§6). Only places the viewer may see are read up through
+        (`shown`, the caller's own list for that viewer, or else the gate)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
             nesting = await states.place_nesting(scope, onto)
-            seen = None if viewer.dm else await gate.visible_to(scope, viewer)
+            seen = None if viewer.dm or shown is not None else await gate.visible_to(scope, viewer)
             inside: dict[str, list[str]] = {}
             reach = {place_id}
             todo = [place_id]
             while todo:
                 inner = todo.pop()
                 for outer in sorted(nesting.outer(inner)):
-                    if seen is not None and not seen.knows(gate.ENTRY, outer):
+                    if not viewer.dm and (
+                        (shown is not None and outer not in shown)
+                        or (seen is not None and not seen.knows(gate.ENTRY, outer))
+                    ):
                         continue  # (a player is never told of a place they don't know)
                     inside.setdefault(inner, []).append(outer)
                     if outer not in reach:
                         reach.add(outer)
                         todo.append(outer)
             levels = nesting.levels
-            own = await map_fact_store.facts_for(scope, sorted(reach), viewer)
+            own = await map_fact_store.facts_for(scope, sorted(reach), viewer, shown)
         out: dict[str, mf.Held] = {}
         for layer in mf.LAYERS:
             held = mf.read_up(place_id, layer, own, inside, levels)

@@ -136,6 +136,9 @@ class Report:
     placeholders: int = 0
     # #3606: for each key tie that expects a feeling, (id, how the stored word sits against it)
     feelings: list[tuple[str, str]] = field(default_factory=list)
+    # #4256: a place's land, climate and ruler, per layer: found, wrong (another value), missed,
+    # and extra (a row the key does not list: a false note). Counts only.
+    map_facts: dict[str, Counter[str]] = field(default_factory=dict)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -168,6 +171,7 @@ class Graph:
     """The backup's entries and connections, found by name."""
 
     def __init__(self, tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
+        self.tables = tables  # (every table, for the checks that read one of their own)
         self.entities = {
             str(e["id"]): e
             for e in tables.get("entity", ())
@@ -488,7 +492,41 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     report.events_in_backup = sum(
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
+    _score_map_facts(report, graph, key, names)
     return report
+
+
+def _score_map_facts(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The key's `map_facts` (#4256): {place, layer, value}, the value a word of the layer's list
+    or, for control, the ruling group's key name. A backup row on that place and layer with that
+    value is found; one with another value is wrong; none is missed. A row the key doesn't list is
+    extra (a false note, design §13.15). Only the rows still open count."""
+    rows = [
+        r
+        for r in graph.tables.get("map_fact", [])
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    used: set[str] = set()
+    for fact in key.get("map_facts", []):
+        layer = str(fact["layer"])
+        tally = report.map_facts.setdefault(layer, Counter())
+        places = graph.ids(names.get(fact["place"], [fact["place"]]))
+        wanted = (
+            graph.ids(names.get(fact["value"], [fact["value"]]))
+            if layer == "control"
+            else {str(fact["value"])}
+        )
+        here = [r for r in rows if str(r["entity_id"]) in places and r["layer"] == layer]
+        hit = [
+            r for r in here if str(r["faction_id"] if layer == "control" else r["value"]) in wanted
+        ]
+        used.update(str(r["id"]) for r in here)
+        tally["found" if hit else "wrong" if here else "missed"] += 1
+    for r in rows:
+        if str(r["id"]) not in used:
+            report.map_facts.setdefault(str(r["layer"]), Counter())["extra"] += 1
 
 
 def _kind_for(entry_type: str) -> str:
@@ -523,6 +561,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "inferred_confirmed": len(report.inferred_confirmed),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
+        "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
     }
 
 
@@ -556,6 +595,11 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
     )
     lines.append(f"Player characters found: {report.players_found} of {report.players_expected}")
+    for layer, c in sorted(report.map_facts.items()):  # (#4256: land, climate and ruler)
+        lines.append(
+            f"Place {layer}: found {c['found']}, wrong {c['wrong']}, missed {c['missed']}, "
+            f"extra {c['extra']}"
+        )
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))
