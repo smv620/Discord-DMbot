@@ -827,6 +827,56 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
             (stats.paragraph_lines_before, stats.paragraph_lines_after), ("0/1/0/0", "0/0/1/0")
         )
 
+    async def test_a_first_answer_cut_and_retried_once_still_gets_the_second_look(self) -> None:
+        # (#3545: the retry happens whenever the first answer runs long, which differs from run to
+        # run; skipping the second look then cost about a third of the sample lore's ties)
+        first = (
+            'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
+            '- Mira | person | quote: "Mira, called the Fox"\n'
+            '- Greyfen Abbey | place | quote: "Greyfen Abbey"\n\n'
+            "RELATIONSHIPS\n- Brother Aldric — leads — Greyfen Abbey"
+            ' | quote: "abbot of Greyfen Abbey"\n'
+        )
+        more = (
+            "RELATIONSHIPS\n- Mira — is related to — Brother Aldric | quote: "
+            '"Mira, called the Fox, is the niece of Brother Aldric"\n'
+        )
+        asked: list[str] = []
+        queue = [Reply("NAMES\n- Brother Ald", True), Reply(first, False), Reply(more, False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                asked.append(system)
+                return queue.pop(0)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        done = await read(fake, text=LONG)
+        stats = done.stats
+        self.assertEqual((stats.read_calls, stats.room_retries, stats.continued), (2, 1, 0))
+        self.assertEqual(len(asked), 3)
+        self.assertIn("SECOND LOOK", asked[2])  # the third call is the paragraph's re-ask
+        self.assertEqual(
+            (stats.second_skipped, stats.paragraphs_asked, stats.second_calls), ("", 1, 1)
+        )
+        self.assertEqual(stats.extra_links, 1)
+        self.assertFalse(done.cut)
+
+    async def test_a_list_that_needed_continuing_skips_the_second_look_and_says_why(self) -> None:
+        text = LONG + " " + "x" * 400_000  # a room that starts at the cap: no room retry
+        queue = [Reply(LIST + "\n- Mi", True), Reply(LIST, False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                return queue.pop(0)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        done = await read(fake, text=text)
+        stats = done.stats
+        self.assertEqual((stats.continued, stats.room_retries), (1, 0))
+        self.assertEqual((stats.second_skipped, stats.paragraphs_asked), ("continued", 0))
+
     async def test_a_short_text_or_no_lonely_name_asks_nothing_more(self) -> None:
         calls = 0
 
@@ -1245,10 +1295,13 @@ class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
             return Reply(json.dumps({"names": [], "connections": []}), False)
 
         fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
-        done = await read(fake, text=LONG)
+        # (a text whose room starts at the cap, so the second call is a continuation, not the one
+        # retry with more room, which still gets the second look since #3545)
+        done = await read(fake, text=LONG + " " + "x" * 400_000)
         self.assertEqual(
             (asked, done.stats.lonely), (2, 0)
         )  # (the first call and its continuation)
+        self.assertEqual(done.stats.second_skipped, "continued")
 
     async def test_a_second_look_that_runs_out_of_time_leaves_the_list_as_it_was(self) -> None:
         queue = [

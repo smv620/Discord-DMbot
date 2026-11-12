@@ -608,6 +608,10 @@ class Stats:
     lonely: int = 0  # names pass 1 gave no relationship line (#2757)
     paragraphs_asked: int = 0  # paragraphs the second look asked about (#2854)
     second_calls: int = 0  # the second look's calls that came back
+    room_retries: int = 0  # pass 1 asked again with twice the room (its first answer was cut)
+    # Why the second look did not run, for the log: "" (it ran, or found no gaps), "short",
+    # "cut", "continued" or "time" (#3545)
+    second_skipped: str = ""
     pass1_links: int = 0  # relationship lines pass 1 gave on its own (before the second look)
     # Paragraphs with 0 / 1 / 2 / 3 or more relationship lines of their names, before and after the
     # second look ("12/5/3/9"): counts only (#2854).
@@ -682,6 +686,7 @@ async def read_list(
     try:
         if reply.cut and room < cap:  # the room was a guess: once more with twice as much
             stats.read_cut += 1
+            stats.room_retries += 1
             room = min(room * 2, cap)
             if time.monotonic() - started < PASS1_BUDGET_S:
                 if tick is not None:
@@ -713,12 +718,23 @@ async def read_list(
     stats.pass1_links = len(found.links)
     stats.left_out = len(found.left_out)
     cut = bool(reply.cut)
-    if (
-        not cut
-        and len(text) >= SECOND_LOOK_MIN_CHARS
-        and stats.read_calls <= 1  # (a text that needed retries or continuations has spent enough)
-        and time.monotonic() - started < PASS1_BUDGET_S
-    ):
+    # The second look runs after the one retry with more room too (Supervisor, #3545): that retry
+    # happens whenever the first answer runs a little long, which differs from run to run on the
+    # same text, and skipping the paragraph re-asks then was a quiet "nothing found" for them.
+    # Only a list that needed continuation rounds (a text too long for one answer) has spent
+    # enough. The reason it was skipped is logged.
+    stats.second_skipped = (
+        "cut"
+        if cut
+        else "short"
+        if len(text) < SECOND_LOOK_MIN_CHARS
+        else "continued"
+        if stats.continued
+        else "time"
+        if time.monotonic() - started >= PASS1_BUDGET_S
+        else ""
+    )
+    if not stats.second_skipped:
         await _second_look(
             ai, text, own, gate, stats, found, look, PASS1_BUDGET_S - (time.monotonic() - started)
         )
@@ -1307,13 +1323,15 @@ async def _read_lore(
         # of people with no name would be a new issue, holding the rest for the DM.
         log.info("Lore read: %d unnamed line(s) past the per-read limit, not made", past)
     log.info(
-        "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
-        "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
-        "paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines %s before, "
+        "Lore read: pass 1 %d call(s), %d cut, %d room retry, %d continued, %d name line(s), %d "
+        "relationship line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second "
+        "look%s at %d paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines "
+        "%s before, "
         "%s after; pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s); %d unnamed "
         "line(s) listed, %d kept%s",
-        stats.read_calls, stats.read_cut, stats.continued, stats.names_listed,
+        stats.read_calls, stats.read_cut, stats.room_retries, stats.continued, stats.names_listed,
         stats.links_listed, stats.pass1_links, stats.left_out, stats.lonely,
+        f" (skipped: {stats.second_skipped})" if stats.second_skipped else "",
         stats.paragraphs_asked, stats.second_calls, stats.extra_links,
         stats.paragraph_lines_before or "-", stats.paragraph_lines_after or "-",
         stats.shape_calls, stats.shape_cut, stats.names_kept, stats.links_kept,
