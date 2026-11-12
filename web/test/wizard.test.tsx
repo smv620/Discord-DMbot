@@ -393,6 +393,62 @@ describe("the wizard", () => {
     expect(screen.getByRole("button", { name: w.finish.retry })).toBeTruthy();
   });
 
+  describe("the finish page's motion and how the DM is told (#4213)", () => {
+    async function running() {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const api = await start();
+      fireEvent.click(screen.getByRole("button", { name: w.skip }));
+      fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "The Frostmaiden" } });
+      fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+      await waitFor(() => expect(api.calls.some((c) => c.startsWith("finish:"))).toBe(true));
+      return api;
+    }
+
+    it("says from the start how the DM is told, and what to do if private messages are closed", async () => {
+      await running();
+      expect(await screen.findByText(w.finish.told)).toBeTruthy();
+      expect(screen.getByText(w.finish.toldClosed)).toBeTruthy();
+      expect(w.finish.told).toContain("private message in Discord");
+      expect(w.finish.told).toContain("No email is sent.");
+    });
+
+    it("the clock moves every half second", async () => {
+      await running();
+      await screen.findByText(w.finish.told);
+      const before = screen.getByText(/^Running for/).textContent;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(screen.getByText(/^Running for/).textContent).not.toBe(before);
+      expect(screen.getByText(/Last progress/)).toBeTruthy();
+    });
+
+    it("looks far less often while the tab is hidden", async () => {
+      const api = await running();
+      await screen.findByText(w.finish.told);
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      try {
+        await vi.advanceTimersByTimeAsync(2000); // let a look in flight settle
+        const seen = api.calls.filter((c) => c.startsWith("finishState")).length;
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(api.calls.filter((c) => c.startsWith("finishState")).length - seen).toBeLessThanOrEqual(1);
+      } finally {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+      }
+    });
+
+    it("a person who asked for less motion gets words, not a moving bar", async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+      try {
+        await running();
+        await screen.findByText(w.finish.told);
+        expect(document.querySelector("progress[aria-label='Working…']")).toBeNull();
+        expect(screen.getAllByText(w.finish.working).length).toBeGreaterThan(0);
+      } finally {
+        window.matchMedia = real;
+      }
+    });
+  });
+
   it("throwing the setup away asks once, then starts fresh", async () => {
     const api = await start();
     fireEvent.click(screen.getByRole("button", { name: w.discard }));
