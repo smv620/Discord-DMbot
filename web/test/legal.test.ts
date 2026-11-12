@@ -12,7 +12,8 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, pcIconsLine, sessionNotesPrivacy, storyStatesLine } from "../src/content/privacy-channels";
+import { REMEMBERED_PLAYERS_LIVE } from "../src/content/remembered-players-switch";
+import { initiativeLine, pcIconsLine, rememberedPlayersLine, sessionNotesPrivacy, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -127,6 +128,11 @@ describe("the facts #433 asks for", () => {
     // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
+    // The remembered-players line is on the page from the deploy that starts the list, before its page opens (#4226); only the
+    // last sentence, about that page, waits for its switch.
+    expect(privacy()).toContain(rememberedPlayersLine.lead);
+    expect(privacy()).toContain("you are removed from every DM's list");
+    expect(privacy().includes("on the People you play with page")).toBe(REMEMBERED_PLAYERS_LIVE);
     expect(privacy().includes(pcIconsLine.lead)).toBe(pcIconsLine.live); // (player pictures: only while the icons are live, #3622)
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
