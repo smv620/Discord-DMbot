@@ -68,9 +68,9 @@ class OnTheCard(NamesTest):
 
     async def test_the_button_is_for_dms_only(self) -> None:
         _text, view = await self.card()
-        self.assertIn(lc.BUTTON, self.labels(view))
+        self.assertIn(lc.LANGUAGES_BUTTON, self.labels(view))
         _text, view = await self.card(MANAGER)
-        self.assertNotIn(lc.BUTTON, self.labels(view))
+        self.assertNotIn(lc.LANGUAGES_BUTTON, self.labels(view))
 
     async def test_the_dm_adds_one_and_sees_it_on_the_card(self) -> None:
         it = await self.add("Dwarvish")

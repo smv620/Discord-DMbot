@@ -1109,7 +1109,12 @@ class NameCard(_Menu):
             for row in (3, 2):  # (the first row with room, as the players' line below)
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
                     self.add_item(
-                        _Button(self._languages, label=languages_card.BUTTON, style=grey, row=row)
+                        _Button(
+                            self._languages,
+                            label=languages_card.LANGUAGES_BUTTON,
+                            style=grey,
+                            row=row,
+                        )
                     )
                     break
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead

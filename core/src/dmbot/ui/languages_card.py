@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-BUTTON = "🗣️ Languages"
+LANGUAGES_BUTTON = "🗣️ Languages"
 ADD_BUTTON = "➕ Add a language"
 CHECKED_BUTTON = "✅ These are right"
 BACK_BUTTON = "↩ Back"
