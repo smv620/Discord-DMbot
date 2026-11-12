@@ -2788,6 +2788,70 @@ class MemoryStore:
             await w.delete(RULE_LINKS, link_id)
             return Written(None, w.batch)
 
+    async def name_person(self, guild_id: int, campaign_id: str, user_id: int, name: str) -> bool:
+        """Give a person entry that is still only DMbot's `Player 1234` placeholder (or its "left
+        the server" wording) a real name (#4225): the member's Discord name, read by the bot with
+        no privileged intent. DMbot's own act (the scan's source, logged, one Undo), never a name
+        the DM chose: an entry the DM renamed or touched is left alone. The placeholder's own
+        listened-for name changes with it, so nothing keeps answering to "Player 1234". Returns
+        whether a name was changed."""
+        name = clean_text(name)
+        key = lookup_key(name)
+        async with self._write(guild_id, campaign_id, "scan") as w:
+            found = await w.select(
+                ENTITIES,
+                " AND type = 'person' AND played_by = %s AND status IN ('proposed', 'confirmed')",
+                [user_id],
+            )
+            if not found:
+                return False
+            row = found[0]
+            if row["name"] == name or row["name"] not in (
+                _placeholder_name(user_id),
+                left_name(user_id),
+            ):
+                return False
+            old_key = lookup_key(row["name"])
+            own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [row["id"], old_key])
+            await w.update(ENTITIES, row["id"], {"name": name})
+            if own:
+                await w.update(
+                    ALIASES,
+                    own[0]["id"],
+                    {"text": name, "key": key, "sound_codes": list(sound_codes(name))},
+                )
+            else:
+                await w.insert(
+                    ALIASES, _new_alias(w, str(row["id"]), name, "full", CONFIRMED, False, None)
+                )
+        return True
+
+    async def placeholder_people(self, guild_id: int, limit: int) -> list[tuple[int, str]]:
+        """People of this server still named `Player 1234`, as (Discord id, campaign), the first
+        `limit` different people: the ones the name sweep looks up (#4225). A player without
+        Discord (a negative number) has no name to find."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT ON (e.played_by) e.played_by, e.campaign_id FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.type = 'person' AND e.played_by > 0"
+                " AND e.status IN ('proposed', 'confirmed')"
+                " AND e.name = 'Player ' || right(e.played_by::text, 4)"
+                " ORDER BY e.played_by, e.campaign_id LIMIT %s",
+                (guild_id, limit),
+            )
+            return [(int(r["played_by"]), str(r["campaign_id"])) for r in await cur.fetchall()]
+
+    async def placeholder_campaigns(self, guild_id: int, user_id: int) -> list[str]:
+        """The campaigns of this server where this person is still a placeholder."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id FROM memory_entities WHERE guild_id = %s AND type = 'person'"
+                " AND played_by = %s AND status IN ('proposed', 'confirmed')"
+                " AND name IN ('Player ' || right(played_by::text, 4), %s) ORDER BY campaign_id",
+                (guild_id, user_id, left_name(user_id)),
+            )
+            return [str(r["campaign_id"]) for r in await cur.fetchall()]
+
     async def rename_entity(
         self,
         guild_id: int,
@@ -6970,6 +7034,12 @@ def _placeholder_name(user_id: int) -> str:
 placeholder_name = _placeholder_name  # for a names download (#1559)
 
 
+def left_name(user_id: int) -> str:
+    """What a person who has left the server is called until they come back (#4225): worded so it
+    can't be taken for a name, with the last four digits to tell two of them apart."""
+    return f"Someone who left the server (\u2026{str(abs(user_id))[-4:]})"
+
+
 async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     """A person entry that is only the `Player 1234` placeholder: still that name, no other
     names, nothing written on it (description, role), nothing logged for it by anyone but the
@@ -6977,7 +7047,10 @@ async def _unused_placeholder(w: Changes, person_id: str, user_id: int) -> bool:
     can't fail halfway), plus the rows that would cascade without a log (a character sheet,
     heard counts), which keep it. An entry the DM touched stays."""
     row = await w.get(ENTITIES, person_id)
-    if row is None or row["type"] != PERSON or row["name"] != _placeholder_name(user_id):
+    # (The name is not compared: DMbot gives a placeholder the member's Discord name itself, #4225,
+    # logged as the scan's own work; a name the DM wrote is logged as theirs, which the log check
+    # below refuses, and any other name of the entry blocks it too.)
+    if row is None or row["type"] != PERSON:
         return False
     if row["description"] or row["role"] is not None:
         return False  # the DM wrote on it (needs_look is DMbot's own mark, not the DM's)
