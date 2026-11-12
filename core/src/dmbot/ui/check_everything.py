@@ -28,7 +28,7 @@ WALK_ID = "dmbot:walk:"
 
 class WalkButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
-    template=r"dmbot:walk:(?P<guild>[0-9]+):(?P<campaign>[0-9a-f]{32})",
+    template=r"dmbot:walk:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32})",
 ):
     """On the after-session message when two or more kinds of checks wait. The server is in the
     id because a private chat has none; the label's count is only for show (the walk reads what
