@@ -380,6 +380,20 @@ describe("the wizard", () => {
     expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
+  it("while the lore is read the finish page shows the pass, how far through it, and what it has found, as counts only (#4213)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={`${G}.counts`} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(/Found so far/); i++) await vi.advanceTimersByTimeAsync(2100);
+    const line = screen.getByText(/Found so far/);
+    expect(line.textContent).toBe(`${w.finish.passes["finding_names"]} · ${w.finish.passPart(2, 5)}. ${w.finish.foundSoFar(12, 1)}`);
+    expect(w.finish.foundSoFar(1, 1)).toBe("Found so far: 1 name, 1 connection");
+  });
+
   it("a finish that fails says what happened and offers another try", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockWizard();

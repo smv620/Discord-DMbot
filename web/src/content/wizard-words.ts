@@ -240,6 +240,17 @@ export const wizardWords = {
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
+    // The lore reader's pass and what it has found so far (#4213): a stage word, a count and two numbers, never a word of a document.
+    passes: {
+      first_read: "Reading the lore",
+      reading: "Reading the lore",
+      finding_names: "Finding names",
+      finding_links: "Finding how they connect",
+      sorting: "Working out what the players know",
+    } as Record<string, string>,
+    passPart: (done: number, total: number): string => `part ${done} of ${total}`,
+    foundSoFar: (names: number, links: number): string =>
+      `Found so far: ${names} ${names === 1 ? "name" : "names"}, ${links} ${links === 1 ? "connection" : "connections"}`,
     // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.
     told: "You can leave this page. When the campaign is ready, DMbot sends you a private message in Discord with what to check, and this page will say Ready. No email is sent.",
     toldClosed: "If your Discord private messages are closed, look in your campaign's DM Bot channel.",

@@ -248,7 +248,7 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
           misses.current += 1;
           if (misses.current >= 5) {
             const now = Math.floor(Date.now() / 1000);
-            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
+            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
           } else setTick((n) => n + 1);
         },
       );
@@ -302,6 +302,13 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
         )}
         {!run && <p class="muted" role="status">{w.loading}</p>}
         {run && !failed && <FinishClock run={run} />}
+        {run && !failed && t.passes[run.pass] !== undefined && (
+          <p class="small" role="status">
+            {t.passes[run.pass]}
+            {run.passTotal > 0 ? ` · ${t.passPart(Math.min(run.passDone, run.passTotal), run.passTotal)}` : ""}
+            {run.foundNames + run.foundLinks > 0 ? `. ${t.foundSoFar(run.foundNames, run.foundLinks)}` : ""}
+          </p>
+        )}
         {!failed && (
           <>
             <p class="small">{t.told}</p>
