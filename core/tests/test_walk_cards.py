@@ -249,7 +249,7 @@ class TheDeedsPart(unittest.IsolatedAsyncioTestCase):
         assert recorded.undo is not None
         self.assertEqual(cast(Any, recorded.undo).item.custom_id, f"dmbot:deedundo:{GUILD}:{CID}:7")
         self.assertEqual((declined.text, declined.undo), ("Okay, not this one.", None))
-        proposals.record.assert_awaited_once()
+        proposals.record.assert_awaited_once_with(GUILD, CID, "d1", opted_in={1}, source="dm")
         proposals.dismiss.assert_awaited_once()
 
     async def test_a_deed_that_was_already_answered_says_so_in_the_cards_words(self) -> None:
@@ -273,3 +273,29 @@ class TheDeedsPart(unittest.IsolatedAsyncioTestCase):
             part = deed_card.walk_kind(bot, GUILD, CID)
             self.assertEqual(len(await part.waiting()), 1)
         proposals.waiting.assert_awaited_once_with(GUILD, CID, opted_in={1})
+
+    async def test_the_count_reads_without_purging_and_a_missing_memory_counts_zero(self) -> None:
+        bot, proposals = self.bot()
+        proposals.count_waiting = AsyncMock(return_value=2)
+        proposals.waiting = AsyncMock()
+        with patch("dmbot.ui.deed_card.DeedProposals", return_value=proposals):
+            self.assertEqual(await deed_card.count_deeds(bot, GUILD, CID), 2)
+        proposals.count_waiting.assert_awaited_once_with(GUILD, CID, opted_in={1})
+        proposals.waiting.assert_not_awaited()
+        self.assertEqual(await deed_card.count_deeds(SimpleNamespace(memory=None), GUILD, CID), 0)
+
+    async def test_the_persistent_ask_carries_the_count_and_a_missing_memory_is_said(self) -> None:
+        self.assertEqual(deed_card.ask_for(GUILD, CID, 5).count, 5)
+        told: list[str] = []
+
+        async def tell(interaction: object, text: str, **_: object) -> None:
+            told.append(text)
+
+        with (
+            patch("dmbot.ui.deed_card._tell", tell),
+            patch("dmbot.ui.deed_card._bot", return_value=SimpleNamespace(memory=None)),
+        ):
+            await deed_card.start_walk_part(
+                cast(Any, object()), GUILD, CID, Walk(CID, GUILD, 1, ())
+            )
+        self.assertEqual(told, [deed_card.NOT_AVAILABLE])

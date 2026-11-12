@@ -369,6 +369,9 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
         bot = SimpleNamespace(
             count_waiting=AsyncMock(return_value=found),
             memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
+            settings=SimpleNamespace(story_deeds_on=True),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object())),
+            plan_allows=AsyncMock(return_value=True),
         )
         with (
             patch("dmbot.ui.check_everything._bot", return_value=bot),
@@ -385,9 +388,28 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
             await ce.run_part(cast(Any, object()), walk)
         start.assert_awaited_once()
 
+    def deeds_bot(self, *, on: bool = True, plan: bool = True, campaign: bool = True) -> Any:
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_deeds_on=on),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object() if campaign else None)),
+            plan_allows=AsyncMock(return_value=plan),
+        )
+
     async def test_a_deeds_count_that_cannot_be_read_is_zero(self) -> None:
         with patch("dmbot.ui.deed_card.count_deeds", AsyncMock(side_effect=RuntimeError("down"))):
-            self.assertEqual(await ce._count_deeds(SimpleNamespace(), GUILD, CID), 0)
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 0)
+
+    async def test_deeds_are_counted_only_where_they_are_asked(self) -> None:
+        counted = AsyncMock(return_value=3)
+        with patch("dmbot.ui.deed_card.count_deeds", counted):
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 3)
+            for bot in (
+                self.deeds_bot(on=False),
+                self.deeds_bot(plan=False),
+                self.deeds_bot(campaign=False),
+            ):
+                self.assertEqual(await ce._count_deeds(bot, GUILD, CID), 0)
+        counted.assert_awaited_once()  # (the three refusals never counted)
 
     async def test_the_deeds_part_opens_the_deeds_cards(self) -> None:
         walk = Walk(CID, GUILD, 1, (DEEDS,))
