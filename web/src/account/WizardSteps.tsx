@@ -277,7 +277,7 @@ export function PlayersStep({ api, guild, draft, onPatch }: StepProps) {
 }
 
 /** Steps 4, 5, 7 and 8 (and the ruleset of 6): documents for one slot, checked only (never read for names yet). */
-export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: StepProps & { slot: WizardSlot; heading: string; lead: string }) {
+export function DocsStep({ api, guild, draft, onDraft, onPatch, slot, heading, lead }: StepProps & { slot: WizardSlot; heading: string; lead: string }) {
   const t = w.docs;
   const mine = draft.documents.filter((d) => d.slot === slot);
   const [link, setLink] = useState("");
@@ -377,6 +377,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           </button>
         )}
       </div>
+      {slot === "homebrew" && <HomebrewLinks {...{ draft, onPatch, ticked, busy }} />}
       {slot === "house" && (
         <div class="stack">
           <label>
@@ -401,13 +402,14 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           </button>
         </div>
       )}
-      {WIZARD_LINKS_LIVE && (
+      {WIZARD_LINKS_LIVE && slot !== "homebrew" && (
       <div class="row">
         <label>
           {t.linkLabel}
           <input type="url" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} />
         </label>
-        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
+        <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad);
+            if (url.length > LINK_MAX) return setProblem(t.linkTooLong); setLink(""); void refresh(api.docAdd(guild, slot, { name: url.slice(0, 200), source: "link", link: url })); }}>
           {t.addLink}
         </button>
       </div>
@@ -522,3 +524,53 @@ export function LaterStep({ heading, later }: { heading: string; later: string }
     </section>
   );
 }
+
+/** Step 8's published homebrew pages (#4211): addresses on dndbeyond.com only, kept in the draft as a short list (the server checks the
+ * address again where the page is read). Each needs the same right-to-use box as a file. */
+function HomebrewLinks({ draft, onPatch, ticked, busy }: { draft: WizardDraft; onPatch: StepProps["onPatch"]; ticked: boolean; busy: boolean }) {
+  const t = w.docs;
+  const links = draft.answers.homebrew_links;
+  const [typed, setTyped] = useState("");
+  const [problem, setProblem] = useState("");
+  function add(): void {
+    const address = typed.trim();
+    let host = "";
+    try {
+      const url = new URL(address);
+      host = url.protocol === "https:" ? url.hostname.toLowerCase() : "";
+    } catch {
+      host = "";
+    }
+    if (host !== "dndbeyond.com" && !host.endsWith(".dndbeyond.com")) return setProblem(t.homebrewLinkBad);
+    if (links.length >= MAX_HOMEBREW_LINKS) return setProblem(t.homebrewLinkMany);
+    setProblem("");
+    setTyped("");
+    if (!links.includes(address)) void onPatch((latest) => ({ homebrew_links: [...latest.homebrew_links, address] }));
+  }
+  return (
+    <div class="stack">
+      {links.length > 0 && (
+        <ul>
+          {links.map((l) => (
+            <li key={l}>
+              {l}{" "}
+              <button type="button" class="link" onClick={() => void onPatch((latest) => ({ homebrew_links: latest.homebrew_links.filter((x) => x !== l) }))}>
+                {t.remove}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <label>
+        {t.homebrewLinkLabel}
+        <input type="url" value={typed} disabled={!ticked} onInput={(e) => setTyped((e.target as HTMLInputElement).value)} />
+      </label>
+      <button type="button" class="button secondary" disabled={busy || !ticked || !typed.trim()} onClick={add}>
+        {t.homebrewLinkAdd}
+      </button>
+      {problem && <p role="alert">{problem}</p>}
+    </div>
+  );
+}
+const MAX_HOMEBREW_LINKS = 20; // the server's own limit
+const LINK_MAX = 2000; // the server's limit for one address (#4206)

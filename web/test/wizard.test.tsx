@@ -540,6 +540,22 @@ describe("the wizard", () => {
     expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
   });
 
+  it("a link longer than the server keeps is refused at the step, and homebrew has its own dndbeyond.com box instead (#4206)", async () => {
+    flags.links = true;
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.input(screen.getByLabelText(w.docs.linkLabel), { target: { value: `https://example.com/${"a".repeat(2000)}` } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.linkTooLong);
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+    for (let to = 5; to <= 8; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull(); // (step 8: the dndbeyond.com box only)
+    expect(screen.getByLabelText(w.docs.homebrewLinkLabel)).toBeTruthy();
+  });
+
   it("one failed look at the finish is tried again, and the wait goes on", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockWizard();
@@ -636,6 +652,43 @@ describe("the wizard", () => {
     expect(await screen.findByText(w.docs.typedName)).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(1);
     expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).value).toBe(""); // (the box empties once it is added)
+  });
+
+  it("step 8 takes dndbeyond.com links only, after the right-to-use box, and keeps them in the draft (#4211)", async () => {
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 8; to++) await next(to);
+    const box = () => screen.getByLabelText(w.docs.homebrewLinkLabel) as HTMLInputElement;
+    expect(box().disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect(box().disabled).toBe(false));
+    fireEvent.input(box(), { target: { value: "https://example.com/homebrew/1" } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(w.docs.homebrewLinkBad)).toBeTruthy();
+    fireEvent.input(box(), { target: { value: "http://www.dndbeyond.com/homebrew/1" } }); // (not https)
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(w.docs.homebrewLinkBad)).toBeTruthy();
+    const good = "https://www.dndbeyond.com/homebrew/creations/1234-a-test";
+    fireEvent.input(box(), { target: { value: good } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.homebrewLinkAdd }));
+    expect(await screen.findByText(good)).toBeTruthy();
+    await waitFor(async () => expect((await api.get(G))?.answers.homebrew_links).toEqual([good]));
+    fireEvent.click(screen.getByRole("button", { name: w.docs.remove }));
+    await waitFor(async () => expect((await api.get(G))?.answers.homebrew_links).toEqual([]));
+  });
+
+  it("the finish page says, in plain counts, what could not be used when the campaign was made anyway (#4211)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={`${G}.notes`} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByText(w.finish.notes["house_unreadable"]!(2))).toBeTruthy();
+    expect(screen.getByText(w.finish.notes["homebrew_link_failed"]!(1))).toBeTruthy();
+    expect(screen.queryByText(/homebrew_/)).toBeNull(); // (words and counts, never the raw note)
   });
 
   it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {

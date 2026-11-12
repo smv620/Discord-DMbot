@@ -20,6 +20,29 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.pages, 3)  # (about 500 words a page)
         self.assertEqual(got.text, text)
 
+    async def test_a_link_is_kept_as_the_address_and_nothing_is_fetched(self) -> None:
+        got = wizard_check.check_link("https://example.com/notes?page=2")
+        assert got is not None
+        self.assertEqual(
+            (got.text, got.pages, got.words, got.status),
+            ("https://example.com/notes?page=2", 0, 0, "ok"),
+        )
+
+    async def test_only_a_plain_https_address_of_sensible_length_is_a_link(self) -> None:
+        for bad in (
+            "http://example.com/x",
+            "example.com",
+            "https://",
+            "https://a b",
+            " https://x.test/y",
+            "https://x.test/y\n",
+            "ftp://x.test/y",
+            "x" * 5,
+        ):
+            self.assertIsNone(wizard_check.check_link(bad), bad)
+        self.assertIsNone(wizard_check.check_link("https://example.com/" + "a" * 2000))
+        self.assertIsNotNone(wizard_check.check_link("https://example.com/" + "a" * (2000 - 20)))
+
     async def test_a_pdf_with_picture_pages_says_how_many(self) -> None:
         from tests.test_adventure import pdf
 

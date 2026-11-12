@@ -47,7 +47,7 @@ def _checked(rows: object) -> list[Row]:
             and raw["choice"] in STORED_CHOICES
             and (raw["custom_ref"] is None or _is_hex(raw["custom_ref"]))
             and ((raw["choice"] == "custom") == (raw["custom_ref"] is not None))
-            and _int(raw["set_by"], 1, INT64_MAX)
+            and _int(raw["set_by"], 0, INT64_MAX)
             and _int(raw["updated_at"], 1, INT64_MAX)
         ):
             raise CampaignError(DAMAGED)
