@@ -769,6 +769,14 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A character's first name the lore uses alone ("Cerric" for the wizard's Cerric Vanya'elen) is
+    # their short name before the read looks (#3880), as the session scan does: run only after the
+    # read, the read had already made "Cerric" a name of its own, the rule could no longer give the
+    # word to the character, and the lore's ties hung on the copy (#4224). It runs after too, for
+    # the people the read itself makes. (A stand-in bot in tests may not have it.)
+    short = getattr(bot, "add_short_names", None)
+    if short is not None:
+        await short(guild, campaign.id, [upload.text])
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -908,9 +916,8 @@ async def _read_background(
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     await _record_sources(memory, campaign, stored, upload, label)
-    # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
-    # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
-    short = getattr(bot, "add_short_names", None)
+    # ... and again for the people this read made ("Tran" for a new Tran Vosk), whatever the AI
+    # listed (#3880).
     if short is not None:
         await short(guild, campaign.id, [upload.text])
     await save_place_spellings(
