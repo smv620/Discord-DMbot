@@ -11002,15 +11002,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
-    async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
+    async def add_short_names(
+        self, gid: int, cid: str, texts: Sequence[str], *, before_read: bool = False
+    ) -> None:
         """Add each character's first name as their short name where the rule allows it
         (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
-        the story extractor. `texts` must hold only what may be read (people who agree). Never
+        the story extractor; `before_read`, before a lore read too, for the DM's confirmed player
+        characters only (#4224). `texts` must hold only what may be read (people who agree). Never
         stops what called it; counts only."""
         if self.memory is None:
             return
         try:
-            written = await self.memory.add_short_names(gid, cid, texts)
+            written = await self.memory.add_short_names(
+                gid, cid, texts, players_before_read=before_read
+            )
         except Exception as exc:
             log.warning("Short names: couldn't add them (%s)", type(exc).__name__)
             return
@@ -14168,10 +14173,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
         try:
-            return await wizard_finish.run_round(self, guild_id)
+            taken = await wizard_finish.run_round(self, guild_id)
         except Exception as exc:
             log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
             return 0
+        try:  # a sheet link that waited for a player (#4205): one a round, after the run
+            await wizard_finish.run_sheet_waits(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard sheets: a server's round failed (%s)", type(exc).__name__)
+        return taken
 
     async def _wizard_finish_loop(self) -> None:
         """Every few seconds: answer the website's start-up wizard finish runs (#3955;
