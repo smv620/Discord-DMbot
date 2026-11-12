@@ -8,10 +8,12 @@ A few people a round, slowly; someone who has left the server is called "Someone
 server (…1234)" so the placeholder cannot be mistaken for a name. Counts only in the log, never a
 name or an id.
 
-The names of people who agreed to be recorded also go in `member_directory`
+Consent: the names of people who agreed to be recorded also go in `member_directory`
 (`MemberDirectory.remember` still refuses anyone who did not agree, and purges them when they stop,
-which this does not change); a name for someone who did not agree lives only in the campaign's own
-entry, which the DM already sees.
+which this does not change). A name for someone who has not answered lives only in the campaign's
+own entry, which the DM already sees; someone who said no or stopped (a refusal on record) is never
+named here, and when a person stops, an entry that stays gets the placeholder back
+(`MemoryStore.forget_speaker`).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ log = logging.getLogger(__name__)
 
 PER_ROUND = 5  # people looked up in a server each round (a round is a minute)
 RETRY_AFTER_S = 3600.0  # a person we could not look up is left alone this long
-CANDIDATES = 50  # how many placeholders to read to find PER_ROUND not skipped
+LEFT_RETRY_S = 24 * 3600.0  # someone not found is looked for again after a day (a wrong "left")
 
 
 def shown_name(display_name: str, username: str) -> str:
@@ -50,8 +52,10 @@ async def run(
     if memory is None or guild is None:
         return 0
     stamp = time.monotonic() if now is None else now
-    found = await memory.placeholder_people(guild_id, CANDIDATES)
-    todo = [user for user, _ in found if skip.get((guild_id, user), 0.0) <= stamp][:PER_ROUND]
+    for key in [k for k, until in skip.items() if until <= stamp]:
+        del skip[key]  # (what is still waiting stays in; the rest is forgotten)
+    waiting = [user for (g, user) in skip if g == guild_id]
+    todo = await memory.placeholder_people(guild_id, PER_ROUND, waiting)
     named = left = failed = 0
     for user_id in todo:
         if getattr(bot, "_closing", False):
@@ -65,6 +69,7 @@ async def run(
             name = shown_name(member.display_name, member.name)
         except discord.NotFound:
             name = left_name(user_id)  # not in the server (any more)
+            skip[(guild_id, user_id)] = stamp + LEFT_RETRY_S
             left += 1
         except Exception as exc:  # Discord could not say: ask again later, never stop the rest
             failed += 1
@@ -90,6 +95,9 @@ async def run(
                 log.info("A member's directory row failed (%s)", type(exc).__name__)
     log.info(
         "Member names: %d looked up, %d entries named, %d left the server, %d failed",
-        len(todo), named, left, failed,
-    )  # fmt: skip
+        len(todo),
+        named,
+        left,
+        failed,
+    )
     return len(todo)

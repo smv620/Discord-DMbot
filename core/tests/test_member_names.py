@@ -65,6 +65,10 @@ class Names(MemoryTest):
         found = await self.memory.entities(GUILD_A, campaign or self.c)
         return next(e for e in found if e.type == "person" and e.played_by == user)
 
+    async def sql(self, sql: str, *args: Any) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(sql, args)
+
     async def aliases(self, entity: str) -> list[str]:
         return sorted(a.text for a in await self.memory.aliases(GUILD_A, self.c, entity_id=entity))
 
@@ -119,13 +123,127 @@ class TheStore(Names):
 
     async def test_only_placeholders_are_found(self) -> None:
         await self.play(ALICE, "Cerric")
-        found = await self.memory.placeholder_people(GUILD_A, 10)
-        self.assertEqual([u for u, _ in found], [ALICE])
+        self.assertEqual(await self.memory.placeholder_people(GUILD_A, 10), [ALICE])
         await self.memory.name_person(GUILD_A, self.c, ALICE, "Eric")
         self.assertEqual(await self.memory.placeholder_people(GUILD_A, 10), [])
 
 
+class TheConsent(Names):
+    async def refuse(self, user: int, kind: str = "stopped") -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, %s, %s)",
+                (GUILD_A, user, kind, 1),
+            )
+
+    async def test_someone_who_said_no_or_stopped_is_never_named(self) -> None:
+        await self.play(ALICE, "Cerric")
+        await self.play(BOB, "Wit")
+        await self.refuse(ALICE, "stopped")
+        await self.refuse(BOB, "declined")
+        self.found[ALICE] = member("Eric", "eric_92")
+        self.found[BOB] = member("Bobby", "bob_b")
+        self.assertEqual(await self.sweep(), 0)
+        self.assertEqual(self.asked, [])  # (not even looked up)
+        self.assertEqual((await self.person(ALICE)).name, "Player 1234")
+
+    async def test_stopping_puts_the_placeholder_back_on_an_entry_that_stays(self) -> None:
+        pc = await self.play(ALICE, "Cerric")
+        self.found[ALICE] = member("Eric", "eric_92")
+        await self.sweep()
+        person = await self.person(ALICE)
+        self.assertEqual(person.name, "Eric (eric_92)")
+        await self.sql(
+            "UPDATE memory_entities SET description = 'The player' WHERE id = %s", person.id
+        )
+        await self.memory.forget_learned(GUILD_A, ALICE)
+        again = await self.person(ALICE)
+        self.assertEqual(again.name, "Player 1234")  # (kept for the DM's own words, not the name)
+        self.assertEqual(await self.aliases(again.id), ["Player 1234"])
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE guild_id = %s"
+                " AND (before::text LIKE '%%eric_92%%' OR after::text LIKE '%%eric_92%%')",
+                (GUILD_A,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # (the log no longer holds the name)
+        self.assertTrue(pc)
+
+    async def test_stopping_with_nothing_else_on_the_entry_leaves_no_discord_name(self) -> None:
+        await self.play(ALICE, "Cerric")  # (the DM's own assignment made this entry)
+        self.found[ALICE] = member("Eric", "eric_92")
+        await self.sweep()
+        await self.memory.forget_learned(GUILD_A, ALICE)
+        found = [e for e in await self.memory.entities(GUILD_A, self.c) if e.type == "person"]
+        self.assertTrue(all("eric" not in e.name.lower() for e in found))
+
+    async def test_a_name_the_dm_chose_stays_when_the_person_stops(self) -> None:
+        await self.play(ALICE, "Cerric")
+        person = await self.person(ALICE)
+        await self.memory.rename_entity(GUILD_A, self.c, person.id, "Alice Vane", source="dm")
+        await self.memory.forget_learned(GUILD_A, ALICE)
+        self.assertEqual((await self.person(ALICE)).name, "Alice Vane")
+
+
 class TheSweep(Names):
+    async def test_an_undone_rename_is_not_done_again_by_the_next_round(self) -> None:
+        await self.play(ALICE, "Cerric")
+        self.found[ALICE] = member("Eric", "eric_92")
+        await self.sweep()
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE guild_id = %s"
+                " AND campaign_id = %s AND source = 'scan'",
+                (GUILD_A, self.c),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        await self.memory.undo(GUILD_A, self.c, int(row["b"]))
+        self.assertEqual((await self.person(ALICE)).name, "Player 1234")
+        self.skip.clear()
+        await self.sweep()
+        self.assertEqual((await self.person(ALICE)).name, "Player 1234")  # (the DM's choice)
+
+    async def test_a_name_that_is_a_secret_name_elsewhere_is_not_given(self) -> None:
+        await self.play(ALICE, "Cerric")
+        villain = await self.add("Eric the Red", type="npc")
+        await self.memory.add_alias(
+            GUILD_A, self.c, villain, "Eric", kind="full", source="dm", secret=True
+        )
+        self.assertFalse(await self.memory.name_person(GUILD_A, self.c, ALICE, "Eric"))
+        self.assertFalse(await self.memory.name_person(GUILD_A, self.c, ALICE, "DM"))
+        self.assertFalse(await self.memory.name_person(GUILD_A, self.c, ALICE, "   "))
+
+    async def test_fifty_skipped_people_do_not_starve_the_ones_after_them(self) -> None:
+        low = [100_000_000_000_000_000 + n for n in range(50)]
+        for n, user in enumerate(low):
+            await self.play(user, f"Low{n}")
+            self.skip[(GUILD_A, user)] = 5000.0  # (skipped for a while, e.g. bots or errors)
+        late = 900_000_000_000_000_000
+        await self.play(late, "Late")
+        self.found[late] = member("Late", "late_l")
+        await self.sweep()
+        self.assertEqual(self.asked, [late])
+
+    async def test_finished_skips_are_forgotten(self) -> None:
+        self.skip[(GUILD_A, ALICE)] = 10.0
+        self.skip[(GUILD_A, BOB)] = 5000.0
+        await self.sweep()
+        self.assertEqual(list(self.skip), [(GUILD_A, BOB)])
+
+    async def test_someone_wrongly_worded_as_left_is_looked_for_again_a_day_later(self) -> None:
+        await self.play(ALICE, "Cerric")
+        await self.sweep()  # (not found)
+        self.assertEqual((await self.person(ALICE)).name, left_name(ALICE))
+        self.found[ALICE] = member("Eric", "eric_92")
+        await self.sweep()  # (the same minute: left alone)
+        self.assertEqual((await self.person(ALICE)).name, left_name(ALICE))
+        await member_names.run(self.bot, GUILD_A, self.skip, now=1000.0 + 24 * 3600 + 1)
+        self.assertEqual((await self.person(ALICE)).name, "Eric (eric_92)")
+
     async def test_one_lookup_renames_the_placeholder_in_every_campaign(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Second", ALICE)).id
         await self.play(ALICE, "Cerric")
