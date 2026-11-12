@@ -6,8 +6,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { WIZARD_DRIVE_LIVE, WIZARD_LINKS_LIVE, WIZARD_OWN_RULESET_LIVE, WIZARD_SHEETS_LIVE } from "../content/wizard-switch";
 import { SUPPLEMENTS, wizardWords as w } from "../content/wizard-words";
+import PlayerPicker from "./PlayerPicker";
 import { problemWords } from "./wizard-problems";
-import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardSlot } from "./wizard-api";
+import { maxBytesFor, toBase64, type WizardAnswers, type WizardApi, type WizardCharacter, type WizardDoc, type WizardDraft, type WizardMember, type WizardSlot } from "./wizard-api";
 
 export interface StepProps {
   api: WizardApi;
@@ -227,36 +228,46 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   );
 }
 
-/** Step 3: who plays each character (optional; a character with no player is "pending"). */
-export function PlayersStep({ draft, onPatch }: StepProps) {
+/** Step 3: who plays each character (optional; a character with no player is "pending"). The player is picked from this server's
+ * members by name (#4204); text that matches no one stays in the box and the character stays "not set yet". */
+export function PlayersStep({ api, guild, draft, onPatch }: StepProps) {
   const t = w.players;
   const a = draft.answers;
+  const [members, setMembers] = useState<WizardMember[] | null | "failed">(null);
+  useEffect(() => {
+    let live = true;
+    api.members(guild).then(
+      (got) => live && setMembers(got),
+      () => live && setMembers("failed"),
+    );
+    return () => void (live = false);
+  }, [api, guild]);
+  const pending = a.characters.filter((c) => c.player === "pending").length;
   return (
     <section>
       <h2>{t.heading}</h2>
       <p>{t.lead}</p>
       {a.characters.length === 0 ? (
         <p class="muted">{t.none}</p>
+      ) : members === null ? (
+        <p class="muted" role="status">{t.loading}</p>
       ) : (
-        <ul>
-          {a.characters.map((c, i) => (
-            <li key={`${c.full}-${i}`}>
-              <label>
-                {c.full}
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder={t.pending}
-                  value={c.player === "pending" ? "" : c.player}
-                  onChange={(e) => {
-                    const v = (e.target as HTMLInputElement).value.trim();
-                    void onPatch((latest) => ({ characters: latest.characters.map((x, j) => (j === i ? { ...x, player: /^[1-9][0-9]{0,18}$/.test(v) ? v : "pending" } : x)) }));
-                  }}
+        <>
+          {(members === "failed" || members.length === 0) && <p role="status">{t.cannotSee}</p>}
+          <ul>
+            {a.characters.map((c, i) => (
+              <li key={`${c.full}-${i}`}>
+                <PlayerPicker
+                  label={c.full}
+                  members={members === "failed" ? [] : members}
+                  value={c.player}
+                  onPick={(id) => void onPatch((latest) => ({ characters: latest.characters.map((x, j) => (j === i ? { ...x, player: id } : x)) }))}
                 />
-              </label>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+          {pending > 0 && <p class="small" role="status">{t.noPlayerYet(pending)}</p>}
+        </>
       )}
     </section>
   );
