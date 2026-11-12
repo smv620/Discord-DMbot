@@ -142,3 +142,56 @@ class SizeMenu(_Menu):
 
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+# ---- 🌍 The campaign's setting (#4173 slice 2) ---------------------------------------------------
+
+SETTING_ON_BUTTON = "🌍 Make it the setting"
+SETTING_OFF_BUTTON = "🌍 Remove as setting"
+ONLY_SETTING_DM = "Only the DM can change the campaign's setting."
+
+
+def setting_line(is_setting: bool) -> str:
+    """The card's line for the campaign's setting, or "" for any other place."""
+    if not is_setting:
+        return ""
+    # (players see the card too: the words are the same for everyone)
+    return (
+        "\n🌍 **Campaign setting:** the whole story happens here. DMbot counts smaller places as "
+        "inside it unless the DM says otherwise."
+    )
+
+
+async def flip_setting(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, make: bool
+) -> None:
+    """Make this place the campaign's setting, or stop it being one: one change, so one Undo. The
+    store holds the rules (a confirmed place, a region or bigger)."""
+    from dmbot.ui.name_card import show_card
+
+    await _answer_first(interaction, in_place=True)
+    campaign = await _campaign_for(interaction, campaign_id)
+    memory = _memory(interaction)
+    if campaign is None or memory is None:
+        return
+    if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+        await _tell(interaction, ONLY_SETTING_DM)
+        return
+    try:
+        written = await memory.set_setting(
+            campaign.guild_id, campaign.id, entity_id if make else None, source=DM,
+            only_if=entity_id,  # (a stale card never clears another place's mark)
+        )  # fmt: skip
+    except MemoryRuleError as exc:  # (the card is drawn again, so its buttons keep working)
+        await show_card(
+            interaction, campaign_id, entity_id, replace=True, note=f"🌍 Couldn't change it. {exc}"
+        )
+        return
+    changed(interaction, campaign)
+    name = _md(written.value.name) if written.value is not None else "That place"
+    note = (
+        f"🌍 Noted: **{name}** is the campaign's setting."
+        if make
+        else "🌍 Noted: no campaign setting now."
+    )
+    await show_card(interaction, campaign_id, entity_id, replace=True, note=note)

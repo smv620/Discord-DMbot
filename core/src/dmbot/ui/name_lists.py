@@ -1125,7 +1125,12 @@ class KindQuestions(discord.ui.View):
             self.remove_item(select)
             what = f"Every **{_md(select.word)}**" if select.word else "The names with no kind"
             done = written.value
-            rest = "" if done == len(select.ids) else " (The rest were checked or changed already.)"
+            rest = (
+                ""
+                if done == len(select.ids)
+                # (one with a player, or a person never named, waits for its own card: #4244)
+                else " (The rest were checked already or need their own card.)"
+            )
             self.notes.append(
                 f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
                 + rest

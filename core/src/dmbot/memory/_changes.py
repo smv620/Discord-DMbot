@@ -87,6 +87,7 @@ ENTITIES = Table(
         "players_text",
         "place_level",
         "place_level_from",
+        "setting",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -104,6 +105,7 @@ ENTITIES = Table(
         "players_text": None,  # the players' line (#2967): none until the DM writes one
         "place_level": None,  # how big a place is: nobody knows until said (#4173)
         "place_level_from": None,  # ... and who said it: DMbot read it, or the DM
+        "setting": False,  # the campaign's setting (#4173): one place at most
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -134,6 +136,12 @@ RULE_LINKS = Table(
     "memory_rule_links",
     "id",
     ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
+)
+# The languages a character knows from the story (#4229), beside the sheets: never in the graph.
+STORY_LANGUAGES = Table(
+    "memory_story_languages",
+    "id",
+    ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
 )
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
@@ -270,6 +278,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STORY_LANGUAGES,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -313,6 +322,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_story_languages", "entity_id", False),  # (#4229)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),
@@ -900,6 +910,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "players_text": None,  # no line before #2967
         "place_level": None,  # no place had a size before #4173
         "place_level_from": None,
+        "setting": False,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it

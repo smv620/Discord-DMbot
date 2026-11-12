@@ -20,11 +20,14 @@ NOW = 1_800_000_000
 FORGET_PERSON = import_module("dmbot.migrations.0431_forget_person")
 FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
 FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
+FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED
 )
-ZEROED: tuple[tuple[str, str], ...] = FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED
+ZEROED: tuple[tuple[str, str], ...] = (
+    FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED + FORGET_DECISIONS.ZEROED
+)
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
 # the drop shows up here as well as in the migration's review.
@@ -63,6 +66,16 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("adventure_chunks", "created_by"),
         ("adventure_documents", "added_by"),
         ("homebrew_entries", "added_by"),
+        ("house_rule_wins", "decided_by"),
+        ("house_rules_file", "set_by"),
+        ("pc_icons", "set_by"),
+        ("pack_suggestions_sent", "sent_by"),
+        ("rule_set_suggestions_sent", "sent_by"),
+        ("site_approvals", "approved_by"),
+        ("recap_accepted", "accepted_by"),
+        ("report_answers", "answered_by"),
+        ("plot_fine", "by_user"),
+        ("recap_jobs", "uploaded_by"),
         ("homebrew_entries", "created_by"),
         ("house_rules", "created_by"),
         ("recap_holds", "dm_user_id"),
@@ -261,8 +274,46 @@ ROWS: dict[str, str] = {
         " %(k)s, %(u)s, 0, 'x', ARRAY['a', 'b'], 1, %(u)s)"
     ),
     "recap_jobs": (
-        "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, created_at)"
-        " VALUES (%(g)s, %(c)s, %(u)s, %(u)s, 1)"
+        "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, uploaded_by,"
+        " created_at) VALUES (%(g)s, %(c)s, %(u)s, %(u)s, %(u)s, 1)"
+    ),
+    "house_rule_wins": (
+        "INSERT INTO house_rule_wins (guild_id, campaign_id, a_number, b_number, winner,"
+        " decided_by, decided_at) VALUES (%(g)s, %(c)s, 1, %(u)s, 'a', %(u)s, 1)"
+    ),
+    "house_rules_file": (
+        "INSERT INTO house_rules_file (guild_id, campaign_id, link, set_by, set_at)"
+        " VALUES (%(g)s, %(c)s, 'https://example.com/x', %(u)s, 1)"
+    ),
+    "pc_icons": (
+        "INSERT INTO pc_icons (guild_id, campaign_id, entity_id, choice, set_by, updated_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 'hidden', %(u)s, 1)"
+    ),
+    "pack_suggestions_sent": (
+        "INSERT INTO pack_suggestions_sent (guild_id, campaign_id, id, set_id, set_name, name,"
+        " sent_by, sent_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 'x', 'x', %(u)s, 1)"
+    ),
+    "rule_set_suggestions_sent": (
+        "INSERT INTO rule_set_suggestions_sent (guild_id, campaign_id, id, set_id, set_name, rule,"
+        " sent_by, sent_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 'x', 'x', %(u)s, 1)"
+    ),
+    "site_approvals": (
+        "INSERT INTO site_approvals (guild_id, campaign_id, domain, approved_by, approved_at)"
+        " VALUES (%(g)s, %(c)s, 'dndbeyond.com', %(u)s, 1)"
+    ),
+    "recap_accepted": (
+        "INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version, text_hash, title,"
+        " summary, accepted_by, accepted_at)"
+        " VALUES (%(g)s, %(c)s, %(u)s, 1, %(f)s, 'x', 'x', %(u)s, 1)"
+    ),
+    "report_answers": (
+        "INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,"
+        " answered_by, answered_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 'difference', 'intended', %(u)s, 1)"
+    ),
+    "plot_fine": (
+        "INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, 'x', %(u)s, 1)"
     ),
 }
 
@@ -294,6 +345,10 @@ SAME_CAMPAIGN_SKIPS: frozenset[str] = frozenset(
         # recap_upload_rights: one row per campaign (key: server and campaign), and Alice's setUp
         # row already holds Alice's campaign's one.
         "recap_upload_rights",
+        # house_rules_file and site_approvals: keyed by the campaign (one file link) or by the
+        # campaign and the site (dndbeyond.com), and Alice's campaign already holds that row.
+        "house_rules_file",
+        "site_approvals",
         # rule_sets: a campaign has one house-rules set, and Alice's campaign already has it, so
         # Bob's parent row cannot go in; rule_set_editors points at that row, so it is skipped too.
         "rule_sets",

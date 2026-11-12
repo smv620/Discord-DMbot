@@ -1046,6 +1046,14 @@ async def _do(
     if a.action == "players-line":  # the line the players are told (#3568); a blank clears it
         await memory.set_players_text(guild_id, cid, entity_id, a.text, source=DM)
         return Outcome(result_id=entity_id)
+    if a.action == "place-setting":  # the campaign's setting (#4173 slice 2): the flag says which
+        try:  # ("remove" clears only this place's mark, never another place's: `only_if`)
+            await memory.set_setting(
+                guild_id, cid, entity_id if a.flag else None, source=DM, only_if=entity_id
+            )
+        except MemoryRuleError as exc:  # gone since it was queued, or not a place big enough
+            return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+        return Outcome(result_id=entity_id)
     if a.action == "place-size":  # how big a place is (#4173); a blank is "Not sure"
         try:
             await memory.set_place_level(guild_id, cid, entity_id, a.text or None, source=DM)

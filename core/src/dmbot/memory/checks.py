@@ -161,20 +161,23 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
 
 
 class Nesting:
-    """Which places are inside which, from the live `located_in` facts between places, and how big
-    each place is (#4173). Pure: built from (place, the place it is in) pairs and a level per
-    place."""
+    """Which places are inside which, from the live `located_in` facts between places, how big
+    each place is, and the campaign's setting (#4173). Pure: built from (place, the place it is in)
+    pairs, a level per place and the setting's id."""
 
     def __init__(
-        self, pairs: Iterable[tuple[str, str]] = (), levels: Mapping[str, str] | None = None
+        self,
+        pairs: Iterable[tuple[str, str]] = (),
+        levels: Mapping[str, str] | None = None,
+        setting: str | None = None,
     ) -> None:
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
         self._levels = dict(levels or {})
+        self._setting = setting if setting in self._levels else None  # (a setting has a size)
 
-    def above(self, place: str) -> set[str]:
-        """Every place this one is inside, at any depth (a loop in the data can't hang it)."""
+    def _stated(self, place: str) -> set[str]:
         seen: set[str] = set()
         todo = [place]
         while todo:
@@ -182,6 +185,22 @@ class Nesting:
                 if outer not in seen:
                     seen.add(outer)
                     todo.append(outer)
+        return seen
+
+    def above(self, place: str) -> set[str]:
+        """Every place this one is inside, at any depth (a loop in the data can't hang it). A place
+        of a known size smaller than the campaign's setting (or inside one) is inside the setting
+        too, unless something says otherwise (#4173 slice 2: "Is Targos in Faerûn?" is never
+        asked): its stated places reach one as big as the setting, or the setting itself."""
+        seen = self._stated(place)
+        if self._setting is None or place == self._setting or self._setting in seen:
+            return seen
+        if place in self._stated(self._setting):  # (the setting is inside it: bad data, no loop)
+            return seen
+        top = place_levels.RANK[self._levels[self._setting]]
+        sizes = [place_levels.RANK[lv] for p in (place, *seen) if (lv := self._levels.get(p))]
+        if sizes and min(sizes) > top:  # smaller than the setting, and nothing as big says other
+            return seen | {self._setting} | self._stated(self._setting)
         return seen
 
     def related(self, a: str, b: str) -> bool:
@@ -200,7 +219,11 @@ class Nesting:
     def _inside_another(self, place: str, other: str) -> bool:
         """Is `place` inside a place, not `other`, of `other`'s size?"""
         level = self._levels.get(other)
-        return any(p != other and self._levels.get(p) == level for p in self.above(place))
+        around = self.above(other)  # (what holds `other` is not elsewhere: Toril)
+        return any(
+            p != other and p not in around and self._levels.get(p) == level
+            for p in self.above(place)
+        )
 
     def would_loop(self, inner: str, outer: str) -> bool:
         """Would putting `inner` in `outer` make a place part of itself?"""

@@ -191,6 +191,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         await conn.execute("SELECT dmbot_forget_requests()")
         # Their typed-id questions, and any that asked about them (#4225).
         await conn.execute("SELECT dmbot_forget_lookups()")
+        # Who decided or set a campaign's records goes to 0; the records stay (#4148).
+        await conn.execute("SELECT dmbot_forget_decisions()")
         # The DM's list of players they remember, and every list that names the person (#4226).
         await conn.execute("SELECT dmbot_forget_dm_players()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))

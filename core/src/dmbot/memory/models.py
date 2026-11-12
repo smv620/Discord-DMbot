@@ -85,6 +85,11 @@ LINK_LABELS = {
 }
 LINK_SOURCE_MAX = 40
 LINK_NAME_MAX = 100
+# A language a character knows from the story (#4229): as written, at most this long, given by
+# DMbot's read or by the DM. A character with a sheet keeps its languages there instead.
+STORY_LANGUAGE_MAX = 60
+LANGUAGE = "language"  # a lore language waiting as a question, like a lineage (#4229 slice 1c)
+GIVEN_BY = ("read", "dm")
 LINK_EDITIONS = ("2014", "2024")
 
 NAME_MAX = 100
@@ -267,6 +272,28 @@ class Trait:
 
 
 @dataclass(frozen=True, slots=True)
+class StoryLanguage:
+    """A language a character knows from the story (#4229), kept beside the sheets: "Elvish" (one
+    of the SRD's, `srd`) or the campaign's own tongue. `given_by` is "read" until the DM checks it
+    ("dm")."""
+
+    id: str
+    entity_id: str
+    name: str
+    srd: bool
+    given_by: str  # GIVEN_BY
+
+
+@dataclass(frozen=True, slots=True)
+class Known:
+    """One language someone at the table knows, and where DMbot has it from (#4229): "sheet" (the
+    character's sheet, the source of truth), or the story ("read" by DMbot, or the "dm"'s word)."""
+
+    name: str
+    source: str  # "sheet", or GIVEN_BY
+
+
+@dataclass(frozen=True, slots=True)
 class RuleLink:
     """A character's link to a rules entry: its species, creature type, stat block, class
     or background, by source and name. A name the rules data doesn't have keeps its plain
@@ -346,6 +373,9 @@ class Entity:
     # DM), so a size the DM never checked is shown as DMbot's read, never as a fact.
     place_level: str | None = None
     place_level_from: str | None = None
+    # The campaign's setting (#4173 slice 2a): the one place the whole story is in (Faerûn). A new,
+    # smaller place sits inside it unless something says otherwise.
+    setting: bool = False
 
     @property
     def place_level_read(self) -> bool:
