@@ -46,6 +46,12 @@ _LINE = re.compile(
     r'^-\s*(?P<name>[^|]+?)\s*\|\s*(?P<kind>[^|]+?)\s*\|\s*(?P<words>[^|]+?)\s*\|\s*quote:\s*"(?P<quote>.+)"\s*$'
 )
 _KINDS = {"lineage": SPECIES, "species": SPECIES, "race": SPECIES, "class": CLASS}
+# A language the character speaks (#4229 slice 1b): a TRAITS line too, but never a rules link. The
+# languages live beside the sheets, so `read_languages` reads these lines and `read_traits` leaves
+# them alone.
+LANGUAGE_KINDS = frozenset({"language", "languages", "speaks", "tongue"})
+LANGUAGE_WORDS = 6  # "the old tongue of Netheril": a name, never a sentence
+MAX_LANGUAGES = 120  # the same guard as MAX_TRAITS
 _CLASSES = {c.casefold(): c for c in (*SRD_CLASSES, *OTHER_CLASSES)}
 _WORD = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*")
 _ARTICLES = frozenset({"a", "an", "the"})
@@ -180,6 +186,8 @@ def read_traits(
             counts["trait_unreadable"] += 1
             continue
         name, words, quote = m["name"].strip(), m["words"].strip(), m["quote"].strip()
+        if m["kind"].strip().casefold() in LANGUAGE_KINDS:
+            continue  # (`read_languages`'s)
         kind = _KINDS.get(m["kind"].strip().casefold())
         if kind is None:
             counts["trait_kind"] += 1
@@ -218,4 +226,67 @@ def read_traits(
         found.append(Found(name, trait))
         if len(found) >= MAX_TRAITS:
             break
+    return found
+
+
+@dataclass(frozen=True, slots=True)
+class Spoken:
+    """One checked language: whose (the name as the read wrote it) and the language, as the text
+    names it (#4229)."""
+
+    name: str
+    language: str
+
+
+def read_languages(
+    lines: Iterable[str],
+    text: str,
+    names: Collection[str],
+    dropped: Counter[str] | None = None,
+    existing: Collection[str] = (),
+) -> list[Spoken]:
+    """The languages the text really says a character speaks (#4229 slice 1b): the TRAITS lines
+    whose kind is a language, each checked as a trait is, so nothing is invented. The quote is in
+    the text and holds the name (or a word of it) and the language's words. `names`: the read's own
+    and the campaign's, matched by key; `existing`: the keys of names the campaign has already.
+    "Elvish and Sylvan" on one line is two languages. A line is
+    dropped, and counted under its reason, when it is about no name (`language_no_name`), its quote
+    doesn't hold the name and the words (`language_not_in_text`), or the words are no name of a
+    language (`language_words`). Pure; counts only."""
+    counts = dropped if dropped is not None else Counter()
+    haystack = bg._squash(text)
+    keys = {name_key(n) for n in names} | set(existing)
+    found: list[Spoken] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in lines:
+        m = _LINE.match(raw.strip())
+        if m is None or m["kind"].strip().casefold() not in LANGUAGE_KINDS:
+            continue  # (`read_traits` counts what it can't read)
+        name, quote = m["name"].strip(), m["quote"].strip()
+        if name_key(name) not in keys:
+            counts["language_no_name"] += 1
+            continue
+        said = bg._squash(quote)
+        if not bg._has(haystack, quote) or not bg._in_quote(said, name):
+            counts["language_not_in_text"] += 1
+            continue
+        for part in re.split(r",|\band\b|\bor\b|/", m["words"]):
+            words = _plain(part)
+            if not words:
+                continue
+            if len(words) > LANGUAGE_WORDS:
+                counts["language_words"] += 1
+                continue
+            if not all(bg._in_quote(said, w) for w in words):
+                counts["language_not_in_text"] += 1
+                continue
+            language = " ".join(words)
+            language = language[:1].upper() + language[1:]
+            key = (name_key(name), name_key(language))
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(Spoken(name, language))
+            if len(found) >= MAX_LANGUAGES:
+                return found
     return found

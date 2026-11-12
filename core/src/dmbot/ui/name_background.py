@@ -897,6 +897,15 @@ async def _read_background(
         read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
         offers=trait_offers,
     )  # fmt: skip
+    # The languages the text says a character speaks (#4229 slice 1b): checked like the traits,
+    # stored after the names, as DMbot's read until the DM checks them.
+    spoken = traits_read.read_languages(
+        read.trait_lines,
+        upload.text,
+        [n for f in found for n in (f.name, *f.also)],
+        read.stats.dropped,
+        existing=known,
+    )
     # A player character's backstory written into campaign lore is known to that character
     # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
     # guess only (see `_backstory_owners`).
@@ -1046,6 +1055,8 @@ async def _read_background(
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
+    if spoken:
+        await store_languages(memory, campaign, spoken)
     return done
 
 
@@ -1271,6 +1282,39 @@ def trait_questions_line(n: int) -> str:
         f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
         " in ❓ Questions for you."
     )
+
+
+async def store_languages(
+    memory: MemoryStore, campaign: Campaign, spoken: Sequence[traits_read.Spoken]
+) -> int:
+    """The languages the lore says a character speaks (#4229 slice 1b), kept beside the sheets as
+    DMbot's read ("DMbot read" on the DM's card) until the DM checks them: on a new character of
+    this read, or one the campaign has. A character with a sheet keeps its languages there, so the
+    store skips it; a name two entries share is skipped (DMbot can't tell whose). Adding one only
+    adds: nothing the DM said is changed, and the DM takes one away on the card. Returns how many
+    were kept. Never raises: the read is done; the log gets counts and the error type only."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        whose: dict[str, set[str]] = {}
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if who is not None and who.type == "character":
+                whose.setdefault(name_key(entry.text), set()).add(who.id)
+        kept = 0
+        for one in spoken:
+            ids = whose.get(name_key(one.name), set())
+            if len(ids) != 1:
+                continue
+            written = await memory.add_story_language(
+                campaign.guild_id, campaign.id, next(iter(ids)), one.language, source="background"
+            )
+            kept += written.value is not None
+        if kept:
+            log.info("Lore languages: %d kept as DMbot's read", kept)
+        return kept
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Lore languages couldn't be kept (%s)", type(exc).__name__)
+        return 0
 
 
 async def ask_traits(

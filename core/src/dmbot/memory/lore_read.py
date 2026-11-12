@@ -357,8 +357,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "(cleric, paladin, wizard…) that the text states outright goes under a fifth heading, "
         "TRAITS, one line each: the character's full name as listed under NAMES | lineage or "
         "class | the text's own word or words for it | quote. 'A half-elf paladin' is two lines. "
-        "A god they serve is not a class (that is a relationship). Never a guess from a name, a "
-        "look or a homeland. Leave the heading out when the text states none.\n"
+        "A god they serve is not a class (that is a relationship). A language the text says they "
+        "speak or know (Elvish, Thieves' Cant, a tongue the story names) is a line too, with "
+        "'language' as its kind: 'speaks Elvish and Sylvan' is one line, its words 'Elvish and "
+        "Sylvan'. Never a guess from a name, a look, a lineage or a homeland. Leave the heading "
+        "out when the text states none.\n"
         "- Keep the headings (UNNAMED and TRAITS only when they have lines), and write nothing "
         "else.\n\n" + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
     )
