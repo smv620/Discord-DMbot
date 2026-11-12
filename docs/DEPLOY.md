@@ -577,6 +577,18 @@ Restore into a fresh install with
 `docker compose exec -T postgres pg_restore -U postgres -d dmbot --clean < dmbot-DATE.dump`.
 The Whisper model is kept in its own volume and downloads again if lost, so it needs no backup.
 
+### The person key (`DMBOT_PERSON_KEY`)
+
+DMbot keeps a keyed one-way hash of a Discord ID after an account is deleted (#4145), so a returning
+person gets no second free trial and an unsubscribe is still honoured, without the database holding
+the ID. The hash is made with `DMBOT_PERSON_KEY` (any random string of 32 characters or more). Set it
+once with `scripts/set-key DMBOT_PERSON_KEY` and put a copy in your password manager.
+
+**Never change it, and never lose it.** The hashes are only recognised under the same key: with a
+new or lost key every person whose account was deleted looks new, and may be given a second trial or
+an offer email again. There is no re-key job yet; a rotation needs one built first. Back the key up
+with the rest of `.env` (it is not in the database dumps).
+
 ## Security checklist
 
 - `.env` is `chmod 600` and never committed (it is in `.gitignore`).
