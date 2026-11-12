@@ -57,7 +57,7 @@ class TheWizardsCharacter(NamesTest):
         _ai_reads.clear()
         await super().asyncTearDown()
 
-    async def read(self) -> None:
+    async def read(self, text: str = TEXT) -> None:
         now = int(time.time())
         async with self.db.guild(GUILD) as conn:  # (a pasted lore upload, as the wizard queues)
             await conn.execute(
@@ -65,7 +65,7 @@ class TheWizardsCharacter(NamesTest):
                 " choice, rights_by, rights_at, created_at, updated_at, state) VALUES"
                 " (%s, %s, replace(gen_random_uuid()::text, '-', ''), %s, 'paste', %s, '',"
                 " 'world', %s, %s, %s, %s, 'waiting')",
-                (GUILD, self.campaign.id, DM_USER, TEXT, DM_USER, now, now, now),
+                (GUILD, self.campaign.id, DM_USER, text, DM_USER, now, now, now),
             )
         claim = await self.queue.claim_next(GUILD)
         assert claim is not None
@@ -98,3 +98,38 @@ class TheWizardsCharacter(NamesTest):
             for r in await self.memory.relations(GUILD, self.campaign.id, entity_id=self.cerric)
         }
         self.assertIn(frozenset((self.cerric, ulric)), ends | kept)
+
+    async def test_before_the_read_a_namesake_in_the_upload_keeps_the_word_back(self) -> None:
+        # (the reviewer: "Cerric Dorn" is not stored before the read, so the run before it must not
+        # hand "Cerric" to the player character; the run after sees both owners, as before #4224)
+        await self.bot.add_short_names(GUILD, self.campaign.id, [TWO_TEXT], before_read=True)
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=self.cerric)
+        self.assertNotIn("cerric", {name_key(a.text) for a in aliases})
+        await self.bot.add_short_names(GUILD, self.campaign.id, [TEXT], before_read=True)
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=self.cerric)
+        self.assertIn("cerric", {name_key(a.text) for a in aliases})  # (no namesake: it is his)
+
+    async def test_before_the_read_only_a_confirmed_player_character_gets_one(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name="Tran Vosk", source=DM,
+            status=CONFIRMED, role="npc",
+        )  # fmt: skip
+        text = "Tran Vosk sold rope. Later Tran left town."
+        await self.bot.add_short_names(GUILD, self.campaign.id, [text], before_read=True)
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=made.value.id)
+        self.assertNotIn("tran", {name_key(a.text) for a in aliases})  # (that waits for after)
+
+    async def test_a_stored_npc_called_cerric_keeps_the_word_from_the_character(self) -> None:
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name="Cerric", source=DM,
+            status=CONFIRMED, role="npc",
+        )  # fmt: skip
+        await self.read()
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=self.cerric)
+        self.assertNotIn("cerric", {name_key(a.text) for a in aliases})
+
+
+TWO_TEXT = (
+    "Cerric Vanya'elen came down from the northern woods. The smith Cerric Dorn shod his horse, "
+    "and then Cerric laughed."
+)
