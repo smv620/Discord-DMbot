@@ -78,10 +78,14 @@ class WaitingOnes(MemoryTest):
 
     async def test_nothing_to_drop_writes_no_change(self) -> None:
         await self.add("Grik", source="scan", status=PROPOSED)
-        async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM memory_changes")
-            before = (await cur.fetchone())["n"]
+        before = await self.logged()
         self.assertEqual(await self.memory.drop_language_suggestions(GUILD_A, self.c), 0)
+        self.assertEqual(await self.logged(), before)
+
+    async def logged(self) -> int:
+        """How many changes the campaign's log holds."""
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM memory_changes")
-            self.assertEqual((await cur.fetchone())["n"], before)
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
