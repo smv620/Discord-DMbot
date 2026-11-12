@@ -17,7 +17,7 @@ from typing import Any
 import discord
 
 from dmbot import walk as walks
-from dmbot.dm_questions import CLAIMS, CONNECTIONS, NAMES, PEOPLE
+from dmbot.dm_questions import CLAIMS, CONNECTIONS, KINDS, NAMES, PEOPLE
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _tell
 from dmbot.walk import Walk
 
@@ -62,13 +62,27 @@ async def waiting_counts(
     interaction: discord.Interaction, guild_id: int, campaign_id: str
 ) -> dict[str, int]:
     """What waits now, by the walk's kinds, read again each time."""
-    found = await _bot(interaction).count_waiting(guild_id, campaign_id)
+    bot = _bot(interaction)
+    found = await bot.count_waiting(guild_id, campaign_id)
     return {
         NAMES: found.names,
         PEOPLE: found.people,
         CLAIMS: found.claims,
         CONNECTIONS: found.connections,
+        KINDS: await _count_kinds(bot, guild_id, campaign_id),
     }
+
+
+async def _count_kinds(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """The kind-of-connection offers waiting (a count that cannot be read is zero; the log gets the
+    error type only). Not part of `count_waiting`: that one is the upload message's four."""
+    if bot.memory is None:
+        return 0
+    try:
+        return len(await bot.memory.kind_offer_list(guild_id, campaign_id))
+    except Exception as exc:
+        log.warning("Check everything: couldn't count kinds (%s)", type(exc).__name__)
+        return 0
 
 
 async def begin(interaction: discord.Interaction, guild_id: int, campaign_id: str) -> None:
@@ -108,6 +122,10 @@ async def run_part(interaction: discord.Interaction, walk: Walk) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
         await start_claims_review(interaction, walk.campaign_id, walk=walk)
+    elif kind == KINDS:
+        from dmbot.ui.kind_offer import start_walk_part
+
+        await start_walk_part(interaction, walk.guild_id, walk.campaign_id, walk)
     else:
         from dmbot.ui.name_background import ask_connections
 

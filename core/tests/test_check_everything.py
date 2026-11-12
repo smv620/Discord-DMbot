@@ -17,6 +17,7 @@ from dmbot.dm_questions import (
     CLAIMS,
     CONNECTIONS,
     FAMILY,
+    KINDS,
     NAMES,
     PEOPLE,
     WALK_PRESS,
@@ -48,9 +49,9 @@ def labels(view: discord.ui.View) -> list[str | None]:
 
 class TheWalksOrderAndWords(unittest.TestCase):
     def test_the_parts_run_names_then_who_is_who_then_what_was_said_then_connections(self) -> None:
-        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS))
-        counts = {CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
-        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS))
+        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS))
+        counts = {KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
+        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS))
 
     def test_nothing_waiting_is_no_walk(self) -> None:
         self.assertEqual(walks.parts_for({}), ())
@@ -94,6 +95,14 @@ class TheButtonOnTheMessage(unittest.TestCase):
         self.assertEqual(labels(view), ["✅ Check everything (40)"])
         self.assertTrue(text.endswith(WALK_PRESS))
         self.assertIn("• names line", text)  # (the count lines keep their words)
+
+    def test_a_kinds_offer_beside_another_walked_kind_joins_the_walk(self) -> None:
+        combined = combine([ask(CLAIMS, 8), ask(KINDS, 1)], walk=self.walk_button)
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])
+        self.assertEqual(labels(view), ["✅ Check everything (9)"])
+        self.assertIn("• kinds line", text)
 
     def test_one_kind_keeps_its_own_button_and_words(self) -> None:
         combined = combine([ask(CLAIMS, 8)], walk=self.walk_button)
