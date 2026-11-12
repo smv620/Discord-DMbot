@@ -160,6 +160,7 @@ match. "In Discord" says where the DM finds it today.
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
+| How big a place is (a plane down to a room; read from the lore's words, the DM sets it, Not sure clears it) | 📏 Size on a place's name card (DM only, #4173 slice 1) | Names: the API and door are built (`placeLevel` on each name, the `place-size` action, #4173); the page's menu is WebDev's, #4187 |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
 | A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | Questions for you: the same card, Yes or No (page built, switched off, `TRAIT_QUESTIONS_LIVE`; the bot's applier is CloudDev-lead's; #3946) |

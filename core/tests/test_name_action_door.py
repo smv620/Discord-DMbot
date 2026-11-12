@@ -27,6 +27,7 @@ EVERY_ACTION = (
     "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
     "link-undo",  # the page's Undo of a connection edit (#4156)
     "link-direction",  # A → B, B → A or A ↔ B (#4154)
+    "place-size",  # how big a place is (#4173)
 )  # fmt: skip
 
 
