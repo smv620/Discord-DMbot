@@ -330,7 +330,8 @@ describe("the wizard", () => {
       await vi.advanceTimersByTimeAsync(2100);
     }
     expect(screen.getByText(w.finish.done)).toBeTruthy();
-    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toContain("cmp-new");
+    // (the campaign's page reads its ref from the path, not from the hash: #4216)
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
   it("a finish that fails says what happened and offers another try", async () => {
@@ -417,6 +418,8 @@ describe("the wizard", () => {
     for (let i = 0; i < 20 && !screen.queryByRole("link", { name: w.finish.open }); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getAllByText(w.finish.errors["no-key"]!).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${encodeURIComponent(`${G}.nokey.cmp-new`)}`);
+    expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).not.toContain("#");
   });
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {
