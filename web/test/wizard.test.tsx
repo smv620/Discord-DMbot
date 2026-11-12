@@ -311,12 +311,62 @@ describe("the wizard", () => {
     expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull();
   });
 
-  it("the rules step keeps the two sets different and lists the seven books", async () => {
-    await start();
+  async function onRules() {
+    const api = await start();
     for (let to = 2; to <= 6; to++) await next(to);
-    expect(screen.getAllByRole("checkbox").length).toBeGreaterThanOrEqual(7);
-    fireEvent.click(screen.getByLabelText(w.rules.legacy));
-    expect(await screen.findByText(`${w.rules.fallbackLabel}: ${w.rules.current}`)).toBeTruthy();
+    return api;
+  }
+  const primary = () => screen.getByLabelText(w.rules.primaryLabel) as HTMLSelectElement;
+  const secondary = () => screen.getByLabelText(w.rules.secondaryLabel) as HTMLSelectElement;
+  const optionsOf = (select: HTMLSelectElement) => [...select.options].map((o) => o.textContent);
+
+  it("the rules step has a required primary and an optional secondary dropdown, with the defaults (#4210)", async () => {
+    await onRules();
+    expect(primary().value).toBe("2024");
+    expect(secondary().value).toBe("2014");
+    expect(optionsOf(primary())).toEqual([w.rules.current, w.rules.legacy]);
+    expect(screen.getByText(w.rules.secondaryHint)).toBeTruthy();
+    expect(screen.getByText(w.rules.houseNote)).toBeTruthy(); // (house rules come in the next steps)
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThanOrEqual(7); // (the books stay below)
+  });
+
+  it("the secondary never offers the primary's choice, and follows when the primary changes (#4210)", async () => {
+    await onRules();
+    expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.legacy]);
+    fireEvent.change(primary(), { target: { value: "2014" } });
+    await waitFor(() => expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.current]));
+    expect(secondary().value).toBe("2024"); // (the repeat turned into the other set)
+  });
+
+  it("None saves no fallback (#4210)", async () => {
+    const api = await onRules();
+    fireEvent.change(secondary(), { target: { value: "none" } });
+    await waitFor(async () => expect((await api.get(G))?.answers.fallback).toBe("none"));
+    expect(secondary().value).toBe("none");
+    fireEvent.change(primary(), { target: { value: "2014" } });
+    await waitFor(async () => expect((await api.get(G))?.answers.target).toBe("2014"));
+    expect((await api.get(G))?.answers.fallback).toBe("none"); // (no clash, so none stays)
+  });
+
+  it("with the switch off there is no upload option (#4210)", async () => {
+    await onRules();
+    expect(screen.queryByText(w.rules.uploadOwn)).toBeNull();
+    expect(screen.queryByText(w.rules.ownLabel)).toBeNull();
+  });
+
+  it("with the switch on, Upload your own opens the box under its dropdown, and only one dropdown can hold it (#4210)", async () => {
+    flags.own = true;
+    await onRules();
+    expect(optionsOf(primary())).toEqual([w.rules.current, w.rules.legacy, w.rules.uploadOwn]);
+    expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.legacy, w.rules.uploadOwn]);
+    fireEvent.change(secondary(), { target: { value: "own" } });
+    expect(await screen.findByRole("heading", { name: w.rules.ownLabel })).toBeTruthy();
+    expect(optionsOf(primary())).not.toContain(w.rules.uploadOwn); // (one own set for the campaign)
+    fireEvent.change(secondary(), { target: { value: "none" } });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: w.rules.ownLabel })).toBeNull());
+    fireEvent.change(primary(), { target: { value: "own" } });
+    expect(await screen.findByRole("heading", { name: w.rules.ownLabel })).toBeTruthy();
+    expect(optionsOf(secondary())).not.toContain(w.rules.uploadOwn);
   });
 
   it("the last page makes the campaign and shows the stages, then links to it", async () => {

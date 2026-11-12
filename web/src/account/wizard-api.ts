@@ -36,7 +36,8 @@ export interface WizardAnswers {
   characters: WizardCharacter[];
   /** The rules to play with and the fallback: "2024" or "2014". */
   target: "2024" | "2014";
-  fallback: "2024" | "2014";
+  /** The rules used when the first has no answer: the other set, or "none" (core FALLBACK_NONE). */
+  fallback: "2024" | "2014" | "none";
   /** The books the person ticked; null until they change a box, so an untouched step keeps the defaults (Xanathar's and Tasha's rules are on). */
   supplements: string[] | null;
   dataUse: boolean;

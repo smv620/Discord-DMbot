@@ -156,11 +156,15 @@ export const wizardWords = {
   // Step 6: rules.
   rules: {
     heading: "Which rules do you play?",
-    lead: "Pick the rules to use first. DMbot uses the other set only when the first has no answer.",
+    lead: "Pick the rules DMbot uses first. You can pick a second set for when the first has no answer.",
     current: "5e current (2024)",
     legacy: "5e legacy (2014)",
-    targetLabel: "Play with",
-    fallbackLabel: "If it has nothing, use",
+    primaryLabel: "Primary rule set",
+    secondaryLabel: "Secondary rule set (optional)",
+    secondaryHint: "Used only when the primary rule set has no answer.",
+    none: "None",
+    uploadOwn: "Upload your own rule set…",
+    houseNote: "House rules and homebrew come in the next steps. Don't add them here.",
     same: "The two sets must be different.",
     supplementsLabel: "Books your table uses",
     supplementsNote: "Choosing a book only tells DMbot's rules advisor which books you use. No book's text is stored.",
