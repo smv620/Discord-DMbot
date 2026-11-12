@@ -383,6 +383,80 @@ class TheHouseRules(FinishTest):
         )
 
 
+class TheLinks(FinishTest):
+    """A web link in a document step (#4206): lore links go to the lore reader as link uploads (its
+    own guarded fetch); house and homebrew links are opened once with the same guarded fetch, and a
+    link that cannot be read keeps its word while the campaign stands."""
+
+    async def add_doc(
+        self, slot: str, address: str, name: str = "A page", source: str = "link"
+    ) -> None:
+        await self.sql(
+            "INSERT INTO wizard_documents (guild_id, user_id, id, slot, name, source, text, status,"
+            " created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, 'ok', %s)",
+            GUILD, DM, f"{abs(hash((slot, address))) % 10**30:032x}", slot, name, source, address,
+            NOW,
+        )  # fmt: skip
+
+    async def finish(self) -> dict[str, Any]:
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_lore_link_is_queued_as_a_link_upload_with_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        # (the stand-in reader blanks the text and keeps the link until it ends: checked at queue)
+        [up] = await self.sql("SELECT source, text, link, choice FROM lore_uploads")
+        self.assertEqual((up["source"], up["text"], up["choice"]), ("link", "", "world"))
+        self.assertTrue(up["link"].startswith("https://docs.google.com/"))
+
+    async def test_a_bad_address_in_a_lore_step_is_a_failed_read_and_nothing_is_queued(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("lore", "http://example.com/page")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "lore_failed"))
+        self.assertEqual(await self.sql("SELECT 1 FROM lore_uploads"), [])
+
+    async def test_a_house_link_is_read_once_and_its_rules_are_added(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return SimpleNamespace(text="1. Flanking gives advantage."), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(len(calls), 1)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        rules = await self.bot.house_rules.list(GUILD, campaign.id)
+        self.assertEqual([r.rule for r in rules], ["Flanking gives advantage."])
+
+    async def test_a_house_link_that_cannot_be_read_keeps_its_word_and_the_campaign_stands(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://example.com/private")
+
+        async def nothing(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, "That page needs a sign-in."
+
+        with patch("dmbot.ui.name_lists.read_link_once", nothing):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+        self.assertIn("doc_link_failed:1", row["notes"])
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+
 class TheRun(FinishTest):
     async def test_the_campaign_is_made_the_lore_then_the_secrets_are_read_and_the_draft_goes(
         self,
