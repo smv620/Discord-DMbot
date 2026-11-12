@@ -33,6 +33,7 @@ from dmbot.logs import log_context
 from dmbot.memory import sheets
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
 from dmbot.memory.sheet_store import SheetRefused
+from dmbot.memory.sheet_waits import SheetWaits
 from dmbot.memory.store import INT64_MAX
 from dmbot.rules import optional
 
@@ -56,9 +57,9 @@ SHEET_PRIVATE = "sheet_private"  # D&D Beyond said the sheet is not public; the 
 SHEET_SLOW = "sheet_slow"  # D&D Beyond (or our own limit) held it back; the link is kept
 SHEET_BAD = "sheet_bad"  # not a D&D Beyond character link; nothing was kept
 # A sheet is kept for the person who plays the character (`SheetStore` refuses one with no
-# player), so a link on a character whose player is not known yet is not kept: the DM adds it on
-# the Sheets page once the character has its player.
-SHEET_NO_PLAYER = "sheet_no_player"
+# player), so a link on a character whose player is not known yet waits (`sheet_waits`) and is read
+# once the character has one (`run_sheet_waits`, Supervisor's ruling on #4221).
+SHEET_WAITING = "sheet_waiting"
 SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
@@ -68,7 +69,7 @@ DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (
     DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT,
-    SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE, SHEETS_FAILED,
+    SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE, SHEETS_FAILED,
 )  # fmt: skip
 NOT_READ_YET = ("house", "homebrew", "ruleset")
 
@@ -496,7 +497,7 @@ async def _make_characters(
 def _notes(counts: dict[str, int]) -> str:
     """ "sheet_private:2 sheet_slow:1": the words in a fixed order with their counts (the row's
     check allows at most 8 pairs of up to 999)."""
-    order = (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE)
+    order = (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE)
     return " ".join(f"{w}:{min(counts[w], 999)}" for w in order if counts.get(w))
 
 
@@ -540,7 +541,7 @@ async def _read_sheets(
         return SHEETS_FAILED
     run.notes = _notes(counts)
     log.info("A wizard run read %d sheet link(s): %s", len(wanted), run.notes or "all read")
-    for word in (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_NO_PLAYER, SHEET_UNREADABLE):
+    for word in (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE):
         # (the first problem's word is the row's)
         if counts.get(word):
             return word
@@ -558,18 +559,37 @@ async def _read_one_sheet(
     entity = have.get(name_key(str(character.get("full", "")).strip()))
     if entity is None:
         return ""  # the character was not made (refused): nothing to link it to
-    if entity.played_by is None or entity.played_by < 0:
-        return SHEET_NO_PLAYER  # (a sheet is kept for its player; nothing is fetched yet)
-    entity_id = entity.id
     url = sheets.sheet_url(number)
-    current = await store.sheet(guild_id, campaign_id, entity_id)
+    if entity.played_by is None or entity.played_by < 0:
+        return await _hold_sheet(bot, guild_id, campaign_id, entity.id, url)
+    current = await store.sheet(guild_id, campaign_id, entity.id)
     if current is not None and current.url == url and current.sheet is not None:
         return ""  # read already (a retaken run): not read twice
+    word = await _link_and_read(bot, store, guild_id, campaign_id, entity.id, number)
+    if word == SHEET_WAITING:  # (the entry lost its player since it was listed)
+        return await _hold_sheet(bot, guild_id, campaign_id, entity.id, url)
+    return word
+
+
+async def _hold_sheet(bot: Any, guild_id: int, campaign_id: str, entity_id: str, url: str) -> str:
+    """A link on a character with no player yet waits for one (`run_sheet_waits`); nothing is
+    fetched now. Returns the word that counts it."""
+    await SheetWaits(bot.campaigns.db).hold(guild_id, campaign_id, entity_id, url, int(time.time()))
+    return SHEET_WAITING
+
+
+async def _link_and_read(
+    bot: Any, store: Any, guild_id: int, campaign_id: str, entity_id: str, number: int
+) -> str:
+    """Link a sheet to a character that has a player and read it once: "" when it is kept, else
+    the problem's word. `SHEET_WAITING` means the entry changed under us (no player now, merged,
+    gone). A private or slow sheet keeps its link, which the Sheets page reads again."""
+    url = sheets.sheet_url(number)
     try:
         await store.link(guild_id, campaign_id, entity_id, number)
         snapshot = await bot.fetch_sheet(number)
     except SheetRefused:
-        return SHEET_NO_PLAYER  # (the entry changed since it was listed: no player, merged, gone)
+        return SHEET_WAITING
     except sheets.SheetError as exc:
         log.info("A wizard sheet couldn't be read yet")  # (the link stays; read again later)
         if exc.refused:
@@ -587,6 +607,35 @@ async def _read_one_sheet(
     if kept:
         bot.sheets_changed(guild_id, campaign_id)  # (a new link drops the old names too)
     return ""
+
+
+async def run_sheet_waits(bot: Any, guild_id: int) -> int:
+    """Read the sheet links that waited for a player (#4205), one a round, the oldest first, with
+    the bot's own sheet limiter. A link whose character has a player is linked and read once, and
+    its row removed whatever the answer: a private or slow sheet keeps its link as any sheet does,
+    and a character that changed since drops the wait. Links nobody got a player for in 90 days
+    are let go. Returns how many were read. Counts only in the log, never a link."""
+    store = getattr(bot, "sheets", None)
+    if store is None or getattr(bot, "campaigns", None) is None:
+        return 0
+    waits = SheetWaits(bot.campaigns.db)
+    if not await waits.waiting(guild_id):
+        return 0
+    await waits.sweep(guild_id, int(time.time()))
+    read = 0
+    for wait in await waits.ready(guild_id, 1):
+        number = sheets.character_id(wait.url)
+        word = (
+            SHEET_BAD
+            if number is None
+            else await _link_and_read(
+                bot, store, guild_id, wait.campaign_id, wait.entity_id, number
+            )
+        )
+        await waits.drop(guild_id, wait.campaign_id, wait.entity_id)
+        read += 1
+        log.info("A waiting wizard sheet was read: %s", word or "kept")
+    return read
 
 
 async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:

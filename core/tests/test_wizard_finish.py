@@ -17,7 +17,7 @@ from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import channel_sync
 from dmbot.memory import sheets
-from dmbot.memory.sheet_store import SheetRefused, SheetStore
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from tests.pg import DatabaseTest
 from tests.test_sheets import answer as sheet_answer
@@ -790,87 +790,87 @@ class TheSheets(FinishTest):
         )
         self.assertEqual((word, self.reads), ("", [NUMBER]))  # (still the one read)
 
-    async def test_a_link_on_a_character_with_no_player_yet_is_counted_not_kept(self) -> None:
+    async def waits(self) -> list[dict[str, Any]]:
+        return await self.sql("SELECT entity_id, url FROM sheet_waits")
+
+    async def test_a_link_on_a_character_with_no_player_yet_waits_and_is_counted(self) -> None:
         answers = self.party(LINK)
         answers["characters"][0]["player"] = "pending"
         row = await self.finish(answers)
-        self.assertEqual((row["state"], row["error"]), ("done", "sheet_no_player"))
-        self.assertEqual(row["notes"], "sheet_no_player:1")
-        self.assertEqual(self.reads, [])  # (nothing is fetched for a sheet that cannot be kept)
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_waiting"))
+        self.assertEqual(row["notes"], "sheet_waiting:1")
+        self.assertEqual(self.reads, [])  # (nothing is fetched for a link that waits)
         self.assertIsNone(await self.sheet_of("Cerric Vale"))
+        [wait] = await self.waits()
+        self.assertEqual(wait["url"], LINK)
 
-    async def test_a_sheet_that_is_not_a_sheet_is_unreadable_not_slow(self) -> None:
-        self.errors[NUMBER] = sheets.SheetError("odd", status=404)
-        row = await self.finish(self.party(LINK))
-        self.assertEqual((row["error"], row["notes"]), ("sheet_unreadable", "sheet_unreadable:1"))
-
-    async def test_a_5xx_or_no_answer_is_slow(self) -> None:
-        self.errors[NUMBER] = sheets.SheetError("down", status=503)
-        self.errors[OTHER_NUMBER] = sheets.SheetError("silent")
-        row = await self.finish(self.party(LINK, sheets.sheet_url(OTHER_NUMBER)))
-        self.assertEqual(row["notes"], "sheet_slow:2")
-
-    async def test_an_entry_that_changed_under_the_stage_stops_only_its_own_sheet(self) -> None:
-        links = (LINK, sheets.sheet_url(OTHER_NUMBER))
-        real = self.store.link
-        calls: list[int] = []
-
-        async def link(*args: Any, **kw: Any) -> None:
-            calls.append(args[3])
-            if args[3] == NUMBER:
-                raise SheetRefused("gone")
-            await real(*args, **kw)
-
-        with patch.object(self.store, "link", link):
-            row = await self.finish(self.party(*links))
-        self.assertEqual(row["notes"], "sheet_no_player:1")  # (the first one only)
-        self.assertEqual(calls, [NUMBER, OTHER_NUMBER])  # (the second was still tried)
-        self.assertEqual(self.reads, [OTHER_NUMBER])
-
-    async def test_two_characters_with_one_name_are_one_link_and_one_read(self) -> None:
-        answers = self.party(LINK, sheets.sheet_url(OTHER_NUMBER))
-        answers["characters"][1]["full"] = answers["characters"][0]["full"]
-        await self.finish(answers)
-        self.assertEqual(self.reads, [NUMBER])
-
-    async def test_a_retaken_run_asks_again_for_a_sheet_that_was_private(self) -> None:
-        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
-        answers = self.party(LINK)
-        await self.finish(answers)
-        del self.errors[NUMBER]
+    async def give_a_player(self, name: str, player: int = DM) -> str:
         [campaign] = await self.campaigns.list_campaigns(GUILD)
-        await self.queue("b" * 32)
-        run = await self.runs.claim_next(GUILD)
-        assert run is not None
-        word = await wizard_finish._read_sheets(
-            self.bot, self.runs, GUILD, run, campaign.id, answers
-        )
-        self.assertEqual((word, self.reads), ("", [NUMBER, NUMBER]))
-        self.assertIsNotNone((await self.sheet_of("Cerric Vale")).sheet)
+        entity = next(e for e in await self.made() if e.name == name)
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", player, entity.id)
+        return str(campaign.id)
 
-    async def test_no_links_or_no_store_means_no_stage(self) -> None:
-        moves: list[str] = []
-        real = wizard_finish.WizardFinishes.move
+    async def waiting_link(self) -> None:
+        answers = self.party(f"{LINK}/share?x=1")
+        answers["characters"][0]["player"] = "pending"
+        await self.finish(answers)
 
-        async def spy(self_: Any, guild_id: int, run: Any, *, stage: str, **kw: Any) -> None:
-            moves.append(stage)
-            await real(self_, guild_id, run, stage=stage, **kw)
+    async def test_a_waiting_link_is_read_once_its_character_has_a_player(self) -> None:
+        await self.waiting_link()
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)  # no player yet
+        self.assertEqual(self.reads, [])
+        await self.give_a_player("Cerric Vale")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(await self.waits(), [])  # (the row goes)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
 
-        with patch.object(wizard_finish.WizardFinishes, "move", spy):
-            await self.finish(self.party(""))
-        self.assertNotIn("sheets", moves)
+    async def test_a_waiting_private_sheet_keeps_its_link_and_the_wait_goes(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))
+        self.assertEqual(await self.waits(), [])
 
-    def test_every_note_the_stage_can_write_fits_the_rows_check(self) -> None:
-        import re
+    async def test_one_waiting_sheet_is_read_each_round_oldest_first(self) -> None:
+        answers = self.party(LINK, sheets.sheet_url(OTHER_NUMBER))
+        for c in answers["characters"]:
+            c["player"] = "pending"
+        await self.finish(answers)
+        await self.give_a_player("Cerric Vale")
+        await self.give_a_player("Mira Dawn")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(len(self.reads), 1)
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(sorted(self.reads), sorted([NUMBER, OTHER_NUMBER]))
 
-        check = re.compile(r"^([a-z_]{1,24}:[0-9]{1,3}( [a-z_]{1,24}:[0-9]{1,3}){0,7})?$")
-        words = (
-            wizard_finish.SHEET_PRIVATE, wizard_finish.SHEET_SLOW, wizard_finish.SHEET_BAD,
-            wizard_finish.SHEET_NO_PLAYER, wizard_finish.SHEET_UNREADABLE,
-        )  # fmt: skip
-        everything = {w: 5000 for w in words}  # (more than three digits: capped at 999)
-        self.assertTrue(check.match(wizard_finish._notes(everything)))
-        self.assertEqual(wizard_finish._notes({}), "")
+    async def test_a_wait_for_an_entry_that_was_turned_down_is_not_read(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        await self.sql("UPDATE memory_entities SET status = 'rejected' WHERE name = 'Cerric Vale'")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+        self.assertEqual(self.reads, [])
+
+    async def test_a_link_nobody_got_a_player_for_is_let_go_after_ninety_days(self) -> None:
+        await self.waiting_link()
+        await self.sql("UPDATE sheet_waits SET created_at = 1")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_a_link_goes_with_its_campaign(self) -> None:
+        await self.waiting_link()
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.sql("DELETE FROM campaigns WHERE id = %s", campaign.id)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_no_store_means_no_sweep(self) -> None:
+        self.bot.sheets = None
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
 
     async def test_a_character_that_was_not_made_is_skipped(self) -> None:
         answers = self.party(LINK)
