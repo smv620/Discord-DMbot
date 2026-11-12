@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_words
+from dmbot.memory import kin, place_levels, place_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -161,13 +161,17 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
 
 
 class Nesting:
-    """Which places are inside which, from the live `located_in` facts between places.
-    Pure: built from (place, the place it is in) pairs."""
+    """Which places are inside which, from the live `located_in` facts between places, and how big
+    each place is (#4173). Pure: built from (place, the place it is in) pairs and a level per
+    place."""
 
-    def __init__(self, pairs: Iterable[tuple[str, str]] = ()) -> None:
+    def __init__(
+        self, pairs: Iterable[tuple[str, str]] = (), levels: Mapping[str, str] | None = None
+    ) -> None:
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
+        self._levels = dict(levels or {})
 
     def above(self, place: str) -> set[str]:
         """Every place this one is inside, at any depth (a loop in the data can't hang it)."""
@@ -181,8 +185,22 @@ class Nesting:
         return seen
 
     def related(self, a: str, b: str) -> bool:
-        """Is one inside the other (so being in both is just being in the smaller one)?"""
-        return a == b or b in self.above(a) or a in self.above(b)
+        """Can someone be in both at once? When one is inside the other (being in both is being in
+        the smaller one), and when the two are of different sizes (#4173): a bank and the town it
+        may stand in are never rivals, even before anyone says it is in that town. Two places of the
+        same size, or of sizes nobody knows, are rivals unless one is inside the other."""
+        if a == b or b in self.above(a) or a in self.above(b):
+            return True
+        if not place_levels.different(self._levels.get(a), self._levels.get(b)):
+            return False
+        # A place already known to be inside another place of the other one's size is elsewhere:
+        # a bakery in Neverwinter and the town of Waterdeep are rivals, whatever their sizes.
+        return not (self._inside_another(a, b) or self._inside_another(b, a))
+
+    def _inside_another(self, place: str, other: str) -> bool:
+        """Is `place` inside a place, not `other`, of `other`'s size?"""
+        level = self._levels.get(other)
+        return any(p != other and self._levels.get(p) == level for p in self.above(place))
 
     def would_loop(self, inner: str, outer: str) -> bool:
         """Would putting `inner` in `outer` make a place part of itself?"""

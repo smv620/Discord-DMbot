@@ -50,6 +50,7 @@ from dmbot.memory import (
     link_words,
     merge_restore,
     notify,
+    place_levels,
     report_fixed,
     reputation_words,
     standing,
@@ -221,6 +222,8 @@ TRAVELS_WITH = "travels_with"  # a companion goes along with a player character 
 # The version of the core `plays` definition, so a link made by DMbot is never behind (#1189).
 PLAYS_VERSION = next(p.version for p in CORE_PREDICATES if p.key == PLAYS)
 NOT_HERE = "That campaign doesn't exist in this server."
+# Only a place has a size (#4173)
+ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
@@ -380,6 +383,14 @@ ATTITUDE_BETWEEN = "An attitude is a group's or a place's feeling toward a whole
 # ---- conversions ---------------------------------------------------------------------
 
 
+def _merged_size(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
+    """How big a merged place is (#4173): the DM's word over DMbot's read, then the kept entry's."""
+    for row in sorted((kept, gone), key=lambda r: r.get("place_level_from") != place_levels.BY_DM):
+        if row.get("place_level") is not None:
+            return {"place_level": row["place_level"], "place_level_from": row["place_level_from"]}
+    return {"place_level": None, "place_level_from": None}
+
+
 def _entity(r: dict[str, Any]) -> Entity:
     return Entity(
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
@@ -387,7 +398,8 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
         r["manipulated_by"],
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
-        r.get("players_text"),
+        r.get("players_text"), place_level=r.get("place_level"),
+        place_level_from=r.get("place_level_from"),
     )  # fmt: skip
 
 
@@ -1088,6 +1100,29 @@ class MemoryStore:
         )
         rows = await states.flag_acting_after_end(w, onto, touching, ended)
         return new, [_flag(r) for r in rows]
+
+    async def set_place_level(
+        self, guild_id: int, campaign_id: str, entity_id: str, level: str | None, *, source: str
+    ) -> Written[Entity]:
+        """How big a place is, the DM's one tap (#4173): one of `place_levels.LEVELS`, or None
+        (nobody knows). One change, so one Undo. The same level again writes nothing."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        if level is not None and level not in place_levels.LEVELS:
+            raise MemoryRuleError(NOT_FOUND)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            current = await _entity_row(w, entity_id)
+            if not onto.is_a(current["type"], "place"):
+                raise MemoryRuleError(ONLY_PLACES)
+            row = current
+            said = place_levels.BY_DM if level is not None else None
+            # (the DM saying what DMbot read is a change too: it is the DM's word now)
+            if (current.get("place_level"), current.get("place_level_from")) != (level, said):
+                row = await w.update(
+                    ENTITIES, entity_id, {"place_level": level, "place_level_from": said}
+                )
+            return Written(_entity(row), w.batch)
 
     async def set_unique(
         self, guild_id: int, campaign_id: str, entity_id: str, unique: bool, *, source: str
@@ -2548,6 +2583,13 @@ class MemoryStore:
                         "created_at": w.now, "played_by": None, "role": role,
                         "needs_look": False,
                         "unique_item": True if n.unique and onto.is_a(kind, "item") else None,
+                        # how big a place is, as the reader found it (#4173): a place only
+                        "place_level": n.place_level if onto.is_a(kind, "place") else None,
+                        "place_level_from": (
+                            place_levels.READ
+                            if n.place_level and onto.is_a(kind, "place")
+                            else None
+                        ),
                         # Names from a list, or read from the DM's story, start unrevealed
                         # (#2404): the table's first mention of one shows it to the players.
                         # Only the DM's word that the world knows it (`shown`) opens one (#2959).
@@ -4475,6 +4517,8 @@ class MemoryStore:
                 "unique_item": (
                     kept["unique_item"] if kept["unique_item"] is not None else gone["unique_item"]
                 ),
+                # and how big a place is, the same way (#4173)
+                **_merged_size(kept, gone),
                 # A clue only some people know stays so if either was (#1649).
                 "audience_limited": kept["audience_limited"] or gone["audience_limited"],
                 # And so does an entry the players don't know yet (#2321).

@@ -77,7 +77,7 @@ from dmbot.memory.store import SAID_AS_MAX, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic, player_id, split_words, told_name
+from dmbot.ui import all_names, logic, place_size, player_id, split_words, told_name
 from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -787,6 +787,13 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
+    size = (
+        place_size.size_line(entity.place_level, entity.place_level_read)
+        if entity.type == "place"
+        else ""
+    )
+    if size and len(text) + len(size) <= CARD_MAX:  # how big a place is (#4173): not a secret
+        text += size
     if secrets and entity.players_text:  # the DM sees what the players are told (#2967)
         line = (
             f"\n💬 **Line for the players:** {_md(entity.players_text)} "
@@ -858,6 +865,8 @@ async def show_card(
             (entity.is_player_character or entity.party)
             and sees_secrets(campaign, interaction.user.id)
         ),
+        # (the card's own kinds: a place is the core kind "place", as `standing` reads it above)
+        size=entity.type == "place" and sees_secrets(campaign, interaction.user.id),
         undo_connection=undo_connection,
         undo_spelling=undo_spelling,
         finish_past=finish_past,
@@ -994,6 +1003,7 @@ class NameCard(_Menu):
         standing: bool = False,
         deed: bool = False,
         companion: bool = False,
+        size: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -1070,6 +1080,8 @@ class NameCard(_Menu):
             self.add_item(_Button(self._deed, label=DEED_BUTTON, style=grey, row=3))
         if companion:  # a character who is not a player character: who it travels with (#3505)
             self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
+        if size:  # a place: how big it is (#4173), beside its standing button
+            self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
         if players_line:  # the DM's line for the players (#2967), on the first row with room
@@ -1174,6 +1186,10 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _place_size(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
 
     async def _travels(self, interaction: discord.Interaction) -> None:
         if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
