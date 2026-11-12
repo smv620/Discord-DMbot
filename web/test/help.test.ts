@@ -59,7 +59,7 @@ describe("Help", () => {
   });
 
   it("the DM steps end with what to do after setting up a campaign", () => {
-    expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press Agree, and watch for DMbot's private message when something needs checking.");
+    expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking.");
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
