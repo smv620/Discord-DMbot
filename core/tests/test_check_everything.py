@@ -237,16 +237,19 @@ class StopForNow(unittest.IsolatedAsyncioTestCase):
             await ce.stop_walk(cast(Any, SimpleNamespace()), walk, view)
         self.assertEqual(replaced, [walks.STOPPED])
         self.assertTrue(view.is_finished())
+        assert relabel.await_args is not None
         self.assertEqual(relabel.await_args.args[1:], (walk, 4))
 
 
 class ChangingTheMessagesButton(unittest.IsolatedAsyncioTestCase):
     def message(self) -> Any:
-        walk_button = discord.ui.Button(
+        walk_button: discord.ui.Button[Any] = discord.ui.Button(
             label="✅ Check everything (9)", custom_id=f"dmbot:walk:{GUILD}:{CID}"
         )
-        other = discord.ui.Button(label="Other", custom_id="test:other")
-        link = discord.ui.Button(label="Open", url="https://discord.com/channels/1/2/3")
+        other: discord.ui.Button[Any] = discord.ui.Button(label="Other", custom_id="test:other")
+        link: discord.ui.Button[Any] = discord.ui.Button(
+            label="Open", url="https://discord.com/channels/1/2/3"
+        )
         view = discord.ui.View(timeout=None)
         for item in (walk_button, other, link):
             view.add_item(item)
