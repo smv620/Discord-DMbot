@@ -54,6 +54,7 @@ from dmbot import (
     install,
     lore_upload,
     mail,
+    member_names,
     owner_presence,
     plan_rules,
     retention,
@@ -715,6 +716,8 @@ UPLOAD_UNDO_FIRST_S = 30  # the website's "Undo this upload" presses are applied
 UPLOAD_UNDO_EVERY_S = 5
 WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
 WIZARD_FINISH_EVERY_S = 5
+MEMBER_NAMES_FIRST_S = 45  # people known only by number are given their Discord names (#4225)
+MEMBER_NAMES_EVERY_S = 60
 DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
@@ -1928,6 +1931,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
+            *(
+                [self._watched(self._member_names_loop(), "member-names")]
+                if self.memory is not None
+                else []
+            ),
             self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
             self._watched(self._hand_over_loop(), "hand-over-answers"),
@@ -14169,6 +14177,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             await disk_check.look(watch)  # (never raises)
             await asyncio.sleep(disk_check.CHECK_EVERY_S)
+
+    async def _member_names_loop(self) -> None:
+        """Every minute: give the people DMbot knows only as `Player 1234` their Discord names, a
+        few in each server (#4225; `member_names`). A server's trouble never stops the others."""
+        await asyncio.sleep(MEMBER_NAMES_FIRST_S)
+        skip: dict[tuple[int, int], float] = {}
+        while not self._closing:
+            for guild in list(self.guilds):
+                try:
+                    await member_names.run(self, guild.id, skip)
+                except Exception as exc:
+                    log.warning("Member names: a server's round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(MEMBER_NAMES_EVERY_S)
 
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
