@@ -448,6 +448,32 @@ class TheRoutes(Wizard):
         )
         self.assertEqual(plain.json()["picturePages"], 0)
 
+    async def test_a_link_is_kept_as_its_address_and_a_bad_one_is_refused(self) -> None:
+        from tests.test_web_api import ALICE
+
+        c = await self.client(ALICE)
+        base = f"/me/wizard/{self.g}"
+        await c.post(base, json={"name": "x"})
+        address = "https://example.com/notes"
+        got = await c.post(
+            f"{base}/documents",
+            json={"slot": "lore", "name": address, "source": "link", "text": address},
+        )
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(
+            (got.json()["pages"], got.json()["words"], got.json()["status"]), (0, 0, "ok")
+        )
+        rows = await self.rows("SELECT source, text FROM wizard_documents")
+        self.assertEqual([(r["source"], r["text"]) for r in rows], [("link", address)])
+        for bad in ("http://example.com/x", "not a link", "https://x.test/" + "a" * 2000):
+            refused = await c.post(
+                f"{base}/documents",
+                json={"slot": "lore", "name": "a", "source": "link", "text": bad},
+            )
+            self.assertEqual(
+                (refused.status_code, refused.json()), (422, {"error": "bad_document"})
+            )
+
     async def test_a_bad_file_body_and_a_stranger_are_refused(self) -> None:
         from tests.test_web_api import ALICE
 
