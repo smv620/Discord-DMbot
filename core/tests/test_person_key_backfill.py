@@ -45,12 +45,20 @@ class Backfill(DatabaseTest):
         person_key.configure(SECRET)
         result = await person_key_backfill.run(self.db)
         self.assertEqual((result.people, result.rows, result.complete), (3, 15, True))
-        for table in ("try_it_used", "trial_extensions", "sent_emails", "email_unsubscribed"):
-            async with self.db.unscoped() as conn:
-                cur = await conn.execute("SELECT dmbot_person_key_todo(0, 1000) AS ids")
-                self.assertEqual((await cur.fetchone() or {})["ids"], [], table)
-        [row] = await self.rows("SELECT person_key FROM email_unsubscribed WHERE user_id = 7001")
-        self.assertEqual(row["person_key"], person_key.key_for(7001))
+        for table in ("trial_extensions", "sent_emails", "email_unsubscribed"):
+            rows = await self.rows(f"SELECT user_id, person_key FROM {table}")
+            self.assertTrue(rows, table)
+            for row in rows:
+                self.assertEqual(
+                    row["person_key"], person_key.key_for(int(str(row["user_id"]))), table
+                )
+        async with self.db.plan_writer(7001) as conn:  # (its own row, through its own policy)
+            cur = await conn.execute("SELECT person_key FROM try_it_used")
+            self.assertEqual(
+                [r["person_key"] for r in await cur.fetchall()], [person_key.key_for(7001)]
+            )
+        [todo] = await self.rows("SELECT dmbot_person_key_todo(0, 1000) AS ids")
+        self.assertEqual(todo["ids"], [])
         again = await person_key_backfill.run(self.db)
         self.assertEqual((again.people, again.rows), (0, 0))
 
@@ -78,6 +86,41 @@ class Backfill(DatabaseTest):
         self.assertEqual((result.people, result.rows), (0, 0))
         [row] = await self.rows("SELECT person_key FROM email_unsubscribed")
         self.assertIsNone(row["person_key"])
+
+    async def test_a_taken_key_in_the_trial_table_leaves_that_row_alone_too(self) -> None:
+        await self.old_person(7001)
+        person_key.configure(SECRET)
+        async with self.db.plan_writer(7099) as conn:
+            await conn.execute(
+                "INSERT INTO try_it_used (user_id, person_key) VALUES (7099, %s)",
+                (person_key.key_for(7001),),
+            )
+        await person_key_backfill.run(self.db)
+        async with self.db.plan_writer(7001) as conn:
+            cur = await conn.execute("SELECT person_key FROM try_it_used")
+            self.assertEqual([r["person_key"] for r in await cur.fetchall()], [None])
+
+    async def test_the_gate_is_shut_outside_the_doors_and_after_them(self) -> None:
+        await self.old_person(7001)
+        person_key.configure(SECRET)
+        async with self.db.unscoped() as conn:  # (try_it_used is held by row-level security)
+            cur = await conn.execute("SELECT count(*) AS n FROM try_it_used")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+            result = await conn.execute("SELECT dmbot_person_key_todo(0, 10) AS ids")
+            self.assertEqual((await result.fetchone() or {})["ids"], [7001])
+            cur = await conn.execute("SELECT count(*) AS n FROM try_it_used")
+            self.assertEqual(
+                (await cur.fetchone() or {})["n"], 0
+            )  # (the door closed behind itself)
+            cur = await conn.execute("SELECT current_setting('dmbot.owner_sync', true) AS v")
+            self.assertIn((await cur.fetchone() or {})["v"], (None, ""))
+
+    async def test_a_batch_outside_one_to_a_thousand_is_clamped_not_read_as_done(self) -> None:
+        for user in (7001, 7002):
+            await self.old_person(user)
+        person_key.configure(SECRET)
+        result = await person_key_backfill.run(self.db, batch=5000)
+        self.assertEqual(result.people, 2)
 
     async def test_a_key_already_on_another_row_is_skipped_not_an_error(self) -> None:
         await self.old_person(7001)

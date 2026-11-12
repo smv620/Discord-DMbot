@@ -29,11 +29,18 @@ class Result:
 
 async def run(db: Database, *, batch: int = BATCH, max_pages: int = MAX_PAGES) -> Result:
     """One pass. Nothing is written while no secret is configured."""
+    batch = min(max(batch, 1), 1000)  # (the doors take 1 to 1,000)
+    if person_key.key_for(1) is None:
+        return Result(
+            0, 0, True
+        )  # no secret: nothing to hash with, and nothing to ask the database
     people = rows = 0
     after = 0
     for _ in range(max_pages):
         async with db.unscoped() as conn:
-            cur = await conn.execute("SELECT dmbot_person_key_todo(%s, %s) AS ids", (after, batch))
+            cur = await conn.execute(
+                "SELECT dmbot_person_key_todo(%s::bigint, %s::integer) AS ids", (after, batch)
+            )
             found = list((await cur.fetchone() or {}).get("ids") or [])
         if not found:
             return Result(people, rows, True)
@@ -41,7 +48,9 @@ async def run(db: Database, *, batch: int = BATCH, max_pages: int = MAX_PAGES) -
         if any(key is None for key in keys):
             return Result(people, rows, True)  # (no secret set, or an ID that is not one)
         async with db.unscoped() as conn:
-            cur = await conn.execute("SELECT dmbot_person_key_fill(%s, %s) AS n", (found, keys))
+            cur = await conn.execute(
+                "SELECT dmbot_person_key_fill(%s::bigint[], %s::text[]) AS n", (found, keys)
+            )
             rows += int((await cur.fetchone() or {}).get("n") or 0)
         people += len(found)
         after = int(found[-1])

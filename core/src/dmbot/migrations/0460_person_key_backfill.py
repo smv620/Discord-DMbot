@@ -9,7 +9,6 @@ is held by row-level security and nothing else may read or change a person's row
 
 from __future__ import annotations
 
-_TABLES = ("try_it_used", "trial_extensions", "sent_emails", "email_unsubscribed")
 _GATE = "dmbot_owner_sync() = ''person_key_fill''"
 
 
@@ -57,7 +56,8 @@ SQL = (
     _policies()
     + r"""
     -- The next IDs after `after` that have a row with no key, lowest first (keyset paging, so a row
-    -- the fill skips cannot make the job loop). IDs only.
+    -- the fill skips cannot make the job loop). IDs only. Each table is cut at `batch` in ID order
+    -- before the merge, so a page costs about a batch, not everything that is left.
     CREATE FUNCTION dmbot_person_key_todo(after BIGINT, batch INTEGER) RETURNS BIGINT[]
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
@@ -71,13 +71,14 @@ SQL = (
         PERFORM set_config('dmbot.owner_sync', 'person_key_fill', true);
         SELECT COALESCE(array_agg(u.id ORDER BY u.id), ARRAY[]::BIGINT[]) INTO found FROM (
             SELECT DISTINCT x.user_id AS id FROM (
-                SELECT user_id FROM try_it_used WHERE person_key IS NULL AND user_id > after
-                UNION ALL SELECT user_id FROM trial_extensions
-                    WHERE person_key IS NULL AND user_id > after
-                UNION ALL SELECT user_id FROM sent_emails
-                    WHERE person_key IS NULL AND user_id > after
-                UNION ALL SELECT user_id FROM email_unsubscribed
-                    WHERE person_key IS NULL AND user_id > after
+                (SELECT user_id FROM try_it_used WHERE person_key IS NULL AND user_id > after
+                    ORDER BY user_id LIMIT batch)
+                UNION ALL (SELECT user_id FROM trial_extensions
+                    WHERE person_key IS NULL AND user_id > after ORDER BY user_id LIMIT batch)
+                UNION ALL (SELECT user_id FROM sent_emails
+                    WHERE person_key IS NULL AND user_id > after ORDER BY user_id LIMIT batch)
+                UNION ALL (SELECT user_id FROM email_unsubscribed
+                    WHERE person_key IS NULL AND user_id > after ORDER BY user_id LIMIT batch)
             ) x ORDER BY x.user_id LIMIT batch
         ) u;
         PERFORM set_config('dmbot.owner_sync', before, true);
