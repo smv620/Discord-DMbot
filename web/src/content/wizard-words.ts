@@ -94,7 +94,11 @@ export const wizardWords = {
     fullLabel: "Character's full name",
     partyLabel: "What the party calls them",
     partyHint: "Optional. For example 'Tav' for 'Tavin Ashgrove'.",
-    sheetLabel: "Public dndbeyond.com sheet link (optional)",
+    // The label reads "Public D&D Beyond sheet link (optional)"; "D&D Beyond" is a link to its site (the owner, 2026-11-12), so it comes in pieces.
+    sheetLabelBefore: "Public ",
+    sheetLabelLink: "D&D Beyond",
+    sheetLabelAfter: " sheet link (optional)",
+    sheetLabel: "Public D&D Beyond sheet link (optional)",
     add: "Add this character to the campaign",
     remove: "Remove",
     tooMany: "A setup holds up to 12 characters. Add the rest later from the Names page.",

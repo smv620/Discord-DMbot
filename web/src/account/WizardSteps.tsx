@@ -210,7 +210,11 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
           </label>
           {WIZARD_SHEETS_LIVE && (
             <label>
-              {t.sheetLabel}
+              {t.sheetLabelBefore}
+              <a href="https://www.dndbeyond.com" target="_blank" rel="noopener noreferrer">
+                {t.sheetLabelLink}
+              </a>
+              {t.sheetLabelAfter}
               <input type="url" value={sheetUrl} onInput={(e) => setSheetUrl((e.target as HTMLInputElement).value)} />
             </label>
           )}

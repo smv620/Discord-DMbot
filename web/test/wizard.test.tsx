@@ -163,6 +163,18 @@ describe("the wizard", () => {
     expect((await api.get(G))?.answers.characters[0]?.sheetUrl).toBe("https://www.dndbeyond.com/characters/3333333");
   });
 
+  it("\"D&D Beyond\" in the sheet label links to its site in a new tab, and the label still names the box (#4204)", async () => {
+    flags.sheets = true;
+    await start();
+    await next(2);
+    const box = screen.getByLabelText(w.confirm.sheetLabel) as HTMLInputElement;
+    const link = box.closest("label")!.querySelector("a")!;
+    expect(link.textContent).toBe("D&D Beyond");
+    expect(link.getAttribute("href")).toBe("https://www.dndbeyond.com");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+  });
+
   it("Skip uses PLAN's words, asks only for the name, then makes the campaign with the defaults", async () => {
     const api = await start();
     fireEvent.click(screen.getByRole("button", { name: w.skip }));
