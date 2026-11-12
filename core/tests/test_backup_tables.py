@@ -183,6 +183,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, %s, 'species', 'srd', 'Goblin', true, 1)",
                 (g, c, new_id(), A),
             ),
+            "memory_story_languages": (  # an NPC's language from the story (#4229)
+                "INSERT INTO memory_story_languages (guild_id, campaign_id, id, entity_id, name,"
+                " name_key, srd, given_by, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Elvish', 'elvish', true, 'dm', 1)",
+                (g, c, new_id(), A),
+            ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"
                 " fetched_at, player_id, ask_mismatch) VALUES (%s, %s, %s,"

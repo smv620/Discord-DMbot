@@ -8,14 +8,15 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
 /** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
+// The books step 6 offers, alphabetical by title for the screen. Core keeps its own order; that only affects how saved values are sorted.
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
-  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
+  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
   { code: "ravnica", title: "Guildmasters' Guide to Ravnica (2018)" },
+  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
   { code: "theros", title: "Mythic Odysseys of Theros (2020)" },
   { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
-  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
-  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
-  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
 
 export const wizardWords = {
@@ -139,6 +140,17 @@ export const wizardWords = {
     linkBad: "A link must start with https://.",
     remove: "Remove",
     none: "Nothing added.",
+    // Step 8's homebrew links (#4211): only pages published on dndbeyond.com can be read.
+    homebrewLinkLabel: "A link to homebrew you published on dndbeyond.com",
+    homebrewLinkAdd: "Add this link",
+    homebrewLinkBad: "DMbot can only read links from dndbeyond.com. Check the address and try again.",
+    homebrewLinkMany: "That's the most links you can add here. Add the rest from the Homebrew page later.",
+    // Step 7 also takes house rules typed in, so a DM with no file isn't sent away (#4211): kept as one document.
+    typedLabel: "Or type your house rules here",
+    typedNote: "One rule per line. Numbers are optional. DMbot reads them when you press \"Make the campaign\".",
+    typedAdd: "Add these rules",
+    typedName: "Typed house rules",
+    typedEmpty: "Type at least one rule first.",
     // Pages that are only pictures (#4030): DMbot cannot read them, so the person types the text that matters into a file.
     picturePages: (n: number): string =>
       n === 1
@@ -157,19 +169,23 @@ export const wizardWords = {
     } as Record<string, string>,
     full: "A setup holds up to 20 files. Remove one to add another.",
     // The right-to-use confirmation (CLAUDE.md, IP): required before DMbot reads shared material.
-    rights: "I have the right to use what I add here.",
-    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files stay in this campaign only.",
-    rightsNeeded: "Tick the box to say you have the right to use these files.",
+    rights: "I have the right to use what I add here, including any homebrew pages I link to.",
+    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files and links stay in this campaign only.",
+    rightsNeeded: "Tick the box to say you have the right to use these files and links.",
   },
 
   // Step 6: rules.
   rules: {
     heading: "Which rules do you play?",
-    lead: "Pick the rules to use first. DMbot uses the other set only when the first has no answer.",
+    lead: "Pick the rules DMbot uses first. You can pick a second set for when the first has no answer.",
     current: "5e current (2024)",
     legacy: "5e legacy (2014)",
-    targetLabel: "Play with",
-    fallbackLabel: "If it has nothing, use",
+    primaryLabel: "Primary rule set",
+    secondaryLabel: "Secondary rule set (optional)",
+    secondaryHint: "Used only when the primary rule set has no answer.",
+    none: "None",
+    uploadOwn: "Upload your own rule set…",
+    houseNote: "House rules and homebrew come in the next steps. Don't add them here.",
     same: "The two sets must be different.",
     supplementsLabel: "Books your table uses",
     supplementsNote: "Choosing a book only tells DMbot's rules advisor which books you use. No book's text is stored.",
@@ -217,6 +233,8 @@ export const wizardWords = {
       party: "Adding the party",
       rules: "Setting the rules",
       house_homebrew: "Adding house rules and homebrew",
+      house: "Reading your house rules",
+      homebrew: "Reading your homebrew",
       data_use: "Saving your choice",
       lore: "Reading the lore",
       secrets: "Reading the secrets",
@@ -235,11 +253,28 @@ export const wizardWords = {
       party_failed: "Your campaign is ready, but DMbot couldn't add the party. Open the campaign and add the characters on its Names page.",
       lore_failed: "Your campaign is ready, but DMbot couldn't read your lore. Add it again from the campaign's Lore page.",
       drive_gone: "Your campaign is ready, but a Google Drive file couldn't be read. Add it again from the campaign's pages.",
+      house_unreadable: "Your campaign is ready, but DMbot couldn't read your house rules. Add them again from the campaign's House rules page.",
+      house_failed: "Your campaign is ready, but DMbot couldn't add your house rules. Add them again from the campaign's House rules page.",
+      homebrew_unreadable: "Your campaign is ready, but DMbot couldn't read your homebrew. Add it again from the campaign's Homebrew page.",
+      homebrew_link_failed: "Your campaign is ready, but DMbot couldn't read a homebrew link. Add it again from the campaign's Homebrew page.",
+      homebrew_failed: "Your campaign is ready, but DMbot couldn't add your homebrew. Add it again from the campaign's Homebrew page.",
       docs_left: "Your campaign is ready. Add your house rules and homebrew on the campaign's House rules and Homebrew pages.",
       bad_answers: "Some of your answers couldn't be used. Go back, check them, and try again.",
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
-    quiet: "Still working. You can leave this page: the campaign will be ready when it is done.",
+    // What the run could not use, one line for each kind, when the campaign was made anyway (counts only: never a name or a link).
+    notes: {
+      house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
+      homebrew_unreadable: (n: number): string => `${n} ${n === 1 ? "homebrew file" : "homebrew files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+      homebrew_link_failed: (n: number): string => `${n} homebrew ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+    } as Record<string, (n: number) => string>,
+    // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.
+    told: "You can leave this page. When the campaign is ready, DMbot sends you a private message in Discord with what to check, and this page will say Ready. No email is sent.",
+    toldClosed: "If your Discord private messages are closed, look in your campaign's DM Bot channel.",
+    // The running clock, redrawn twice a second, and when the bot last moved (counts and times only, never a word of a document).
+    runningFor: (seconds: number): string => `Running for ${seconds >= 60 ? `${Math.floor(seconds / 60)} min ` : ""}${seconds % 60} s`,
+    lastProgress: (seconds: number): string => (seconds < 1 ? "Last progress just now" : `Last progress ${seconds} s ago`),
+    working: "Working…",
   },
 } as const;
