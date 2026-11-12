@@ -265,6 +265,17 @@ export const wizardWords = {
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
+    // The lore reader's pass and what it has found so far (#4213): a stage word, a count and two numbers, never a word of a document.
+    passes: {
+      first_read: "Reading the lore",
+      reading: "Reading the lore",
+      finding_names: "Finding names",
+      finding_links: "Finding how they connect",
+      sorting: "Working out what the players know",
+    } as Record<string, string>,
+    passPart: (done: number, total: number): string => `part ${done} of ${total}`,
+    foundSoFar: (names: number, links: number): string =>
+      `Found so far: ${names} ${names === 1 ? "name" : "names"}, ${links} ${links === 1 ? "connection" : "connections"}`,
     // What the run could not use, one line for each kind, when the campaign was made anyway (counts only: never a name or a link).
     notes: {
       house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
