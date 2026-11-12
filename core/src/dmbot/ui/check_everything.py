@@ -17,7 +17,7 @@ from typing import Any
 import discord
 
 from dmbot import walk as walks
-from dmbot.dm_questions import CLAIMS, CONNECTIONS, DEEDS, KINDS, NAMES, PEOPLE
+from dmbot.dm_questions import CLAIMS, CONNECTIONS, DEEDS, KINDS, NAMES, PEOPLE, REVEALS
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _tell
 from dmbot.walk import Walk
 
@@ -71,7 +71,19 @@ async def waiting_counts(
         CONNECTIONS: found.connections,
         KINDS: await _count_kinds(bot, guild_id, campaign_id),
         DEEDS: await _count_deeds(bot, guild_id, campaign_id),
+        REVEALS: await _count_reveals(bot, guild_id, campaign_id),
     }
+
+
+async def _count_reveals(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """What the characters learned, waiting for a yes (zero when it cannot be read)."""
+    from dmbot.ui.reveal_card import count_reveals
+
+    try:
+        return await count_reveals(bot, guild_id, campaign_id)
+    except Exception as exc:
+        log.warning("Check everything: couldn't count reveals (%s)", type(exc).__name__)
+        return 0
 
 
 async def _count_deeds(bot: Any, guild_id: int, campaign_id: str) -> int:
@@ -137,6 +149,10 @@ async def run_part(interaction: discord.Interaction, walk: Walk) -> None:
         from dmbot.ui.claims_review import start_claims_review
 
         await start_claims_review(interaction, walk.campaign_id, walk=walk)
+    elif kind == REVEALS:
+        from dmbot.ui.reveal_card import start_walk_part as start_reveals
+
+        await start_reveals(interaction, walk.guild_id, walk.campaign_id, walk)
     elif kind == DEEDS:
         from dmbot.ui.deed_card import start_walk_part as start_deeds
 
