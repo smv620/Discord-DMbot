@@ -135,6 +135,12 @@ RULE_LINKS = Table(
     "id",
     ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
 )
+# The languages a character knows from the story (#4229), beside the sheets: never in the graph.
+STORY_LANGUAGES = Table(
+    "memory_story_languages",
+    "id",
+    ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
+)
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -270,6 +276,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STORY_LANGUAGES,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -313,6 +320,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_story_languages", "entity_id", False),  # (#4229)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),

@@ -35,6 +35,7 @@ REASONS = ("", "empty", "scanned", "locked", "too_big", "not_text")
 NAME_MAX = 100
 LINK_MAX = 2_048
 CHARACTERS_MAX = 12
+HOMEBREW_LINKS_MAX = 20  # step 8's links; each is one page fetched once at Finish
 # Door statuses the page words itself; any other non-"ok" status is a code bug and shows as a
 # plain failure.
 KNOWN = frozenset(
@@ -130,6 +131,8 @@ def check_patch(patch: dict[str, Any], *, finishing: bool = False) -> dict[str, 
             clean[key] = sorted(set(value), key=SUPPLEMENTS.index)
         elif key == "characters":
             clean[key] = _characters(value, finishing)
+        elif key == "homebrew_links":
+            clean[key] = _links(value)
         elif key == "skipped":
             if not isinstance(value, list) or any(
                 not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 9 for v in value
@@ -142,6 +145,14 @@ def check_patch(patch: dict[str, Any], *, finishing: bool = False) -> dict[str, 
     if target is not None and target == fallback:
         raise RecapError("bad_fallback")  # the other ruleset, or none
     return clean
+
+
+def _links(value: Any) -> list[str]:
+    """Step 8's published-page addresses (#4211): a short list of short strings. Which sites are
+    allowed is checked where the page is read, at Finish, and again at the step by the page."""
+    if not isinstance(value, list) or len(value) > HOMEBREW_LINKS_MAX:
+        raise RecapError("bad_homebrew_links")
+    return [_text(v, LINK_MAX, "homebrew_links") for v in value if isinstance(v, str) and v.strip()]
 
 
 def _characters(value: Any, finishing: bool = False) -> list[dict[str, Any]]:
