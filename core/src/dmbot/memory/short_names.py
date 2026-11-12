@@ -79,6 +79,13 @@ def _shaped(word: str) -> bool:
     )
 
 
+def could_be_short_name(word: str) -> bool:
+    """Whether this first word is shaped like a name someone could be called alone (a capital,
+    enough letters, not a title, creature kind, epithet or rules word). The caller decides the
+    rest (#4224: the wizard's characters, whose names the DM typed)."""
+    return _shaped(word)
+
+
 def _owners(names: Iterable[tuple[str, str]]) -> dict[str, set[str]]:
     """Each name key, and the key of each name's first word, to the entries that use it."""
     owners: dict[str, set[str]] = {}
@@ -104,16 +111,36 @@ def used_alone(word: str, text: str) -> bool:
     return False
 
 
+_NAME_AFTER = re.compile(r"[ \t]+([^\W\d_][\w'’-]*)")  # the word that follows, whole
+
+
+def named_otherwise(word: str, name: str, text: str) -> bool:
+    """Does the text also write the word as the start of another full name ("the smith Cerric
+    Dorn" beside Cerric Vanya'elen)? Then it may be another person the text is about to bring in,
+    who is not stored yet: before a read, nobody gets the word (#4224, the reviewer)."""
+    own = name.split()[1] if len(name.split()) > 1 else ""
+    pattern = re.compile(rf"(?<![\w{_EDGE}]){re.escape(word)}(?![\w'’{_EDGE}])")
+    for found in pattern.finditer(text):
+        after = _NAME_AFTER.match(text, found.end())
+        if after is not None and after.group(1)[:1].isupper() and after.group(1) != own:
+            return True
+    return False
+
+
 def short_names(
     people: Sequence[tuple[str, str]],
     names: Iterable[tuple[str, str]],
     texts: Sequence[str],
+    *,
+    unread: bool = False,
 ) -> list[tuple[str, str]]:
     """(entry id, short name) for each person who gets one. `people`: (id, name) of the campaign's
     characters. `names`: (entry id, text) of every name and other name the campaign's live entries
     have, rejected and undone ones included, so a name the DM turned down for an entry is never
     added to it again and a word another entry is called is never taken. `texts`: the campaign's
-    text to look for the word in (the lore just read, or a session's lines, each its own line)."""
+    text to look for the word in (the lore just read, or a session's lines, each its own line).
+    `unread`: the text has not been read for names yet, so a person it is about to bring in is no
+    owner yet: a word the text also writes before another capitalised name is held back."""
     names = list(names)
     owners = _owners(names)
     has = {(owner, name_key(text)) for owner, text in names}
@@ -130,5 +157,7 @@ def short_names(
         if owners.get(key, set()) - {person}:
             continue  # another entry is called that, or starts with it: neither gets it
         if word in text and used_alone(word, text):  # (the plain look first: it's cheap)
+            if unread and named_otherwise(word, name, text):
+                continue  # (maybe a namesake the read has yet to store: the read after decides)
             found.append((person, word))
     return found

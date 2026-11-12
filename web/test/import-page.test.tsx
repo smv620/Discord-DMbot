@@ -103,6 +103,9 @@ describe("the page", () => {
     ).toBe(w.leaveOut);
     // Someone who has not agreed is marked in the list.
     expect(within(cerric).getByText(`Ash (${w.notAgreedMark})`)).toBeTruthy();
+    // Someone the DM has played with before is marked too (#4226).
+    expect(within(cerric).getByText(`Mira · ${w.playedBeforeMark}`)).toBeTruthy();
+    expect(within(cerric).queryByText("Stormy · " + w.playedBeforeMark)).toBeNull();
   });
 
   it("shows a speaker who has not agreed as dropped, with how a player agrees", async () => {

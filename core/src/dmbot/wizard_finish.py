@@ -9,8 +9,12 @@ when it last moved), and every write is conditional on this worker still holding
 stops quietly. A campaign is made once however many times a run is retried (`made_campaign`, and a
 look at an earlier run of the same person that already made one).
 
-Not in this slice (the next PR): the party's members and sheet links, the supplements, and the
-house-rule, homebrew and ruleset documents. A document in those slots is left in the draft.
+Sheet links (#4205): after the characters are made, each public D&D Beyond link the DM gave is
+linked and read once, through the same reader "Link my character" uses. A sheet that is private or
+slow never stops the campaign; the run says how many in `notes`.
+
+Not in this slice: the house-rule, homebrew and ruleset documents. A document in those slots is
+left in the draft.
 """
 
 from __future__ import annotations
@@ -26,7 +30,10 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
+from dmbot.memory import sheets, short_names
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
+from dmbot.memory.sheet_store import SheetRefused
+from dmbot.memory.sheet_waits import SheetWaits
 from dmbot.memory.store import INT64_MAX
 from dmbot.rules import optional
 
@@ -44,16 +51,30 @@ LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 NOT_ALLOWED, PLAN, GONE, FAILED = "not-allowed", "plan", "gone", "failed"
 DRIVE_GONE, LORE_FAILED, BAD_ANSWERS = "drive_gone", "lore_failed", "bad_answers"
 PARTY_FAILED = "party_failed"  # the characters could not be made; the campaign stands
+# Sheet links (#4205): the campaign and its characters stand whatever these say. The row keeps the
+# first word as its `error` and every word with its count in `notes`.
+SHEET_PRIVATE = "sheet_private"  # D&D Beyond said the sheet is not public; the link is kept
+SHEET_SLOW = "sheet_slow"  # D&D Beyond (or our own limit) held it back; the link is kept
+SHEET_BAD = "sheet_bad"  # not a D&D Beyond character link; nothing was kept
+# A sheet is kept for the person who plays the character (`SheetStore` refuses one with no
+# player), so a link on a character whose player is not known yet waits (`sheet_waits`) and is read
+# once the character has one (`run_sheet_waits`, Supervisor's ruling on #4221).
+SHEET_WAITING = "sheet_waiting"
+SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
+SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
 # not read, and the draft is cleaned up, so the run says so and the page tells the DM to add them on
 # the House rules and Homebrew pages. Nothing is silently dropped.
 DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
-SOME_DOCS = (DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT)
+SOME_DOCS = (
+    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT,
+    SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE, SHEETS_FAILED,
+)  # fmt: skip
 NOT_READ_YET = ("house", "homebrew", "ruleset")
 
 # The stage codes the page shows, in order.
-STAGES = ("campaign", "data_use", "rules", "party", "lore", "secrets", "clean")
+STAGES = ("campaign", "data_use", "rules", "party", "sheets", "lore", "secrets", "clean")
 CHOICE_OF = {"lore": "world", "secrets": "spoilers"}
 
 
@@ -65,6 +86,7 @@ class Run:
     made_campaign: str = ""
     tries: int = 1
     started_at: int = 0  # when the page queued it (seconds)
+    notes: str = ""  # "word:count word:count": what the run has to say about several things
 
 
 @dataclass(slots=True)
@@ -135,14 +157,16 @@ class WizardFinishes:
         if made_campaign:
             run.made_campaign = made_campaign
 
-    async def end(self, guild_id: int, run: Run, *, ok: bool, error: str = "") -> bool:
+    async def end(
+        self, guild_id: int, run: Run, *, ok: bool, error: str = "", notes: str = ""
+    ) -> bool:
         """Close the run, only if this worker still holds it."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE wizard_finishes SET state = %s, error = %s, moved_at = %s"
+                "UPDATE wizard_finishes SET state = %s, error = %s, notes = %s, moved_at = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
-                ("done" if ok else "failed", error[:40], int(self._now()), guild_id, run.id,
-                 run.claimed_at),
+                ("done" if ok else "failed", error[:40], notes, int(self._now()), guild_id,
+                 run.id, run.claimed_at),
             )  # fmt: skip
             return bool(cur.rowcount)
 
@@ -267,7 +291,7 @@ def check_answers(answers: dict[str, Any]) -> dict[str, Any] | None:
     from dmbot.web.recaps import RecapError
 
     try:
-        clean = wizard.check_patch(answers)
+        clean = wizard.check_patch(answers, finishing=True)
     except RecapError:
         return None
     return clean if str(clean.get("name", "")).strip() else None
@@ -293,7 +317,9 @@ async def run_round(bot: Any, guild_id: int) -> int:
             log.warning("A wizard finish run failed (%s)", type(exc).__name__)
             word = FAILED
         try:
-            held = await runs.end(guild_id, run, ok=word in ("", *SOME_DOCS), error=word)
+            held = await runs.end(
+                guild_id, run, ok=word in ("", *SOME_DOCS), error=word, notes=run.notes
+            )
         except Exception as exc:  # the row stays working and is retaken, then failed at MAX_TRIES
             log.warning("A wizard finish run could not be closed (%s)", type(exc).__name__)
             return 1
@@ -358,6 +384,7 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     except Exception as exc:  # the campaign is usable without its characters: say so, go on
         log.warning("A wizard run could not make its characters (%s)", type(exc).__name__)
         word = PARTY_FAILED
+    word = await _read_sheets(bot, runs, guild_id, run, campaign_id, answers) or word
     for slot in ("lore", "secrets"):
         docs = [d for d in draft.documents if d["slot"] == slot]
         word = await _read_slot(runs, guild_id, run, campaign_id, draft, slot, docs) or word
@@ -453,7 +480,7 @@ async def _make_characters(
             entity_id = written.value.id
             have[name_key(name)] = entity_id
             made += 1
-        short = str(c.get("party_name", "")).strip()
+        short = str(c.get("party_name", "")).strip() or _first_name(name, characters)
         if short and name_key(short) != name_key(name):
             try:  # (already there is fine: the call returns the existing alias)
                 await memory.add_alias(
@@ -465,6 +492,173 @@ async def _make_characters(
     await memory.party_on_assignment(guild_id, campaign_id)
     log.info("A wizard run made %d player character(s)", made)  # counts only
     return made
+
+
+def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
+    """The first name of a character the DM typed in full and gave no short name for (#4224): the
+    lore says "Cerric" where the wizard has "Cerric Vanya'elen", and unless "Cerric" is already one
+    of the character's other names the lore read makes it a new entry beside them. It is the DM's
+    own word (they typed the character), but only a word that is a name (`could_be_short_name`)
+    and that no other wizard character also starts with or is called (two Miras: neither gets it;
+    another character's short name counts too). A name written surname first ("Vanya'elen Cerric")
+    gets its first word: accepted, the DM can remove it."""
+    parts = name.split()
+    first = short_names.first_word(name)
+    if len(parts) < 2 or not short_names.could_be_short_name(first):
+        return ""
+    key = name_key(first)
+    for other in characters:
+        full = str(other.get("full", "")).strip()
+        if name_key(full) == name_key(name):
+            continue  # (this character, or one written the same)
+        for text in (full, str(other.get("party_name", "")).strip()):
+            if text and key in (name_key(text), name_key(short_names.first_word(text))):
+                return ""
+    return first
+
+
+def _notes(counts: dict[str, int]) -> str:
+    """ "sheet_private:2 sheet_slow:1": the words in a fixed order with their counts (the row's
+    check allows at most 8 pairs of up to 999)."""
+    order = (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE)
+    return " ".join(f"{w}:{min(counts[w], 999)}" for w in order if counts.get(w))
+
+
+async def _read_sheets(
+    bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
+    answers: dict[str, Any],
+) -> str:  # fmt: skip
+    """The public D&D Beyond links the DM gave in the wizard (#4205): each one is linked to its
+    character and read once, with the reader and the limits "Link my character" has (no cookie,
+    one request for each character, no crawl). A character the run did not make, or one that is
+    already linked to this same sheet and has been read, is skipped, so a retaken run never reads a
+    sheet twice. Nothing here stops the campaign: the first problem's word is returned, and the
+    counts of each word go in `run.notes`. Counts only in the log, never a link."""
+    store = getattr(bot, "sheets", None)
+    memory = bot.memory
+    wanted = [c for c in answers.get("characters") or [] if str(c.get("sheet_url", "")).strip()]
+    if store is None or memory is None or not wanted:
+        return ""
+    counts: dict[str, int] = {}
+    try:
+        have = {
+            name_key(e.name): e
+            for e in await memory.entities(guild_id, campaign_id)
+            if e.role == PLAYER_CHARACTER
+        }
+        done: set[str] = set()  # (two characters with one name are one entry: one link, one read)
+        for number, c in enumerate(wanted, 1):
+            await runs.move(guild_id, run, stage="sheets", part=number, of_parts=len(wanted))
+            key = name_key(str(c.get("full", "")).strip())
+            if key in done:
+                continue
+            done.add(key)
+            word = await _read_one_sheet(bot, store, guild_id, campaign_id, have, c)
+            if word:
+                counts[word] = counts.get(word, 0) + 1
+    except Lost:
+        raise
+    except Exception as exc:  # the campaign and its characters stand: say so, go on
+        log.warning("A wizard run could not read its sheets (%s)", type(exc).__name__)
+        run.notes = _notes(counts)
+        return SHEETS_FAILED
+    run.notes = _notes(counts)
+    log.info("A wizard run read %d sheet link(s): %s", len(wanted), run.notes or "all read")
+    for word in (SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE):
+        # (the first problem's word is the row's)
+        if counts.get(word):
+            return word
+    return ""
+
+
+async def _read_one_sheet(
+    bot: Any, store: Any, guild_id: int, campaign_id: str, have: dict[str, Any],
+    character: dict[str, Any],
+) -> str:  # fmt: skip
+    """One character's link: "" when it was read (or was already), else the problem's word."""
+    number = sheets.character_id(str(character.get("sheet_url", "")))
+    if number is None:
+        return SHEET_BAD  # (only the one exact D&D Beyond shape is ever fetched)
+    entity = have.get(name_key(str(character.get("full", "")).strip()))
+    if entity is None:
+        return ""  # the character was not made (refused): nothing to link it to
+    url = sheets.sheet_url(number)
+    if entity.played_by is None or entity.played_by < 0:
+        return await _hold_sheet(bot, guild_id, campaign_id, entity.id, url)
+    current = await store.sheet(guild_id, campaign_id, entity.id)
+    if current is not None and current.url == url and current.sheet is not None:
+        return ""  # read already (a retaken run): not read twice
+    word = await _link_and_read(bot, store, guild_id, campaign_id, entity.id, number)
+    if word == SHEET_WAITING:  # (the entry lost its player since it was listed)
+        return await _hold_sheet(bot, guild_id, campaign_id, entity.id, url)
+    return word
+
+
+async def _hold_sheet(bot: Any, guild_id: int, campaign_id: str, entity_id: str, url: str) -> str:
+    """A link on a character with no player yet waits for one (`run_sheet_waits`); nothing is
+    fetched now. Returns the word that counts it."""
+    await SheetWaits(bot.campaigns.db).hold(guild_id, campaign_id, entity_id, url, int(time.time()))
+    return SHEET_WAITING
+
+
+async def _link_and_read(
+    bot: Any, store: Any, guild_id: int, campaign_id: str, entity_id: str, number: int
+) -> str:
+    """Link a sheet to a character that has a player and read it once: "" when it is kept, else
+    the problem's word. `SHEET_WAITING` means the entry changed under us (no player now, merged,
+    gone). A private or slow sheet keeps its link, which the Sheets page reads again."""
+    url = sheets.sheet_url(number)
+    try:
+        await store.link(guild_id, campaign_id, entity_id, number)
+        snapshot = await bot.fetch_sheet(number)
+    except SheetRefused:
+        return SHEET_WAITING
+    except sheets.SheetError as exc:
+        log.info("A wizard sheet couldn't be read yet")  # (the link stays; read again later)
+        if exc.refused:
+            return SHEET_PRIVATE
+        # "slow" is only what a later try can fix: our own limit, D&D Beyond's 429/5xx, no answer
+        if exc.limited or exc.status is None or exc.status >= 500:
+            return SHEET_SLOW
+        return SHEET_UNREADABLE
+    try:
+        kept = await store.save(
+            guild_id, campaign_id, entity_id, snapshot, int(time.time()), url=url
+        )
+    except SheetRefused:
+        return SHEET_UNREADABLE  # (an answer that is not a sheet DMbot can keep)
+    if kept:
+        bot.sheets_changed(guild_id, campaign_id)  # (a new link drops the old names too)
+    return ""
+
+
+async def run_sheet_waits(bot: Any, guild_id: int) -> int:
+    """Read the sheet links that waited for a player (#4205), one a round, the oldest first, with
+    the bot's own sheet limiter. A link whose character has a player is linked and read once, and
+    its row removed whatever the answer: a private or slow sheet keeps its link as any sheet does,
+    and a character that changed since drops the wait. Links nobody got a player for in 90 days
+    are let go. Returns how many were read. Counts only in the log, never a link."""
+    store = getattr(bot, "sheets", None)
+    if store is None or getattr(bot, "campaigns", None) is None:
+        return 0
+    waits = SheetWaits(bot.campaigns.db)
+    if not await waits.waiting(guild_id):
+        return 0
+    await waits.sweep(guild_id, int(time.time()))
+    read = 0
+    for wait in await waits.ready(guild_id, 1):
+        number = sheets.character_id(wait.url)
+        word = (
+            SHEET_BAD
+            if number is None
+            else await _link_and_read(
+                bot, store, guild_id, wait.campaign_id, wait.entity_id, number
+            )
+        )
+        await waits.drop(guild_id, wait.campaign_id, wait.entity_id)
+        read += 1
+        log.info("A waiting wizard sheet was read: %s", word or "kept")
+    return read
 
 
 async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:

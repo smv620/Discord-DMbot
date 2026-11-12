@@ -28,6 +28,7 @@ ELSEWHERE: Rules = {
         "session_usage", "owner_campaigns", "campaigns", "email_changes", "email_sign_in_links",
         "sent_emails", "entitlements", "web_sessions",
         "web_users", "support_tickets", "wizard_documents", "wizard_drafts", "wizard_finishes",
+        "dm_players",  # (0450: its own forget function, dmbot_forget_dm_players, #4226)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
     )
 }  # fmt: skip

@@ -564,6 +564,7 @@ from dmbot.ui import met_list as met_list_ui
 from dmbot.ui import private_scenes_list as private_scenes_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
+from dmbot.ui.check_everything import WalkButton
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
@@ -1790,6 +1791,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
+        self.add_dynamic_items(WalkButton)  # "✅ Check everything" after a session (#4192)
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
@@ -11012,15 +11014,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
-    async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
+    async def add_short_names(
+        self, gid: int, cid: str, texts: Sequence[str], *, before_read: bool = False
+    ) -> None:
         """Add each character's first name as their short name where the rule allows it
         (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
-        the story extractor. `texts` must hold only what may be read (people who agree). Never
+        the story extractor; `before_read`, before a lore read too, for the DM's confirmed player
+        characters only (#4224). `texts` must hold only what may be read (people who agree). Never
         stops what called it; counts only."""
         if self.memory is None:
             return
         try:
-            written = await self.memory.add_short_names(gid, cid, texts)
+            written = await self.memory.add_short_names(
+                gid, cid, texts, players_before_read=before_read
+            )
         except Exception as exc:
             log.warning("Short names: couldn't add them (%s)", type(exc).__name__)
             return
@@ -11329,7 +11336,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> bool:
         """`send_asks` for a campaign with no table at a session (a lore upload, an import,
         #3314). True when the message reached a DM privately or was posted on the DM screen."""
-        combined = combine(asks, about)
+        combined = combine(asks, about, walk=partial(WalkButton, guild_id, campaign_id))
         if combined is None:
             return False
         text, view = combined
@@ -14204,10 +14211,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _wizard_round(self, guild_id: int) -> int:
         """One server's finish round; a failure is logged (the class only) and never escapes."""
         try:
-            return await wizard_finish.run_round(self, guild_id)
+            taken = await wizard_finish.run_round(self, guild_id)
         except Exception as exc:
             log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
             return 0
+        try:  # a sheet link that waited for a player (#4205): one a round, after the run
+            await wizard_finish.run_sheet_waits(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard sheets: a server's round failed (%s)", type(exc).__name__)
+        return taken
 
     async def _wizard_finish_loop(self) -> None:
         """Every few seconds: answer the website's start-up wizard finish runs (#3955;

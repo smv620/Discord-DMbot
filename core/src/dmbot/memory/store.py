@@ -3840,7 +3840,12 @@ class MemoryStore:
             return Written(_alias(row), w.batch)
 
     async def add_short_names(
-        self, guild_id: int, campaign_id: str, texts: Sequence[str]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        texts: Sequence[str],
+        *,
+        players_before_read: bool = False,
     ) -> Written[list[Alias]]:
         """A person's first name as their short name, by rule (#3880, `short_names.py`): "Tran"
         for Tran Vosk when the text uses "Tran" alone and nothing else in the campaign is called
@@ -3865,13 +3870,25 @@ class MemoryStore:
                 (*scope.ids, SHORT_NAME_SOURCE),
             )
             undone = [(str(r["entity_id"]), str(r["text"])) for r in await cur.fetchall()]
-        people = [(str(e["id"]), str(e["name"])) for e in entities if e["type"] == "character"]
+        people = [
+            (str(e["id"]), str(e["name"]))
+            for e in entities
+            if e["type"] == "character"
+            # Before a lore read (#4224): only the DM's own confirmed player characters, and never a
+            # word the text also writes before another name (a namesake not stored yet).
+            and (
+                not players_before_read
+                or (e["role"] == PLAYER_CHARACTER and e["status"] == CONFIRMED)
+            )
+        ]
         # Every name and other name of a live entry, turned-down other names too: one the DM
         # rejected for this entry is never added again, and a word another entry is called is
         # never taken. An entry the DM rejected outright ("Not a name") blocks nothing.
         names = [(str(e["id"]), str(e["name"])) for e in entities]
         names += [(str(a["entity_id"]), str(a["text"])) for a in aliases]
-        found = short_names_mod.short_names(people, [*names, *undone], texts)
+        found = short_names_mod.short_names(
+            people, [*names, *undone], texts, unread=players_before_read
+        )
         if not found:
             return Written([], None)
         async with self._write(guild_id, campaign_id, SHORT_NAME_SOURCE) as w:
@@ -4628,7 +4645,7 @@ class MemoryStore:
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
-        await _move_rule_links(w, keep_id, gone_id)
+        await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -6947,9 +6964,13 @@ async def _close_stale_flags(w: Changes) -> list[Flag]:
 # ---- helpers (inside a write) ----------------------------------------------------------
 
 
-async def _move_rule_links(w: Changes, keep_id: str, gone_id: str) -> None:
+async def _move_rule_links(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
     """A merged entry's links to the rules go with it, unless the kept entry already has
-    that species or creature type, or the very same link (then they stay behind, unseen)."""
+    that species or creature type, or the very same link (then they stay behind, unseen), or
+    the kept entry is no character (#4241: only a character is linked to the rules, and a
+    backup holding one on anything else would be refused)."""
+    if not to_character:
+        return
     mine = await w.select(RULE_LINKS, " AND entity_id = %s", [keep_id])
     has_one = {r["kind"] for r in mine if r["kind"] in (SPECIES, CREATURE_TYPE)}
     has_same = {(r["kind"], r["rules_source"], r["name"]) for r in mine}

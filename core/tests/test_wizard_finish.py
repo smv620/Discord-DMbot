@@ -16,8 +16,11 @@ import discord
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import channel_sync
+from dmbot.memory import sheets
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
 from tests.pg import DatabaseTest
+from tests.test_sheets import answer as sheet_answer
 
 GUILD = 111
 DM = 1001
@@ -450,6 +453,105 @@ class TheCharacters(FinishTest):
         self.assertIsNone(by_name["Mira Dawn"].played_by)  # (pending: answered later)
         self.assertEqual((await self.run_row())["state"], "done")
 
+    async def aliases_of(self, name: str) -> list[tuple[str, str, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        found = await self.bot.memory.aliases(GUILD, campaign.id, entity_id=entity.id)
+        return sorted((a.text, a.kind, a.status) for a in found)
+
+    async def test_a_full_name_with_no_short_name_gets_its_first_name_as_a_confirmed_one(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            await self.aliases_of("Cerric Vanya'elen"),
+            [("Cerric", "short", "confirmed"), ("Cerric Vanya'elen", "full", "confirmed")],
+        )
+
+    async def test_a_short_name_the_dm_typed_is_the_one_kept(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "Ric", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
+
+    async def test_two_characters_with_one_first_name_get_none(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Mira Vale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Mira Dawn", "Mira Vale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_one_word_name_a_title_or_a_name_another_character_has_gets_none(self) -> None:
+        chars = [
+            {"full": "Zed", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Captain Rook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Zed", "Captain Rook", "Dane Holt"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_creature_an_epithet_or_a_too_short_first_word_gets_none(self) -> None:
+        chars = [
+            {"full": "Goblin Sam", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Red Ilsa", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Al Brook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "jon Hale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Goblin Sam", "Red Ilsa", "Al Brook", "jon Hale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_another_characters_short_name_counts_as_taken(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Tom Vale", "party_name": "Mira", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Mira Dawn")], ["Mira Dawn"])
+        self.assertIn("Mira", [t for t, _, _ in await self.aliases_of("Tom Vale")])
+
+    async def test_an_ordinary_first_name_is_added(self) -> None:
+        chars = [{"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertIn("Wit", [t for t, _, _ in await self.aliases_of("Wit Sparrow")])
+
+    async def test_a_retried_run_adds_the_first_name_once(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts.count("Cerric"), 1)
+
     async def test_a_player_number_who_is_not_in_the_server_is_not_kept(self) -> None:
         chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "9999"}]
         await self.draft({"name": "Frostmaiden", "characters": chars})
@@ -675,3 +777,240 @@ class TheDocumentsNotReadYet(FinishTest):
         ):
             await wizard_finish.run_round(self.bot, GUILD)
         self.assertEqual((await self.run_row())["error"], "lore_failed")
+
+
+NUMBER, OTHER_NUMBER, THIRD = 12345678, 87654321, 5550001
+LINK = sheets.sheet_url(NUMBER)
+
+
+class TheSheets(FinishTest):
+    """Public D&D Beyond links given in the wizard (#4205): linked and read once, whatever D&D
+    Beyond says, and the campaign stands."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.reads: list[int] = []
+        self.errors: dict[int, sheets.SheetError] = {}
+
+        async def fetch_sheet(character: int) -> dict[str, Any]:
+            self.reads.append(character)
+            if character in self.errors:
+                raise self.errors[character]
+            return sheets.parse(sheet_answer())
+
+        self.store = SheetStore(self.db)
+        self.changed: list[str] = []
+        self.bot.sheets = self.store
+        self.bot.fetch_sheet = fetch_sheet
+        self.bot.sheets_changed = lambda g, c: self.changed.append(c)
+
+    def party(self, *links: str) -> dict[str, Any]:
+        names = ("Cerric Vale", "Mira Dawn", "Wit Sparrow")
+        return {
+            "name": "Frostmaiden",
+            "characters": [
+                {"full": n, "party_name": "", "sheet_url": link, "player": str(DM)}
+                for n, link in zip(names, links, strict=False)
+            ],
+        }
+
+    async def finish(self, answers: dict[str, Any]) -> dict[str, Any]:
+        await self.draft(answers)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def made(self) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        found = await self.bot.memory.entities(GUILD, campaign.id)
+        return [e for e in found if e.role == "player_character"]
+
+    async def sheet_of(self, name: str) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        return await self.store.sheet(GUILD, campaign.id, entity.id)
+
+    async def test_a_public_link_is_linked_and_read_once_and_the_row_is_clean(self) -> None:
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"], row["notes"]), ("done", "", ""))
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(len(self.changed), 1)
+
+    async def test_a_private_sheet_keeps_the_link_and_the_campaign_stands(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_private"))
+        self.assertEqual(row["notes"], "sheet_private:1")
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))  # (read again later)
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_a_slow_or_busy_read_keeps_the_link_with_its_own_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("later", limited=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual(
+            (row["state"], row["error"], row["notes"]), ("done", "sheet_slow", "sheet_slow:1")
+        )
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_each_word_has_its_count_and_the_first_problem_is_the_rows_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.errors[OTHER_NUMBER] = sheets.SheetError("later", limited=True)
+        self.errors[THIRD] = sheets.SheetError("no", refused=True)
+        links = (LINK, sheets.sheet_url(OTHER_NUMBER), sheets.sheet_url(THIRD))
+        row = await self.finish(self.party(*links))
+        self.assertEqual(row["error"], "sheet_private")
+        self.assertEqual(row["notes"], "sheet_private:2 sheet_slow:1")
+
+    async def test_a_link_that_is_not_a_dndbeyond_character_is_never_fetched(self) -> None:
+        row = await self.finish(self.party("https://evil.example.com/characters/12345678"))
+        self.assertEqual((row["error"], row["notes"]), ("sheet_bad", "sheet_bad:1"))
+        self.assertEqual(self.reads, [])
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+
+    async def test_only_the_normalised_character_is_fetched(self) -> None:
+        row = await self.finish(self.party(f"{LINK}/share?x=1"))
+        self.assertEqual(row["error"], "")
+        self.assertEqual(self.reads, [NUMBER])
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_a_retaken_run_reads_nothing_twice(self) -> None:
+        answers = self.party(LINK)
+        await self.finish(answers)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.queue("b" * 32)  # (the retake: a new run on the same campaign)
+        run = await self.runs.claim_next(GUILD)
+        assert run is not None
+        word = await wizard_finish._read_sheets(
+            self.bot, self.runs, GUILD, run, campaign.id, answers
+        )
+        self.assertEqual((word, self.reads), ("", [NUMBER]))  # (still the one read)
+
+    async def waits(self) -> list[dict[str, Any]]:
+        return await self.sql("SELECT entity_id, url FROM sheet_waits")
+
+    async def test_a_link_on_a_character_with_no_player_yet_waits_and_is_counted(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["player"] = "pending"
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_waiting"))
+        self.assertEqual(row["notes"], "sheet_waiting:1")
+        self.assertEqual(self.reads, [])  # (nothing is fetched for a link that waits)
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+        [wait] = await self.waits()
+        self.assertEqual(wait["url"], LINK)
+
+    async def give_a_player(self, name: str, player: int = DM) -> str:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", player, entity.id)
+        return str(campaign.id)
+
+    async def waiting_link(self) -> None:
+        answers = self.party(f"{LINK}/share?x=1")
+        answers["characters"][0]["player"] = "pending"
+        await self.finish(answers)
+
+    async def test_a_waiting_link_is_read_once_its_character_has_a_player(self) -> None:
+        await self.waiting_link()
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)  # no player yet
+        self.assertEqual(self.reads, [])
+        await self.give_a_player("Cerric Vale")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(await self.waits(), [])  # (the row goes)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+
+    async def test_a_waiting_private_sheet_keeps_its_link_and_the_wait_goes(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))
+        self.assertEqual(await self.waits(), [])
+
+    async def test_one_waiting_sheet_is_read_each_round_oldest_first(self) -> None:
+        answers = self.party(LINK, sheets.sheet_url(OTHER_NUMBER))
+        for c in answers["characters"]:
+            c["player"] = "pending"
+        await self.finish(answers)
+        await self.give_a_player("Cerric Vale")
+        await self.give_a_player("Mira Dawn")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(len(self.reads), 1)
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(sorted(self.reads), sorted([NUMBER, OTHER_NUMBER]))
+
+    async def test_a_wait_for_an_entry_that_was_turned_down_is_not_read(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        await self.sql("UPDATE memory_entities SET status = 'rejected' WHERE name = 'Cerric Vale'")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+        self.assertEqual(self.reads, [])
+
+    async def test_a_link_nobody_got_a_player_for_is_let_go_after_ninety_days(self) -> None:
+        await self.waiting_link()
+        await self.sql("UPDATE sheet_waits SET created_at = 1")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_a_link_goes_with_its_campaign(self) -> None:
+        await self.waiting_link()
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.sql("DELETE FROM campaigns WHERE id = %s", campaign.id)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_no_store_means_no_sweep(self) -> None:
+        self.bot.sheets = None
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+
+    async def test_a_character_that_was_not_made_is_skipped(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["full"] = ""  # (nothing to make: refused as empty)
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(self.reads, [])
+
+    async def test_the_stage_breaking_never_stops_the_run(self) -> None:
+        self.bot.fetch_sheet = AsyncMock(side_effect=RuntimeError("boom"))
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheets_failed"))
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_the_progress_row_holds_the_stage_and_counts_only(self) -> None:
+        moves: list[tuple[str, int, int]] = []
+        real = wizard_finish.WizardFinishes.move
+
+        async def spy(
+            self_: Any,
+            guild_id: int,
+            run: Any,
+            *,
+            stage: str,
+            part: int = 0,
+            of_parts: int = 0,
+            **kw: Any,
+        ) -> None:
+            moves.append((stage, part, of_parts))
+            await real(self_, guild_id, run, stage=stage, part=part, of_parts=of_parts, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "move", spy):
+            await self.finish(self.party(LINK, sheets.sheet_url(OTHER_NUMBER)))
+        self.assertIn(("sheets", 1, 2), moves)
+        self.assertIn(("sheets", 2, 2), moves)
+        self.assertIn("sheets", wizard_finish.STAGES)
+
+    async def test_no_log_line_holds_a_link(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        with self.assertLogs(level="INFO") as logged:
+            await self.finish(self.party(LINK))
+        text = "\n".join(logged.output)
+        self.assertNotIn("dndbeyond", text)
+        self.assertNotIn(str(NUMBER), text)

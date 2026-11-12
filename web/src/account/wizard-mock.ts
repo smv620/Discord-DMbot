@@ -146,6 +146,18 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const docs = stage === "lore" || stage === "secrets" ? (drafts.get(guild)?.documents.filter((d) => d.slot === stage).length ?? 0) : 0;
       return { ...base, state: "working", stage, part: docs ? 1 : 0, ofParts: docs, error: "", campaignRef: at > 0 ? `${guild}.cmp-new` : "" };
     },
+    // This server's members (#4204): those who played with the DM before come first, then by name; ".nomembers" has none, ".brokenmembers" fails.
+    async members(guild) {
+      calls.push(`members:${guild}`);
+      if (guild.endsWith(".brokenmembers")) throw new WizardError("server");
+      if (guild.endsWith(".nomembers")) return [];
+      return [
+        { userId: "1001", name: "Zoe", before: true },
+        { userId: "1002", name: "Ada", before: false },
+        { userId: "1003", name: "Ben", before: false },
+        { userId: "1004", name: "Eric the Red", before: false },
+      ];
+    },
     async discard(guild) {
       calls.push(`discard:${guild}`);
       drafts.delete(guild);

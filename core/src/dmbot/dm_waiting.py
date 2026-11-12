@@ -135,7 +135,17 @@ def asks_for(
             text = _alone_linked(kind, n)
             button = partial(_link_button, LINKED_BUTTONS[kind], summary_url)
             screen = _alone(kind, n + extra)
-        out.append(Ask(kind, text, f"{_line(kind, n)} from {where}", button, buttons[kind], screen))
+        out.append(
+            Ask(
+                kind,
+                text,
+                f"{_line(kind, n)} from {where}",
+                button,
+                buttons[kind],
+                screen,
+                count=n + extra,
+            )
+        )
         if extra:
             more = _plural(extra, "more name to check", "more names to check")
             own = f"📝 **{more}**.\n" + _alone(kind, extra).split("\n", 1)[1]
