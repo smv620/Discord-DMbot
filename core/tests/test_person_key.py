@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import unittest
 from types import SimpleNamespace
 
@@ -19,14 +20,23 @@ class TheKeys(unittest.TestCase):
         self.assertEqual(keys.of(ALICE), keys.of(ALICE))
         self.assertTrue(person_key.valid(keys.of(ALICE)))
 
+    def test_a_known_secret_and_id_give_this_exact_key(self) -> None:
+        # Pinned on purpose: if the input encoding ever changed, every stored key would stop being
+        # recognised (a returning person looks new), and only this test would say so.
+        self.assertEqual(
+            PersonKeys(SECRET).of(ALICE),
+            "f8e7dd8be19d58bc243ae2987dbe4c46f73fbbd24470b223803fc8080e17fc0f",
+        )
+
+    def test_the_object_never_shows_its_secret(self) -> None:
+        self.assertEqual(repr(PersonKeys(SECRET)), "PersonKeys(...)")
+
     def test_another_id_or_another_secret_gives_another_key(self) -> None:
         keys = PersonKeys(SECRET)
         self.assertNotEqual(keys.of(ALICE), keys.of(BOB))
         self.assertNotEqual(keys.of(ALICE), PersonKeys("t" * 40).of(ALICE))
 
     def test_the_key_is_not_the_plain_hash_of_the_id(self) -> None:
-        import hashlib
-
         plain = hashlib.sha256(str(ALICE).encode()).hexdigest()
         self.assertNotEqual(
             PersonKeys(SECRET).of(ALICE), plain

@@ -579,15 +579,20 @@ The Whisper model is kept in its own volume and downloads again if lost, so it n
 
 ### The person key (`DMBOT_PERSON_KEY`)
 
-DMbot keeps a keyed one-way hash of a Discord ID after an account is deleted (#4145), so a returning
-person gets no second free trial and an unsubscribe is still honoured, without the database holding
-the ID. The hash is made with `DMBOT_PERSON_KEY` (any random string of 32 characters or more). Set it
-once with `scripts/set-key DMBOT_PERSON_KEY` and put a copy in your password manager.
+After someone deletes their account, DMbot keeps a scrambled code made from their Discord ID that
+cannot be turned back into the ID (#4145). It lets DMbot see that the same person has come back, so
+they get no second free trial and nobody is emailed after asking not to be. The code is made with
+`DMBOT_PERSON_KEY`.
 
-**Never change it, and never lose it.** The hashes are only recognised under the same key: with a
-new or lost key every person whose account was deleted looks new, and may be given a second trial or
-an offer email again. There is no re-key job yet; a rotation needs one built first. Back the key up
-with the rest of `.env` (it is not in the database dumps).
+1. Make a long random string: `openssl rand -hex 32`.
+2. Run `scripts/set-key DMBOT_PERSON_KEY` and paste it when asked.
+3. Copy it into your password manager. dev1 sets it on the server before the code that uses it is
+   deployed.
+
+**Never change it, and never lose it.** The codes only match under the same key: with a new or lost
+key, everyone whose account was deleted looks new, and may be given a second trial or emailed after
+asking not to be. There is no job to re-make the codes yet, so a change would need one built first.
+Back the key up with the rest of `.env` (it is not in the database dumps).
 
 ## Security checklist
 

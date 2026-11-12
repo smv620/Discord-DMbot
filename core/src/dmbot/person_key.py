@@ -30,6 +30,11 @@ class PersonKeyMissing(RuntimeError):
 class PersonKeys:
     """Hashes Discord IDs under one secret. Built once from the settings."""
 
+    __slots__ = ("_secret",)
+
+    def __repr__(self) -> str:
+        return "PersonKeys(...)"  # (never the secret, even in a traceback or a log line)
+
     def __init__(self, secret: str) -> None:
         if len(secret) < KEY_MIN:
             raise PersonKeyMissing(
