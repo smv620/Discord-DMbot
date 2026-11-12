@@ -409,7 +409,7 @@ export function DocsStep({ api, guild, draft, onDraft, onPatch, slot, heading, l
           <input type="url" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} />
         </label>
         <button type="button" class="button secondary" disabled={busy || !ticked || !link.trim()} onClick={() => { const url = link.trim(); if (!/^https:\/\//.test(url)) return setProblem(t.linkBad);
-            if (url.length > LINK_MAX) return setProblem(t.linkTooLong); setLink(""); void refresh(api.docAdd(guild, slot, { name: url, source: "link", link: url })); }}>
+            if (url.length > LINK_MAX) return setProblem(t.linkTooLong); setLink(""); void refresh(api.docAdd(guild, slot, { name: url.slice(0, 200), source: "link", link: url })); }}>
           {t.addLink}
         </button>
       </div>
