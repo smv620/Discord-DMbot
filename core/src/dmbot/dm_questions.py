@@ -49,6 +49,11 @@ class Ask:
     # its id).
     screen_button: Callable[[], discord.ui.Item[Any]]
     screen: str  # counts-only words for the fallback channel, if the private message fails
+    # How many checks wait behind this question (0 when not counted), for "Check everything (N)".
+    count: int = 0
+    # A link to a summary message elsewhere, not a button that opens cards (the upload's summary,
+    # which holds Add all): "Check everything" keeps it.
+    link: bool = False
 
 
 def ordered(asks: list[Ask]) -> list[Ask]:
@@ -56,23 +61,42 @@ def ordered(asks: list[Ask]) -> list[Ask]:
     return sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else len(ORDER))
 
 
+# The kinds "✅ Check everything" walks through (#4192), in ORDER. The other kinds keep their own
+# buttons until they join the walk.
+WALKED = (NAMES, PEOPLE, CLAIMS, CONNECTIONS)
+WALK_PRESS = "Press **✅ Check everything** to go through them."
+
+
 def combine(
-    asks: list[Ask], about: str = "your last session"
+    asks: list[Ask],
+    about: str = "your last session",
+    walk: Callable[[int], discord.ui.Item[Any]] | None = None,
 ) -> tuple[str, discord.ui.View] | None:
     """The one message and its buttons, or None with nothing to ask. One question keeps its own
-    words; several become a list under a count, each with its button."""
+    words; several become a list under a count. With `walk` (a maker taking the total waiting, 0
+    when not counted) and two or more of the walked kinds, those kinds' buttons become one
+    "✅ Check everything"; a link to an upload's summary stays, and so does every other kind's
+    own button."""
     if not asks:
         return None
     asks = ordered(asks)
+    walked = [a for a in asks if a.kind in WALKED]  # (two or more kinds, not two questions)
+    use_walk = walk is not None and len({a.kind for a in walked}) >= 2
     view = discord.ui.View(timeout=None)
+    if use_walk and walk is not None:
+        counted = [a.count for a in walked]
+        view.add_item(walk(sum(counted) if all(counted) else 0))
     for ask in asks:
+        if use_walk and ask.kind in WALKED and not ask.link:
+            continue
         view.add_item(ask.button())
     if len(asks) == 1:
         return asks[0].alone, view
     lines = "\n".join(f"• {ask.line}" for ask in asks)
     # (no ❓ here: the private message already opens with DMbot's own "has a question" line)
     head = f"**{len(asks)} questions** about {about}:"
-    text = f"{head}\n{lines}\nPress a button to answer."
+    press = WALK_PRESS if use_walk else "Press a button to answer."
+    text = f"{head}\n{lines}\n{press}"
     return text, view
 
 

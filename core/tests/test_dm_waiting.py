@@ -199,10 +199,12 @@ class TheSummaryLink(WithImports):
         await self.told(me)
         _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
         links = rest[0] if rest else None
+        # (two kinds wait: "✅ Check everything" comes first, #4192; the summary links stay)
         self.assertEqual(
-            [c.label for c in view.children], ["📝 Check new names", "📜 Check the connections"]
+            [getattr(getattr(c, "item", c), "label", None) for c in view.children],
+            ["✅ Check everything (5)", "📝 Check new names", "📜 Check the connections"],
         )
-        self.assertTrue(all(c.url == summary.jump_url for c in view.children))
+        self.assertTrue(all(c.url == summary.jump_url for c in view.children[1:]))
         # ...and "Open in Discord" points at the summary too, not at the question itself
         assert links is not None
         self.assertEqual(links.discord_url, summary.jump_url)

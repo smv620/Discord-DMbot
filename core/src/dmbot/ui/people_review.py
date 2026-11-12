@@ -11,12 +11,15 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import MemoryRuleError, PeopleSuggestion
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.names import _campaign_for, _md, _memory
+from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
 
 NOTHING_WAITING = "✅ Nothing to check. DMbot asks after a session, when it learns a name."
+FINISHED = "✅ Who is who is checked."  # (the line a "Check everything" walk leaves, #4192)
 GONE = "That one was already answered. Press **Check who is who** again for the next one."
 
 
@@ -82,7 +85,9 @@ class PeopleReviewButton(
         await start_people_review(interaction, self.campaign_id)
 
 
-async def start_people_review(interaction: discord.Interaction, campaign_id: str) -> None:
+async def start_people_review(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> None:
     memory = _memory(interaction)
     if memory is None:
         await _tell(interaction, "Remembering names isn't switched on for this DMbot yet.")
@@ -90,9 +95,12 @@ async def start_people_review(interaction: discord.Interaction, campaign_id: str
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    view = PeopleReview(campaign.id, campaign.guild_id)
+    view = PeopleReview(campaign.id, campaign.guild_id, walk=walk)
     text = await view.current_text(interaction)
     if text is None:
+        if walk is not None:  # (answered meanwhile: on to the next part)
+            await next_part(interaction, walk)
+            return
         await _tell(interaction, NOTHING_WAITING)
         return
     await _send(interaction, text, view)
@@ -111,9 +119,11 @@ class PeopleReview(_Menu):
     """Yes / Someone else… / Not a player / Later for a name; Yes / No / Later for a
     character. Later keeps the question waiting for the next time."""
 
-    def __init__(self, campaign_id: str, guild_id: int) -> None:
+    def __init__(self, campaign_id: str, guild_id: int, *, walk: Walk | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): a progress line and Stop for now
+        self.first_total = 0  # how many waited when this review began, for "4 of 11"
         # The server comes with the question, not from the press: the question may be in the
         # DM's private chat, where a press has no server (#3210).
         self.guild_id = guild_id
@@ -138,6 +148,7 @@ class PeopleReview(_Menu):
             self.shown = None
             return None
         self.shown = waiting[0]
+        self.first_total = max(self.first_total, len(waiting))
         if self.shown.kind == "name":
             buttons = [
                 (self._yes, "✅ Yes, that's them", discord.ButtonStyle.success, 0),
@@ -153,13 +164,20 @@ class PeopleReview(_Menu):
             ]
         for handler, label, style, row in buttons:
             self.add_item(_Button(handler, label=label, style=style, row=row))
-        return question_text(self.shown, self._name_of(interaction, self.shown), len(waiting))
+        add_stop(self, self.walk, row=2)
+        done = self.first_total - len(waiting) + 1
+        return progress(self.walk, done, self.first_total) + question_text(
+            self.shown, self._name_of(interaction, self.shown), len(waiting)
+        )
 
     async def _next(self, interaction: discord.Interaction, done: str) -> None:
         text = await self.current_text(interaction)
         if text is None:
             self.stop()
-            await _replace(interaction, f"{done}\n\n{NOTHING_WAITING}".strip(), None)
+            final = FINISHED if self.walk is not None else NOTHING_WAITING
+            await _replace(interaction, f"{done}\n\n{final}".strip(), None)
+            if self.walk is not None:
+                await next_part(interaction, self.walk)
             return
         await _replace(interaction, f"{done}\n\n{text}".strip(), self)
 
