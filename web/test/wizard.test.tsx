@@ -357,12 +357,62 @@ describe("the wizard", () => {
     expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull();
   });
 
-  it("the rules step keeps the two sets different and lists the seven books", async () => {
-    await start();
+  async function onRules() {
+    const api = await start();
     for (let to = 2; to <= 6; to++) await next(to);
-    expect(screen.getAllByRole("checkbox").length).toBeGreaterThanOrEqual(7);
-    fireEvent.click(screen.getByLabelText(w.rules.legacy));
-    expect(await screen.findByText(`${w.rules.fallbackLabel}: ${w.rules.current}`)).toBeTruthy();
+    return api;
+  }
+  const primary = () => screen.getByLabelText(w.rules.primaryLabel) as HTMLSelectElement;
+  const secondary = () => screen.getByLabelText(w.rules.secondaryLabel) as HTMLSelectElement;
+  const optionsOf = (select: HTMLSelectElement) => [...select.options].map((o) => o.textContent);
+
+  it("the rules step has a required primary and an optional secondary dropdown, with the defaults (#4210)", async () => {
+    await onRules();
+    expect(primary().value).toBe("2024");
+    expect(secondary().value).toBe("2014");
+    expect(optionsOf(primary())).toEqual([w.rules.current, w.rules.legacy]);
+    expect(screen.getByText(w.rules.secondaryHint)).toBeTruthy();
+    expect(screen.getByText(w.rules.houseNote)).toBeTruthy(); // (house rules come in the next steps)
+    expect(screen.getAllByRole("checkbox").length).toBeGreaterThanOrEqual(7); // (the books stay below)
+  });
+
+  it("the secondary never offers the primary's choice, and follows when the primary changes (#4210)", async () => {
+    await onRules();
+    expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.legacy]);
+    fireEvent.change(primary(), { target: { value: "2014" } });
+    await waitFor(() => expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.current]));
+    expect(secondary().value).toBe("2024"); // (the repeat turned into the other set)
+  });
+
+  it("None saves no fallback (#4210)", async () => {
+    const api = await onRules();
+    fireEvent.change(secondary(), { target: { value: "none" } });
+    await waitFor(async () => expect((await api.get(G))?.answers.fallback).toBe("none"));
+    expect(secondary().value).toBe("none");
+    fireEvent.change(primary(), { target: { value: "2014" } });
+    await waitFor(async () => expect((await api.get(G))?.answers.target).toBe("2014"));
+    expect((await api.get(G))?.answers.fallback).toBe("none"); // (no clash, so none stays)
+  });
+
+  it("with the switch off there is no upload option (#4210)", async () => {
+    await onRules();
+    expect(screen.queryByText(w.rules.uploadOwn)).toBeNull();
+    expect(screen.queryByText(w.rules.ownLabel)).toBeNull();
+  });
+
+  it("with the switch on, Upload your own opens the box under its dropdown, and only one dropdown can hold it (#4210)", async () => {
+    flags.own = true;
+    await onRules();
+    expect(optionsOf(primary())).toEqual([w.rules.current, w.rules.legacy, w.rules.uploadOwn]);
+    expect(optionsOf(secondary())).toEqual([w.rules.none, w.rules.legacy, w.rules.uploadOwn]);
+    fireEvent.change(secondary(), { target: { value: "own" } });
+    expect(await screen.findByRole("heading", { name: w.rules.ownLabel })).toBeTruthy();
+    expect(optionsOf(primary())).not.toContain(w.rules.uploadOwn); // (one own set for the campaign)
+    fireEvent.change(secondary(), { target: { value: "none" } });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: w.rules.ownLabel })).toBeNull());
+    fireEvent.change(primary(), { target: { value: "own" } });
+    expect(await screen.findByRole("heading", { name: w.rules.ownLabel })).toBeTruthy();
+    expect(optionsOf(secondary())).not.toContain(w.rules.uploadOwn);
   });
 
   it("the last page makes the campaign and shows the stages, then links to it", async () => {
@@ -391,6 +441,62 @@ describe("the wizard", () => {
     for (let i = 0; i < 10 && !screen.queryByText(w.finish.retry); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getAllByText(w.finish.errors["failed"]!).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: w.finish.retry })).toBeTruthy();
+  });
+
+  describe("the finish page's motion and how the DM is told (#4213)", () => {
+    async function running() {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const api = await start();
+      fireEvent.click(screen.getByRole("button", { name: w.skip }));
+      fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "The Frostmaiden" } });
+      fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+      await waitFor(() => expect(api.calls.some((c) => c.startsWith("finish:"))).toBe(true));
+      return api;
+    }
+
+    it("says from the start how the DM is told, and what to do if private messages are closed", async () => {
+      await running();
+      expect(await screen.findByText(w.finish.told)).toBeTruthy();
+      expect(screen.getByText(w.finish.toldClosed)).toBeTruthy();
+      expect(w.finish.told).toContain("private message in Discord");
+      expect(w.finish.told).toContain("No email is sent.");
+    });
+
+    it("the clock moves every half second", async () => {
+      await running();
+      await screen.findByText(w.finish.told);
+      const before = screen.getByText(/^Running for/).textContent;
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(screen.getByText(/^Running for/).textContent).not.toBe(before);
+      expect(screen.getByText(/Last progress/)).toBeTruthy();
+    });
+
+    it("looks far less often while the tab is hidden", async () => {
+      const api = await running();
+      await screen.findByText(w.finish.told);
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+      try {
+        await vi.advanceTimersByTimeAsync(2000); // let a look in flight settle
+        const seen = api.calls.filter((c) => c.startsWith("finishState")).length;
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(api.calls.filter((c) => c.startsWith("finishState")).length - seen).toBeLessThanOrEqual(1);
+      } finally {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+      }
+    });
+
+    it("a person who asked for less motion gets words, not a moving bar", async () => {
+      const real = window.matchMedia;
+      window.matchMedia = ((q: string) => ({ matches: q.includes("reduce"), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia;
+      try {
+        await running();
+        await screen.findByText(w.finish.told);
+        expect(document.querySelector("progress[aria-label='Working…']")).toBeNull();
+        expect(screen.getAllByText(w.finish.working).length).toBeGreaterThan(0);
+      } finally {
+        window.matchMedia = real;
+      }
+    });
   });
 
   it("throwing the setup away asks once, then starts fresh", async () => {
@@ -470,7 +576,7 @@ describe("the wizard", () => {
 
   it("offers exactly the supplement codes core accepts, and the pretend API refuses any other", async () => {
     // (core's wizard.py list: a code not on it is refused at the door)
-    expect(SUPPLEMENTS.map((s) => s.code)).toEqual(["xanathar", "ravnica", "theros", "tasha", "fizban", "mordenkainen", "bigby"]);
+    expect(SUPPLEMENTS.map((s) => s.code).sort()).toEqual(["bigby", "fizban", "mordenkainen", "ravnica", "tasha", "theros", "xanathar"]);
     const api = mockWizard();
     await api.start(G, "");
     await expect(api.set(G, 6, { supplements: ["tasha", "nope"] })).rejects.toMatchObject({ kind: "bad_value", key: "supplements" });
@@ -513,6 +619,32 @@ describe("the wizard", () => {
     expect(screen.getByRole("button", { name: w.docs.add })).toBeTruthy();
   });
 
+  it("step 7 takes house rules typed in, one document, after the right-to-use box is ticked (#4211)", async () => {
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 7; to++) await next(to);
+    const box = screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement;
+    const add = screen.getByRole("button", { name: w.docs.typedAdd }) as HTMLButtonElement;
+    expect([box.disabled, add.disabled]).toEqual([true, true]); // (nothing is added before the right-to-use box)
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.docs.typedAdd }));
+    expect(await screen.findByText(w.docs.typedEmpty)).toBeTruthy(); // (an empty box adds nothing)
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+    fireEvent.input(screen.getByLabelText(w.docs.typedLabel), { target: { value: "1. Flanking gives advantage.\n2. Potions take a bonus action." } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.typedAdd }));
+    expect(await screen.findByText(w.docs.typedName)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(1);
+    expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).value).toBe(""); // (the box empties once it is added)
+  });
+
+  it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {
+    flags.house = true;
+    await start();
+    for (let to = 2; to <= 8; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.typedLabel)).toBeNull();
+  });
+
   it("step 6 hides the person's own ruleset upload in the first release", async () => {
     await start();
     for (let to = 2; to <= 6; to++) await next(to);
@@ -532,6 +664,28 @@ describe("the wizard", () => {
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":supplements"))).toBe(true));
     await waitFor(() => expect(box("Xanathar").checked).toBe(false));
     expect(box("Tasha").checked).toBe(true); // (turning one off did not turn the other off)
+  });
+
+  it("step 6 lists the books in alphabetical order by title", async () => {
+    await start();
+    for (let to = 2; to <= 6; to++) await next(to);
+    const titles = SUPPLEMENTS.map((s) => s.title);
+    const sorted = [
+      "Bigby Presents: Glory of the Giants (2023)",
+      "Fizban's Treasury of Dragons (2021)",
+      "Guildmasters' Guide to Ravnica (2018)",
+      "Mordenkainen Presents: Monsters of the Multiverse (2022)",
+      "Mythic Odysseys of Theros (2020)",
+      "Tasha's Cauldron of Everything (2020)",
+      "Xanathar's Guide to Everything (2017)",
+    ];
+    expect(titles).toEqual([...titles].sort((a, b) => a.localeCompare(b))); // the data is in order, so a future book lands in place
+    // What the person sees: each book's checkbox label, top to bottom, against the literal sorted list.
+    const onScreen = [...document.querySelectorAll("label")]
+      .map((label) => label.textContent ?? "")
+      .map((text) => sorted.find((title) => text.includes(title)))
+      .filter((title): title is string => title !== undefined);
+    expect(onScreen).toEqual(sorted);
   });
 
   it("a saved answer for the books is shown as saved", async () => {

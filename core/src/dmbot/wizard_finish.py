@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot import wizard_homebrew, wizard_house
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
@@ -43,6 +44,10 @@ GIVE_UP_S = 30 * 60  # as the door's: a run that has not moved this long ago was
 RETAKE_AFTER_S = 10 * 60  # a claim that stopped moving this long ago (the bot restarted)
 MAX_TRIES = 3
 LORE_POLL_S = 3.0
+# At most one progress write a second for a run (#4213). `move()` writes the row on every poll
+# too, so LORE_POLL_S must stay above this or the cap no longer holds.
+PROGRESS_EVERY_S = 1.0
+_NO_COUNTS = ("", 0, 0, 0, 0)  # (pass word, done, total, names found, connections found)
 LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 
 # The words a failed run ends with (the page turns them into plain words); the door also writes
@@ -61,6 +66,8 @@ SHEET_BAD = "sheet_bad"  # not a D&D Beyond character link; nothing was kept
 # once the character has one (`run_sheet_waits`, Supervisor's ruling on #4221).
 SHEET_WAITING = "sheet_waiting"
 SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
+HOMEBREW_FAILED = "homebrew_failed"  # the stage itself broke; the run goes on
+HOUSE_FAILED = "house_failed"  # the stage itself broke; the run goes on
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
 # not read, and the draft is cleaned up, so the run says so and the page tells the DM to add them on
@@ -68,13 +75,17 @@ SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (
-    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT,
+    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT, HOUSE_FAILED, wizard_house.HOUSE_UNREADABLE,
+    HOMEBREW_FAILED, wizard_homebrew.HOMEBREW_UNREADABLE, wizard_homebrew.HOMEBREW_LINK_FAILED,
     SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE, SHEETS_FAILED,
 )  # fmt: skip
-NOT_READ_YET = ("house", "homebrew", "ruleset")
+NOT_READ_YET = ("ruleset",)
 
 # The stage codes the page shows, in order.
-STAGES = ("campaign", "data_use", "rules", "party", "sheets", "lore", "secrets", "clean")
+STAGES = (
+    "campaign", "data_use", "rules", "party", "sheets", "lore", "house", "homebrew", "secrets",
+    "clean",
+)  # fmt: skip
 CHOICE_OF = {"lore": "world", "secrets": "spoilers"}
 
 
@@ -87,6 +98,8 @@ class Run:
     tries: int = 1
     started_at: int = 0  # when the page queued it (seconds)
     notes: str = ""  # "word:count word:count": what the run has to say about several things
+    last_counts: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)  # as last written
+    progress_at: float = 0.0  # when the reader's counts were last copied (the 1 a second cap)
 
 
 @dataclass(slots=True)
@@ -116,7 +129,8 @@ class WizardFinishes:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE wizard_finishes SET state = 'working', claimed_at = %s, tries = tries + 1,"
-                " moved_at = %s WHERE (guild_id, id) = (SELECT guild_id, id FROM wizard_finishes"
+                " moved_at = %s, pass_word = '', pass_done = 0, pass_total = 0, found_names = 0,"
+                " found_links = 0 WHERE (guild_id, id) = (SELECT guild_id, id FROM wizard_finishes"
                 " WHERE guild_id = %s AND created_at >= %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
@@ -156,6 +170,47 @@ class WizardFinishes:
         run.claimed_at = stamp
         if made_campaign:
             run.made_campaign = made_campaign
+
+    async def lore_progress(self, guild_id: int, upload: str) -> tuple[str, int, int, int, int]:
+        """The reader's own counts for one upload: the pass it is in (a stage word), how far
+        through it (done of total), and the names and connections found so far. Numbers and one
+        word, never a word of the text."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT stage, done, total, names_found, links_found FROM lore_uploads"
+                " WHERE guild_id = %s AND id = %s",
+                (guild_id, upload),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            return "", 0, 0, 0, 0
+        return (str(row["stage"]), int(row["done"]), int(row["total"]),
+                int(row["names_found"]), int(row["links_found"]))  # fmt: skip
+
+    async def progress(
+        self, guild_id: int, run: Run, counts: tuple[str, int, int, int, int]
+    ) -> None:
+        """Copy the reader's counts onto the finish row so the page can show motion (#4213). At
+        most one write a second for a run: a call within a second of the last one is dropped (the
+        next poll brings the newer numbers). Raises `Lost` like `move`."""
+        now = self._now()
+        if counts == run.last_counts:
+            return  # (nothing new to say)
+        if counts != _NO_COUNTS and now - run.progress_at < PROGRESS_EVERY_S:
+            return  # (clearing the counts between documents always goes through)
+        word, done, total, names, links = counts
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE wizard_finishes SET pass_word = %s, pass_done = %s, pass_total = %s,"
+                " found_names = %s, found_links = %s, moved_at = %s"
+                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                (word[:40], max(done, 0), max(total, 0), max(names, 0), max(links, 0), int(now),
+                 guild_id, run.id, run.claimed_at),
+            )  # fmt: skip
+            if not cur.rowcount:
+                raise Lost
+        run.progress_at = now
+        run.last_counts = counts
 
     async def end(
         self, guild_id: int, run: Run, *, ok: bool, error: str = "", notes: str = ""
@@ -338,7 +393,10 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     answers = check_answers(draft.answers)
     if answers is None:
         return BAD_ANSWERS
-    needs_rights = any(d["slot"] in CHOICE_OF for d in draft.documents)
+    # (the door refuses it too; checked again here, for every slot that is read and for links)
+    needs_rights = bool(answers.get("homebrew_links")) or any(
+        d["slot"] in (*CHOICE_OF, "house", "homebrew") for d in draft.documents
+    )
     if needs_rights and not draft.rights_shared_at:
         return NO_RIGHTS  # nothing is read, and none is made up, without the DM's confirmation
     guild = bot.get_guild(guild_id)
@@ -385,8 +443,16 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
         log.warning("A wizard run could not make its characters (%s)", type(exc).__name__)
         word = PARTY_FAILED
     word = await _read_sheets(bot, runs, guild_id, run, campaign_id, answers) or word
-    for slot in ("lore", "secrets"):
+    for slot in ("lore", "house", "homebrew", "secrets"):
         docs = [d for d in draft.documents if d["slot"] == slot]
+        if slot == "house":
+            word = await _read_house(bot, runs, guild_id, run, campaign_id, docs) or word
+            continue
+        if slot == "homebrew":
+            word = (
+                await _read_homebrew(bot, runs, guild_id, run, campaign_id, docs, answers) or word
+            )
+            continue
         word = await _read_slot(runs, guild_id, run, campaign_id, draft, slot, docs) or word
     if any(d["slot"] in NOT_READ_YET for d in draft.documents):
         word = word or DOCS_LEFT
@@ -720,6 +786,91 @@ async def _read_slot(
     return word
 
 
+def _with_pairs(notes: str, new: dict[str, int]) -> str:
+    """The notes with these "word:count" pairs set, each replacing an earlier pair of its word (a
+    retaken run does not double a count); at most 8 pairs, as the row's check allows."""
+    pairs = {p.partition(":")[0]: p for p in notes.split() if p}
+    pairs.update({w: f"{w}:{n}" for w, n in new.items()})
+    return " ".join(list(pairs.values())[:8])
+
+
+async def _read_house(
+    bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
+    docs: list[dict[str, Any]],
+) -> str:  # fmt: skip
+    """The house-rule documents of step 7, read into the campaign (#4211) with the House rules
+    page's own reader. A document that holds no readable rule keeps its word in the notes and the
+    campaign stands; so does a failure of the whole stage."""
+    word = DRIVE_GONE if any(d["source"] == "drive" for d in docs) else ""
+    docs = [
+        d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
+    ]
+    store = getattr(bot, "house_rules", None)
+    if docs and store is None:
+        return HOUSE_FAILED  # the DM adds them on the House rules page
+    if not docs:
+        return word
+    await runs.move(guild_id, run, stage="house", part=1, of_parts=len(docs))
+    try:
+        _, _, unreadable = await wizard_house.read_documents(
+            store, guild_id, campaign_id, run.user_id, docs
+        )
+    except Exception as exc:  # the campaign is usable without them: say so, go on
+        log.warning("A wizard run could not read its house rules (%s)", type(exc).__name__)
+        return word or HOUSE_FAILED
+    if unreadable:
+        run.notes = _with_pairs(run.notes, {wizard_house.HOUSE_UNREADABLE: min(unreadable, 999)})
+        return word or wizard_house.HOUSE_UNREADABLE
+    return word
+
+
+async def _read_homebrew(
+    bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
+    docs: list[dict[str, Any]], answers: dict[str, Any],
+) -> str:  # fmt: skip
+    """The homebrew files and links of step 8, read into the campaign (#4211) through the
+    Homebrew page's own paths. Each file or link that cannot be used adds its count to the notes
+    and the first problem's word is the row's; the campaign stands in every case."""
+    word = DRIVE_GONE if any(d["source"] == "drive" for d in docs) else ""
+    docs = [
+        d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
+    ]
+    links = [str(v).strip() for v in answers.get("homebrew_links") or [] if str(v).strip()]
+    store = getattr(bot, "homebrew", None)
+    importer, sources = getattr(bot, "importer", None), getattr(bot, "sources", None)
+    if ((docs or links) and store is None) or (links and (importer is None or sources is None)):
+        return HOMEBREW_FAILED  # the DM adds them on the Homebrew page
+    if not docs and not links:
+        return word
+    await runs.move(guild_id, run, stage="homebrew", part=1, of_parts=len(docs) + len(links))
+    counts: dict[str, int] = {}
+    try:
+        if docs:
+            _, bad = await wizard_homebrew.read_documents(
+                store, guild_id, campaign_id, run.user_id, docs
+            )
+            if bad:
+                counts[wizard_homebrew.HOMEBREW_UNREADABLE] = bad
+        if links:
+            await runs.move(
+                guild_id, run, stage="homebrew", part=len(docs) + 1, of_parts=len(docs) + len(links)
+            )
+            _, failed = await wizard_homebrew.read_links(
+                importer, sources, store, guild_id, campaign_id, run.user_id, links
+            )
+            if failed:
+                counts[wizard_homebrew.HOMEBREW_LINK_FAILED] = failed
+    except Lost:
+        raise
+    except Exception as exc:  # the campaign is usable without them: say so, go on
+        log.warning("A wizard run could not read its homebrew (%s)", type(exc).__name__)
+        return word or HOMEBREW_FAILED
+    if counts:
+        run.notes = _with_pairs(run.notes, {w: min(n, 999) for w, n in counts.items()})
+        return word or next(iter(counts))
+    return word
+
+
 async def _read_one(
     runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str, draft: Draft, slot: str,
     doc: dict[str, Any], number: int, of_parts: int,
@@ -742,7 +893,9 @@ async def _read_one(
     while True:
         state = await runs.lore_state(guild_id, upload)
         if state in ("done", "failed", "gone"):
+            await runs.progress(guild_id, run, _NO_COUNTS)  # (the next document starts at zero)
             return state
+        await runs.progress(guild_id, run, await runs.lore_progress(guild_id, upload))
         if waited >= LORE_WAIT_S:
             await runs.cancel_upload(guild_id, upload)
             return "failed"
