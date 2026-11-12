@@ -114,7 +114,12 @@ def left_text(offer: Offer) -> str:
 
 
 def undone_text(offer: Offer) -> str:
-    who, _what, now = _shown(offer)
+    who, what, now = _shown(offer)
+    if offer.trait.kind == LANGUAGE:
+        return (
+            f"Undone: **{who}** no longer speaks **{what}**. The question is back, so you can "
+            "answer it again."
+        )
     back = (
         f"**{who}** is {_a(f'**{now}**')} again." if offer.trait.kind == SPECIES and now
         else "it is taken back."
@@ -123,7 +128,12 @@ def undone_text(offer: Offer) -> str:
 
 
 def could_not_text(offer: Offer) -> str:
-    who, _what, _now = _shown(offer)
+    who, what, _now = _shown(offer)
+    if offer.trait.kind == LANGUAGE:  # (refused because the character has a sheet since)
+        return (
+            f"DMbot couldn't add it: **{who}** has a sheet now, so add **{what}** there. DMbot "
+            "won't ask this one again. Showing what is left."
+        )
     return (
         f"DMbot couldn't change **{who}**: they may have been joined with another name or "
         "removed. DMbot won't ask this one again. Showing what is left."

@@ -652,7 +652,6 @@ class BackgroundOffer(_Menu):
                     # question itself opens privately from ❓ Questions for you, #3926)
                     knowledge_note=done.knowledge_note
                     + trait_questions_line(done.trait_questions)
-                    + sheet_languages_line(done.sheet_languages)
                     + picture_held_line(len(done.picture_held)),
                     held=done.picture_held,
                 )
@@ -665,6 +664,13 @@ class BackgroundOffer(_Menu):
                     guild, campaign.id, key, posted, sum(map(len, stored.values()))
                 )
             await bot.tell_dm_waiting(guild, campaign.id, key, where="your upload")
+            if done.sheet_languages:  # (#4229 1c) to this DM alone: never the DM Bot channel,
+                # which the campaign's people read and which only ever gets counts; sent after
+                # either kind of note, so neither path loses it
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.followup.send(
+                        sheet_languages_line(done.sheet_languages).strip(), ephemeral=True
+                    )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -1373,8 +1379,11 @@ async def ask_languages(
     """The languages the lore gives characters the campaign already had (#4229 slice 1c,
     Supervisor's ruling): one with no sheet that doesn't know it yet gets a question, as #3926 does
     for a lineage ("Does Brewner speak Giant?"); a player character whose sheet lacks it is named
-    on the upload's note instead, with nothing stored. Only a confirmed character, and never a name
-    two entries share. Returns the new questions and the sheet lines. Never raises."""
+    to the DM alone instead (a private line after the upload's note), with nothing stored. Only a
+    confirmed character, and never a name two entries share. Returns the new questions and the
+    sheet lines. Never raises."""
+    offers: list[trait_offers_mod.Offer] = []
+    on_sheets: list[tuple[str, str]] = []
     try:
         lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
         whose: dict[str, set[str]] = {}
@@ -1388,8 +1397,6 @@ async def ask_languages(
             return 0, []
         everyone = sorted(set(ids.values()))
         known = await memory.languages_known(campaign.guild_id, campaign.id, everyone)
-        offers: list[trait_offers_mod.Offer] = []
-        on_sheets: list[tuple[str, str]] = []
         for s in spoken:
             entity_id = ids.get(s.name)
             if entity_id is None:
@@ -1405,14 +1412,17 @@ async def ask_languages(
                     entity_id, Trait(LANGUAGE, s.language, "", None, False), s.quote, upload
                 )
             )
-        asked = 0
-        if offers:
-            store = trait_offers_mod.TraitOfferStore(memory._db)
-            asked = await store.offer(campaign.guild_id, campaign.id, offers, notice_id)
-        return asked, on_sheets
     except Exception as exc:  # the type only: a database error can quote a row
-        log.warning("Language questions couldn't be kept (%s)", type(exc).__name__)
+        log.warning("Language questions couldn't be read (%s)", type(exc).__name__)
         return 0, []
+    if not offers:
+        return 0, on_sheets
+    try:
+        store = trait_offers_mod.TraitOfferStore(memory._db)
+        return await store.offer(campaign.guild_id, campaign.id, offers, notice_id), on_sheets
+    except Exception as exc:  # (the sheet lines are kept: they need no write)
+        log.warning("Language questions couldn't be kept (%s)", type(exc).__name__)
+        return 0, on_sheets
 
 
 async def ask_traits(

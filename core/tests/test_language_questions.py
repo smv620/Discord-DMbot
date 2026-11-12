@@ -17,6 +17,7 @@ from dmbot.ui import trait_questions as tq
 from dmbot.web import trait_offers as web_offers
 from tests.test_memory_names import GUILD, NamesTest
 from tests.test_sheets import answer
+from tests.test_web_trait_offers import DWARF
 from tests.test_web_trait_offers import Base as WebBase
 
 GIANT = Trait(LANGUAGE, "Giant", "", None, False)
@@ -33,6 +34,11 @@ class TheWords(unittest.TestCase):
         self.assertEqual(
             tq.kept_text(offer), "Done: **Brewner** speaks **Giant**. ↩️ Undo takes it back."
         )
+
+    def test_undo_and_a_refusal_say_what_happened_to_the_language(self) -> None:
+        offer = to.Offer("e1", GIANT, "Brewner speaks Giant", "Notes", "Brewner")
+        self.assertIn("**Brewner** no longer speaks **Giant**", tq.undone_text(offer))
+        self.assertIn("has a sheet now, so add **Giant** there", tq.could_not_text(offer))
 
     def test_the_note_names_what_a_sheet_lacks_and_counts_the_rest(self) -> None:
         self.assertEqual(nb.sheet_languages_line(()), "")
@@ -77,6 +83,23 @@ class Asked(NamesTest):
         )
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
 
+    async def test_no_is_final(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer()])
+        self.assertTrue(await self.store.never(GUILD, self.campaign.id, self.offer()))
+        self.assertEqual(await self.store.offer(GUILD, self.campaign.id, [self.offer()]), 0)
+        self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+
+    async def test_a_sheet_added_since_closes_the_question(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer()])
+        async with self.db.guild(GUILD) as conn:  # (a typed sheet, as if the DM added one since)
+            await conn.execute(
+                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, sheet, source,"
+                " fetched_at, player_id) VALUES (%s, %s, %s, '{}'::jsonb, 'typed', 1, %s)",
+                (GUILD, self.campaign.id, self.brewner, PLAYER),
+            )
+        self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+
     async def test_the_upload_asks_about_one_with_no_sheet_and_names_a_sheets_gap(self) -> None:
         testa = (
             await self.memory.add_entity(
@@ -111,6 +134,9 @@ class Asked(NamesTest):
 
 class TheWebsiteLeavesThemOut(WebBase):
     async def test_a_language_question_is_not_listed_yet(self) -> None:
-        await self.leave(to.Offer(self.mira, GIANT, "Mira speaks Giant", "Notes"))
-        got = await web_offers.waiting(self.web, self.session, self.cref)
-        self.assertEqual(got, {"offers": []})
+        await self.leave(
+            to.Offer(self.mira, GIANT, "Mira speaks Giant", "Notes"),
+            to.Offer(self.mira, DWARF, "Mira is a dwarf", "Notes"),
+        )
+        got = (await web_offers.waiting(self.web, self.session, self.cref))["offers"]
+        self.assertEqual([o["kind"] for o in got], ["species"])  # the lineage one only
