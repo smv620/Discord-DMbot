@@ -450,6 +450,79 @@ class TheCharacters(FinishTest):
         self.assertIsNone(by_name["Mira Dawn"].played_by)  # (pending: answered later)
         self.assertEqual((await self.run_row())["state"], "done")
 
+    async def aliases_of(self, name: str) -> list[tuple[str, str, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        found = await self.bot.memory.aliases(GUILD, campaign.id, entity_id=entity.id)
+        return sorted((a.text, a.kind, a.status) for a in found)
+
+    async def test_a_full_name_with_no_short_name_gets_its_first_name_as_a_confirmed_one(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            await self.aliases_of("Cerric Vanya'elen"),
+            [("Cerric", "short", "confirmed"), ("Cerric Vanya'elen", "full", "confirmed")],
+        )
+
+    async def test_a_short_name_the_dm_typed_is_the_one_kept(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "Ric", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
+
+    async def test_two_characters_with_one_first_name_get_none(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Mira Vale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Mira Dawn", "Mira Vale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_one_word_name_or_a_title_or_a_name_another_character_has_gets_none(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Zed", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Captain Rook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Zed")], ["Zed"])
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Captain Rook")], ["Captain Rook"])
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Dane Holt")], ["Dane Holt"])
+        self.assertIn("Wit", [t for t, _, _ in await self.aliases_of("Wit Sparrow")])
+
+    async def test_a_retried_run_adds_the_first_name_once(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts.count("Cerric"), 1)
+
     async def test_a_player_number_who_is_not_in_the_server_is_not_kept(self) -> None:
         chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "9999"}]
         await self.draft({"name": "Frostmaiden", "characters": chars})

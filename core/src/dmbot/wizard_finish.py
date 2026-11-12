@@ -26,6 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
 from dmbot.logs import log_context
+from dmbot.memory import short_names
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
 from dmbot.memory.store import INT64_MAX
 from dmbot.rules import optional
@@ -453,7 +454,7 @@ async def _make_characters(
             entity_id = written.value.id
             have[name_key(name)] = entity_id
             made += 1
-        short = str(c.get("party_name", "")).strip()
+        short = str(c.get("party_name", "")).strip() or _first_name(name, characters)
         if short and name_key(short) != name_key(name):
             try:  # (already there is fine: the call returns the existing alias)
                 await memory.add_alias(
@@ -465,6 +466,29 @@ async def _make_characters(
     await memory.party_on_assignment(guild_id, campaign_id)
     log.info("A wizard run made %d player character(s)", made)  # counts only
     return made
+
+
+def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
+    """The first name of a character the DM typed in full and gave no short name for (#4224): the
+    lore says "Cerric" where the wizard has "Cerric Vanya'elen", and unless "Cerric" is already one
+    of the character's other names the lore read makes it a new entry beside them. It is the DM's
+    own word (they typed the character), but only a word that is a name (`could_be_short_name`)
+    and that no other wizard character also starts with (two Miras: neither gets it)."""
+    parts = name.split()
+    first = short_names.first_word(name)
+    if len(parts) < 2 or not short_names.could_be_short_name(first):
+        return ""
+    key = name_key(first)
+    others = [
+        str(c.get("full", "")).strip()
+        for c in characters
+        if name_key(str(c.get("full", "")).strip()) != name_key(name)
+    ]
+    if any(
+        name_key(other) == key or name_key(short_names.first_word(other)) == key for other in others
+    ):
+        return ""
+    return first
 
 
 async def _made_before(bot: Any, guild_id: int, run: Run, name: str) -> str:
