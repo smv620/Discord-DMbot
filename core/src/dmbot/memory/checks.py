@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_levels, place_words
+from dmbot.memory import kin, next_words, place_levels, place_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -113,6 +113,8 @@ def ordered(
     ("Wit sees Cerric as a rival") keeps its order, and one the DM made two-way is sorted."""
     if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
+    if p.key == "next_to" and next_words.one_way(detail):
+        return subject_id, object_id  # "Targos is on the shore of Maer Dualdon" keeps its order
     if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id

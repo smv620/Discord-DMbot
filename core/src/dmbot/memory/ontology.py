@@ -656,6 +656,28 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("imprisoned_by", "prisoner_of", "captured_by"),
     ),
     PredicateTerm(
+        "next_to",
+        "is next to",
+        "Two places beside each other: two regions that share a border, a town on the shore of a "
+        "lake, a keep at the foot of a mountain, two rooms side by side, a town on a named road. "
+        "Its word, when the story gives one, is kept in its details: borders, on the shore of, on "
+        "the coast of, at the foot of, on. Never one place inside another: that is 'is in'.",
+        ("place",),
+        ("place",),
+        symmetric=True,
+        covers=(
+            "two regions or realms that share a border",
+            "a town on the shore of a lake, or on the coast of a sea",
+            "a keep or village at the foot of a mountain",
+            "a town on a named road or trade route",
+            "two rooms or buildings side by side",
+        ),
+        not_this=(("one place inside another (a tavern in a town)", "located_in"),),
+        examples=("Targos is on the shore of Maer Dualdon.", "Luskan borders the Sword Coast."),
+        inverse_label="is next to",
+        synonyms=("beside", "borders", "adjacent_to", "next_door_to", "on_the_shore_of"),
+    ),
+    PredicateTerm(
         "contains",
         "contains",
         "Has something inside it: a note in a book, a gem in a chest.",

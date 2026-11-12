@@ -240,7 +240,9 @@ NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "
 # Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
 # is full. A companion travels with a player character or the party (#3176): the session readers
 # and the DM's own button propose it, not this menu.
-NOT_IN_MENU = frozenset({"travels_with"})
+# Not in the generic menu: a companion's is proposed by the readers, and two places beside each
+# other (#4173 slice 6a) have their own control on a place's card (Discord's menu holds 25).
+NOT_IN_MENU = frozenset({"travels_with", "next_to"})
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
