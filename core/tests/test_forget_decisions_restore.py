@@ -11,7 +11,8 @@ from typing import Any
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.memory.pc_icons_backup import PcIconsSection
 from dmbot.memory.report_backup import ReportAnswersSection
-from dmbot.recaps.accepted import AcceptedSection, text_hash
+from dmbot.recaps.accepted import AcceptedSection
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.plot_backup import PlotFineSection
 from dmbot.recaps.store import RecapStore
 from dmbot.rules.homebrew_sources import SiteApprovalsSection
@@ -19,7 +20,7 @@ from dmbot.rules.wins import WinsSection
 from tests.pg import DatabaseTest
 
 HEX32 = "a" * 32
-GOOD: list[tuple[Any, list[dict[str, Any]], str, str]] = [
+GOOD: list[tuple[Any, list[dict[str, Any]], str, str | int]] = [
     (
         AcceptedSection(),
         [
