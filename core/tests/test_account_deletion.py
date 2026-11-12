@@ -212,6 +212,31 @@ class AccountDeletion(DatabaseTest):
                 assert row is not None
                 self.assertGreaterEqual(row["n"], 2, table)
 
+    async def test_every_table_the_requests_forget_names_exists_with_its_policies(self) -> None:
+        from importlib import import_module
+
+        mod = import_module("dmbot.migrations.0440_forget_requests")
+        async with self.db.unscoped() as conn:
+            for table, column in mod.DELETED:
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM information_schema.columns"
+                    " WHERE table_schema = current_schema() AND table_name = %s"
+                    " AND column_name = %s",
+                    (table, column),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertEqual(row["n"], 1, (table, column))
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM pg_policies WHERE schemaname = current_schema()"
+                    " AND tablename = %s AND policyname LIKE 'forget_requests_%%'",
+                    (table,),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                # (move_codes has no row-level security, so it has no policy)
+                self.assertEqual(row["n"], 0 if table in mod.NO_RLS else 2, table)
+
     async def test_the_persons_own_requests_and_records_go_and_the_confirmation_stays_at_zero(
         self,
     ) -> None:
