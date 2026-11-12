@@ -281,6 +281,7 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
   const t = w.docs;
   const mine = draft.documents.filter((d) => d.slot === slot);
   const [link, setLink] = useState("");
+  const [typed, setTyped] = useState(""); // house rules typed in, one per line (#4211)
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const [ticking, setTicking] = useState(false);
@@ -376,6 +377,30 @@ export function DocsStep({ api, guild, draft, onDraft, slot, heading, lead }: St
           </button>
         )}
       </div>
+      {slot === "house" && (
+        <div class="stack">
+          <label>
+            {t.typedLabel}
+            <textarea rows={5} value={typed} disabled={!ticked} aria-describedby="typed-note" onInput={(e) => setTyped((e.target as HTMLTextAreaElement).value)} />
+          </label>
+          <span id="typed-note" class="small muted">
+            {t.typedNote}
+          </span>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy || !ticked}
+            onClick={() => {
+              const text = typed.trim();
+              if (!text) return setProblem(t.typedEmpty);
+              setTyped("");
+              void refresh(api.docAdd(guild, slot, { name: t.typedName, source: "upload", text }));
+            }}
+          >
+            {t.typedAdd}
+          </button>
+        </div>
+      )}
       {WIZARD_LINKS_LIVE && (
       <div class="row">
         <label>
