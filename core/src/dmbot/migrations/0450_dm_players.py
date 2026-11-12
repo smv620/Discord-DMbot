@@ -295,7 +295,7 @@ for _sig in _FUNCTIONS:
     SQL += f"    REVOKE ALL ON FUNCTION {_sig} FROM PUBLIC;\n"
 
 ISOLATED_TABLES: tuple[str, ...] = ()
-USER_ISOLATED_TABLES: tuple[str, ...] = ()
+USER_ISOLATED_TABLES: tuple[str, ...] = ("dm_players",)
 
 # The website's doors (a DM's list and Forget, a player's list and Clear) and account deletion's
 # call.
