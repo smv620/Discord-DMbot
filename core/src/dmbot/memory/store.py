@@ -418,6 +418,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
         r.get("players_text"), place_level=r.get("place_level"),
         place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
+        setting_from=r.get("setting_from"),
         form=r.get("form"), form_from=r.get("form_from"),
     )  # fmt: skip
 
@@ -1200,13 +1201,104 @@ class MemoryStore:
                 level = row.get("place_level")
                 if level not in SETTING_LEVELS:
                     raise MemoryRuleError(SETTING_SIZE)
-            if [r["id"] for r in now] == ([entity_id] if entity_id else []):
+            if [r["id"] for r in now] == ([entity_id] if entity_id else []) and all(
+                r.get("setting_from") == DM for r in now
+            ):  # (the same place again, already the DM's word: nothing to write)
                 return Written(_entity(row) if row else None, None)
             for r in now:  # (first: one setting at most)
-                await w.update(ENTITIES, r["id"], {"setting": False})
-            if entity_id is not None:
-                row = await w.update(ENTITIES, entity_id, {"setting": True})
+                if r["id"] != entity_id:
+                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": None})
+            if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
+                row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
+
+    async def guess_setting(
+        self, guild_id: int, campaign_id: str, world: str, *, source: str
+    ) -> Written[Entity | None]:
+        """DMbot's guess at the campaign's setting, from its shared adventure (#4173 slice 2b,
+        `setting_worlds.world_for`): the place named `world` (found by name, or made, hidden from
+        the players until the DM keeps it), at world size, marked as DMbot's guess. One change, so
+        one Undo. Nothing when the campaign has a setting already or the DM once said ✖ Not the
+        setting to a guess: DMbot never guesses twice, and never over the DM."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            said = await w.select(ENTITIES, " AND (setting OR setting_from = 'declined')", [])
+            if said:
+                return Written(None, None)
+            onto = await _load_ontology(w)
+            key = name_key(world)
+            found = [
+                r
+                for r in await w.select(
+                    ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
+                )
+                if name_key(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+            ]
+            if len(found) > 1:
+                return Written(None, None)  # (two places of that name: DMbot can't tell which)
+            if found:
+                place = found[0]
+                if place.get("place_level") not in SETTING_LEVELS:
+                    return Written(None, None)  # (the DM's Faerûn is smaller: never over the DM)
+                row = await w.update(
+                    ENTITIES, str(place["id"]), {"setting": True, "setting_from": place_levels.READ}
+                )
+                return Written(_entity(row), w.batch)
+            name = clean_text(world)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "place", "name": name, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None,
+                    # (the players hear of it once the DM keeps it: the ux-critic on #4173)
+                    "hidden_from_players": True,
+                    "place_level": "world", "place_level_from": place_levels.READ,
+                    "setting": True, "setting_from": place_levels.READ,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            return Written(_entity(row), w.batch)
+
+    async def keep_setting(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's ✅ Keep as the setting, on DMbot's guess: the DM's word now, so smaller places
+        count as inside it, and a place DMbot made for the guess is shown to the players (it was
+        hidden only while it was a guess). One change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _entity_row(w, entity_id)
+            if not row.get("setting"):
+                raise MemoryRuleError(NOT_FOUND)
+            change: dict[str, Any] = {"setting_from": DM}
+            if (
+                row.get("setting_from") == place_levels.READ
+                and row.get("hidden_from_players")
+                and (str(row.get("source")) != DM)
+            ):
+                change["hidden_from_players"] = False  # (DMbot hid it for the guess, not the DM)
+            if any(row.get(k) != v for k, v in change.items()):
+                row = await w.update(ENTITIES, entity_id, change)
+            return Written(_entity(row), w.batch)
+
+    async def decline_setting(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's ✖ Not the setting, on DMbot's guess: no setting, and DMbot never guesses again
+        for this campaign (the mark stays on the place, `setting_from = 'declined'`). One change,
+        so one Undo. A setting the DM made is taken away with 🌍 Remove as setting instead."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _entity_row(w, entity_id)
+            if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
+                raise MemoryRuleError(NOT_FOUND)
+            row = await w.update(
+                ENTITIES, entity_id, {"setting": False, "setting_from": "declined"}
+            )
+            return Written(_entity(row), w.batch)
 
     async def set_place_level(
         self, guild_id: int, campaign_id: str, entity_id: str, level: str | None, *, source: str
@@ -1229,6 +1321,7 @@ class MemoryStore:
                 change: dict[str, Any] = {"place_level": level, "place_level_from": said}
                 if current.get("setting") and level not in SETTING_LEVELS:
                     change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
+                    change["setting_from"] = None
                 row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)
 
@@ -4895,7 +4988,8 @@ class MemoryStore:
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
         if gone.get("setting"):  # the campaign's setting follows the place it is (#4173)
-            await w.update(ENTITIES, gone_id, {"setting": False})  # (first: one setting at most)
+            # (first: one setting at most; the kept place takes who said it, a guess stays a guess)
+            await w.update(ENTITIES, gone_id, {"setting": False, "setting_from": None})
             now = await _entity_row(w, keep_id)  # (with the merged size: a setting stays big)
             if (
                 not now.get("setting")
@@ -4903,7 +4997,9 @@ class MemoryStore:
                 and onto.is_a(now["type"], "place")
                 and now.get("place_level") in SETTING_LEVELS
             ):
-                await w.update(ENTITIES, keep_id, {"setting": True})
+                await w.update(
+                    ENTITIES, keep_id, {"setting": True, "setting_from": gone.get("setting_from")}
+                )
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )

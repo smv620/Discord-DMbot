@@ -30,7 +30,7 @@ from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
-from dmbot.memory import plan_reader
+from dmbot.memory import plan_reader, setting_worlds
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
     READ_REPLY_BYTES,
@@ -40,6 +40,7 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
+from dmbot.memory.models import BACKGROUND_SOURCE
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     MAX_PDF_BYTES,
@@ -654,9 +655,34 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
         log.info(
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
+        await guess_setting(interaction, fresh, attachment.filename, text)
         card, view = await _card(interaction, fresh)
         kept = "Kept." + (f"\n{note}" if note else "")
         await reply(f"{kept}\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+
+
+async def guess_setting(
+    interaction: discord.Interaction, campaign: Campaign, file_name: str, text: str
+) -> bool:
+    """Where the story is set, worked out from the adventure just kept (#4173 slice 2b): its
+    file's name, then its opening words, against `setting_worlds`' names. Written as DMbot's guess
+    for the DM to keep or refuse on the place's card, never over a setting the DM has, never
+    twice after a ✖ Not the setting, and never as a message: the card and the campaign's settings
+    show it (Supervisor's conditions). Never raises: the log says whether one was found, no
+    names."""
+    world = setting_worlds.world_for(file_name, text)
+    memory = getattr(interaction.client, "memory", None)
+    if world is None or memory is None:
+        return False
+    try:
+        written = await memory.guess_setting(
+            campaign.guild_id, campaign.id, world.place, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # (the type only: a database error can quote a row)
+        log.warning("A setting couldn't be guessed (%s)", type(exc).__name__)
+        return False
+    log.info("Setting from the adventure: %s", "guessed" if written.value else "kept as it was")
+    return written.value is not None
 
 
 class RemoveButton(
