@@ -70,6 +70,7 @@ from dmbot.web import (
     past_sessions,
     pc_icons,
     pictures,
+    private_scenes,
     recap_style,
     relationships,
     report,
@@ -2490,6 +2491,31 @@ def create_app(
         try:
             return {"answer": await met_list.queue(db, session, ref, met_id, body)}
         except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/private-scenes")
+    async def me_campaign_private_scenes(ref: str, signed: Signed) -> dict[str, Any]:
+        """The times two player characters were alone together while the party was split
+        (#4102): DM only. No word of what was said."""
+        session, _token = signed
+        try:
+            return await private_scenes.listed(db, session, ref)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/private-scenes/{scene_id}/not-private")
+    async def me_campaign_private_scene_not_private(
+        ref: str, scene_id: str, signed: Signed
+    ) -> dict[str, str]:
+        """ "Not private" (#4102): DMbot never counts this scene again. DM only."""
+        session, _token = signed
+        try:
+            return await private_scenes.not_private(db, session, ref, scene_id)
+        except RecapError as err:
+            if err.code == "gone":
+                raise HTTPException(status_code=409, detail="gone") from None
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
