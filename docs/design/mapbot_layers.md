@@ -134,8 +134,10 @@ Every time a map is found, DMbot asks the person who uploaded it, once for that 
   positions and used for answers.
 - **No:** the picture is removed from storage. Only its short transcript line stays, when it was
   posted in the table's chat.
-- **Not answered:** it stays an ordinary kept picture under the pictures rules, and is not used as
-  a map. The question can be answered later from the picture's page.
+- **Not answered:** it is not used as a map: no close reading, no positions, no answers from it.
+  The picture itself is treated as any picture posted in the table's chat is today, under the
+  pictures rules its poster already agreed to (#3268), and a map added on the website is simply
+  not uploaded. The question can be answered later from the picture's page.
 - **It is one tap, asked once per map,** never again for the same picture in that campaign (the
   store already knows a picture by its hash).
 - **A DM can always remove a map** someone else said yes to.
@@ -174,7 +176,10 @@ Every time a map is found, DMbot asks the person who uploaded it, once for that 
   and for the AI. It now belongs to its map.
 - **Rules:** per campaign with forced row-level security and `ON UPDATE CASCADE`; in
   `campaigns/tables.py`; in the backup (kept pictures already are); deleted with the campaign;
-  deleted when its poster deletes their own pictures; never shared between campaigns.
+  deleted when its poster deletes their own lines or pictures, or their account; never shared
+  between campaigns.
+- **How long:** a map with a yes is kept until a DM or its poster removes it, or the campaign is
+  deleted. Section 16, point 4, asks that it never be taken by the rolling removal of old pictures.
 
 ---
 
@@ -339,8 +344,8 @@ None of this raises an alert or a question during play.
 - One map's changes are one grouped private note, with counts and one Undo.
 
 ### 7.5 When a map is deleted
-A map goes when its poster deletes their own pictures, when a DM removes it, or when the answer to
-the right-to-use question is "No". In the same transaction:
+A map goes when its poster deletes their own lines or pictures, or their account; when a DM removes
+it; or when the answer to the right-to-use question is "No". In the same transaction:
 
 - its features (pins, paths, areas) are deleted;
 - **a `read` layer row or link that rests only on that map is deleted** (`source = map`, that map,
@@ -577,8 +582,19 @@ Each slice is its own PR with tests, sample keys and a migration number claimed 
 | 11 | **Imports, one tool per PR:** Azgaar, then Universal VTT, then Watabou, then Kanka | GraphEngineer, WebDev | slices 4 and 8 | a whole world in one upload |
 | 12 | **The sketch from the graph** | WebDev | slice 4 | a picture where there is no map |
 
-Slices 1 and 2 are unchanged from revision 1 and need not wait. Slice 3 is the first new one, and
-it is useful alone: the DM gets a Maps page and links before any position exists.
+**Build order** (Supervisor's ruling on #4255, 2026-11-12): the numbers above name the slices; they
+are not the order. Slice 1 sits on `route_to`, which is #4173's slice 6d, and that needs #4173's
+session chain. So:
+
+1. #4173 slice 6a (`form`, and `next_to` with its words);
+2. **slice 2** (#4256), which needs only place levels;
+3. #4173 slices 2b, 3, 4 and 5;
+4. #4173 slice 6d, with **slice 1** (#4255) built inside it;
+5. the rest in the table's order.
+
+**Slice 3 does not wait for any of that.** It needs only the kept pictures, which are built, and it
+is useful alone: the DM gets a Maps page and links before any position exists. Slices 1 and 2 are
+unchanged from revision 1.
 
 ---
 
