@@ -13,6 +13,7 @@ import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesP
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
+import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
@@ -422,6 +423,10 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           </p>
         )}
       </section>
+
+      {PRIVATE_SCENES_LIVE && data.canEdit && api.privateScenes !== undefined && (
+        <LazyPanel load={() => import("./PrivateScenes")} what="the private scenes" props={{ api, campaignRef: ref }} />
+      )}
 
       {NAME_MATCHES_LIVE && data.canEdit && api.nameMatches !== undefined && (
         <LazyPanel
