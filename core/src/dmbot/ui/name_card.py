@@ -77,7 +77,15 @@ from dmbot.memory.store import SAID_AS_MAX, SETTING_LEVELS, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic, place_size, player_id, split_words, told_name
+from dmbot.ui import (
+    all_names,
+    languages_card,
+    logic,
+    place_size,
+    player_id,
+    split_words,
+    told_name,
+)
 from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -814,6 +822,15 @@ async def show_card(
         line = traits_line(links)
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
+    if secrets and entity.type == "character":  # what it speaks (#4229): sheet, else story
+        try:
+            known = await memory.languages_known(campaign.guild_id, campaign.id, [entity_id])
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: languages not read (%s)", type(exc).__name__)
+            known = {}
+        line = languages_card.languages_line(known.get(entity_id, []))
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
@@ -880,6 +897,11 @@ async def show_card(
             and entity.status == CONFIRMED
             and (entity.setting or entity.place_level in SETTING_LEVELS)
             else None
+        ),
+        languages=(
+            entity.type == "character"
+            and not has_sheet
+            and sees_secrets(campaign, interaction.user.id)
         ),
         undo_connection=undo_connection,
         undo_spelling=undo_spelling,
@@ -1019,6 +1041,7 @@ class NameCard(_Menu):
         companion: bool = False,
         size: bool = False,
         setting: bool | None = None,
+        languages: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
@@ -1103,6 +1126,18 @@ class NameCard(_Menu):
             for row in (3, 2, 1):
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
                     self.add_item(_Button(self._flip_setting, label=label, style=grey, row=row))
+                    break
+        if languages:  # a character with no sheet: the languages the story gives it (#4229)
+            for row in (3, 2):  # (the first row with room, as the players' line below)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(
+                            self._languages,
+                            label=languages_card.LANGUAGES_BUTTON,
+                            style=grey,
+                            row=row,
+                        )
+                    )
                     break
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
@@ -1218,6 +1253,10 @@ class NameCard(_Menu):
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
+
+    async def _languages(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await languages_card.show_languages(interaction, self.campaign_id, self.entity_id)
 
     async def _travels(self, interaction: discord.Interaction) -> None:
         if await companion_ui.start(interaction, self.campaign_id, self.entity_id):

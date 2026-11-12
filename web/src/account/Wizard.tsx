@@ -15,7 +15,8 @@ import WorkProgress from "./WorkProgress";
 // The finish words a second try can help with; the others need something else first (a plan, a key, the pages named in the line).
 const RETRY_AFTER = ["failed", "lost", "party_failed", "lore_failed", ""];
 const STALLED_AFTER = 120; // seconds without a move before the wait says it has stalled
-const POLL_MS = 2000;
+const POLL_MS = 1500; // the bot's state is looked at every 1 to 2 seconds while the page is in view
+const HIDDEN_POLL_MS = 10_000; // and far less often while the tab is hidden (#4213)
 
 /** Where the campaign's page is, from the ref the finish run gives (`<server>.<campaign>`). */
 
@@ -251,7 +252,7 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
           } else setTick((n) => n + 1);
         },
       );
-    }, POLL_MS);
+    }, typeof document !== "undefined" && document.hidden ? HIDDEN_POLL_MS : POLL_MS);
     return () => clearTimeout(timer);
   }, [api, guild, started, run, tick]);
 
@@ -292,16 +293,21 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
             stage={failed ? t.errors[run.error] ?? t.errors["failed"]! : t.stages[run.stage] ?? t.stages["campaign"]!}
             done={run.ofParts > 0 ? run.part : null}
             total={run.ofParts > 0 ? run.ofParts : null}
-            startedAt={run.createdAt}
-            updatedAt={run.movedAt}
             serverNow={run.serverNow}
+            progressUnknown
             state={failed ? "failed" : stalled ? "stalled" : "running"}
             frozen={failed}
             reason={failed ? t.errors[run.error] ?? t.errors["failed"]! : null}
           />
         )}
         {!run && <p class="muted" role="status">{w.loading}</p>}
-        {run && !failed && <p class="small">{t.quiet}</p>}
+        {run && !failed && <FinishClock run={run} />}
+        {!failed && (
+          <>
+            <p class="small">{t.told}</p>
+            <p class="small">{t.toldClosed}</p>
+          </>
+        )}
         {failed && run && run.campaignRef && <a class="button secondary" href={campaignHref(run.campaignRef)}>{t.open}</a>}
         {failed && run && RETRY_AFTER.includes(run.error) && (
           <button type="button" class="button" disabled={pressing} onClick={() => void press()}>
@@ -333,5 +339,34 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
       </button>
       {problem && <p role="alert">{problem}</p>}
     </section>
+  );
+}
+
+/** The motion of the wait (#4213): a clock redrawn every half second from the server's own times, "Last progress N s ago" on the same
+ * clock, and a bar that moves while the bot works. Only times and counts, never a word of a document. A person who asked for less
+ * motion gets still words instead of the moving bar. The bot's own writes are far rarer than this: the motion is the clock and the bar. */
+function FinishClock({ run }: { run: WizardFinish }) {
+  const t = w.finish;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, []);
+  // The server's clock, kept as its gap from this browser's when the answer arrived, so a wrong computer clock shows no wrong age.
+  const gap = useRef(0);
+  const seen = useRef<number | null>(null);
+  if (seen.current !== run.serverNow) {
+    seen.current = run.serverNow;
+    gap.current = run.serverNow * 1000 - Date.now();
+  }
+  const server = (now + gap.current) / 1000;
+  const calm = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <div class="stack">
+      {calm ? <p class="small">{t.working}</p> : <progress aria-label={t.working} />}
+      <p class="small muted">
+        {t.runningFor(Math.max(0, Math.floor(server - run.createdAt)))} · {t.lastProgress(Math.max(0, Math.floor(server - run.movedAt)))}
+      </p>
+    </div>
   );
 }
