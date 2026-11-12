@@ -1293,7 +1293,7 @@ async def _review(
         await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
-    if bulk and await _offer_add_all(interaction, memory, campaign, waiting):
+    if bulk and await _offer_add_all(interaction, memory, campaign, waiting, walk=walk):
         return
     view = SuggestionReview(campaign.id, [e.id for e in waiting], walk=walk)
     text = await view.prepare(interaction, campaign, memory, waiting[0])
@@ -1305,6 +1305,8 @@ async def _offer_add_all(
     memory: MemoryStore,
     campaign: Campaign,
     waiting: Sequence[Entity],
+    *,
+    walk: Walk | None = None,
 ) -> bool:
     """The lore review's "✅ Add all 4 places" for the name scan's suggestions that were given a
     kind (#2937), opened by the same persistent "Check new names" button, so it works after a
@@ -1343,9 +1345,10 @@ async def _offer_add_all(
     )
     await _send(
         interaction,
-        f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
-        f"are. Nothing is added until you press a button.{left}",
-        BulkConfirm(campaign.id, by_kind),
+        progress(walk, 0, 0)  # (inside "Check everything": which part this is, #4192)
+        + f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of "
+        f"them are. Nothing is added until you press a button.{left}",
+        BulkConfirm(campaign.id, by_kind, walk=walk),
     )
     return True
 

@@ -135,7 +135,6 @@ def asks_for(
             text = _alone_linked(kind, n)
             button = partial(_link_button, LINKED_BUTTONS[kind], summary_url)
             screen = _alone(kind, n + extra)
-        linked = bool(summary_url) and kind in LINKED_BUTTONS
         out.append(
             Ask(
                 kind,
@@ -145,7 +144,6 @@ def asks_for(
                 buttons[kind],
                 screen,
                 count=n + extra,
-                link=linked,
             )
         )
         if extra:

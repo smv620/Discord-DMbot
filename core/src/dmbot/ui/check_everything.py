@@ -98,7 +98,8 @@ async def run_part(interaction: discord.Interaction, walk: Walk) -> None:
     if kind == NAMES:
         from dmbot.ui.names import start_review
 
-        await start_review(interaction, walk.campaign_id, bulk=False, walk=walk)
+        # (the names part opens with Add all when there are names to add in bulk, then goes on)
+        await start_review(interaction, walk.campaign_id, bulk=True, walk=walk)
     elif kind == PEOPLE:
         from dmbot.ui.people_review import start_people_review
 

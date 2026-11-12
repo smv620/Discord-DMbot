@@ -51,9 +51,6 @@ class Ask:
     screen: str  # counts-only words for the fallback channel, if the private message fails
     # How many checks wait behind this question (0 when not counted), for "Check everything (N)".
     count: int = 0
-    # A link to a summary message elsewhere, not a button that opens cards (the upload's summary,
-    # which holds Add all): "Check everything" keeps it.
-    link: bool = False
 
 
 def ordered(asks: list[Ask]) -> list[Ask]:
@@ -74,9 +71,9 @@ def combine(
 ) -> tuple[str, discord.ui.View] | None:
     """The one message and its buttons, or None with nothing to ask. One question keeps its own
     words; several become a list under a count. With `walk` (a maker taking the total waiting, 0
-    when not counted) and two or more of the walked kinds, those kinds' buttons become one
-    "✅ Check everything"; a link to an upload's summary stays, and so does every other kind's
-    own button."""
+    when not counted) and two or more of the walked kinds, those kinds' buttons (an upload
+    summary's links included: the walk opens Add all itself) become one "✅ Check everything";
+    every other kind keeps its own button."""
     if not asks:
         return None
     asks = ordered(asks)
@@ -87,7 +84,7 @@ def combine(
         counted = [a.count for a in walked]
         view.add_item(walk(sum(counted) if all(counted) else 0))
     for ask in asks:
-        if use_walk and ask.kind in WALKED and not ask.link:
+        if use_walk and ask.kind in WALKED:
             continue
         view.add_item(ask.button())
     if len(asks) == 1:

@@ -3279,9 +3279,17 @@ class BulkConfirm(_Menu):
     """Say yes to every name of a kind from this reading at once ("All 14 places"), undo it, or
     open the checking. Only the names this reading found: never an earlier reading's."""
 
-    def __init__(self, campaign_id: str, stored: dict[str, list[str]], queued: int = 0) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        stored: dict[str, list[str]],
+        queued: int = 0,
+        *,
+        walk: Walk | None = None,
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): its own Stop, and the walk goes on
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
         # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
@@ -3330,7 +3338,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
-        if self.queued:
+        if self.queued and self.walk is None:  # (a walk reaches the connections itself)
             self.add_item(
                 _Button(
                     self._connections,
@@ -3353,6 +3361,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
+        add_stop(self, self.walk, row=2)
 
     def _addable(self) -> dict[str, list[str]]:
         """The names a yes-to-all may cover: every kind but ideas, which need a look, and player
@@ -3389,11 +3398,11 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         if self.shared:
             # (the summary stays for the other game masters; the cards are this DM's, privately)
-            await start_review(interaction, self.campaign_id, bulk=False)
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
             return
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id, bulk=False)
+        await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)
@@ -3456,7 +3465,9 @@ class BulkConfirm(_Menu):
             text += f"\n{split}"
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
-        if total and self.queued:  # their names may be answered now
+        if self.walk is not None:  # the names left to look at one by one, then the next part
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
+        elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
     async def _undo(self, interaction: discord.Interaction) -> None:

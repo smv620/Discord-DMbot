@@ -30,11 +30,11 @@ CID = "a" * 32
 GUILD = 4242
 
 
-def ask(kind: str, count: int = 3, *, link: bool = False) -> Ask:
+def ask(kind: str, count: int = 3) -> Ask:
     def button() -> discord.ui.Item[Any]:
         return discord.ui.Button(label=kind, custom_id=f"test:{kind}")
 
-    return Ask(kind, f"{kind} alone", f"{kind} line", button, button, f"{kind} screen", count, link)
+    return Ask(kind, f"{kind} alone", f"{kind} line", button, button, f"{kind} screen", count)
 
 
 def ids(view: discord.ui.View) -> list[str | None]:
@@ -115,14 +115,13 @@ class TheButtonOnTheMessage(unittest.TestCase):
         _, view = combined
         self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}", "test:family"])
 
-    def test_the_uploads_summary_link_stays_beside_the_walk(self) -> None:
+    def test_the_uploads_summary_links_go_when_the_walk_is_used(self) -> None:
         combined = combine(
-            [ask(NAMES, 2, link=True), ask(CLAIMS, 1), ask(CONNECTIONS, 4, link=True)],
-            walk=self.walk_button,
+            [ask(NAMES, 2), ask(CLAIMS, 1), ask(CONNECTIONS, 4)], walk=self.walk_button
         )
         assert combined is not None
         _, view = combined
-        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}", "test:names", "test:connections"])
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])  # (one check button)
 
     def test_a_kind_that_was_not_counted_leaves_the_total_off_the_label(self) -> None:
         combined = combine([ask(NAMES, 3), ask(CLAIMS, 0)], walk=self.walk_button)
@@ -293,6 +292,31 @@ class ChangingTheMessagesButton(unittest.IsolatedAsyncioTestCase):
             await ce.relabel_origin(cast(Any, interaction), walk, 3)
         self.assertIn("RuntimeError", logged.output[0])
         self.assertNotIn("secret words", logged.output[0])
+
+
+class TheNamesPartOpensWithAddAll(unittest.TestCase):
+    def test_the_walk_asks_for_add_all_first(self) -> None:
+        import inspect
+
+        source = inspect.getsource(ce.run_part)
+        self.assertIn("start_review(interaction, walk.campaign_id, bulk=True, walk=walk)", source)
+
+    def test_the_add_all_card_in_a_walk_has_its_own_stop_and_no_connections_button(self) -> None:
+        from dmbot.ui.name_background import BulkConfirm
+
+        walk = Walk(CID, GUILD, 1, (NAMES, CONNECTIONS))
+        ids_ = {"place": ["a", "b"], "person": ["c"]}
+        inside = BulkConfirm(CID, ids_, queued=3, walk=walk)
+        outside = BulkConfirm(CID, ids_, queued=3)
+        self.assertIn("Stop for now", labels(inside))
+        self.assertNotIn("📜 Check the connections", labels(inside))  # (the walk gets there itself)
+        self.assertNotIn("Stop for now", labels(outside))
+        self.assertIn("📜 Check the connections", labels(outside))  # (today's card is unchanged)
+        self.assertIn("📝 Check them one by one", labels(inside))
+
+    def test_the_part_line_is_above_the_add_all_words(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        self.assertEqual(ce.progress(walk, 0, 0), "_Names, part 1 of 3_\n")
 
 
 class WithoutAWalkNothingChanges(unittest.TestCase):
