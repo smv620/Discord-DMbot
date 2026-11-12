@@ -1,4 +1,4 @@
-"""Typing a Discord ID in a person picker (#4225, point 5; migration 0445): the page asks, the bot
+"""Typing a Discord ID in a person picker (#4225, point 5; migration 0447): the page asks, the bot
 looks the member up in the server and answers, and the page shows who it is. Run as the website's
 own database role for the doors; the bot's worker with a stand-in server. Real Postgres; invented
 names and ids."""
