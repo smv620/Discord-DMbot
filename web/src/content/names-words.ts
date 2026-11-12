@@ -66,6 +66,9 @@ export const namesPage = {
   saveKind: "Save what it is",
   // Making a name a player character (#2985): who plays it can be added now or later, in Discord or here.
   playerLabel: "Who plays it? Their Discord ID (optional)",
+  playerPickLabel: "Who plays it? (optional)",
+  playerElsewhere: "Someone else: type their Discord ID…",
+  playerPickFailed: "Couldn't load the server's members. You can type their Discord ID instead.",
   playerNote: "Not sure yet? Leave this empty. It is still a player character, and you can add the player later. Adding an ID doesn't start recording anyone: they still choose that themselves.",
   playerInfoLabel: "How to find a Discord ID",
   playerInfoSteps: [
