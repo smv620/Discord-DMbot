@@ -769,6 +769,11 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A waiting suggestion that is an SRD language ("Elvish") is turned down first (#4227). (A
+    # stand-in bot in tests may not have it.)
+    drop = getattr(bot, "drop_language_suggestions", None)
+    if drop is not None:
+        await drop(guild, campaign.id)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)

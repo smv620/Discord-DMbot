@@ -11000,6 +11000,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
+    async def drop_language_suggestions(self, gid: int, cid: str) -> None:
+        """Turn down any waiting suggestion that is an SRD language (#4227,
+        `MemoryStore.drop_language_suggestions`), before a scan or a lore read suggests more. Never
+        stops what called it; counts only."""
+        if self.memory is None:
+            return
+        try:
+            dropped = await self.memory.drop_language_suggestions(gid, cid)
+        except Exception as exc:
+            log.warning("Language suggestions: couldn't drop them (%s)", type(exc).__name__)
+            return
+        if dropped:
+            log.info("Language suggestions: %d dropped", dropped)
+
     async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
         """Add each character's first name as their short name where the rule allows it
         (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
@@ -11035,6 +11049,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
         await self.add_short_names(gid, cid, lines)
+        await self.drop_language_suggestions(gid, cid)
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
