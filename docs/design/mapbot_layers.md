@@ -383,9 +383,9 @@ grouped by layer, each with ✅ / ✏️ / 🚫. Logs hold counts only.
 - **A map posted in the table's chat starts as `table`.** Every other map starts as `dm`.
 - **"Show to the table"** changes a `dm` map to `table`, after one warning: "Players will see
   everything drawn on this map." A DM who has a players' version uploads that one as its own map.
-- **A `dm` map's link is never public,** whatever the pictures default is, and is only ever posted
-  on the DM screen or to the DM privately. It still asks for a DM's sign-in, so a player peeking at
-  the DM screen can't open it.
+- **A `dm` map's link is never public,** whatever the pictures default is, and is only ever sent
+  to the DM privately or shown where the DM opened it on purpose (a place's card). It still asks
+  for a DM's sign-in, so a player peeking at the DM screen can't open it.
 - **Showing a map to the table makes the names written on it known to the party,** as a picture
   posted in the table's chat already does.
 
@@ -437,11 +437,21 @@ Every answer is short, says "about", names the map it used, and carries the map'
 
 - **When asked** ("Hey DMbot, how far is Bryn Shander?"): the answer goes where table questions and
   the DM sidebar already go, with the link.
-- **Unasked, on the DM screen only:** when the table's talk asks a where, how far or which way
-  question about a place that has a pin, DMbot posts one line with the map's link. It is quiet
+- **Unasked, in the DM's private chat with DMbot:** when the table's talk asks a where, how far or
+  which way question about a place that has a pin, DMbot sends the DM one line with the map's link. It is quiet
   about the same pair of places for the rest of the session, as the live heads-up is
   (`memory/live_heads_up.py`). Code decides this from the words and the pins; it costs no AI call.
 - **The link** opens the website's map page at that spot. In Discord it shows a small cut-out.
+
+**Where DMbot gets the DM's attention** (owner, 2026-11-12). This holds for everything in this
+document that DMbot says without being asked:
+
+- **It is a private message to the DM,** never a post on the DM screen. The DM screen stays a
+  quick-reference screen: it holds only what the DM opens there on purpose, such as a map's link on
+  a place's card.
+- **One button at most** in that message (for example "Don't send these for this campaign").
+- **Anything with several steps** (checking a map's pins, World notes) is a link from the message
+  to the DM Bot channel or the website, never done inside the message.
 
 **When the DM's word and a map disagree** (owner, 2026-11-12):
 
@@ -452,15 +462,18 @@ Every answer is short, says "about", names the map it used, and carries the map'
   - **Against a straight line,** it is flagged only when the stated distance is the shorter one by
     more than 20%. A road is always longer than a straight line, so a longer stated distance is no
     conflict.
-- **Direction:** flagged when the stated direction is more than one of the eight compass points
-  away from the map's, and only on a map whose north was read or set, never assumed.
-- **What the DM sees:** one line, on the DM screen only, with the map, both figures and the
+- **Direction:** the stated direction is taken as an angle (north 0°, north-east 45°, east 90°, and
+  so on round the sixteen points) and compared with the map's bearing. **Under 45° apart is
+  silence; 45° or more is flagged.** If the map's bearing is east-north-east (67.5°), "north-east"
+  and "east" are fine and "north" is flagged. Only on a map whose north was read or set, never
+  assumed.
+- **What the DM sees:** one private message from DMbot, with the map, both figures and the
   difference: "You said 20 miles from Targos to Bryn Shander. The Ten-Towns map makes it about 35
   by road. 🗺️ link". Once for each pair of places in a session, as the live heads-up does.
 - **Nothing changes in the data.** The DM keeps their word, fixes the map (its scale or a pin), or
-  ignores it. There are no buttons that change the story.
+  ignores it. No button changes the story.
 - **A conflict found in uploaded lore or prep** goes in that upload's note or in World notes, not
-  on the DM screen during play.
+  in a message during play.
 - **Within 20% is silence.** Never to players, never worded as a correction.
 
 **Travel time is suggested, never flagged** (owner, 2026-11-12). The same trip can take very
@@ -479,8 +492,8 @@ different times, so a stated time is never treated as a conflict with a map.
 - **What it looks like:** a short range with its working, citing each SRD entry used: "About 2
   days on foot at a Normal pace; 3 if Slow for stealth." Anything it had to assume is said ("no
   road on the map, so across open tundra").
-- **When it is offered:** when the DM asks, or once when the DM states a travel time for a pair of
-  places DMbot can measure. It is DM-side, an estimate, and the DM decides.
+- **When it is offered:** when the DM asks, or once, in the DM's private chat, when the DM states
+  a travel time for a pair of places DMbot can measure. It is DM-side, an estimate, and the DM decides.
 - **What it never does:** change the game clock, mark a journey as travelled, or tell the DM their
   time is wrong.
 
@@ -566,6 +579,8 @@ source of positions.
 - **Never a built-in gazetteer or built-in maps of a published setting,** and never one campaign's
   maps or layers used for another.
 - **Never post any of it to players as a ruling.**
+- **Never use the DM screen for an alert.** What DMbot says unasked goes to the DM's private chat,
+  with one button at most.
 
 ---
 
@@ -631,7 +646,7 @@ Each slice is its own PR with tests, sample keys and a migration number claimed 
 | 6 | **Culture and population** | GraphEngineer, WebDev | #4229's catalogue | "strong dwarven culture" on a place |
 | 7 | **Route condition** | GraphEngineer | slice 1 | "closed" on the pass, with its history |
 | 8 | **Layers from maps:** what a map shows outright, as layer rows, with the snapshot and deletion rules | GraphEngineer | slices 2 and 4 | layers filled from a posted map |
-| 9 | **Bringing a map back during play:** the unasked DM-screen line and the Discord cut-out | GraphEngineer | slice 4 | the right map at the right moment |
+| 9 | **Bringing a map back during play:** the unasked private message to the DM, and the Discord cut-out | GraphEngineer | slice 4 | the right map at the right moment |
 | 10 | **The travel-time suggestion** (route, terrain, how the party travels, pace), then the after-session weather note and recap colour | GraphEngineer | slices 2, 4 and 7; recap scored as `docs/RECAP_STANDARD.md` requires | "about 2 days on foot; 3 if slow for stealth", with its working |
 | 11 | **Imports, one tool per PR:** Azgaar, then Universal VTT, then Watabou, then Kanka | GraphEngineer, WebDev | slices 4 and 8 | a whole world in one upload |
 | 12 | **The sketch from the graph** | WebDev | slice 4 | a picture where there is no map |
@@ -677,8 +692,9 @@ and 2.
    is a legal sign-off: for the owner (`needs: owner`).
 2. **A player's yes: answered** (owner, 2026-11-12). A player's yes stores the map; a DM's yes
    lets DMbot use it (section 3.3).
-3. **The unasked DM-screen line** (slice 9): on by default, or a setting the DM turns on? Proposed:
-   on, with one tap to turn it off for the campaign. For Supervisor.
+3. **The unasked map message** (slice 9): **answered.** On by default, with one tap to turn it off
+   for the campaign (Supervisor, on #4274), and sent to the DM's private chat, never the DM screen
+   (owner, 2026-11-12).
 4. **Storage.** Maps are large and DMs will want them kept for good. Proposed: a map with a yes is
    marked permanent, so the rolling removal of old pictures never takes it, and the plan's storage
    limit is the only cap. For Supervisor, with the plan rules.
