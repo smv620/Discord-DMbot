@@ -68,8 +68,7 @@ def _rebuild(door: str, swaps: tuple[tuple[str, str, int], ...]) -> str:
     )
 
 
-SQL = (
-    r"""
+SQL = r"""
     ALTER TABLE memory_entities ADD COLUMN setting_from TEXT
         CHECK (setting_from IN ('read', 'dm', 'declined'));
     CREATE POLICY migrate_backfill ON memory_entities FOR ALL USING (true) WITH CHECK (true);
@@ -87,9 +86,7 @@ SQL = (
         RETURN replace(def, old, new);
     END
     $f$;
-    """
-    + _rebuild("dmbot_web_all_names", _ALL_NAMES_SWAPS)
-)
+    """ + _rebuild("dmbot_web_all_names", _ALL_NAMES_SWAPS)
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 
