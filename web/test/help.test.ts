@@ -16,15 +16,21 @@ import { storyStatesLine } from "../src/content/privacy-channels";
 import { featureSteps, isLive, knownTitle, liveFeatureSteps } from "../src/content/help-features";
 import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, SECRET_REVEAL_LIVE, presessionNoteSteps, secretSaidSteps, secretRevealSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
+import Questions from "../src/pages/help/questions.astro";
+import Snags from "../src/pages/help/snags.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
 let help: Document;
+let questions: Document; // the quick answers and the snags have their own pages (#4235)
+let snagsPage: Document;
 
 beforeAll(async () => {
   const container = await AstroContainer.create();
   help = parsePage(
     await container.renderToString(Help, { request: new Request("https://dmbot.example/help") }),
   );
+  questions = parsePage(await container.renderToString(Questions, { request: new Request("https://dmbot.example/help/questions") }));
+  snagsPage = parsePage(await container.renderToString(Snags, { request: new Request("https://dmbot.example/help/snags") }));
 });
 
 describe("Help", () => {
@@ -32,12 +38,18 @@ describe("Help", () => {
     expect(help.querySelector("#dm-heading")?.textContent).toBe("For the game master");
     expect(help.querySelector("#player-heading")?.textContent).toBe("For players");
     const lists = [...help.querySelectorAll("section ol")];
-    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length, snags.length, gettingHelp.items.length]);
+    expect(lists.map((l) => l.children.length)).toEqual([dmSteps.length, playerSteps.length, accountSteps.length, emailSteps.length, gettingHelp.items.length]);
+    // The quick answers and the snags are on exactly one page each, and /help links to both.
+    expect(help.querySelector("#quick-heading + ul")).toBeNull();
+    expect(help.querySelector("#snags-heading + ol")).toBeNull();
+    expect([...help.querySelectorAll("#moved a")].map((a) => a.getAttribute("href"))).toEqual(["/help/questions", "/help/snags"]);
+    expect(questions.querySelectorAll("main li").length).toBe(quickAnswers.length);
+    expect(snagsPage.querySelectorAll("main li").length).toBe(snags.length);
   });
 
   it("says what DMbot knows when the game master asks it a quick question (#1379)", () => {
-    expect(help.querySelector("#quick-heading")?.textContent).toBe(quickAnswersHeading);
-    const items = [...help.querySelectorAll("#quick-heading + ul li")].map((li) => li.textContent);
+    expect(questions.querySelector("#quick-heading")?.textContent).toBe(quickAnswersHeading);
+    const items = [...questions.querySelectorAll("#quick-heading + ul li")].map((li) => li.textContent);
     expect(items).toEqual(quickAnswers.map((s) => s.text));
     const all = items.join(" ");
     expect(all).toContain("the story facts you have confirmed about the names in your question");
@@ -88,14 +100,13 @@ describe("Help", () => {
     expect(snags.length).toBeGreaterThanOrEqual(5);
     expect(snags.length).toBeLessThanOrEqual(7);
     for (const snag of snags) expect(snag.text.split(" ").length, snag.question).toBeLessThanOrEqual(40);
-    const section = help.querySelector("#snags-heading")?.parentElement;
+    const section = snagsPage.querySelector("#snags-heading")?.parentElement;
     expect(section?.querySelector("h2")?.textContent).toBe(snagsHeading);
     expect(section?.querySelectorAll("li").length).toBe(snags.length);
     // The section sits before "Getting help" and links to the steps and the support route on this page.
     const hrefs = [...(section?.querySelectorAll("li a") ?? [])].map((a) => a.getAttribute("href"));
-    expect(hrefs).toEqual(["#dm-heading", "#getting-help"]);
-    const order = [...help.querySelectorAll("h2")].map((h) => h.id);
-    expect(order.indexOf("snags-heading")).toBe(order.indexOf("getting-help-heading") - 1);
+    // (the page they sit on is /help/snags now, so the links go to /help)
+    expect(hrefs).toEqual(["/help#dm-heading", "/help#getting-help"]);
   });
 
   it("has an On this page list whose links all point to ids on the page (#1811)", () => {

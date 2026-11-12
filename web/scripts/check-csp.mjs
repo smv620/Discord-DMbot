@@ -40,6 +40,8 @@ const SCRIPTED = new Set([
   "handover.html", // the hand-over accept page (#2534)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
+  "help/questions.html", // the same search box (#4235)
+  "help/snags.html", // the same search box (#4235)
   "hello.html",
   "admin.html",
   "pricing.html",
