@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import psycopg
 
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
@@ -113,6 +114,102 @@ class FinishTest(DatabaseTest):
                 await asyncio.sleep(0.01)
 
         self.worker = asyncio.create_task(work())
+
+
+class TheProgress(FinishTest):
+    """The finer counts on the finish row while the lore is read (#4213): numbers and one stage
+    word, copied from the reader's own row, at most once a second, cleared between documents."""
+
+    def slow_reader(self) -> None:
+        async def work() -> None:
+            while True:
+                rows = await self.sql(
+                    "SELECT id FROM lore_uploads WHERE state = 'waiting' ORDER BY seq LIMIT 1"
+                )
+                if rows:
+                    for done, names in ((10, 2), (60, 5), (120, 9)):
+                        await self.sql(
+                            "UPDATE lore_uploads SET state = 'working', stage = 'first_read',"
+                            " done = %s, total = 120, names_found = %s, links_found = 1"
+                            " WHERE id = %s",
+                            done, names, rows[0]["id"],
+                        )  # fmt: skip
+                        await asyncio.sleep(0.15)
+                    await self.sql(
+                        "UPDATE lore_uploads SET state = 'done', text = '' WHERE id = %s",
+                        rows[0]["id"],
+                    )
+                await asyncio.sleep(0.01)
+
+        self.worker = asyncio.create_task(work())
+
+    async def watch(self) -> list[tuple[Any, ...]]:
+        seen: list[tuple[Any, ...]] = []
+
+        async def look() -> None:
+            while True:
+                rows = await self.sql(
+                    "SELECT pass_word, pass_done, pass_total, found_names, found_links"
+                    " FROM wizard_finishes"
+                )
+                if rows:
+                    seen.append(tuple(rows[0].values()))
+                await asyncio.sleep(0.01)
+
+        self.watcher: asyncio.Task[None] = asyncio.create_task(look())
+        return seen
+
+    async def test_the_readers_counts_reach_the_finish_row_and_clear_at_the_end(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.slow_reader()
+        seen = await self.watch()
+        with (
+            patch.object(wizard_finish, "LORE_POLL_S", 0.05),
+            patch.object(wizard_finish, "PROGRESS_EVERY_S", 0.0),
+        ):
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.worker and self.worker.cancel()
+        self.watcher.cancel()
+        self.assertIn(("first_read", 60, 120, 5, 1), seen)
+        self.assertEqual(
+            await self.sql(
+                "SELECT pass_word, pass_done, pass_total, found_names, found_links"
+                " FROM wizard_finishes"
+            ),
+            [{"pass_word": "", "pass_done": 0, "pass_total": 0, "found_names": 0,
+              "found_links": 0}],
+        )  # fmt: skip
+
+    async def test_at_most_one_write_a_second_for_a_run(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.slow_reader()
+        seen = await self.watch()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):  # (polls every 20 ms, cap 1 s)
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.worker and self.worker.cancel()
+        self.watcher.cancel()
+        counted = {row for row in seen if row[1] > 0}
+        self.assertLessEqual(len(counted), 1)  # (the whole read took under a second)
+
+    async def test_the_state_door_sends_the_counts_and_the_stage_word_and_only_a_word_fits(
+        self,
+    ) -> None:
+        # (the door needs a signed-in member of the server, so its text is read back instead)
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_finish_state'"
+        )
+        for key, column in (
+            ("pass", "pass_word"), ("passDone", "pass_done"), ("passTotal", "pass_total"),
+            ("foundNames", "found_names"), ("foundLinks", "found_links"),
+        ):  # fmt: skip
+            self.assertIn(f"'{key}', r.{column}", door["d"])
+        await self.queue()
+        with self.assertRaises(psycopg.errors.CheckViolation):  # (a sentence is not a pass word)
+            await self.sql("UPDATE wizard_finishes SET pass_word = 'Belleros sold it'")
 
 
 class TheRun(FinishTest):
