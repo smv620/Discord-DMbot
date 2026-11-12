@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot import wizard_homebrew, wizard_house
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
@@ -65,6 +66,8 @@ SHEET_BAD = "sheet_bad"  # not a D&D Beyond character link; nothing was kept
 # once the character has one (`run_sheet_waits`, Supervisor's ruling on #4221).
 SHEET_WAITING = "sheet_waiting"
 SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
+HOMEBREW_FAILED = "homebrew_failed"  # the stage itself broke; the run goes on
+HOUSE_FAILED = "house_failed"  # the stage itself broke; the run goes on
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
 # not read, and the draft is cleaned up, so the run says so and the page tells the DM to add them on
@@ -72,13 +75,17 @@ SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (
-    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT,
+    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT, HOUSE_FAILED, wizard_house.HOUSE_UNREADABLE,
+    HOMEBREW_FAILED, wizard_homebrew.HOMEBREW_UNREADABLE, wizard_homebrew.HOMEBREW_LINK_FAILED,
     SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE, SHEETS_FAILED,
 )  # fmt: skip
-NOT_READ_YET = ("house", "homebrew", "ruleset")
+NOT_READ_YET = ("ruleset",)
 
 # The stage codes the page shows, in order.
-STAGES = ("campaign", "data_use", "rules", "party", "sheets", "lore", "secrets", "clean")
+STAGES = (
+    "campaign", "data_use", "rules", "party", "sheets", "lore", "house", "homebrew", "secrets",
+    "clean",
+)  # fmt: skip
 CHOICE_OF = {"lore": "world", "secrets": "spoilers"}
 
 
@@ -386,7 +393,10 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     answers = check_answers(draft.answers)
     if answers is None:
         return BAD_ANSWERS
-    needs_rights = any(d["slot"] in CHOICE_OF for d in draft.documents)
+    # (the door refuses it too; checked again here, for every slot that is read and for links)
+    needs_rights = bool(answers.get("homebrew_links")) or any(
+        d["slot"] in (*CHOICE_OF, "house", "homebrew") for d in draft.documents
+    )
     if needs_rights and not draft.rights_shared_at:
         return NO_RIGHTS  # nothing is read, and none is made up, without the DM's confirmation
     guild = bot.get_guild(guild_id)
@@ -433,8 +443,16 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
         log.warning("A wizard run could not make its characters (%s)", type(exc).__name__)
         word = PARTY_FAILED
     word = await _read_sheets(bot, runs, guild_id, run, campaign_id, answers) or word
-    for slot in ("lore", "secrets"):
+    for slot in ("lore", "house", "homebrew", "secrets"):
         docs = [d for d in draft.documents if d["slot"] == slot]
+        if slot == "house":
+            word = await _read_house(bot, runs, guild_id, run, campaign_id, docs) or word
+            continue
+        if slot == "homebrew":
+            word = (
+                await _read_homebrew(bot, runs, guild_id, run, campaign_id, docs, answers) or word
+            )
+            continue
         word = await _read_slot(runs, guild_id, run, campaign_id, draft, slot, docs) or word
     if any(d["slot"] in NOT_READ_YET for d in draft.documents):
         word = word or DOCS_LEFT
@@ -765,6 +783,91 @@ async def _read_slot(
             state = "failed"
         if state != "done":
             word = word or LORE_FAILED
+    return word
+
+
+def _with_pairs(notes: str, new: dict[str, int]) -> str:
+    """The notes with these "word:count" pairs set, each replacing an earlier pair of its word (a
+    retaken run does not double a count); at most 8 pairs, as the row's check allows."""
+    pairs = {p.partition(":")[0]: p for p in notes.split() if p}
+    pairs.update({w: f"{w}:{n}" for w, n in new.items()})
+    return " ".join(list(pairs.values())[:8])
+
+
+async def _read_house(
+    bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
+    docs: list[dict[str, Any]],
+) -> str:  # fmt: skip
+    """The house-rule documents of step 7, read into the campaign (#4211) with the House rules
+    page's own reader. A document that holds no readable rule keeps its word in the notes and the
+    campaign stands; so does a failure of the whole stage."""
+    word = DRIVE_GONE if any(d["source"] == "drive" for d in docs) else ""
+    docs = [
+        d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
+    ]
+    store = getattr(bot, "house_rules", None)
+    if docs and store is None:
+        return HOUSE_FAILED  # the DM adds them on the House rules page
+    if not docs:
+        return word
+    await runs.move(guild_id, run, stage="house", part=1, of_parts=len(docs))
+    try:
+        _, _, unreadable = await wizard_house.read_documents(
+            store, guild_id, campaign_id, run.user_id, docs
+        )
+    except Exception as exc:  # the campaign is usable without them: say so, go on
+        log.warning("A wizard run could not read its house rules (%s)", type(exc).__name__)
+        return word or HOUSE_FAILED
+    if unreadable:
+        run.notes = _with_pairs(run.notes, {wizard_house.HOUSE_UNREADABLE: min(unreadable, 999)})
+        return word or wizard_house.HOUSE_UNREADABLE
+    return word
+
+
+async def _read_homebrew(
+    bot: Any, runs: WizardFinishes, guild_id: int, run: Run, campaign_id: str,
+    docs: list[dict[str, Any]], answers: dict[str, Any],
+) -> str:  # fmt: skip
+    """The homebrew files and links of step 8, read into the campaign (#4211) through the
+    Homebrew page's own paths. Each file or link that cannot be used adds its count to the notes
+    and the first problem's word is the row's; the campaign stands in every case."""
+    word = DRIVE_GONE if any(d["source"] == "drive" for d in docs) else ""
+    docs = [
+        d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
+    ]
+    links = [str(v).strip() for v in answers.get("homebrew_links") or [] if str(v).strip()]
+    store = getattr(bot, "homebrew", None)
+    importer, sources = getattr(bot, "importer", None), getattr(bot, "sources", None)
+    if ((docs or links) and store is None) or (links and (importer is None or sources is None)):
+        return HOMEBREW_FAILED  # the DM adds them on the Homebrew page
+    if not docs and not links:
+        return word
+    await runs.move(guild_id, run, stage="homebrew", part=1, of_parts=len(docs) + len(links))
+    counts: dict[str, int] = {}
+    try:
+        if docs:
+            _, bad = await wizard_homebrew.read_documents(
+                store, guild_id, campaign_id, run.user_id, docs
+            )
+            if bad:
+                counts[wizard_homebrew.HOMEBREW_UNREADABLE] = bad
+        if links:
+            await runs.move(
+                guild_id, run, stage="homebrew", part=len(docs) + 1, of_parts=len(docs) + len(links)
+            )
+            _, failed = await wizard_homebrew.read_links(
+                importer, sources, store, guild_id, campaign_id, run.user_id, links
+            )
+            if failed:
+                counts[wizard_homebrew.HOMEBREW_LINK_FAILED] = failed
+    except Lost:
+        raise
+    except Exception as exc:  # the campaign is usable without them: say so, go on
+        log.warning("A wizard run could not read its homebrew (%s)", type(exc).__name__)
+        return word or HOMEBREW_FAILED
+    if counts:
+        run.notes = _with_pairs(run.notes, {w: min(n, 999) for w, n in counts.items()})
+        return word or next(iter(counts))
     return word
 
 
