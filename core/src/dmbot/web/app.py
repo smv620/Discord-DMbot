@@ -3813,6 +3813,11 @@ def create_app(
                     if raw is None:
                         raise RecapError("bad_document")
                     source, checked = "upload", await wizard_check.check_file(name, raw)
+            elif body.get("source") == "link":
+                link = wizard_check.check_link(str(body.get("text", "")))
+                if link is None:
+                    raise RecapError("bad_document")
+                source, checked = "link", link
             else:
                 source, checked = "upload", wizard_check.check_text(str(body.get("text", "")))
             made = await wizard.add_document(

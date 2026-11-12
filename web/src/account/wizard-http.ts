@@ -115,7 +115,11 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
     },
     async docAdd(guild, slot, input) {
       const body: Record<string, unknown> = { slot, name: input.name };
-      if (input.data !== undefined) body["data"] = input.data;
+      // A link document (#4206): its address goes as the text, with the source saying it is to be fetched, not read now.
+      if (input.source === "link" && input.link !== undefined) {
+        body["source"] = "link";
+        body["text"] = input.link;
+      } else if (input.data !== undefined) body["data"] = input.data;
       else if (input.text !== undefined) body["text"] = input.text;
       else throw new WizardError("bad_document");
       const got = (await call("POST", at(guild, "/documents"), body)) as Partial<WizardDoc>;

@@ -554,6 +554,22 @@ describe("the wizard", () => {
     expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
   });
 
+  it("a link longer than the server keeps is refused at the step, and homebrew has its own dndbeyond.com box instead (#4206)", async () => {
+    flags.links = true;
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.input(screen.getByLabelText(w.docs.linkLabel), { target: { value: `https://example.com/${"a".repeat(2000)}` } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.linkTooLong);
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+    for (let to = 5; to <= 8; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull(); // (step 8: the dndbeyond.com box only)
+    expect(screen.getByLabelText(w.docs.homebrewLinkLabel)).toBeTruthy();
+  });
+
   it("one failed look at the finish is tried again, and the wait goes on", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockWizard();
