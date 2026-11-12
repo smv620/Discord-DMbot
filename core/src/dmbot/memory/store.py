@@ -2883,6 +2883,29 @@ class MemoryStore:
             await w.delete(STORY_LANGUAGES, language_id)
             return Written(None, w.batch)
 
+    async def check_story_languages(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[list[str]]:
+        """The DM's "these are right" (#4229): every language DMbot read for this character
+        becomes the DM's word, in one change (one Undo). Returns their names."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can change that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            rows = await w.select(
+                STORY_LANGUAGES,
+                " AND entity_id = %s AND given_by = 'read' ORDER BY created_at, id",
+                [entity_id],
+            )
+            for row in rows:
+                await w.update(STORY_LANGUAGES, row["id"], {"given_by": DM})
+            return Written([str(r["name"]) for r in rows], w.batch)
+
+    async def has_sheet(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
+        """Does this character have a sheet (#4229)? Then its languages are the sheet's, never the
+        story's. Read from the sheets themselves, so one listing no languages still counts."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await scope.get(SHEETS, entity_id, lock=False) is not None
+
     async def story_languages(
         self, guild_id: int, campaign_id: str, entity_id: str
     ) -> list[StoryLanguage]:
