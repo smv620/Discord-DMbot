@@ -907,7 +907,7 @@ export const dmSteps: Step[] = [
   },
   // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
   ...liveFeatureSteps("gameMaster"),
-  { text: "After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking." },
+  { text: `After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press "${consent}", and watch for DMbot's private message when something needs checking.` },
 ];
 
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new

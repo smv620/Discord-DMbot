@@ -62,6 +62,13 @@ describe("Help", () => {
     expect(dmSteps.at(-1)?.text).toBe("After you set up a campaign: open your campaign's DM Bot channel, type /dmbot start when you play, ask each player to press \"I'm 16 or older, record me\", and watch for DMbot's private message when something needs checking.");
   });
 
+  it("the consent label in that step is core's, read from consent_words.py", () => {
+    const py = readFileSync(fileURLToPath(new URL("../../core/src/dmbot/consent_words.py", import.meta.url)), "utf8");
+    const minAge = /MIN_AGE = (\d+)/.exec(py)?.[1];
+    expect(py).toContain('CONSENT_LABEL = f"I\'m {MIN_AGE} or older, record me"');
+    expect(dmSteps.at(-1)?.text).toContain(`I'm ${minAge} or older, record me`);
+  });
+
   it("names only buttons and commands that are in the bot's code", () => {
     for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps, ...featureSteps]) {
       for (const { name, file } of step.names ?? []) {
