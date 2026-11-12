@@ -2984,3 +2984,13 @@ SAMPLE RUN 20 (dev1, 2026-11-11, live build f624c4b8; counts on #3545). One run,
 CREDITS, read-only (counts only, this campaign): import extractor 34 calls, 208 credits; import topic 29 calls, 29 credits; import name_pass 2 calls, 7 credits; lore names_background 5 calls, 12 credits; lore names_background_read 2 calls, 394 credits; script theatre 1 call, 8 credits.
 
 Deploy 19's checks 3 and 4, on the copy and the live database (posted on #3720): check 3, account deletion on a test account with one row in each of owner_credits, owner_hours, ai_credit_spend, session_usage and name_actions: all 0 after the deletion calls, and 0 rows left in any table with a user-id column (on the copy, not live). Check 4, hand-over questions for the sample campaign: 0 questions, 0 answers on the live database.
+
+DEPLOY c030d95a (deploy 22; Supervisor's handover on #3720 naming c030d95a39675eabdb7fe3f4528e9f519198b764, CI green on every job; the owner's go in the dev1 session on 2026-11-12). Live was 24285fac (21). Migrations 0440_forget_requests, 0441_wizard_members, 0443_wizard_finish_notes, 0444_sheet_waits (0442 is not on development yet). Order: image build, campaign backup by the live build (format 6, one part), pg_dumpall to ~/db-backups (mode 600, 3 "dump complete" lines), dry run on the copy (restore, ownership, password reset, migrations twice: the four, then nothing), live: bot, then web-api. Pruned to five images.
+
+Check 1 (migrations recorded, clean start, GIT_COMMIT on both): PASSED. Bot "Database updated" for the four, connected to 2 servers, 0 ERROR lines; web-api healthy, 0 ERROR lines; GIT_COMMIT c030d95a on both; DMBOT_WIZARD_LINK=1 unchanged. Found, not changed: /data/status is owned by root (since 8 Nov), so the bot's features.json write fails on every start with "Feature list: not written (PermissionError)". Start-up goes on; needs a server-side decision.
+
+Check 2 (sample run 22, counts on #3545): DONE. Exit 0. Lore 67 of 89 entries, 20 of 126 ties, 0 wrong ties (run 21: 66, 18, 1). Both 68 of 97 entries (same), 43 of 141 ties, 10 wrong (run 21: 38, 6). AI decides (session): 15 careful calls, about $0.04. Recap: the first try was refused by the fact check and wrote nothing; the rerun with --keep --yes kept it as a draft (exit 0).
+
+Owner checks A to D (wizard Back and members, dndbeyond.com sheet links after finish, Open the campaign, Cerric entries) are open.
+
+Session: dev1
