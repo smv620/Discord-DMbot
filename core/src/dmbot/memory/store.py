@@ -153,6 +153,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     ROLES,
+    SETTING_GUESS_SOURCE,
     SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
@@ -1207,7 +1208,9 @@ class MemoryStore:
                 return Written(_entity(row) if row else None, None)
             for r in now:  # (first: one setting at most)
                 if r["id"] != entity_id:
-                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": None})
+                    # (the DM taking away DMbot's guess is a no to it: never guessed again)
+                    gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
+                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
             if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
                 row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
@@ -1225,13 +1228,18 @@ class MemoryStore:
             if said:
                 return Written(None, None)
             onto = await _load_ontology(w)
-            key = name_key(world)
+
+            def bare(name: str) -> str:  # ("the Flanaess" and "Flanaess" are one world)
+                key = name_key(name)
+                return key[4:] if key.startswith("the ") else key
+
+            key = bare(world)
             found = [
                 r
                 for r in await w.select(
                     ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
                 )
-                if name_key(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+                if bare(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
             ]
             if len(found) > 1:
                 return Written(None, None)  # (two places of that name: DMbot can't tell which)
@@ -1248,7 +1256,7 @@ class MemoryStore:
                 ENTITIES,
                 {
                     "id": new_id(), "type": "place", "name": name, "description": "",
-                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "status": CONFIRMED, "merged_into": None, "source": SETTING_GUESS_SOURCE,
                     "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
                     "unique_item": None,
                     # (the players hear of it once the DM keeps it: the ux-critic on #4173)
@@ -1273,12 +1281,14 @@ class MemoryStore:
             if not row.get("setting"):
                 raise MemoryRuleError(NOT_FOUND)
             change: dict[str, Any] = {"setting_from": DM}
+            # (only the place DMbot made for the guess, hidden for it: never a place the DM or the
+            # scene gate hid, which a guess found by name may be)
             if (
                 row.get("setting_from") == place_levels.READ
                 and row.get("hidden_from_players")
-                and (str(row.get("source")) != DM)
+                and row.get("source") == SETTING_GUESS_SOURCE
             ):
-                change["hidden_from_players"] = False  # (DMbot hid it for the guess, not the DM)
+                change["hidden_from_players"] = False
             if any(row.get(k) != v for k, v in change.items()):
                 row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)

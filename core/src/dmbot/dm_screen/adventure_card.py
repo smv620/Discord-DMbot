@@ -682,6 +682,10 @@ async def guess_setting(
         log.warning("A setting couldn't be guessed (%s)", type(exc).__name__)
         return False
     log.info("Setting from the adventure: %s", "guessed" if written.value else "kept as it was")
+    if written.value is not None:  # (the DM's cards and search see the new place at once)
+        from dmbot.ui.names import changed
+
+        changed(interaction, campaign)
     return written.value is not None
 
 

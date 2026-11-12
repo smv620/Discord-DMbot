@@ -16,7 +16,9 @@ class World(NamedTuple):
     key: str
     label: str  # the world's own name, what a DM says ("Forgotten Realms")
     place: str  # the place DMbot makes the campaign's setting ("Faerûn")
-    description: str  # the menu's second line (the ux-critic on #4173)
+    description: (
+        str  # the setup menu's second line (the ux-critic on #4173; #4291 and #4292 use it)
+    )
 
 
 WORLDS: tuple[World, ...] = (
@@ -86,6 +88,13 @@ def world_for(file_name: str, opening: str = "") -> World | None:
     for title, world in sorted(_TITLES.items(), key=lambda kv: -len(kv[0])):
         if f" {title} " in name:
             return BY_KEY[world]
-    words = f" {_plain(opening[:OPENING_CHARS])} "
+    # (a legal line, "… Forgotten Realms … are trademarks of …", names a world the book may not be
+    # set in: the reviewer on #4173. Such lines are left out.)
+    kept = [
+        line
+        for line in opening[:OPENING_CHARS].splitlines()
+        if "trademark" not in line.casefold() and "©" not in line and "(c)" not in line.casefold()
+    ]
+    words = f" {_plain(' '.join(kept))} "
     found = {world for named, world in _NAMES.items() if f" {named} " in words}
     return BY_KEY[found.pop()] if len(found) == 1 else None

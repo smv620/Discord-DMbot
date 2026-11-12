@@ -239,3 +239,53 @@ class OnTheCard(NamesTest):
         it = self.it(MANAGER)
         await place_size.answer_guess(it, self.campaign.id, self.faerun, keep=True)
         self.assertEqual(it.response.sent[-1][0], place_size.ONLY_SETTING_DM)
+
+
+class AfterTheReview(MemoryTest):
+    """The reviewer's cases on #4173 slice 2b."""
+
+    async def test_keep_never_shows_a_place_someone_else_hid(self) -> None:
+        faerun = await self.add("Faerûn", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, faerun, "world", source=BY_DM)
+        await self.memory.set_hidden_from_players(GUILD_A, self.c, faerun, True, source=BY_DM)
+        await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        kept = await self.memory.keep_setting(GUILD_A, self.c, faerun, source=BY_DM)
+        self.assertTrue(kept.value.hidden_from_players)
+
+    async def test_the_dm_taking_a_guess_away_is_a_no(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        gone = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert gone is not None
+        self.assertEqual((gone.setting, gone.setting_from), (False, "declined"))
+        again = await self.memory.guess_setting(GUILD_A, self.c, "Khorvaire", source="background")
+        self.assertIsNone(again.value)
+
+    async def test_undo_of_a_no_brings_the_guess_back(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        no = await self.memory.decline_setting(GUILD_A, self.c, made.value.id, source=BY_DM)
+        assert no.batch is not None
+        await self.memory.undo(GUILD_A, self.c, no.batch)
+        back = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert back is not None
+        self.assertTrue(back.setting_guessed)
+
+    async def test_the_flanaess_with_or_without_the(self) -> None:
+        own = await self.add("Flanaess", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, own, "world", source=BY_DM)
+        made = await self.memory.guess_setting(GUILD_A, self.c, "the Flanaess", source="background")
+        assert made.value is not None
+        self.assertEqual(made.value.id, own)
+
+
+class TheListAgain(unittest.TestCase):
+    def test_every_title_names_a_world_on_the_list(self) -> None:
+        self.assertTrue(set(sw.ADVENTURES.values()) <= set(sw.BY_KEY))
+        self.assertEqual(sw.World._fields, ("key", "label", "place", "description"))
+
+    def test_a_legal_line_names_no_world(self) -> None:
+        legal = "Forgotten Realms and the dragon ampersand are trademarks of their owner.\nA hut."
+        self.assertIsNone(sw.world_for("community adventure.pdf", legal))
+        self.assertIsNone(sw.world_for("x.pdf", "© 2024 someone. Eberron is theirs.\nA hut."))
