@@ -31,7 +31,7 @@ _SAID: dict[str, str] = {
     "share a border": BORDERS,
     "on the shore of": SHORE, "on the shores of": SHORE, "shore": SHORE, "lakeside": SHORE,
     "on the coast of": COAST, "coast": COAST, "coastal": COAST,
-    "at the foot of": FOOT, "foot": FOOT, "below": FOOT,
+    "at the foot of": FOOT, "foot": FOOT,
     "on": ON, "lies on": ON, "along": ON,
 }  # fmt: skip
 PLAIN = "is next to"

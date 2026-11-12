@@ -18,8 +18,8 @@ from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secr
 
 log = logging.getLogger(__name__)
 
-BUTTON = "📏 Size"
-ONLY_DM = "Only the DM can change a place's size."
+BUTTON = "📏 Size and kind"
+ONLY_DM = "Only the DM can change a place's size or kind."
 NOT_SURE = "not_sure"  # the menu's value for "no size" (a level is never this word)
 HOLDER = "Pick a size"
 # The menu's choices: a short name and an example each, so "Region" or "District" is plain
@@ -78,8 +78,10 @@ def ask_text(name: str, level: str | None, read: bool = False) -> str:
     return (
         f"📏 **How big is {_md(name)}?**{said}\n"
         'Then DMbot won\'t flag someone as "in two places" for being in a building and the town '
-        "around it. Players who can see this place see its size too.\n"
-        "Below that: is it land, water or a road? A town can be on a lake's shore, or on a road."
+        "around it.\n"
+        '🧭 **Second menu: is it land, water or a road?** Then a town "on the shore of" it '
+        "means a lake.\n"
+        "Players who can see this place see both."
     )
 
 

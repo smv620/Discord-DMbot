@@ -232,7 +232,7 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 # The campaign's setting (#4173 slice 2): a confirmed place no smaller than a region
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
-SETTING_SIZE = "Tap 📏 Size first and pick Region or bigger."
+SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."

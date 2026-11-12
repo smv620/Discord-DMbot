@@ -344,7 +344,7 @@ class TheMenu(unittest.TestCase):
         self.assertEqual(place_size.size_line("settlement"), "\n📏 **Size:** a town or city")
         self.assertEqual(
             place_size.size_line("settlement", read=True),
-            "\n📏 **Size:** a town or city (DMbot read this; tap 📏 Size to change)",
+            "\n📏 **Size:** a town or city (DMbot read this; tap 📏 Size and kind to change)",
         )
         self.assertEqual(place_size.size_line(None), "")
 
