@@ -145,6 +145,32 @@ class TheDoors(Lookups):
                 await c.execute("SELECT * FROM member_lookups")
 
 
+class TheAccount(Lookups):
+    async def forget(self, user: int) -> None:
+        async with self.db.user(user) as conn:
+            await conn.execute("SELECT dmbot_forget_lookups()")
+
+    async def count(self) -> int:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM member_lookups")
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    async def test_a_persons_own_questions_and_any_that_asked_about_them_go_with_the_account(
+        self,
+    ) -> None:
+        await self.ask(str(ERIC))  # Alice asks about Eric
+        await member_lookup.ask(self.web, self.bob, self.g, str(FAR))  # Bob asks about someone else
+        self.assertEqual(await self.count(), 2)
+        await self.forget(ERIC)  # Eric leaves: the question that asked about him goes
+        self.assertEqual(await self.count(), 1)
+        await self.forget(self.session.user_id)  # Alice leaves: hers (none left) and only hers
+        self.assertEqual(await self.count(), 1)
+        await self.forget(self.bob.user_id)  # Bob leaves: his own question goes
+        self.assertEqual(await self.count(), 0)
+
+
 class TheBot(Lookups):
     async def answered(self, text: str) -> dict[str, Any]:
         lid = await self.ask(text)

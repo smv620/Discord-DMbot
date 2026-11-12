@@ -90,8 +90,9 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_a = import_module("dmbot.migrations.0431_forget_person")
         part_b = import_module("dmbot.migrations.0432_forget_authorship")
         part_c = import_module("dmbot.migrations.0440_forget_requests")
-        done = {*part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED}
-        deleted_tables = {t for t, _ in (*part_a.DELETED, *part_c.DELETED)}
+        part_d = import_module("dmbot.migrations.0447_member_lookups")
+        done = {*part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.DELETED}
+        deleted_tables = {t for t, _ in (*part_a.DELETED, *part_c.DELETED, *part_d.DELETED)}
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT table_name, column_name FROM information_schema.columns"

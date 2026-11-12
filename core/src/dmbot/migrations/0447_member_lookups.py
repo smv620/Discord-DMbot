@@ -124,15 +124,60 @@ SQL = (
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
+    -- Account deletion (#4141 pattern, 0431 and 0440): a person's own questions go, and so does any
+    -- row that asked about them (the typed id is theirs too). The policies are for the function's
+    -- owner only and open only while it runs.
+    DO $do$
+    BEGIN
+        EXECUTE format('CREATE POLICY forget_lookups_read ON member_lookups FOR SELECT TO %I
+            USING (dmbot_owner_sync() = ''forget_lookups''
+                   AND (user_id = dmbot_current_user() OR target = dmbot_current_user()))',
+            current_user);
+        EXECUTE format('CREATE POLICY forget_lookups_delete ON member_lookups FOR DELETE TO %I
+            USING (dmbot_owner_sync() = ''forget_lookups''
+                   AND (user_id = dmbot_current_user() OR target = dmbot_current_user()))',
+            current_user);
+    END
+    $do$;
+    CREATE FUNCTION dmbot_forget_lookups() RETURNS VOID
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.owner_sync', true), '');
+    BEGIN
+        IF dmbot_current_user() IS NULL THEN
+            RETURN;
+        END IF;
+        PERFORM set_config('dmbot.owner_sync', 'forget_lookups', true);
+        DELETE FROM member_lookups
+            WHERE user_id = dmbot_current_user() OR target = dmbot_current_user();
+        -- (an error rolls the setting back, so only success restores it)
+        PERFORM set_config('dmbot.owner_sync', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_forget_lookups() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_forget_lookups() FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_may_look_up_members(BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_member_lookup_add(BIGINT, BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_member_lookup_read(BIGINT, TEXT) FROM PUBLIC;
 """
 )
 
+# (table, the column that holds the person's Discord ID): the catalog test reads this. A row is also
+# removed when `target` is the person (see the function above).
+DELETED: tuple[tuple[str, str], ...] = (("member_lookups", "user_id"),)
+
 ISOLATED_TABLES: tuple[str, ...] = ("member_lookups",)
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_member_lookup_add", "dmbot_web_member_lookup_add(BIGINT, BIGINT)"),
     ("dmbot_web_member_lookup_read", "dmbot_web_member_lookup_read(BIGINT, TEXT)"),
+    # Account deletion's call, made on the website like the other forgets.
+    ("dmbot_forget_lookups", "dmbot_forget_lookups()"),
 )

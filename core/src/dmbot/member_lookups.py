@@ -39,14 +39,18 @@ class MemberLookups:
         (id, the id asked about, the claim stamp)."""
         now_ms = int(self._now() * 1000)
         async with self._db.guild(guild_id) as conn:
+            # The picked rows are fixed once (MATERIALIZED): row-level security with a function in
+            # it can make the planner run a plain `IN (… LIMIT n)` again for each row, taking more
+            # than n.
             cur = await conn.execute(
-                "UPDATE member_lookups SET state = 'working', claimed_at = %s"
-                " WHERE (guild_id, id) IN (SELECT guild_id, id FROM member_lookups"
+                "WITH picked AS MATERIALIZED (SELECT id FROM member_lookups"
                 " WHERE guild_id = %s AND created_at >= %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s))"
-                " ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED) RETURNING id, target",
-                (now_ms, guild_id, now_ms // 1000 - GIVE_UP_S, now_ms - RETAKE_AFTER_S * 1000,
-                 PER_ROUND),
+                " ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED)"
+                " UPDATE member_lookups m SET state = 'working', claimed_at = %s FROM picked p"
+                " WHERE m.guild_id = %s AND m.id = p.id RETURNING m.id, m.target",
+                (guild_id, now_ms // 1000 - GIVE_UP_S, now_ms - RETAKE_AFTER_S * 1000,
+                 PER_ROUND, now_ms, guild_id),
             )  # fmt: skip
             return [(str(r["id"]), int(r["target"]), now_ms) for r in await cur.fetchall()]
 
