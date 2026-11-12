@@ -457,6 +457,92 @@ class TheLinks(FinishTest):
         self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
 
 
+class TheBusyLinks(TheLinks):
+    """Another link being opened for the server (a DM's paste in Discord) is waited for, not
+    counted as a failed link; a document with a bad address never reaches the fetch."""
+
+    DOC = "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+
+    async def test_a_busy_server_is_waited_for_and_the_rules_are_added(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+        answers: list[Any] = [(None, LINK_BUSY), (SimpleNamespace(text="1. One rule."), None)]
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            result: tuple[Any, str | None] = answers.pop(0)
+            return result
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(len(await self.bot.house_rules.list(GUILD, campaign.id)), 1)
+
+    async def test_busy_for_too_long_is_a_failed_link_and_the_campaign_stands(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+
+        async def busy(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, LINK_BUSY
+
+        with (
+            patch("dmbot.ui.name_lists.read_link_once", busy),
+            patch.object(wizard_finish, "LORE_WAIT_S", 0.05),
+        ):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+
+    async def test_a_bad_address_never_reaches_the_fetch(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "http://example.com/page")
+        await self.add_doc("homebrew", "https://example.com/" + "x" * 2100)
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return None, None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual(calls, [])
+        self.assertIn("doc_link_failed:2", row["notes"])
+
+    async def test_a_homebrew_link_document_is_read_and_loaded(self) -> None:
+        await self.draft()
+        await self.add_doc(
+            "homebrew", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+        )
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return SimpleNamespace(text="## Hollow King (monster)\n\nIt rules the crypt.\n"), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(
+            [e.name for e in await self.bot.homebrew.list(GUILD, campaign.id)], ["Hollow King"]
+        )
+
+    async def test_a_lore_link_is_queued_with_its_exact_address_and_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", self.DOC)
+        seen: list[tuple[str, str]] = []
+        real = wizard_finish.WizardFinishes.queue_lore
+
+        async def spy(self_: Any, *args: Any, **kw: Any) -> str:
+            seen.append((args[3], kw.get("link", "")))
+            return await real(self_, *args, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "queue_lore", spy):
+            await self.finish()
+        self.assertEqual(seen, [(self.DOC, self.DOC)])  # (the text argument is dropped for a link)
+
+
 class TheRun(FinishTest):
     async def test_the_campaign_is_made_the_lore_then_the_secrets_are_read_and_the_draft_goes(
         self,

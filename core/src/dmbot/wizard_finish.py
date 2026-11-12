@@ -45,6 +45,7 @@ GIVE_UP_S = 30 * 60  # as the door's: a run that has not moved this long ago was
 RETAKE_AFTER_S = 10 * 60  # a claim that stopped moving this long ago (the bot restarted)
 MAX_TRIES = 3
 LORE_POLL_S = 3.0
+LINK_TEXT_MAX: int = 262_144  # a linked page's text, as a document (the lore queue's own limit)
 _LINK = re.compile(r"https://\S+")  # the lore queue's own check for a link upload
 # At most one progress write a second for a run (#4213). `move()` writes the row on every poll
 # too, so LORE_POLL_S must stay above this or the cap no longer holds.
@@ -795,6 +796,14 @@ async def _read_slot(
     return word
 
 
+def _add_pair(notes: str, word: str, count: int) -> str:
+    """The notes with `count` more under `word`: a word two stages share (a link that failed in
+    house rules and in homebrew) counts both. The notes of a retaken run start empty, so a count
+    is never added twice."""
+    have = {p.partition(":")[0]: int(p.partition(":")[2]) for p in notes.split() if p}
+    return _with_pairs(notes, {word: min(have.get(word, 0) + count, 999)})
+
+
 def _with_pairs(notes: str, new: dict[str, int]) -> str:
     """The notes with these "word:count" pairs set, each replacing an earlier pair of its word (a
     retaken run does not double a count); at most 8 pairs, as the row's check allows."""
@@ -804,13 +813,13 @@ def _with_pairs(notes: str, new: dict[str, int]) -> str:
 
 
 async def _link_texts(
-    guild_id: int, run: Run, docs: list[dict[str, Any]]
+    runs: WizardFinishes, guild_id: int, run: Run, stage: str, docs: list[dict[str, Any]]
 ) -> tuple[list[dict[str, Any]], int]:
     """House and homebrew documents that are links (#4206): each address is opened once with the
     guarded fetch Discord's link upload uses (one at a time for the server) and its text takes the
     document's place. Returns (the documents with text, how many links could not be read); the
     campaign stands either way. Nothing of an address or a page is logged."""
-    from dmbot.ui.name_lists import read_link_once  # (that module leads back to the bot)
+    from dmbot.ui.name_lists import LINK_BUSY, read_link_once  # (that module leads to the bot)
 
     out: list[dict[str, Any]] = []
     bad = 0
@@ -822,12 +831,22 @@ async def _link_texts(
         if not _LINK.fullmatch(address) or len(address) > 2000:
             bad += 1
             continue
-        try:
-            upload, _ = await read_link_once(guild_id, address)
-        except Exception as exc:  # one link's trouble never stops the others
-            log.warning("A wizard link could not be read (%s)", type(exc).__name__)
-            upload = None
-        if upload is None or not upload.text.strip():
+        upload = None
+        waited = 0.0
+        while True:
+            try:
+                upload, problem = await read_link_once(guild_id, address)
+            except Exception as exc:  # one link's trouble never stops the others
+                log.warning("A wizard link could not be read (%s)", type(exc).__name__)
+                break
+            # Another link is being opened for this server (a DM's paste in Discord, the lore
+            # worker): wait for it, as the lore worker does, instead of losing the document.
+            if upload is not None or problem != LINK_BUSY or waited >= LORE_WAIT_S:
+                break
+            await asyncio.sleep(LORE_POLL_S)
+            waited += LORE_POLL_S
+            await runs.move(guild_id, run, stage=stage, part=len(out) + bad + 1, of_parts=len(docs))
+        if upload is None or not upload.text.strip() or len(upload.text) > LINK_TEXT_MAX:
             bad += 1
             continue
         out.append({**doc, "text": upload.text})
@@ -848,9 +867,9 @@ async def _read_house(
     store = getattr(bot, "house_rules", None)
     if docs and store is None:
         return HOUSE_FAILED  # the DM adds them on the House rules page
-    docs, bad_links = await _link_texts(guild_id, run, docs)
+    docs, bad_links = await _link_texts(runs, guild_id, run, "house", docs)
     if bad_links:
-        run.notes = _with_pairs(run.notes, {DOC_LINK_FAILED: min(bad_links, 999)})
+        run.notes = _add_pair(run.notes, DOC_LINK_FAILED, bad_links)
         word = word or DOC_LINK_FAILED
     if not docs:
         return word
@@ -879,9 +898,9 @@ async def _read_homebrew(
     docs = [
         d for d in docs if d["source"] != "drive" and d["status"] == "ok" and str(d["text"]).strip()
     ]
-    docs, bad_links = await _link_texts(guild_id, run, docs)
+    docs, bad_links = await _link_texts(runs, guild_id, run, "homebrew", docs)
     if bad_links:
-        run.notes = _with_pairs(run.notes, {DOC_LINK_FAILED: min(bad_links, 999)})
+        run.notes = _add_pair(run.notes, DOC_LINK_FAILED, bad_links)
         word = word or DOC_LINK_FAILED
     links = [str(v).strip() for v in answers.get("homebrew_links") or [] if str(v).strip()]
     store = getattr(bot, "homebrew", None)
@@ -926,6 +945,11 @@ async def _read_one(
     """Queue one document and wait for the reader. The queue holds one upload for a campaign at a
     time, so an earlier one still open (a retaken run's) is waited for first, and one that is not
     read in time is taken out, its words blanked."""
+    link = ""
+    if doc["source"] == "link":
+        link = str(doc["text"]).strip()  # (the page stores a link document's address as its text)
+        if not _LINK.fullmatch(link) or len(link) > 2000:
+            return "failed"  # (checked before anything waits or is queued)
     waited = 0.0
     while (open_one := await runs.open_upload(guild_id, campaign_id)) != "":
         if waited >= LORE_WAIT_S:
@@ -934,11 +958,6 @@ async def _read_one(
         await asyncio.sleep(LORE_POLL_S)
         waited += LORE_POLL_S
         await runs.move(guild_id, run, stage=slot, part=number, of_parts=of_parts)
-    link = ""
-    if doc["source"] == "link":
-        link = str(doc["text"]).strip()  # (the page stores a link document's address as its text)
-        if not _LINK.fullmatch(link) or len(link) > 2000:
-            return "failed"
     upload = await runs.queue_lore(
         guild_id, campaign_id, run.user_id, str(doc["text"]),
         choice=CHOICE_OF[slot], rights_at=draft.rights_shared_at, link=link,
