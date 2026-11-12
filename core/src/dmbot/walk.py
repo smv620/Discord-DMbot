@@ -80,6 +80,17 @@ STOPPED = "Stopped. Your answers are saved. Press **✅ Carry on** on the messag
 # (the message to press was not kept, so the way back is the button on the first message)
 STOPPED_NO_ORIGIN = "Stopped. Your answers are saved. Press **✅ Check everything** again to go on."
 ALL_DONE = "✅ Everything is checked. DMbot will ask again after the next session."
+
+
+def left_for_later(left: int) -> str:
+    """The end of a walk when some answers were left for later (Later, Skip the rest)."""
+    what = "check" if left == 1 else "checks"
+    return (
+        f"Done for now. {left} {what} left for later. "
+        "Press **✅ Check everything** on the message when you want them."
+    )
+
+
 NOTHING_TO_CHECK = "Nothing to check right now. DMbot will ask again when there is something new."
 STOP_LABEL = "Stop for now"
 

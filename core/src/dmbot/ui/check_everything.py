@@ -18,7 +18,7 @@ import discord
 
 from dmbot import walk as walks
 from dmbot.dm_questions import CLAIMS, CONNECTIONS, NAMES, PEOPLE
-from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _tell
+from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _tell
 from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
@@ -75,8 +75,8 @@ async def begin(interaction: discord.Interaction, guild_id: int, campaign_id: st
     """The button was pressed (first time or Carry on): open the first part that has something."""
     from dmbot.ui import names
 
-    if interaction.guild is None:
-        names._PRIVATE_SERVERS[campaign_id] = guild_id  # (the part flows look the server up here)
+    # Counting what waits takes several reads: answer Discord first (it gives up after 3 seconds).
+    await _answer_first(interaction)
     campaign = await names._campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
         return
@@ -124,6 +124,11 @@ async def next_part(interaction: discord.Interaction, walk: Walk) -> None:
             await _tell(interaction, walks.between(walk.kind, later.kind, counts[later.kind]))
             await run_part(interaction, later)
             return
+    # Anything left for later (Later, Skip the rest) still waits: don't say everything is checked.
+    left = sum(counts.values())
+    if left > 0:
+        await _tell(interaction, walks.left_for_later(left))
+        return
     await _tell(interaction, walks.ALL_DONE)
 
 
@@ -133,7 +138,9 @@ def progress(walk: Walk | None, done: int, total: int) -> str:
 
 
 def add_stop(view: _Menu, walk: Walk | None, row: int = 4) -> None:
-    """Stop for now, on every card of a walk (row 4, the last, so no flow's own buttons move)."""
+    """Stop for now, on every card of a walk (row 4, the last, so no flow's own buttons move). It
+    needs no DM check of its own: it only ends this private card and changes a button's label, and
+    the walk was opened by `begin`, which checked the DM."""
     if walk is None:
         return
 
@@ -161,7 +168,7 @@ async def relabel_origin(interaction: discord.Interaction, walk: Walk, left: int
     """Change only the walk button's label on the message the DM pressed, keeping every other
     button and link on it. Best effort: the log gets the error type only."""
     if walk.origin is None or left <= 0:
-        return
+        return  # (nothing to carry on with, or no message to change: the button keeps its label)
     channel_id, message_id = walk.origin
     try:
         channel = await interaction.client.fetch_channel(channel_id)

@@ -47,7 +47,7 @@ from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places, player_id, split_words
-from dmbot.ui.check_everything import add_stop, progress
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -1284,8 +1284,6 @@ async def _review(
 ) -> None:
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting and walk is not None:  # (answered meanwhile: on to the next part)
-        from dmbot.ui.check_everything import next_part
-
         await next_part(interaction, walk)
         return
     if not waiting:
@@ -1771,7 +1769,6 @@ class SuggestionReview(_Menu):
         self.stop()
         if self.walk is not None:  # the walk says what is next; no "done" of its own
             await _replace(interaction, f"{note}\n\n{FINISHED}" if note else FINISHED, None)
-            from dmbot.ui.check_everything import next_part
 
             await next_part(interaction, self.walk)
             return

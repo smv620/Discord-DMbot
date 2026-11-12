@@ -3232,6 +3232,8 @@ class ConnectionOffer(_Menu):
                     view=self,
                     allowed_mentions=NO_PINGS,
                 )
+            if self.walk is not None:  # (this card keeps its Undo; the walk goes on below it)
+                await next_part(interaction, self.walk)
 
     async def _undo_all(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()

@@ -181,6 +181,14 @@ class FromOnePartToTheNext(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.told, ["Names done. Next: connections (4)."])
         self.assertEqual(self.opened, [CONNECTIONS])
 
+    async def test_answers_left_for_later_are_not_called_everything_checked(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS)).next()
+        with self.counts({NAMES: 2, CLAIMS: 1}):  # (two names were left for later)
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, [walks.left_for_later(3)])
+        self.assertIn("3 checks left for later", self.told[0])
+        self.assertEqual(self.opened, [])
+
     async def test_after_the_last_part_everything_is_checked(self) -> None:
         walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS)).next()
         with self.counts({NAMES: 0, CLAIMS: 0}):
@@ -231,6 +239,60 @@ class StopForNow(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replaced, [walks.STOPPED])
         self.assertTrue(view.is_finished())
         self.assertEqual(relabel.await_args.args[1:], (walk, 4))
+
+
+class ChangingTheMessagesButton(unittest.IsolatedAsyncioTestCase):
+    def message(self) -> Any:
+        walk_button = discord.ui.Button(
+            label="✅ Check everything (9)", custom_id=f"dmbot:walk:{GUILD}:{CID}"
+        )
+        other = discord.ui.Button(label="Other", custom_id="test:other")
+        link = discord.ui.Button(label="Open", url="https://discord.com/channels/1/2/3")
+        view = discord.ui.View(timeout=None)
+        for item in (walk_button, other, link):
+            view.add_item(item)
+        edit = AsyncMock()
+        message = SimpleNamespace(edit=edit, components=[])
+        return message, view, edit
+
+    async def run_relabel(self, left: int, origin: tuple[int, int] | None = (7, 8)) -> Any:
+        message, view, edit = self.message()
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message))
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(fetch_channel=AsyncMock(return_value=channel))
+        )
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS), origin=origin)
+        with (
+            patch("dmbot.ui.check_everything.discord.abc.Messageable", SimpleNamespace),
+            patch.object(discord.ui.View, "from_message", return_value=view),
+        ):
+            await ce.relabel_origin(cast(Any, interaction), walk, left)
+        return view, edit
+
+    async def test_only_the_walk_button_changes_and_the_link_stays(self) -> None:
+        view, edit = await self.run_relabel(4)
+        edit.assert_awaited_once()
+        self.assertEqual(labels(view), ["✅ Carry on (4 left)", "Other", "Open"])
+        self.assertEqual(
+            getattr(view.children[2], "url", None), "https://discord.com/channels/1/2/3"
+        )
+
+    async def test_nothing_left_or_no_message_changes_nothing(self) -> None:
+        for left, origin in ((0, (7, 8)), (4, None)):
+            _view, edit = await self.run_relabel(left, origin)
+            edit.assert_not_awaited()
+
+    async def test_a_message_that_cannot_be_fetched_is_logged_by_type_and_swallowed(self) -> None:
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(
+                fetch_channel=AsyncMock(side_effect=RuntimeError("secret words"))
+            )
+        )
+        walk = Walk(CID, GUILD, 1, (NAMES,), origin=(7, 8))
+        with self.assertLogs("dmbot.ui.check_everything", level="WARNING") as logged:
+            await ce.relabel_origin(cast(Any, interaction), walk, 3)
+        self.assertIn("RuntimeError", logged.output[0])
+        self.assertNotIn("secret words", logged.output[0])
 
 
 class WithoutAWalkNothingChanges(unittest.TestCase):
