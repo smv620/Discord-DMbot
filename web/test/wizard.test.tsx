@@ -619,6 +619,32 @@ describe("the wizard", () => {
     expect(screen.getByRole("button", { name: w.docs.add })).toBeTruthy();
   });
 
+  it("step 7 takes house rules typed in, one document, after the right-to-use box is ticked (#4211)", async () => {
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 7; to++) await next(to);
+    const box = screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement;
+    const add = screen.getByRole("button", { name: w.docs.typedAdd }) as HTMLButtonElement;
+    expect([box.disabled, add.disabled]).toEqual([true, true]); // (nothing is added before the right-to-use box)
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.docs.typedAdd }));
+    expect(await screen.findByText(w.docs.typedEmpty)).toBeTruthy(); // (an empty box adds nothing)
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+    fireEvent.input(screen.getByLabelText(w.docs.typedLabel), { target: { value: "1. Flanking gives advantage.\n2. Potions take a bonus action." } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.typedAdd }));
+    expect(await screen.findByText(w.docs.typedName)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("docAdd:")).length).toBe(1);
+    expect((screen.getByLabelText(w.docs.typedLabel) as HTMLTextAreaElement).value).toBe(""); // (the box empties once it is added)
+  });
+
+  it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {
+    flags.house = true;
+    await start();
+    for (let to = 2; to <= 8; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.typedLabel)).toBeNull();
+  });
+
   it("step 6 hides the person's own ruleset upload in the first release", async () => {
     await start();
     for (let to = 2; to <= 6; to++) await next(to);

@@ -140,6 +140,12 @@ export const wizardWords = {
     linkBad: "A link must start with https://.",
     remove: "Remove",
     none: "Nothing added.",
+    // Step 7 also takes house rules typed in, so a DM with no file isn't sent away (#4211): kept as one document.
+    typedLabel: "Or type your house rules here",
+    typedNote: "One rule per line. Numbers are optional. DMbot reads them when you press \"Make the campaign\".",
+    typedAdd: "Add these rules",
+    typedName: "Typed house rules",
+    typedEmpty: "Type at least one rule first.",
     // Pages that are only pictures (#4030): DMbot cannot read them, so the person types the text that matters into a file.
     picturePages: (n: number): string =>
       n === 1
