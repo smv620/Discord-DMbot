@@ -289,6 +289,4 @@ class Routes(Views):
             words = {x["id"]: x.get("words") for e in got["edges"] for x in e["links"]}
             with self.subTest(view=view):
                 self.assertIn(road, words)
-                self.assertNotEqual(words.get(leg_id), "is connected by road to")
-                if leg_id in words:
-                    self.assertIn("the party", str(words[leg_id]))
+                self.assertEqual(words[leg_id], "is where the party set out by road for")
