@@ -10,10 +10,11 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
+from dmbot.memory import next_words, route_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.ui import name_card
 from dmbot.ui import place_links as pl
-from tests.test_memory_names import GUILD, NamesTest
+from tests.test_memory_names import GUILD, PLAYER, NamesTest
 
 
 class TheWords(unittest.TestCase):
@@ -56,10 +57,16 @@ class TheFlow(NamesTest):
         )
         return made.value
 
-    async def pick(self, how: str, first: Any, other: Any, value: str) -> None:
-        menu = pl.PlaceWords(self.campaign.id, first.id, other.id, how, (first.name, other.name))
+    async def pick(
+        self, how: str, first: Any, other: Any, value: str, user: int | None = None, **kw: Any
+    ) -> Any:
+        menu = pl.PlaceWords(
+            self.campaign.id, first.id, other.id, how, (first.name, other.name), **kw
+        )
         menu.pick = SimpleNamespace(values=[value])  # type: ignore[assignment]
-        await menu._picked(self.it())
+        it = self.it() if user is None else self.it(user)
+        await menu._picked(it)
+        return it
 
     async def card_words(self, card_of: Any) -> str:
         names = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
@@ -73,6 +80,15 @@ class TheFlow(NamesTest):
             town, lake = (a, b) if (a.id < b.id) == (n == 0) else (b, a)
             await self.pick(pl.NEXT_TO, town, lake, "on the shore of")
             self.assertEqual(await self.card_words(town), f"is on the shore of {lake.name}")
+            hill = await self.place(f"Kelvin's Cairn {n}")
+            keep, peak = (town, hill) if (town.id < hill.id) == (n == 0) else (hill, town)
+            await self.pick(pl.NEXT_TO, keep, peak, "at the foot of")
+            (rel,) = [
+                r
+                for r in await self.memory.relations(GUILD, self.campaign.id, entity_id=keep.id)
+                if r.detail == "at the foot of"
+            ]
+            self.assertEqual((rel.subject_id, rel.object_id), (keep.id, peak.id))
 
     async def test_a_way_is_saved_with_its_means_and_not_sure_with_none(self) -> None:
         targos, bryn = await self.place("Targos"), await self.place("Bryn Shander")
@@ -95,6 +111,36 @@ class TheFlow(NamesTest):
         )
         said = " ".join(text for text, _ in it.response.sent)
         self.assertIn("isn't a place", said)
+        self.assertFalse(view.is_finished())  # (the list still works: pick another)
         self.assertEqual(
             await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id), []
         )
+
+    async def test_every_choice_saves_its_own_word(self) -> None:
+        for how, choices, read in (
+            (pl.NEXT_TO, pl.NEXT_CHOICES, next_words.word_of),
+            (pl.TRAVEL_TO, pl.TRAVEL_CHOICES, route_words.means_of),
+        ):
+            for n, (label, detail) in enumerate(choices):
+                with self.subTest(how=how, label=label):
+                    a, b = await self.place(f"{how} A{n}"), await self.place(f"{how} B{n}")
+                    await self.pick(how, a, b, detail or pl.NOT_SAID)
+                    (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=a.id)
+                    self.assertEqual((rel.predicate, rel.detail), (how, detail))
+                    self.assertEqual(read(detail), detail)
+
+    async def test_only_the_dm_saves_one(self) -> None:
+        a, b = await self.place("Targos"), await self.place("Bryn Shander")
+        it = await self.pick(pl.TRAVEL_TO, a, b, "road", user=PLAYER)
+        # (refused before it is saved: by the card's own check, or by ONLY_DM in `connect`)
+        said = " ".join(text for text, _ in it.response.sent)
+        self.assertTrue("DM" in said, said)
+        self.assertEqual(await self.memory.relations(GUILD, self.campaign.id, entity_id=a.id), [])
+
+    async def test_a_place_found_by_a_secret_name_is_linked_in_secret(self) -> None:
+        a, b = await self.place("Targos"), await self.place("Bryn Shander")
+        await self.pick(pl.NEXT_TO, a, b, "", secret=True, forced=True)
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=a.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)

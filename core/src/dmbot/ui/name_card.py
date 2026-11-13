@@ -3157,24 +3157,36 @@ async def choose_other(
             ),
         )
         return
-    view.stop()
     if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):
-        # two places only, then how they sit or the way between them (#4173 slice 6d)
+        # two places only, then how they sit or the way between them (#4173 slice 6d); the DM's
+        # alone, asked again here. The list is stopped only once the place is right, so after
+        # "isn't a place" it still works.
         found = await _current(interaction, campaign_id, entity_id)
         other = await _current(interaction, campaign_id, other_id) if found else None
         memory = _memory(interaction)
         if found is None or other is None or memory is None:
             return
-        row = await memory.entity(found[0].guild_id, found[0].id, other_id)
-        if row is None or row.type != "place":
+        if not sees_secrets(found[0], interaction.user.id):
+            await _tell(interaction, place_size.ONLY_DM)
+            return
+        gid, cid = found[0].guild_id, found[0].id
+        onto = await memory.ontology(gid, cid)
+        ends = [await memory.entity(gid, cid, e) for e in (entity_id, other_id)]
+        if any(e is None or not onto.is_a(e.type, "place") for e in ends):
             await _tell(interaction, place_links.NOT_A_PLACE.format(name=_md(other[1])))
             return
+        view.stop()
         await _replace(
             interaction,
-            place_links.ask_words(found[1], other[1]),
-            place_links.PlaceWords(campaign_id, entity_id, other_id, how, (found[1], other[1])),
-        )
+            place_links.ask_words(found[1], other[1], how),
+            place_links.PlaceWords(
+                campaign_id, entity_id, other_id, how, (found[1], other[1]),
+                # (found through a secret name: saying it on the other's card would give it away)
+                secret=secret or other_id in hidden, forced=other_id in hidden,
+            ),
+        )  # fmt: skip
         return
+    view.stop()
     if how.removesuffix(BACK) == KIN:  # "is family of": ask the role first, save after (#3102)
         found = await _current(interaction, campaign_id, entity_id)
         other = await _current(interaction, campaign_id, other_id) if found else None
@@ -3422,6 +3434,11 @@ async def connect(
     predicate = how.removesuffix(BACK)
     if predicate not in CONNECTION_WORDS:
         await _tell(interaction, "Pick how they're connected again.")
+        return
+    if predicate in (place_links.NEXT_TO, place_links.TRAVEL_TO) and not sees_secrets(
+        campaign, interaction.user.id
+    ):  # (the DM's own place links, #4173 slice 6d: asked again as it is saved)
+        await _tell(interaction, place_size.ONLY_DM)
         return
     denied = secret and not sees_secrets(campaign, interaction.user.id)
     if denied and forced:

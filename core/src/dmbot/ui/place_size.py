@@ -168,10 +168,11 @@ class SizeMenu(_Menu):
 
     async def _find(self, interaction: discord.Interaction, how: str) -> None:
         """The usual name search, asking "Targos is next to…" (a form must be the first answer, so
-        nothing is read before it; who may save is checked again when it is saved)."""
+        nothing is read before it; the DM is asked again when the place is picked and when it is
+        saved). Not stopped: the form's answer replaces this message, and a cancel keeps it."""
         from dmbot.ui.name_card import PickForm
 
-        self.stop()
+        self.origin = None
         await interaction.response.send_modal(
             PickForm(
                 self.campaign_id, self.entity_id, how,

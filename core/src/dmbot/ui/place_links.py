@@ -19,6 +19,7 @@ NEXT_TO_BUTTON = "↔️ Next to…"
 TRAVEL_BUTTON = "🛣️ Travel to…"
 NOT_A_PLACE = "**{name}** isn't a place. Type another name and pick a place."
 ASK = "**{a}** is … **{b}**. Pick the words that fit."
+ASK_WAY = "How do you get from **{a}** to **{b}**? Pick one."
 NAME_IN_HINT = 32  # each name in an option's hint is cut to this, so a hint stays within 100
 # (label, the stored word) in the order the menu shows them; "" is the plain kind
 NEXT_CHOICES = (
@@ -46,6 +47,11 @@ def asked(name: str, how: str) -> str:
     return f"Travel from {name} to…" if how == TRAVEL_TO else f"{name} is next to…"
 
 
+def ask_words(a: str, b: str, how: str = NEXT_TO) -> str:
+    """The message above the menu: the sentence it finishes, the card's place first."""
+    return (ASK_WAY if how == TRAVEL_TO else ASK).format(a=_md(a), b=_md(b))
+
+
 def hint(how: str, detail: str, a: str, b: str) -> str:
     """The option's description: the card's own sentence for it, with the card's place first and
     both names cut so it fits Discord's 100 characters."""
@@ -58,6 +64,7 @@ def hint(how: str, detail: str, a: str, b: str) -> str:
 
 
 def options(how: str, a: str, b: str) -> list[discord.SelectOption]:
+    """The menu's choices, each with the card's own sentence for it as its hint."""
     choices = TRAVEL_CHOICES if how == TRAVEL_TO else NEXT_CHOICES
     return [
         discord.SelectOption(
@@ -72,12 +79,21 @@ class PlaceWords(_Menu):
     until a choice; ↩ Back saves nothing and goes back to the card."""
 
     def __init__(
-        self, campaign_id: str, entity_id: str, other_id: str, how: str, names: tuple[str, str]
+        self,
+        campaign_id: str,
+        entity_id: str,
+        other_id: str,
+        how: str,
+        names: tuple[str, str],
+        *,
+        secret: bool = False,
+        forced: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id, self.entity_id, self.other_id, self.how = (
             campaign_id, entity_id, other_id, how,
         )  # fmt: skip
+        self.secret, self.forced = secret, forced  # (checked again in `connect`)
         holder = f"Travel from {names[0]}…" if how == TRAVEL_TO else f"{names[0]} is…"
         self.pick = _Select(
             self._picked,
@@ -94,7 +110,7 @@ class PlaceWords(_Menu):
         self.stop()  # (stopped first: a second press does nothing)
         await connect(
             interaction, self.campaign_id, self.entity_id, self.how, self.other_id,
-            detail="" if value == NOT_SAID else value,
+            secret=self.secret, forced=self.forced, detail="" if value == NOT_SAID else value,
         )  # fmt: skip
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -102,7 +118,3 @@ class PlaceWords(_Menu):
 
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
-
-
-def ask_words(a: str, b: str) -> str:
-    return ASK.format(a=_md(a), b=_md(b))
