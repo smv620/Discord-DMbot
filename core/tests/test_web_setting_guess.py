@@ -24,3 +24,36 @@ class TheDoor(Acting):
         await self.memory.keep_setting(self.g, self.one.id, self.keep, source="dm")
         other = next(n for n in (await self.page(bob))["names"] if n["id"] == self.keep)
         self.assertEqual(other["setting"], True)  # (kept: the plain list shows it)
+
+
+class ARead(Acting):
+    """#4356: a place's size or kind DMbot only read reaches the DM's browser only; once the DM
+    has said it, everyone who sees the name gets it."""
+
+    async def read_by_dmbot(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET place_level = 'settlement', place_level_from = 'read',"
+                " form = 'water', form_from = 'read' WHERE campaign_id = %s AND id = %s",
+                (self.one.id, self.keep),
+            )
+
+    async def row(self, who: object = None) -> dict[str, object]:
+        got = await self.page(who)  # type: ignore[arg-type]
+        return dict(next(n for n in got["names"] if n["id"] == self.keep))
+
+    async def test_a_read_value_is_the_dms_alone(self) -> None:
+        await self.read_by_dmbot()
+        fields = ("placeLevel", "placeLevelFrom", "form", "formFrom")
+        dm_row = await self.row()
+        self.assertEqual([dm_row[f] for f in fields], ["settlement", "read", "water", "read"])
+        bob = await self.signed(BOB, THURSDAY)
+        player_row = await self.row(bob)
+        self.assertEqual([player_row.get(f) for f in fields], [None, None, None, None])
+
+    async def test_once_the_dm_says_it_everyone_gets_it(self) -> None:
+        await self.read_by_dmbot()
+        await self.memory.set_place_form(self.g, self.one.id, self.keep, "water", source="dm")
+        player_row = await self.row(await self.signed(BOB, THURSDAY))
+        self.assertEqual((player_row["form"], player_row["formFrom"]), ("water", "dm"))
+        self.assertIsNone(player_row.get("placeLevel"))  # (the size is still only DMbot's read)
