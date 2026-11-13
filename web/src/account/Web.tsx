@@ -646,10 +646,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     .map((e) => {
       // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
-      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, quote: _quote, ...l }) => l) };
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, assumed: _assumed, check: _check, quote: _quote, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, pinned: _pinned, check: _check, quote: _quote, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, assumed: _assumed, check: _check, quote: _quote, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
