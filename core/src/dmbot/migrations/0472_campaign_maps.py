@@ -107,6 +107,8 @@ SQL = (
         ADD FOREIGN KEY (guild_id, campaign_id, map_id)
             REFERENCES campaign_maps (guild_id, campaign_id, id)
             ON DELETE SET NULL (map_id) ON UPDATE CASCADE;
+    CREATE INDEX memory_map_facts_by_map ON memory_map_facts (guild_id, campaign_id, map_id)
+        WHERE map_id IS NOT NULL;
 """
 )
 
