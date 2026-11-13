@@ -20,6 +20,7 @@ import itertools
 import logging
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -48,6 +49,7 @@ from dmbot.memory import (
     knowers,
     lineage,
     link_words,
+    map_fact_store,
     merge_restore,
     notify,
     place_levels,
@@ -61,6 +63,7 @@ from dmbot.memory import (
 from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
+from dmbot.memory import map_facts as mf
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import short_names as short_names_mod
@@ -1344,6 +1347,8 @@ class MemoryStore:
                     change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
                     change["setting_from"] = None
                 row = await w.update(ENTITIES, entity_id, change)
+                # (a climate only a region or bigger has: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
 
     async def set_place_form(
@@ -1364,7 +1369,117 @@ class MemoryStore:
             said = place_levels.BY_DM if form is not None else None
             if (current.get("form"), current.get("form_from")) != (form, said):
                 row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
+                # (water or a road has no land type: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
+
+    # ---- A place's land, climate and who rules it (#4256, MapBot layers slice 2) ----------------
+
+    async def map_facts(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
+    ) -> dict[str, list[mf.Fact]]:
+        """Each place's open land, climate and ruler rows, as `viewer` may see them: the one reader
+        (`map_fact_store.facts_for`, the players' rule of design §8.3). `shown`: the entries the
+        caller's own list shows that viewer, if it has one."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
+
+    async def map_facts_up(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
+    ) -> dict[str, mf.Held]:
+        """For one place, each layer's value: its own, or the nearest bigger place's, read up the
+        place tree and never stored (§6). Only places the viewer may see are read up through
+        (`shown`, the caller's own list for that viewer, or else the gate)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            nesting = await states.place_nesting(scope, onto)
+            seen = None if viewer.dm or shown is not None else await gate.visible_to(scope, viewer)
+            inside: dict[str, list[str]] = {}
+            reach = {place_id}
+            todo = [place_id]
+            while todo:
+                inner = todo.pop()
+                for outer in sorted(nesting.outer(inner)):
+                    if not viewer.dm and (
+                        (shown is not None and outer not in shown)
+                        or (seen is not None and not seen.knows(gate.ENTRY, outer))
+                    ):
+                        continue  # (a player is never told of a place they don't know)
+                    inside.setdefault(inner, []).append(outer)
+                    if outer not in reach:
+                        reach.add(outer)
+                        todo.append(outer)
+            levels = nesting.levels
+            own = await map_fact_store.facts_for(scope, sorted(reach), viewer, shown)
+        out: dict[str, mf.Held] = {}
+        for layer in mf.LAYERS:
+            held = mf.read_up(place_id, layer, own, inside, levels)
+            if held is not None:
+                out[layer] = held
+        return out
+
+    async def set_map_fact(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        layer: str,
+        value: str | None,
+        *,
+        how: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's word for a place's land, climate or ruler (the edit screen): one change, so one
+        Undo. None is "Not sure" and clears it. For control, `value` is the group's id."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how)
+            return Written(None, w.batch)
+
+    async def show_map_facts(
+        self, guild_id: int, campaign_id: str, place_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️: whether players who can see this place see its land, climate and
+        ruler. One change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            changed = await map_fact_store.show_to_table(w, onto, place_id, shown)
+            return Written(changed, w.batch)
+
+    async def keep_map_facts(
+        self, guild_id: int, campaign_id: str, place_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ Keep what DMbot read, for one place: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            kept = await map_fact_store.keep_read(w, onto, place_id)
+            return Written(kept, w.batch)
+
+    async def add_read_map_facts(
+        self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str
+    ) -> Written[Counter[str]]:
+        """What a text reader found about places, as `read` for the DM to check (§7.2), in one
+        change of its own (its own Undo). Counts only."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            counts = await map_fact_store.add_read(w, onto, found)
+            return Written(counts, w.batch if counts["written"] or counts["same"] else None)
 
     async def set_unique(
         self, guild_id: int, campaign_id: str, entity_id: str, unique: bool, *, source: str
@@ -5026,6 +5141,9 @@ class MemoryStore:
         )
         await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_story_languages(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
+        await map_fact_store.move_on_merge(  # land, climate, ruler (#4256)
+            w, onto, str(kept["type"]), keep_id, gone_id
+        )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:

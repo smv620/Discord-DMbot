@@ -149,6 +149,15 @@ STORY_LANGUAGES = Table(
     "id",
     ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
 )
+# A place's land, climate and who rules it (#4256, MapBot layers slice 2), beside the graph: a
+# layer row never says one place is in, next to or reachable from another (design §13.2).
+MAP_FACTS = Table(
+    "memory_map_facts",
+    "id",
+    ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
+     "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
+     "also_text", "table_knows", "created_at"),
+)  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -284,7 +293,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES,
+       STORY_LANGUAGES, MAP_FACTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -329,6 +338,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
         ("memory_story_languages", "entity_id", False),  # (#4229)
+        ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
+        ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),
