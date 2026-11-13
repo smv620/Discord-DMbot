@@ -79,7 +79,9 @@ class Viewer(NamedTuple):
 
 def may_use_map(m: Map) -> bool:
     """THE answer to "may DMbot use this map?" (design rule 3): both yeses are on the row. Every
-    reader of maps calls this; a map waiting for a DM, or one a DM said no to, is never used."""
+    reader of maps calls this; a map waiting for a DM, or one a DM said no to, is never used. (A
+    picture in chat that is not a map yet has `dmbot.map_use.may_use_map`, until 6b-2 makes this
+    the only one, #4349.)"""
     return m.use_ok is True
 
 
