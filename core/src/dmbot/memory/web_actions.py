@@ -84,6 +84,7 @@ LINK_WHO, ALIAS_WHO = "link-who", "alias-who"
 # Which way a connection reads, the DM's choice (#4154): `text` "a-b" (from the pair's first name
 # by id, the edge's `a` on the page), "b-a", or "both"
 DIRECTION_ACTION = "link-direction"
+RIGHT_ACTION = "link-right"  # ✅ That's right on a place's assumed parent (#4304)
 DIRECTIONS = ("a-b", "b-a", "both")
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
@@ -1222,6 +1223,10 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             # a turn is written anew in one batch, so the page's Undo puts the old row back, #4156)
             turned = await memory.set_direction(guild_id, cid, link.id, reads_from, source=DM)
             batch = turned.batch
+        elif a.action == RIGHT_ACTION:
+            # the DM's ✅ That's right: the call Discord's card makes. A retried job finds the mark
+            # already gone, which writes nothing and has no batch.
+            batch = (await memory.confirm_assumed(guild_id, cid, link.id, source=DM)).batch
         elif a.action == KNOWS_HOW_ACTION:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
