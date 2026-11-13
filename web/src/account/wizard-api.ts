@@ -67,6 +67,12 @@ export interface WizardFinish {
   ofParts: number;
   /** One of the finish run's words: plan, not-allowed, gone, no-key, failed or lost; empty when none. */
   error: string;
+  /** While the lore is read (#4213): the reader's pass as one stage word, how far through it, and what it has found so far. Numbers and a word only. */
+  pass: string;
+  passDone: number;
+  passTotal: number;
+  foundNames: number;
+  foundLinks: number;
   /** What could not be used, as words and counts only ("house_unreadable:2 homebrew_link_failed:1"); empty when nothing. */
   notes: string;
   /** Set once the campaign exists, so the page can link to it from then on. */
