@@ -11,7 +11,7 @@ from typing import Any
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as BY_DM
-from dmbot.memory.scene_moves import ARRIVE, Move
+from dmbot.memory.scene_moves import ARRIVE, TRAVEL, Move
 from dmbot.memory.session_chain import MAIN
 from dmbot.memory.story_chain_store import Said, StoryChains, chain_key
 from tests.test_memory_names import DM, GUILD, NamesTest
@@ -71,7 +71,7 @@ class Chains(NamesTest):
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT chain, entity_id FROM memory_story_chain WHERE campaign_id = %s"
-                " AND chain <> 'mark' ORDER BY chain, rank",
+                " AND chain NOT IN ('mark', 'town') ORDER BY chain, rank",
                 (self.cid,),
             )
             out: dict[str, list[str]] = {}
@@ -271,6 +271,39 @@ class Journeys(Chains):
         )
         self.assertEqual(done.journeys, 0)
         self.assertEqual(await self.legs(), [])
+
+    async def test_a_session_that_ends_on_the_road_gives_the_next_its_journey(self) -> None:
+        """#4338: the town the party set out from is kept between sessions, so the next session's
+        first arrival is the journey; it is never an open place meanwhile."""
+        said = [Said(at(1), DM, "You reach Kelvenmoor.", 1),
+                Said(at(2), DM, "After three days on the road you are cold.", 2)]  # fmt: skip
+        moves = {1: (Move(1, ARRIVE, "Kelvenmoor"),), 2: (Move(2, TRAVEL, ""),)}
+
+        async def agreed() -> set[int]:
+            return set(self.agreeing)
+
+        first = await self.chains.read_session(
+            GUILD, self.cid, START, said, {DM}, "Session 1", agreed, moves
+        )
+        self.assertEqual(first.journeys, 0)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT chain, entity_id FROM memory_story_chain WHERE guild_id = %s"
+                " AND campaign_id = %s AND chain = 'town'",
+                (GUILD, self.cid),
+            )
+            kept = [(r["chain"], self.by_id[r["entity_id"]]) for r in await cur.fetchall()]
+        self.assertEqual(kept, [("town", "Kelvenmoor")])
+        from dmbot.memory import states
+        from dmbot.memory.store import _load_ontology
+
+        async with self.memory._read(GUILD, self.cid) as scope:
+            nesting = await states.place_nesting(scope, await _load_ontology(scope))
+        self.assertNotIn(self.ids["Kelvenmoor"], nesting._open or set())
+        later = START + 86_400
+        done = await self.go((86_401, DM, "You reach Brindleford.", "Brindleford"), started=later)
+        self.assertEqual(done.journeys, 1)
+        self.assertEqual(await self.legs(), [("Kelvenmoor", "Brindleford", "", later)])
 
     async def test_one_undo_takes_one_journey_back(self) -> None:
         await self.go(

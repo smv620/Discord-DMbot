@@ -20,7 +20,7 @@ DAMAGED = "This backup file is damaged (bad places for where the story is)."
 ROWS_MAX = 200  # far above any campaign: a few chains of at most 21 places
 INT64_MAX = 2**63 - 1
 _KEYS = {"chain", "rank", "entity_id", "updated_at"}
-_CHAIN = re.compile(r"^(main|mark|s[0-9]{1,12}g[1-3])$")  # (the table's own check)
+_CHAIN = re.compile(r"^(main|mark|town|s[0-9]{1,12}g[1-3])$")  # (the table's own check)
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
 Row = tuple[str, int, str | None, int]
@@ -49,7 +49,7 @@ def _checked(rows: object) -> list[Row]:
                 if raw["chain"] == "mark"
                 else isinstance(raw["entity_id"], str) and bool(_ID.match(raw["entity_id"]))
             )
-            and (raw["chain"] != "mark" or raw["rank"] == 0)
+            and (raw["chain"] not in ("mark", "town") or raw["rank"] == 0)
             and _int(raw["updated_at"], 1, INT64_MAX)
             and (raw["chain"], raw["rank"]) not in seen
         ):
