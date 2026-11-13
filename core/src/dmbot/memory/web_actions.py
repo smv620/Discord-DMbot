@@ -129,6 +129,29 @@ TOLD_ACTIONS = ("told-add", "told-remove")
 # DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
 # takes it back. Filed under no name; the target is the match's batch, in digits.
 MATCH_ACTIONS = ("match-confirm", "match-undo")
+# A place's land, climate and ruler, and the switch for showing them to players (#4287): the text is
+# "<value> <shade>", or "<group id> <how>" for the ruler, or blank for "Not sure".
+MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
+
+
+async def _map_fact(
+    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action
+) -> Outcome:
+    """Run one of `MAP_ACTIONS` through the store's own rules (which place, which layer, which
+    group), so the website can never write what Discord's menus refuse."""
+    try:
+        if a.action == "map-show":
+            await memory.show_map_facts(guild_id, cid, entity_id, a.flag, source=DM)
+        else:
+            first, _, how = a.text.partition(" ")
+            await memory.set_map_fact(
+                guild_id, cid, entity_id, a.action[4:], first or None, how=how, source=DM
+            )
+    except MemoryRuleError as exc:  # gone since it was queued, not a place, or not allowed there
+        return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+    return Outcome(result_id=entity_id)
+
+
 # The "Met but not named" list (#4045): `entity_id` names the list's row (memory_met), not an entry.
 MET_ACTIONS = ("met-name", "met-join", "met-remove")
 MET_WAITING = "met_waiting"  # the name is still waiting in the name check: check it there first
@@ -1066,6 +1089,8 @@ async def _do(
         except MemoryRuleError as exc:  # gone since it was queued, or not a place
             return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
         return Outcome(result_id=entity_id)
+    if a.action in MAP_ACTIONS:  # a place's land, climate and ruler (#4287); blank is "Not sure"
+        return await _map_fact(memory, guild_id, cid, entity_id, a)
     if a.action in TOLD_ACTIONS:
         return await _told(memory, guild_id, cid, entity_id, a)
     if a.action == ALIAS_WHO:
