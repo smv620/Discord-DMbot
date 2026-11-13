@@ -160,6 +160,7 @@ def _facts(
                 deed=str(e["detail"] or "") if kind == "did" else "",
                 session=_when(e.get("at")),
                 subject_kind=str(nodes[a]["kind"]),
+                route_state=str(e.get("route_state") or ""),  # (a journey or a plan, #4173 6d)
                 # (meaningful for the player version only: that graph holds just what players know)
                 players_know=True,
                 viewer_knows=clicker_knows is None or str(e["id"]) in clicker_knows,

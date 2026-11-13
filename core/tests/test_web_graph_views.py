@@ -290,3 +290,7 @@ class Routes(Views):
             with self.subTest(view=view):
                 self.assertIn(road, words)
                 self.assertEqual(words[leg_id], "is where the party set out by road for")
+                link = next(x for e in got["edges"] for x in e["links"] if x["id"] == leg_id)
+                self.assertNotEqual(link["direction"], "both")  # (one way, from the start)
+                self.assertEqual(link["back"], "is where the party arrived by road from")
+                self.assertIsNone(link.get("pairWords"))
