@@ -37,6 +37,9 @@ SQL = r"""
             REFERENCES memory_entities (guild_id, campaign_id, id)
             ON DELETE CASCADE ON UPDATE CASCADE
     );
+    -- (deleting a place or a campaign checks this link: without an index, every row is read)
+    CREATE INDEX memory_story_chain_entity
+        ON memory_story_chain (guild_id, campaign_id, entity_id);
     """ + _isolate("memory_story_chain")
 
 ISOLATED_TABLES: tuple[str, ...] = ("memory_story_chain",)
