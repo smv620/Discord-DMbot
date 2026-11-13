@@ -16,8 +16,8 @@ from dmbot.memory.lookup import LookupCache
 from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName
 from dmbot.memory.models import DM as BY_DM
 from dmbot.memory.store import ONLY_PLACES
+from dmbot.ui import name_card, place_size
 from dmbot.ui import names as ui
-from dmbot.ui import place_size
 from tests.test_memory_names import DM as NAMES_DM
 from tests.test_memory_names import GUILD as NAMES_GUILD
 from tests.test_memory_names import MANAGER, NamesTest
@@ -170,6 +170,41 @@ class OnTheCard(NamesTest):
             return str(it.response.sent[-1][0]), None
         text, view = it.response.edited[-1]
         return str(text), view
+
+    async def card(self, user: int = NAMES_DM) -> str:
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        it = self.it(user)
+        await name_card.show_card(it, self.campaign.id, self.maer.id)
+        return str(it.response.sent[0][0])
+
+    async def read_by_dmbot(self) -> None:
+        async with self.db.guild(NAMES_GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET place_level = 'settlement', place_level_from = 'read',"
+                " form = 'water', form_from = 'read' WHERE id = %s",
+                (self.maer.id,),
+            )
+
+    async def test_a_player_never_sees_a_size_or_kind_dmbot_only_read(self) -> None:
+        # (#4286: only the DM's card says "DMbot read this" and names the DM's button)
+        await self.read_by_dmbot()
+        dm_card = await self.card()
+        self.assertIn("📏 **Size:** a town or city (DMbot read this; tap", dm_card)
+        self.assertIn("🧭 **Kind of place:** water (DMbot read this; tap", dm_card)
+        player_card = await self.card(MANAGER)
+        self.assertNotIn("Size:", player_card)
+        self.assertNotIn("Kind of place:", player_card)
+        self.assertNotIn("DMbot read this", player_card)
+
+    async def test_a_player_sees_what_the_dm_said_with_no_hint(self) -> None:
+        await self.read_by_dmbot()
+        await self.memory.set_place_form(
+            NAMES_GUILD, self.campaign.id, self.maer.id, pl.WATER, source=BY_DM
+        )
+        player_card = await self.card(MANAGER)
+        self.assertIn("🧭 **Kind of place:** water", player_card)
+        self.assertNotIn("Size:", player_card)  # (the size is still only DMbot's read)
+        self.assertNotIn("DMbot read this", player_card)
 
     async def pick(self, view: Any, value: str, user: int = NAMES_DM) -> Any:
         view.form_pick._values = [value]  # (as Discord sets it on a pick)
