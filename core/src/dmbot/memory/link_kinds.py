@@ -29,6 +29,7 @@ BY_PREDICATE: dict[str, str] = {
     "captive_of": OTHER,
     "contains": WORK,
     "next_to": WORK,  # (work, service and places: two places beside each other, #4173 slice 6a)
+    "route_to": WORK,  # (and two places with a way between them, #4173 slice 6d)
 }
 
 

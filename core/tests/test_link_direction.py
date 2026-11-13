@@ -31,6 +31,7 @@ class TheWords(unittest.TestCase):
             "knows": "know each other",
             "travels_with": "travel together",
             "next_to": "are next to each other",  # (#4173 slice 6a; "borders": "share a border")
+            "route_to": "are connected",  # (#4173 slice 6d; "road": "are connected by road")
             "associated_with": "are connected",
         }
         self.assertEqual(PAIR_WORDS, expected)

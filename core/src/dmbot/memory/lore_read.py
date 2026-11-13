@@ -317,6 +317,9 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "lake's shore, lands that share a border, a village at the foot of a mountain, a town on "
         "a named road; say which: borders, on the shore of, on the coast of, at the foot of or "
         "on), "
+        "is connected to (a stated way between two places the same sentence names: a road, a "
+        "river, a sea or trade route, an airship, a portal, a path through the wild; a way word "
+        "alone, with one place or none, is not one), "
         "is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES (or one of that name's other or secret names, as the "
@@ -463,7 +466,10 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "next to = a is next to b (two places beside each other, never one inside the other: "
         'that is in; in "words" put exactly one of borders, on the shore of, on the coast of, at '
         "the foot of or on (a town on a named road or river), as the text says it, else leave "
-        '"words" empty). A '
+        '"words" empty); '
+        "route to = a is connected to b (a stated way between two places the line names both "
+        'of; in "words" put exactly one of road, river, sea, air, portal or wild (a path through '
+        'the wild), or the line\'s own words for any other way, else leave "words" empty). A '
         "family line that names a role uses that role's word; use 'family' only when the line "
         "names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
