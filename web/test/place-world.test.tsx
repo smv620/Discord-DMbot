@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError, type PlaceWorld } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
@@ -113,5 +114,56 @@ describe("the rules", () => {
     const { row } = await openPlace("Saltmarsh");
     expect(row.queryByText(w.heading)).toBeNull();
     expect(row.queryByLabelText(w.land.label)).toBeNull();
+  });
+});
+
+describe("what the story put in its own words, other groups, and a save that does not go through", () => {
+  const rowOf2 = (over: Record<string, unknown>) => ({ layer: "terrain", value: "forest", words: "", group: null, groupName: null, how: "", part: "", read: true, source: "text", shown: false, ...over });
+  async function openWith(rows: PlaceWorld["rows"], tweak?: (api: ReturnType<typeof mockApi>) => void) {
+    const api = mockApi("table");
+    const real = api.placeWorld!.bind(api);
+    api.placeWorld = async (ref, id) => ({ ...(await real(ref, id)), rows });
+    tweak?.(api);
+    render(<Names api={api} path={DM} />);
+    await screen.findByRole("list", { name: namesPage.listLabel });
+    fireEvent.change(screen.getByLabelText(namesPage.perPageLabel), { target: { value: "200" } });
+    await waitFor(() => expect(rowOf("Saltmarsh")).toBeTruthy());
+    fireEvent.click(within(rowOf("Saltmarsh")).getByRole("button", { name: "Saltmarsh" }));
+    return { api, row: within(rowOf("Saltmarsh")) };
+  }
+
+  it("a land in the story's own words is shown with its words and not offered as a choice", async () => {
+    const { row } = await openWith([rowOf2({ value: "other", words: "salt flats" }) as never]);
+    expect(await row.findByText(`${w.landLine("salt flats", false)}${w.readMark}`)).toBeTruthy();
+    expect(row.queryByLabelText(w.land.label)).toBeNull();
+  });
+
+  it("every group that holds the place is listed, and a row of only a part of it is left out of the choices", async () => {
+    const { row } = await openWith([
+      rowOf2({ layer: "control", value: "", group: "a".repeat(32), groupName: "Ten-Towns", how: "rules", read: false, source: "dm" }) as never,
+      rowOf2({ layer: "control", value: "", group: "b".repeat(32), groupName: "The Arcane Brotherhood", how: "claims", read: false, source: "dm" }) as never,
+      rowOf2({ layer: "terrain", value: "desert", part: "the south", read: false, source: "dm" }) as never,
+    ]);
+    expect(await row.findByText(w.rulerLine("Ruled by", "Ten-Towns"))).toBeTruthy();
+    expect(row.getByText(w.rulerLine("Claimed by", "The Arcane Brotherhood"))).toBeTruthy();
+    expect((row.getByLabelText(w.land.label) as HTMLSelectElement).value).toBe(""); // (the southern part is not the whole place's land)
+  });
+
+  it("when the first change is not read back as saved, it says so, keeps the other choices and sends nothing more", async () => {
+    const { api, row } = await openWith([], (a) => {
+      const real = a.changeName!.bind(a);
+      a.changeName = async (ref, id, change) => {
+        if (change.action === "map-terrain") throw new ApiError("still-waiting");
+        return real(ref, id, change);
+      };
+    });
+    fireEvent.change(await row.findByLabelText(w.land.label), { target: { value: "forest" } });
+    fireEvent.change(row.getByLabelText(w.ruler.label), { target: { value: "a".repeat(32) } });
+    await pressSave(row);
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("placeWorld:"))).toBe(true));
+    await new Promise((go) => setTimeout(go, 50));
+    expect(api.calls.some((c) => c.includes('"map-control"'))).toBe(false);
+    expect((row.getByLabelText(w.ruler.label) as HTMLSelectElement).value).toBe("a".repeat(32)); // (the ruler choice is still there)
+    expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

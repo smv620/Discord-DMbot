@@ -21,8 +21,13 @@ interface Picks {
   how: string;
 }
 
+// (a row with a part, "the northern half", is not what the store's own setter changes: only the whole-place row counts here)
+const whole = (data: PlaceWorld, layer: string): PlaceWorldRow[] => data.rows.filter((r) => r.layer === layer && r.part === "");
+
+type Scope = "all" | "land" | "climate" | "ruler" | "none";
+
 function picksOf(data: PlaceWorld): Picks {
-  const by = (layer: string): PlaceWorldRow | undefined => data.rows.find((r) => r.layer === layer);
+  const by = (layer: string): PlaceWorldRow | undefined => whole(data, layer)[0];
   const land = by("terrain");
   const climate = by("climate");
   const control = by("control");
@@ -36,9 +41,10 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const flight = useRef(false);
-  const seen = useRef("");
 
-  async function load(): Promise<PlaceWorld | null> {
+  /** Read the place again. `scope` is the part of the choices to reset to what is saved: all of them for the first read, only the layer just
+   * saved after a Save (so a choice not sent yet is never thrown away), none after the show switch. */
+  async function load(scope: Scope = "all"): Promise<PlaceWorld | null> {
     if (!api.placeWorld) {
       setFailed(true);
       return null;
@@ -47,12 +53,14 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       const got = await api.placeWorld(refId, row.id);
       setData(got);
       setFailed(false);
-      // The choices follow what is saved, but are not reset by the first read or by a read that changed nothing.
-      const saved = JSON.stringify(picksOf(got));
-      if (saved !== seen.current) {
-        seen.current = saved;
-        setPicks(picksOf(got));
-      }
+      const saved = picksOf(got);
+      setPicks((now) => {
+        if (scope === "all" || now === null) return saved;
+        if (scope === "land") return { ...now, land: saved.land, part: saved.part };
+        if (scope === "climate") return { ...now, warm: saved.warm, wet: saved.wet };
+        if (scope === "ruler") return { ...now, group: saved.group, how: saved.how };
+        return now;
+      });
       return got;
     } catch {
       setFailed(true);
@@ -60,7 +68,6 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
     }
   }
   useEffect(() => {
-    seen.current = "";
     setPicks(null);
     setNote(null);
     void load();
@@ -84,31 +91,38 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
     );
 
   const saved = picksOf(data);
-  const by = (layer: string): PlaceWorldRow | undefined => data.rows.find((r) => r.layer === layer);
+  const by = (layer: string): PlaceWorldRow | undefined => whole(data, layer)[0];
   const land = by("terrain");
   const climate = by("climate");
-  const control = by("control");
+  const controls = whole(data, "control"); // (a place may be ruled by one group and claimed by another)
+  // A value the story put in its own words ("other") can be shown but not set from here: Discord's menus do not offer it either.
+  const landOwn = land?.value === "other";
+  const climateOwn = climate?.value === "other";
   const canClimate = data.level === null || BIG.includes(data.level);
   const isLand = data.form === null; // terrain is for land, not water or a road
-  const changedLand = picks.land !== saved.land || (picks.land !== "" && picks.part !== saved.part);
-  const changedClimate = picks.warm !== saved.warm || (picks.warm !== "" && picks.wet !== saved.wet);
+  const changedLand = !landOwn && (picks.land !== saved.land || (picks.land !== "" && picks.part !== saved.part));
+  const changedClimate = !climateOwn && (picks.warm !== saved.warm || (picks.warm !== "" && picks.wet !== saved.wet));
   const changedRuler = picks.group !== saved.group || (picks.group !== "" && picks.how !== saved.how);
   const changed = changedLand || changedClimate || changedRuler;
   const shown = data.rows.some((r) => r.shown);
   const id = `world-${row.id}`;
   const set = (patch: Partial<Picks>) => setPicks({ ...picks, ...patch });
 
-  async function sendLayer(change: NameChange, ok: string, matches: (got: PlaceWorld) => boolean): Promise<boolean> {
+  async function sendLayer(scope: Scope, change: NameChange, ok: string, matches: (got: PlaceWorld) => boolean): Promise<boolean> {
     const problem = await act(change, ok);
     if (problem !== null) {
       if (problem !== "") setNote({ ok: false, text: problem });
       return false;
     }
-    setNote({ ok: true, text: ok });
     // The page's `act` answers "nothing" for a change that may still be waiting, so the next layer goes only once the saved rows show this one.
     await new Promise((go) => setTimeout(go, 0));
-    const got = await load();
-    return got !== null && matches(got);
+    const got = await load(scope);
+    if (got === null || !matches(got)) {
+      setNote({ ok: false, text: w.stillSaving });
+      return false;
+    }
+    setNote({ ok: true, text: ok });
+    return true;
   }
 
   async function save(): Promise<void> {
@@ -120,17 +134,17 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       let fine = true;
       if (changedLand) {
         const value = picks!.land === "" ? null : picks!.land;
-        fine = await sendLayer({ action: "map-terrain", value, how: value && picks!.part ? "partly" : "" }, w.notedLand(row.name), (g) => picksOf(g).land === (value ?? ""));
+        fine = await sendLayer("land", { action: "map-terrain", value, how: value && picks!.part ? "partly" : "" }, w.notedLand(row.name), (g) => picksOf(g).land === (value ?? ""));
       }
       if (fine && changedClimate) {
         const value = picks!.warm === "" ? null : picks!.warm;
-        fine = await sendLayer({ action: "map-climate", value, how: value ? picks!.wet : "" }, w.notedClimate(row.name), (g) => picksOf(g).warm === (value ?? ""));
+        fine = await sendLayer("climate", { action: "map-climate", value, how: value ? picks!.wet : "" }, w.notedClimate(row.name), (g) => picksOf(g).warm === (value ?? ""));
       }
       if (fine && changedRuler) {
         const group = picks!.group === "" ? null : picks!.group;
         // A ruler needs a way of holding the place; "rules it" is the first and the plainest.
         const how = group ? picks!.how || "rules" : "";
-        await sendLayer({ action: "map-control", group, how }, w.notedRuler(row.name), (g) => picksOf(g).group === (group ?? ""));
+        await sendLayer("ruler", { action: "map-control", group, how }, w.notedRuler(row.name), (g) => picksOf(g).group === (group ?? ""));
       }
     } finally {
       flight.current = false;
@@ -144,7 +158,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
     setBusy(true);
     setNote(null);
     try {
-      await sendLayer({ action: "map-show", shown: !shown }, w.notedShown(row.name, !shown), (g) => g.rows.some((r) => r.shown) === !shown);
+      await sendLayer("none", { action: "map-show", shown: !shown }, w.notedShown(row.name, !shown), (g) => g.rows.some((r) => r.shown) === !shown);
     } finally {
       flight.current = false;
       setBusy(false);
@@ -169,14 +183,14 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
           {readMark(climate)}
         </p>
       )}
-      {control && control.groupName && (
-        <p>
-          {w.rulerLine(w.ruler.lines[control.how] ?? w.ruler.lines["rules"]!, control.groupName)}
-          {readMark(control)}
+      {controls.map((c) => (
+        <p key={`${c.group}-${c.how}`}>
+          {c.groupName ? w.rulerLine(w.ruler.lines[c.how] ?? w.ruler.lines["rules"]!, c.groupName) : ""}
+          {readMark(c)}
         </p>
-      )}
+      ))}
 
-      {isLand && (
+      {isLand && !landOwn && (
         <>
           <label class="field" for={`${id}-land`}>
             {w.land.label}
@@ -195,7 +209,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
         </>
       )}
 
-      {canClimate ? (
+      {climateOwn ? null : canClimate ? (
         <>
           <label class="field" for={`${id}-climate`}>
             {w.climate.label}
@@ -233,6 +247,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       {data.groups.length === 0 && <p class="small muted">{w.ruler.noGroups}</p>}
       {picks.group !== "" && (
         <div role="radiogroup" aria-label={w.ruler.howLabel}>
+          <span class="small">{w.ruler.howLabel}</span>
           {HOWS.map((h) => (
             <label key={h} class="row">
               <input type="radio" name={`${id}-how`} checked={(picks.how || "rules") === h} disabled={busy} onChange={() => set({ how: h })} /> {w.ruler.hows[h]}
@@ -251,6 +266,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       ) : (
         <p class="small muted">{w.nothingToShow}</p>
       )}
+      {data.rows.length > 0 && changed && <p class="small muted">{w.saveFirst}</p>}
       <p role="status" aria-live="polite" class={note && !note.ok ? "warn small" : "small"}>
         {busy ? w.working : (note?.text ?? "")}
       </p>

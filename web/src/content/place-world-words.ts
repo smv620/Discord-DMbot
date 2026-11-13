@@ -56,6 +56,8 @@ export const placeWorldWords = {
   show: "👁️ Show to players",
   nothingToShow: "Nothing to show yet. Set the land, climate or ruler first.",
   save: "Save",
+  saveFirst: "Save your choices first, then you can hide or show them.",
+  stillSaving: "Still saving that one. Press Save again for the rest.",
   working: "Saving…",
   notedLand: (name: string): string => `Noted: ${name}'s land is updated.`,
   notedClimate: (name: string): string => `Noted: ${name}'s climate is updated.`,
