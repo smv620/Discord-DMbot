@@ -689,7 +689,8 @@ async def guess_setting(
         from dmbot.ui.names import changed
 
         changed(interaction, campaign)
-    return written.value
+    guessed: Entity | None = written.value
+    return guessed
 
 
 def guess_line(world: str) -> str:

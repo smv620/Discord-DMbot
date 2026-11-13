@@ -354,7 +354,7 @@ class TheFormsReply(unittest.TestCase):
                 view.add_item(discord.ui.Button(label="Remove", row=row))
         view.add_item(discord.ui.Button(label="Add", row=4))
         self.assertTrue(adventure_card.add_guess_buttons(view, "c", "e"))
-        labels = [c.label for c in view.children if getattr(c, "row", None) == 4]
+        labels = [getattr(c, "label", None) for c in view.children if getattr(c, "row", None) == 4]
         self.assertEqual(
             labels, ["Add", place_size.KEEP_SETTING_BUTTON, place_size.NOT_SETTING_BUTTON]
         )
