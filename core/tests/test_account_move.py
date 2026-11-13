@@ -9,7 +9,7 @@ from unittest.mock import patch
 from psycopg import AsyncConnection, errors
 from psycopg.rows import dict_row
 
-from dmbot import account_move, usage
+from dmbot import account_move, person_key, usage
 from dmbot.account_id import to_dmbot_id
 from dmbot.account_move import AccountMoves, MoveError
 from dmbot.campaigns import CampaignStore
@@ -672,6 +672,44 @@ class Moves(DatabaseTest):
         self.assertEqual(
             await self.scalar("SELECT count(*) FROM email_unsubscribed WHERE user_id = %s", NEW), 1
         )
+
+    async def test_the_move_gives_each_trial_marker_its_keyed_hash_and_copies_the_unsubscribe(
+        self,
+    ) -> None:
+        person_key.configure("m" * 40)
+        self.addCleanup(person_key.configure, "")
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO email_unsubscribed (user_id, at, person_key) VALUES (%s, 5, %s)",
+                (OLD, person_key.key_for(OLD)),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT user_id, person_key FROM email_unsubscribed ORDER BY user_id"
+            )
+            unsubscribed = [(r["user_id"], r["person_key"]) for r in await cur.fetchall()]
+        self.assertEqual(
+            unsubscribed,
+            sorted([(OLD, person_key.key_for(OLD)), (NEW, person_key.key_for(NEW))]),
+        )
+        async with self.db.plan_writer(OLD) as conn:
+            cur = await conn.execute("SELECT person_key FROM try_it_used")
+            self.assertEqual(
+                [r["person_key"] for r in await cur.fetchall()], [person_key.key_for(OLD)]
+            )
+
+    async def test_the_move_door_refuses_a_malformed_key_before_it_touches_anything(self) -> None:
+        good = "ab" * 32
+        for old_key, new_key in (("nope", good), (good, "AB" * 32), ("", None)):
+            with self.subTest(old_key=old_key, new_key=new_key):
+                async with self.db.unscoped() as conn:
+                    cur = await conn.execute(
+                        "SELECT dmbot_move_account(%s, %s, %s, %s, %s, %s) AS outcome",
+                        (OLD, NEW, NOW, "x", old_key, new_key),
+                    )
+                    self.assertEqual((await cur.fetchone() or {})["outcome"], "bad_key")
+        self.assertEqual(await self.scalar("SELECT count(*) FROM account_moves"), 0)
 
     async def test_too_many_campaigns_for_the_plan_stops_the_move(self) -> None:
         async with self.db.plan_writer(OLD) as conn:
