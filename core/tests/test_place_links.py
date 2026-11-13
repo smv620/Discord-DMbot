@@ -153,12 +153,52 @@ class TheFlow(NamesTest):
             rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=town.id)
             self.assertEqual([r.detail for r in rels], [next_words.BORDERS])  # (the old words)
 
+    def note(self, it: Any) -> str:
+        return str(it.response.edited[-1][0]) if it.response.edited else ""
+
     async def test_the_same_words_again_change_nothing(self) -> None:
         targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
         await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        (before,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id)
+        it = await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        self.assertNotIn("Changed", self.note(it))
+        (after,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id)
+        self.assertEqual(after.id, before.id)
+
+    async def test_one_way_words_from_the_other_card_turn_the_link_round(self) -> None:
+        targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
+        await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        it = await self.pick(pl.NEXT_TO, lake, targos, "on the shore of")  # (from the lake's card)
+        self.assertIn("🧭 Changed:", self.note(it))
+        (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id)
+        self.assertEqual((rel.subject_id, rel.object_id), (lake.id, targos.id))
+
+    async def test_a_secret_link_stays_secret_and_says_so(self) -> None:
+        targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
+        await self.pick(pl.NEXT_TO, targos, lake, next_words.BORDERS, secret=True)
+        it = await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        self.assertIn("🤫 Secret: players can't see it.", self.note(it))
+        (rel,) = await self.memory.relations(
+            GUILD, self.campaign.id, entity_id=targos.id, include_secret=True
+        )
+        self.assertTrue(rel.secret)
+
+    async def test_a_hide_asked_on_a_shown_link_says_it_stays_shown(self) -> None:
+        targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
+        await self.pick(pl.NEXT_TO, targos, lake, next_words.BORDERS)
+        it = await self.pick(pl.NEXT_TO, targos, lake, "on the shore of", secret=True)
+        self.assertIn("Players can still see it.", self.note(it))
+
+    async def test_a_proposal_between_them_is_left_for_the_dm_to_answer(self) -> None:
+        targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, targos.id, pl.NEXT_TO, lake.id, source="extractor",
+            confidence=0.6, status="proposed", detail=next_words.BORDERS,
+        )  # fmt: skip
         await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
         rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id)
-        self.assertEqual(len(rels), 1)
+        expected = [(next_words.BORDERS, "proposed"), ("on the shore of", "confirmed")]
+        self.assertEqual(sorted((r.detail, r.status) for r in rels), expected)
 
     async def test_only_the_dm_saves_one(self) -> None:
         a, b = await self.place("Targos"), await self.place("Bryn Shander")
