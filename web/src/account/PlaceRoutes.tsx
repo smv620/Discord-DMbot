@@ -15,6 +15,7 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
   const [how, setHow] = useState<"next" | "travel" | null>(null);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Other[] | null>(null);
+  const [looking, setLooking] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
   const [picked, setPicked] = useState<Other | null>(null);
   const [choice, setChoice] = useState<Choice | null>(null);
@@ -27,20 +28,26 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
   useEffect(() => {
     const mine = ++seq.current;
     setSearchFailed(false);
+    setLooking(false);
     if (how === null || picked !== null || q.trim() === "" || !api.allNames) {
       setFound(null);
       return;
     }
+    setFound(null); // (old results never stay clickable for new words)
+    setLooking(true);
     const timer = setTimeout(() => {
       api
         .allNames?.(refId, { q, kind: "place", sort: "name", page: 1 })
         .then((read) => {
-          if (mine === seq.current) setFound(read.names.filter((n) => n.id !== row.id).map((n) => ({ id: n.id, name: n.name })));
+          if (mine !== seq.current) return;
+          setFound(read.names.filter((n) => n.id !== row.id).map((n) => ({ id: n.id, name: n.name })));
+          setLooking(false);
         })
         .catch(() => {
           if (mine === seq.current) {
             setFound(null);
             setSearchFailed(true);
+            setLooking(false);
           }
         });
     }, SEARCH_MS);
@@ -62,7 +69,7 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
     try {
       // the card's place is the connection's first name, so a one-way word keeps its meaning
       await api.changeWebLink(refId, { action: "add", a: row.id, b: picked.id, words: choice.forward, secret: false });
-      setNote({ ok: true, text: w.saved });
+      setNote({ ok: true, text: w.saved(row.name, picked.name, choice) });
       close();
     } catch (error) {
       if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
@@ -86,15 +93,16 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
         <div class="stack">
           <label class="field">
             {w.asked(row.name, travel)}
-            <input type="text" value={q} aria-label={w.searchLabel} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+            <input type="text" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
           </label>
+          {looking && <p class="small muted" role="status">{w.searching}</p>}
           {searchFailed && <p class="small warn" role="alert">{w.failedSearch}</p>}
           {found !== null && found.length === 0 && <p class="small muted">{w.none}</p>}
           {found !== null && found.length > 0 && (
-            <ul class="stack" role="listbox" aria-label={w.searchLabel}>
+            <ul class="stack">
               {found.map((o) => (
                 <li key={o.id}>
-                  <button type="button" role="option" aria-selected={false} class="button secondary" onClick={() => setPicked(o)}>{o.name}</button>
+                  <button type="button" class="button secondary" onClick={() => setPicked(o)}>{o.name}</button>
                 </li>
               ))}
             </ul>
@@ -103,7 +111,7 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
         </div>
       )}
       {how !== null && picked !== null && (
-        <fieldset class="stack" disabled={busy}>
+        <fieldset class="stack" aria-busy={busy}>
           <legend>{w.ask(row.name, picked.name, travel)}</legend>
           {choices.map((c) => (
             <label key={c.label} class="choice">

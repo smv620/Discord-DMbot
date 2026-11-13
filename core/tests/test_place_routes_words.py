@@ -56,3 +56,27 @@ class TheWebsiteWordsAreDiscords(unittest.TestCase):
         self.assertIn(
             place_links.ask_words("${a}", "${b}", route_words.ROUTE_TO).replace("**", ""), text
         )
+
+
+class EverySentenceReadsBackToItsKind(unittest.TestCase):
+    """The website saves a choice's sentence as the connection's words, and the add-link action reads
+    it back (`link_words.predicate_for`): each must give its own kind and word, or the website would
+    save something else than Discord's menu does."""
+
+    def test_next_to(self) -> None:
+        for label, detail in place_links.NEXT_CHOICES:
+            if detail == next_words.ON:
+                continue  # (left out on the website for now)
+            sentence = link_words.link_words(place_links.NEXT_TO, detail)
+            with self.subTest(label):
+                kind, word = link_words.predicate_for(sentence)[:2]
+                self.assertEqual(kind, place_links.NEXT_TO)
+                self.assertEqual(next_words.word_of(word), detail)
+
+    def test_travel_to(self) -> None:
+        for label, detail in place_links.TRAVEL_CHOICES:
+            sentence = link_words.link_words(route_words.ROUTE_TO, detail)
+            with self.subTest(label):
+                kind, word = link_words.predicate_for(sentence)[:2]
+                self.assertEqual(kind, route_words.ROUTE_TO)
+                self.assertEqual(route_words.means_of(word), route_words.means_of(detail))

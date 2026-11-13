@@ -27,6 +27,8 @@ export const TRAVEL_CHOICES: readonly Choice[] = [
   { label: "Not sure", forward: "is connected to", pair: "are connected" },
 ];
 
+const hintOf = (a: string, b: string, c: Choice): string => (c.pair !== null ? `${a} and ${b} ${c.pair}` : `${a} ${c.forward} ${b}`);
+
 export const placeRoutesWords = {
   nextButton: "↔️ Next to…",
   travelButton: "🛣️ Travel to…",
@@ -39,10 +41,11 @@ export const placeRoutesWords = {
   /** The sentence the choice finishes: the card's place first. */
   ask: (a: string, b: string, travel: boolean): string => (travel ? `How do you get from ${a} to ${b}? Pick one.` : `${a} is … ${b}. Pick the words that fit.`),
   /** A choice's hint: the card's own sentence for it. */
-  hint: (a: string, b: string, c: Choice): string => (c.pair !== null ? `${a} and ${b} ${c.pair}` : `${a} ${c.forward} ${b}`),
+  hint: hintOf,
   save: "Save",
   back: "↩ Back",
-  saved: "Saved. Undo it from the Story Graph's connection list.",
-  failed: "Couldn't save that. Try again in a minute.",
-  refused: "DMbot couldn't keep that one. Check that both are places and try again.",
-} as const;
+  /** What was saved, in the card's own sentence. */
+  saved: (a: string, b: string, c: Choice): string => `Saved: ${hintOf(a, b, c)}.`,
+  failed: "Couldn't save that. Try again.",
+  refused: "DMbot couldn't save that link. Close this and pick the place again.",
+};

@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { WebLinkChange } from "../src/account/api";
+import { ApiError, type WebLinkChange } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
@@ -70,8 +70,8 @@ describe("saving", () => {
   it("searches places only, asks the card's question, and a choice saves its own sentence with the card's place first", async () => {
     const { row, changes, queries } = await openRow("Saltmarsh");
     fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
-    fireEvent.input(await row.findByLabelText(w.searchLabel), { target: { value: "Greywatch" } });
-    const found = await row.findByRole("option", { name: "Greywatch" });
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    const found = await row.findByRole("button", { name: "Greywatch" });
     await waitFor(() => expect(queries.at(-1)).toEqual({ q: "Greywatch", kind: "place" }));
     const other = found.textContent as string;
     fireEvent.click(found);
@@ -80,13 +80,13 @@ describe("saving", () => {
     fireEvent.click(row.getByRole("button", { name: w.save }));
     await waitFor(() => expect(changes).toHaveLength(1));
     expect(changes[0]).toMatchObject({ action: "add", words: "is on the shore of", secret: false });
-    expect(await row.findByText(w.saved)).toBeTruthy();
+    expect(await row.findByText(w.saved("Saltmarsh", other, NEXT_CHOICES[2]!))).toBeTruthy();
   });
   it("travel saves its way, 'Not sure' included", async () => {
     const { row, changes } = await openRow("Saltmarsh");
     fireEvent.click(await row.findByRole("button", { name: w.travelButton }));
-    fireEvent.input(await row.findByLabelText(w.searchLabel), { target: { value: "Greywatch" } });
-    fireEvent.click(await row.findByRole("option", { name: "Greywatch" }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", true)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
     fireEvent.click(row.getByLabelText(new RegExp(`^${TRAVEL_CHOICES.at(-1)!.label}`)));
     fireEvent.click(row.getByRole("button", { name: w.save }));
     await waitFor(() => expect(changes).toHaveLength(1));
@@ -95,12 +95,27 @@ describe("saving", () => {
   it("Back saves nothing, and Save waits for a choice", async () => {
     const { row, changes } = await openRow("Saltmarsh");
     fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
-    fireEvent.input(await row.findByLabelText(w.searchLabel), { target: { value: "Greywatch" } });
-    fireEvent.click(await row.findByRole("option", { name: "Greywatch" }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
     expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(row.getByRole("button", { name: w.back }));
     expect(changes).toHaveLength(0);
     expect(await row.findByRole("button", { name: w.nextButton })).toBeTruthy();
+  });
+});
+
+describe("when saving fails", () => {
+  it("says so and keeps the choice", async () => {
+    const { api, row } = await openRow("Saltmarsh");
+    api.changeWebLink = async () => {
+      throw new ApiError("unavailable");
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
+    fireEvent.click(row.getByLabelText(/^Next to/));
+    fireEvent.click(row.getByRole("button", { name: w.save }));
+    expect(await row.findByText(w.failed)).toBeTruthy();
   });
 });
 
