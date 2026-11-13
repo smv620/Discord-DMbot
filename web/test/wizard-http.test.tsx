@@ -123,9 +123,14 @@ describe("the refusals", () => {
   });
 
   it("every word the finish run can end with has a plain line, and the ones that leave a campaign link to it", () => {
-    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "docs_left", "bad_answers", "no_rights", "drive_gone"];
+    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "channels_failed", "docs_left", "bad_answers", "no_rights", "drive_gone"];
     for (const word of words) expect(w.finish.errors[word], word).toBeTruthy();
     expect(w.finish.errors["docs_left"]).toContain("House rules");
+  });
+
+  it("channels_failed says the campaign is made, points to Manage DMbot in Discord, and does not offer a retry", () => {
+    expect(w.finish.errors["channels_failed"]).toContain("Manage DMbot");
+    expect(w.finish.errors["channels_failed"]).toContain("campaign is ready");
   });
 });
 
