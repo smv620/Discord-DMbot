@@ -264,6 +264,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 'scenes-1', 'm', 5)",
                 (g, c, A, SPEAKER),
             ),
+            "memory_story_chain": (
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
+                (g, c, A),
+            ),
             "memory_kind_offers": (
                 "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
                 " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",

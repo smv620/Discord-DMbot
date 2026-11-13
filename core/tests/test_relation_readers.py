@@ -34,6 +34,8 @@ READERS = {
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/hand_over.py": DM_ONLY + ": current confirmed owns and carries of a one-of-a-kind "
     "item, for the DM's private question (#4115); ends a tie only on the DM's answer",
+    "memory/story_chain_store.py": DM_ONLY + ": which places have a parent already, so where the "
+    "story is never guesses twice (#4173 slice 4); shows nothing",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
     "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
