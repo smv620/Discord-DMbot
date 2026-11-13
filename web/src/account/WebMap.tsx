@@ -869,14 +869,14 @@ export default function WebMap({
             <p class="small">{words.sideNone}</p>
           ) : (
             <>
-            {onJump && canEdit && <p class="small muted">Tap a connection to open it.</p>}
+            {onJump && canEdit && <p class="small muted">{words.tapConnection}</p>}
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
                   {markSecret(l) && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
                   {onJump && canEdit ? (
-                    <button type="button" class="link-button" aria-label={`Open this connection: ${l.text}`} onClick={() => onJump(l.a, l.b, l.id)}>
+                    <button type="button" class="link-button" aria-label={words.openConnection(l.text)} onClick={() => onJump(l.a, l.b, l.id)}>
                       {l.text}
                     </button>
                   ) : (
