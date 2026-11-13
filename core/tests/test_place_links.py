@@ -129,6 +129,37 @@ class TheFlow(NamesTest):
                     self.assertEqual((rel.predicate, rel.detail), (how, detail))
                     self.assertEqual(read(detail), detail)
 
+    async def test_new_words_change_the_link_in_one_undo(self) -> None:
+        # (#4284: two places already next to each other get new words, never a second link)
+        for n in range(2):
+            a, b = await self.place(f"Targos {n}"), await self.place(f"Maer Dualdon {n}")
+            town, lake = (a, b) if (a.id < b.id) == (n == 0) else (b, a)
+            await self.pick(pl.NEXT_TO, town, lake, next_words.BORDERS)
+            it = await self.pick(pl.NEXT_TO, town, lake, "on the shore of")
+            note = str(it.response.edited[-1][0]) if it.response.edited else ""
+            self.assertIn("🧭 Changed:", note)
+            rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=town.id)
+            self.assertEqual([(r.predicate, r.detail) for r in rels],
+                             [(pl.NEXT_TO, "on the shore of")])  # fmt: skip
+            self.assertEqual(await self.card_words(town), f"is on the shore of {lake.name}")
+            async with self.db.guild(GUILD) as conn:
+                cur = await conn.execute(
+                    "SELECT max(batch) AS b FROM memory_changes WHERE campaign_id = %s",
+                    (self.campaign.id,),
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            await self.memory.undo(GUILD, self.campaign.id, int(row["b"]), source="dm")
+            rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=town.id)
+            self.assertEqual([r.detail for r in rels], [next_words.BORDERS])  # (the old words)
+
+    async def test_the_same_words_again_change_nothing(self) -> None:
+        targos, lake = await self.place("Targos"), await self.place("Maer Dualdon")
+        await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        await self.pick(pl.NEXT_TO, targos, lake, "on the shore of")
+        rels = await self.memory.relations(GUILD, self.campaign.id, entity_id=targos.id)
+        self.assertEqual(len(rels), 1)
+
     async def test_only_the_dm_saves_one(self) -> None:
         a, b = await self.place("Targos"), await self.place("Bryn Shander")
         it = await self.pick(pl.TRAVEL_TO, a, b, "road", user=PLAYER)
