@@ -135,12 +135,14 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const per = guild.endsWith(".slow") ? 3 : 1; // looks for each stage
       const at = Math.floor((run.looks - 1) / per);
       const now = NOW();
-      const base = { createdAt: run.started, movedAt: now, serverNow: now, part: 0, ofParts: 0, notes: "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0 };
+      // (the channel is made in the first stage; ".nochannel" is a server where the bot could not make it)
+      const channel = !guild.endsWith(".nochannel") ? "400000000000000009" : "";
+      const base = { createdAt: run.started, movedAt: now, serverNow: now, part: 0, ofParts: 0, dmBotChannel: "", notes: "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0 };
       if (guild.endsWith(".fail") && at >= 2) return { ...base, state: "failed", stage: STAGES[2]!, error: "failed", campaignRef: "" };
-      if (guild.endsWith(".nokey") && at >= 5) return { ...base, state: "failed", stage: "lore", error: "no-key", campaignRef: `${guild}.cmp-new` };
+      if (guild.endsWith(".nokey") && at >= 5) return { ...base, state: "failed", stage: "lore", error: "no-key", campaignRef: `${guild}.cmp-new`, dmBotChannel: channel };
       if (at >= STAGES.length) {
         drafts.delete(guild);
-        return { ...base, state: "done", stage: "clean", error: "", notes: guild.endsWith(".notes") ? "house_unreadable:2 homebrew_link_failed:1" : "", campaignRef: `${guild}.cmp-new` };
+        return { ...base, state: "done", stage: "clean", error: "", notes: guild.endsWith(".notes") ? "house_unreadable:2 homebrew_link_failed:1" : "", campaignRef: `${guild}.cmp-new`, dmBotChannel: channel };
       }
       const stage = STAGES[at]!;
       const docs = stage === "lore" || stage === "secrets" ? (drafts.get(guild)?.documents.filter((d) => d.slot === stage).length ?? 0) : 0;
