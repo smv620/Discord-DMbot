@@ -179,6 +179,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "place_level_from": place_levels.FROM,
     "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
     "form_from": place_levels.FROM,
+    "setting_from": (*place_levels.FROM, "declined"),  # who made it the setting (#4173 slice 2b)
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
@@ -209,6 +210,7 @@ _NULLABLE = {
     "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
     "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
     "form", "form_from",  # (a place's form and who said it, #4173 slice 6a)
+    "setting_from",  # (who made it the campaign's setting, #4173 slice 2b)
     "both_ways",  # (the DM's direction, #4154: None is the kind's default)
 }  # fmt: skip
 
@@ -675,6 +677,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
+            if "setting_from" not in raw:  # (from before #4173 slice 2b: a setting was the DM's)
+                raw = {**raw, "setting_from": "dm" if raw.get("setting") else None}
         elif isinstance(raw, dict) and raw.get("table") == "belief":
             # from before the pin (#2447), a hide's sleep (#3082) and lineage (#3091)
             raw = {
@@ -1140,6 +1144,11 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
     parties = [r for r in by_tag["entity"] if r["party"]]
     if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
         raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    if any(
+        bool(r.get("setting")) != (r.get("setting_from") in place_levels.FROM)
+        for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)  # a setting says who set it, and only a setting does (2b)
     settings = [r for r in by_tag["entity"] if r.get("setting")]
     if len(settings) > 1 or any(
         not onto.is_a(r["type"], "place") or r.get("place_level") not in place_levels.SETTING_LEVELS

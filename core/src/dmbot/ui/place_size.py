@@ -218,19 +218,63 @@ class SizeMenu(_Menu):
 # ---- 🌍 The campaign's setting (#4173 slice 2) ---------------------------------------------------
 
 SETTING_ON_BUTTON = "🌍 Make it the setting"
+KEEP_SETTING_BUTTON = "✅ Keep as the setting"  # on DMbot's guess from the adventure (#4173 2b)
+NOT_SETTING_BUTTON = "✖ Not the setting"
 SETTING_OFF_BUTTON = "🌍 Remove as setting"
 ONLY_SETTING_DM = "Only the DM can change the campaign's setting."
 
 
-def setting_line(is_setting: bool) -> str:
-    """The card's line for the campaign's setting, or "" for any other place."""
+def setting_line(is_setting: bool, guessed: bool = False, dm: bool = True) -> str:
+    """The card's line for the campaign's setting, or "" for any other place. DMbot's guess from
+    the adventure is the DM's alone until kept (#4173 slice 2b): players see no line for it."""
     if not is_setting:
         return ""
+    if guessed:
+        if not dm:
+            return ""
+        return (
+            "\n🌍 **Campaign setting?** DMbot guessed this from your adventure. Tap "
+            f"{KEEP_SETTING_BUTTON} if it's right, or {NOT_SETTING_BUTTON} if not."
+        )
     # (players see the card too: the words are the same for everyone)
     return (
         "\n🌍 **Campaign setting:** the whole story happens here. DMbot counts smaller places as "
         "inside it unless the DM says otherwise."
     )
+
+
+async def answer_guess(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, keep: bool
+) -> None:
+    """The DM's ✅ Keep as the setting or ✖ Not the setting, on DMbot's guess: one change, one
+    Undo. ✖ means DMbot never guesses again for this campaign."""
+    from dmbot.ui.name_card import show_card
+
+    await _answer_first(interaction, in_place=True)
+    campaign = await _campaign_for(interaction, campaign_id)
+    memory = _memory(interaction)
+    if campaign is None or memory is None:
+        return
+    if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+        await _tell(interaction, ONLY_SETTING_DM)
+        return
+    try:
+        answer = memory.keep_setting if keep else memory.decline_setting
+        written = await answer(campaign.guild_id, campaign.id, entity_id, source=DM)
+    except MemoryRuleError as exc:  # (the card is drawn again, so its buttons keep working)
+        await show_card(
+            interaction, campaign_id, entity_id, replace=True, note=f"🌍 Couldn't change it. {exc}"
+        )
+        return
+    changed(interaction, campaign)
+    name = _md(written.value.name)
+    note = (
+        f"🌍 Noted: **{name}** is the campaign's setting. DMbot now counts smaller places as "
+        "inside it; change any place on its card."
+        if keep
+        else f"🌍 Noted: **{name}** isn't the setting. DMbot won't guess again."
+    )
+    await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
 
 
 async def flip_setting(
