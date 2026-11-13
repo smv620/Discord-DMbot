@@ -174,9 +174,9 @@ def predicate_for(words: str) -> tuple[str, str]:
     # Next to… and Travel to… send the card's words): "is on the shore of", "is connected by road
     # to", never the catch-all labelled with them
     # (not plain "is on": too short to be sure it means two places)
-    for word in (next_words.BORDERS, next_words.SHORE, next_words.COAST, next_words.FOOT):
-        if clean.casefold() == next_words.forward(word).casefold():
-            return "next_to", word
+    for sits in (next_words.BORDERS, next_words.SHORE, next_words.COAST, next_words.FOOT):
+        if clean.casefold() == next_words.forward(sits).casefold():
+            return "next_to", sits
     for means in route_words.MEANS:
         if clean.casefold() == route_words.forward(means).casefold():
             return route_words.ROUTE_TO, means
