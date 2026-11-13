@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dmbot.campaigns import CampaignStore
 from dmbot.maps.store import MapError, MapStore, Viewer, may_use_map
+from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, PictureStore
 from tests.pg import DatabaseTest
 
@@ -26,7 +27,8 @@ class Maps(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.pictures = PictureStore(self.db, clock=lambda: 1000.0)
-        self.maps = MapStore(self.db, clock=lambda: 2000.0)
+        self.memory = MemoryStore(self.db)
+        self.maps = MapStore(self.db, self.memory, clock=lambda: 2000.0)
         self.one = await self.campaigns.create(GUILD_A, "One", DM)
         self.two = await self.campaigns.create(GUILD_A, "Two", DM)
         self.far = await self.campaigns.create(GUILD_B, "Far", DM)
@@ -48,7 +50,7 @@ class Maps(DatabaseTest):
             kind="region", came_from=str(more.pop("came_from", "website")), storage_mb=10,
             **more,  # type: ignore[arg-type]
         )  # fmt: skip
-        return made.id
+        return made.value.id
 
     async def test_nothing_is_kept_as_a_map_without_the_uploaders_yes(self) -> None:
         pic = await self.picture(self.one.id, 1)
@@ -82,15 +84,15 @@ class Maps(DatabaseTest):
         pic = await self.picture(self.one.id, 1)
         mid = await self.add(pic, dm=False)
         yes = await self.maps.answer_use(GUILD_A, self.one.id, mid, dm_id=DM, yes=True)
-        self.assertTrue(may_use_map(yes))
-        self.assertEqual((yes.use_by, yes.use_at), (DM, 2000))
+        self.assertTrue(may_use_map(yes.value))
+        self.assertEqual((yes.value.use_by, yes.value.use_at), (DM, 2000))
         self.assertEqual(
             [m.id for m in await self.maps.maps(GUILD_A, self.one.id, DM_VIEW, usable_only=True)],
             [mid],
         )
         no = await self.maps.answer_use(GUILD_A, self.one.id, mid, dm_id=OTHER_DM, yes=False)
-        self.assertFalse(may_use_map(no))
-        self.assertFalse(no.waiting)  # (answered: it leaves "Questions for you")
+        self.assertFalse(may_use_map(no.value))
+        self.assertFalse(no.value.waiting)  # (answered: it leaves "Questions for you")
         self.assertEqual(await self.maps.waiting_for_a_dm(GUILD_A, self.one.id), [])
         self.assertIsNotNone(await self.pictures.get(GUILD_A, self.one.id, pic))  # still kept
 
@@ -116,12 +118,12 @@ class Maps(DatabaseTest):
     async def test_a_dm_may_show_any_map_to_the_table_but_none_is_born_shown(self) -> None:
         web = await self.add(await self.picture(self.one.id, 1), dm=True)
         shown = await self.maps.set_audience(GUILD_A, self.one.id, web, "table")
-        self.assertEqual(shown.audience, "table")
+        self.assertEqual(shown.value.audience, "table")
         self.assertEqual(
             [m.id for m in await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW)], [web]
         )
         back = await self.maps.set_audience(GUILD_A, self.one.id, web, "dm")
-        self.assertEqual(back.audience, "dm")
+        self.assertEqual(back.value.audience, "dm")
         with self.assertRaises(MapError):
             await self.maps.set_audience(GUILD_A, self.one.id, web, "everyone")
 
@@ -160,12 +162,12 @@ class Maps(DatabaseTest):
         assert during is not None
         self.assertTrue(during.permanent)
         gone = await self.maps.remove_map(GUILD_A, self.one.id, mid)
-        assert gone is not None
+        assert gone.value is not None
         after = await self.pictures.get(GUILD_A, self.one.id, pic)
         assert after is not None
         self.assertFalse(after.permanent)
         self.assertIsNone(await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW))
-        self.assertIsNone(await self.maps.remove_map(GUILD_A, self.one.id, mid))
+        self.assertIsNone((await self.maps.remove_map(GUILD_A, self.one.id, mid)).value)
 
     async def test_a_map_is_refused_when_permanent_pictures_are_full(self) -> None:
         for n in (1, 2, 3, 4, 5, 6, 7, 8):  # 8 MB of 10 is the 80% share
@@ -195,7 +197,7 @@ class Maps(DatabaseTest):
         self.assertEqual(await self.maps.maps(GUILD_A, self.two.id, DM_VIEW), [])
         self.assertEqual(await self.maps.maps(GUILD_B, self.far.id, DM_VIEW), [])
         self.assertIsNone(await self.maps.get(GUILD_A, self.two.id, mid, DM_VIEW))
-        self.assertIsNone(await self.maps.remove_map(GUILD_A, self.two.id, mid))
+        self.assertIsNone((await self.maps.remove_map(GUILD_A, self.two.id, mid)).value)
         with self.assertRaises(MapError):
             await self.maps.answer_use(GUILD_A, self.two.id, mid, dm_id=DM, yes=False)
 
@@ -250,3 +252,64 @@ class Maps(DatabaseTest):
         kept = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
         assert kept is not None
         self.assertEqual((kept.came_from, kept.audience, kept.waiting), ("website", "dm", True))
+
+    async def pinned(self, pic: int) -> bool:
+        kept = await self.pictures.get(GUILD_A, self.one.id, pic)
+        assert kept is not None
+        return kept.permanent
+
+    async def test_every_write_is_one_undo(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        made = await self.maps.add_map(
+            GUILD_A, self.one.id, picture_id=pic, uploader_id=PLAYER, uploader_is_dm=False,
+            right_to_use=True, kind="region", came_from="discord", audience="table",
+            storage_mb=10,
+        )  # fmt: skip
+        mid = made.value.id
+        self.assertIsNotNone(made.batch)
+        answered = await self.maps.answer_use(GUILD_A, self.one.id, mid, dm_id=DM, yes=True)
+        shown = await self.maps.set_audience(GUILD_A, self.one.id, mid, "dm")
+
+        async def now() -> object:
+            return await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
+
+        assert shown.batch is not None and answered.batch is not None and made.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, shown.batch)
+        got = await now()
+        assert got is not None
+        self.assertEqual(got.audience, "table")  # type: ignore[attr-defined]
+        await self.memory.undo(GUILD_A, self.one.id, answered.batch)
+        got = await now()
+        assert got is not None
+        self.assertTrue(got.waiting)  # type: ignore[attr-defined]
+        removed = await self.maps.remove_map(GUILD_A, self.one.id, mid)
+        assert removed.batch is not None
+        self.assertFalse(await self.pinned(pic))
+        await self.memory.undo(GUILD_A, self.one.id, removed.batch)  # the map and its pin return
+        self.assertIsNotNone(await now())
+        self.assertTrue(await self.pinned(pic))
+        await self.memory.undo(GUILD_A, self.one.id, made.batch)  # (the add: gone, unpinned)
+        self.assertIsNone(await now())
+        self.assertFalse(await self.pinned(pic))
+
+    async def test_a_removal_of_a_map_that_is_not_here_writes_nothing(self) -> None:
+        gone = await self.maps.remove_map(GUILD_A, self.one.id, "0" * 32)
+        self.assertEqual((gone.value, gone.batch), (None, None))
+
+    async def test_deleting_the_picture_leaves_no_change_log_rows_of_its_map(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        mid = await self.add(pic, dm=True)
+        await self.maps.set_audience(GUILD_A, self.one.id, mid, "table")
+
+        async def rows() -> int:
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM memory_changes WHERE table_name = 'campaign_maps'"
+                )
+                row = await cur.fetchone()
+            assert row is not None
+            return int(row["n"])
+
+        self.assertGreater(await rows(), 0)
+        await self.pictures.delete(GUILD_A, self.one.id, pic)
+        self.assertEqual(await rows(), 0)

@@ -143,10 +143,13 @@ class MapUndo(DatabaseTest):
         removed = await self.remove(other_id, removed_pic)
         await self.pictures.delete(GUILD, self.camp, pic)  # (takes its map, outside the log)
         await self.pictures.delete(GUILD, self.camp, removed_pic)  # (its row stays, deleted)
-        for batch in (added, removed):
-            with self.assertRaises(MemoryRuleError) as caught:
-                await self.memory.undo(GUILD, self.camp, batch)
-            self.assertEqual(str(caught.exception), MAP_PICTURE_GONE)
+        # (a picture deleted while its map stood takes the map's log rows with it, #4350: its Undo
+        # is refused as too late; a map removed earlier still has them, and says the picture went)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.undo(GUILD, self.camp, added)
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD, self.camp, removed)
+        self.assertEqual(str(caught.exception), MAP_PICTURE_GONE)
         self.assertIsNone(await self.map_row(other_id))  # (never back on a deleted picture)
         self.assertFalse(await self.pinned(removed_pic))
 
