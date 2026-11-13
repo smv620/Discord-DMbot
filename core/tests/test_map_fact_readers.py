@@ -43,12 +43,42 @@ class OneReader(unittest.TestCase):
         # (writes read inside their own change with `w.select`; only `facts_for` reads for a viewer)
         viewer_reads = re.findall(r"scope\.select\(\s*MAP_FACTS", text)
         self.assertEqual(len(viewer_reads), 1, "one read for viewers")
+        # the players' rule is written once, in `map_facts.for_players` (#4287: the website's
+        # player view calls it too), and the one reader uses it
+        self.assertIn("mf.for_players(facts, known)", text)
+        text = (SRC / "memory" / "map_facts.py").read_text(encoding="utf-8")
         # every part of the players' rule (§8.3, and the safe side on #4256): the behaviour itself
         # is tested against a database in test_map_facts.py; this keeps a refactor from dropping one
         for part in (
             "f.table_knows",  # the DM showed it
-            "f.status == mf.CONFIRMED",  # the DM kept it (a value DMbot read is the DM's)
+            "f.status == CONFIRMED",  # the DM kept it (a value DMbot read is the DM's)
             "f.place_id in known",  # the place is shown to them
             "f.value in known",  # and so is the group that rules it
         ):
             self.assertIn(part, text, part)
+
+
+class ThePlayersRule(unittest.TestCase):
+    """`map_facts.for_players`, the one rule Discord and the website share (#4287)."""
+
+    def fact(self, layer: str = "climate", value: str = "cold", **kw: object) -> object:
+        from dmbot.memory import map_facts as mf
+
+        base = {"id": "f", "place_id": "town", "layer": layer, "value": value, "words": "",
+                "how": "", "part": "", "status": mf.CONFIRMED, "source": "dm",
+                "table_knows": True}  # fmt: skip
+        return mf.Fact(**{**base, **kw})  # type: ignore[arg-type]
+
+    def test_each_part_of_the_rule(self) -> None:
+        from dmbot.memory import map_facts as mf
+
+        known = {"town", "guild"}
+        shown = self.fact()
+        ruler = self.fact(mf.CONTROL, "guild")
+        hidden = [
+            self.fact(table_knows=False),  # (the DM hasn't shown it)
+            self.fact(status=mf.READ),  # (DMbot read it; the DM hasn't kept it)
+            self.fact(place_id="far"),  # (a place they don't know)
+            self.fact(mf.CONTROL, "cult"),  # (a group they don't know)
+        ]
+        self.assertEqual(mf.for_players([shown, ruler, *hidden], known), [shown, ruler])
