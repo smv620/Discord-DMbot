@@ -63,3 +63,40 @@ class Assumed(link_actions.Editing):
             self.g, self.one.id, guess, source=DM_SOURCE, unrevealed=False
         )
         self.assertIn(guess, await self.edges(self.player))
+
+    async def assumed_link(self) -> str:
+        written = await self.memory.add_relation(
+            self.g, self.one.id, self.inn, "located_in", self.hall,
+            source=DM_SOURCE, confidence=1.0, status="confirmed", assumed=True,
+        )  # fmt: skip
+        return str(written.value[0].id)
+
+    async def dm_links(self) -> dict[str, dict[str, Any]]:
+        got = await relationships.read_web(self.web, self.session, self.cref, center=self.hall)
+        return {x["id"]: x for e in got["edges"] for x in e["links"]}
+
+    async def test_the_dm_is_told_it_is_assumed_and_right_clears_it_and_undo_puts_it_back(
+        self,
+    ) -> None:
+        guess = await self.assumed_link()
+        self.assertTrue((await self.dm_links())[guess]["assumed"])
+        answer = await self.edit(guess, action="right")
+        outcome = (await self.apply_all())[0]
+        self.assertEqual(outcome.error, "")
+        self.assertNotIn("assumed", (await self.dm_links())[guess])  # (the mark is gone)
+        # one change, so the page's Undo puts the mark back
+        done = await self.poll(answer)
+        (batch,) = done["batches"]
+        await self.memory.undo(self.g, self.one.id, batch, source=DM_SOURCE)
+        self.assertTrue((await self.dm_links())[guess]["assumed"])
+
+    async def test_a_second_press_and_a_player_press_change_nothing(self) -> None:
+        guess = await self.assumed_link()
+        self.assertEqual(
+            await self.refused_edit(self.player, link=guess, action="right"), "forbidden"
+        )
+        self.assertEqual(await self.apply_all(), [])  # (nothing was queued)
+        await self.edit(guess, action="right")
+        await self.edit(guess, action="right")
+        outcomes = await self.apply_all()
+        self.assertEqual([o.error for o in outcomes], ["", ""])  # (the second finds it done)
