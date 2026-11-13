@@ -56,6 +56,7 @@ from dmbot import (
     mail,
     member_names,
     owner_presence,
+    person_key,
     plan_rules,
     retention,
     script_make,
@@ -15349,6 +15350,8 @@ async def fill_parties(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    if not person_key.configure(settings.person_key):
+        log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     dm_links.configure_site(settings.site_url)  # the website button of every private message
     alerter = alerts.Alerter(settings.mail)
