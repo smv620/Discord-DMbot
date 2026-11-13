@@ -38,6 +38,7 @@ class TheDoor(PlaceWorld):
     async def test_a_dm_reads_a_place_with_nothing_set_and_the_groups_for_the_menu(self) -> None:
         got = await self.world()
         self.assertEqual(got["rows"], [])
+        self.assertEqual((got["level"], got["form"]), (None, None))  # (what the page's rules need)
         self.assertIn(
             {"id": self.order, "name": "Order of the Keep"},
             got["groups"],

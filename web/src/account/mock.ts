@@ -27,6 +27,7 @@ import type {
   ScriptOffer,
   MatchRow,
   MetItem,
+  PlaceWorldRow,
   PrivateScene,
   NamesQuery,
   SmartNamesAnswer,
@@ -935,6 +936,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const memorySaid = new Map<string, string | null>();
   // The line the players are told about each name (#3568), by the name's id.
   const playersLines = new Map<string, string>();
+  // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
+  const worldRows = new Map<string, PlaceWorldRow[]>();
+  const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
   const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
     const recap = names.find((n) => n.id === id);
@@ -2657,6 +2662,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       metNow = metNow.filter((m) => m.id !== id);
     },
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
+    async placeWorld(ref, placeId) {
+      calls.push(`placeWorld:${ref}:${placeId}`);
+      const named = memory.find((n) => n.id === placeId);
+      if (!named || named.kind !== "place") throw new ApiError("not-found");
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+    },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
       await reachable();
@@ -3142,6 +3153,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {
+        // A place's land, climate and ruler (#4287): the same rules as the store: climate only on a region or bigger, a group must exist.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const mine = worldRows.get(id) ?? [];
+        if (change.action === "map-show") {
+          worldRows.set(id, mine.map((r) => ({ ...r, shown: change.shown })));
+          return { ...row, others: [...row.others] };
+        }
+        const layer = change.action === "map-terrain" ? "terrain" : change.action === "map-climate" ? "climate" : "control";
+        if (layer === "climate" && !["plane", "world", "region", null].includes(worldLevel(row.name))) throw new ApiError("bad-target");
+        const rest = mine.filter((r) => r.layer !== layer);
+        const value = change.action === "map-control" ? change.group : change.value;
+        if (value !== null) {
+          const group = change.action === "map-control" ? worldGroups.find((g) => g.id === change.group) : undefined;
+          if (change.action === "map-control" && !group) throw new ApiError("bad-target");
+          rest.push({ layer, value: change.action === "map-control" ? "" : (value as string), words: "", group: group?.id ?? null, groupName: group?.name ?? null, how: change.action === "map-control" ? change.how : change.how, part: "", read: false, source: "dm", shown: false });
+        }
+        worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }
       if (change.action === "players-line") {

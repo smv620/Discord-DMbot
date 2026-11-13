@@ -55,6 +55,8 @@ async def read(db: Database, session: Session, ref: str, place_id: str) -> dict[
     if got.get("status") != "ok":
         raise RecapError("not_found")
     return {
+        "level": got.get("level"),  # the place's size and form decide what may be set on it
+        "form": got.get("form"),
         "rows": [_row(r) for r in got["rows"]],
         "groups": [{"id": str(g["id"]), "name": str(g["name"])} for g in got["groups"]],
     }

@@ -135,6 +135,9 @@ SQL = (
     + r"""
     CREATE FUNCTION dmbot_web_place_world(g BIGINT, c TEXT, place TEXT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
+    DECLARE
+        lvl TEXT;
+        frm TEXT;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
@@ -143,14 +146,14 @@ SQL = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM memory_entities e
-                       WHERE e.guild_id = g AND e.campaign_id = c AND e.id = place
-                         AND e.status = 'confirmed' AND e.type = 'place'
-                         AND e.merged_into IS NULL) THEN
+        SELECT e.place_level, e.form INTO lvl, frm FROM memory_entities e
+            WHERE e.guild_id = g AND e.campaign_id = c AND e.id = place
+              AND e.status = 'confirmed' AND e.type = 'place' AND e.merged_into IS NULL;
+        IF NOT FOUND THEN
             RETURN jsonb_build_object('status', 'not_found');
         END IF;
         RETURN jsonb_build_object(
-            'status', 'ok',
+            'status', 'ok', 'level', lvl, 'form', frm,
             'rows', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                            'id', f.id, 'layer', f.layer, 'value', f.value, 'words', f.words,
