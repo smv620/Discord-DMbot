@@ -3,6 +3,9 @@
 // The start-up wizard's pages (#3956, behind WIZARD_LIVE): start, one page for each step saved as it is chosen, Back and Next,
 // Skip with PLAN's words (only the name is asked), checked documents with the right-to-use box first, the rules step, the finish
 // wait with its stages, and the failures' words. Run against the wizard's pretend API (wizard-mock.ts).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -463,6 +466,11 @@ describe("the wizard", () => {
     const items = screen.getAllByRole("listitem").map((li) => li.textContent);
     for (const line of w.finish.next) expect(items).toContain(line);
     expect(w.finish.next).toHaveLength(4);
+    // The player's step names the button as the bot has it, not as "Agree" (the label is read from core's own file).
+    const consent = readFileSync(join(process.cwd(), "..", "core", "src", "dmbot", "consent_words.py"), "utf8");
+    expect(consent).toContain('CONSENT_LABEL = f"I\'m {MIN_AGE} or older, record me"');
+    expect(w.finish.next[2]).toContain(`"I'm 16 or older, record me"`);
+    expect(w.finish.next.join(" ")).not.toContain("Agree");
   });
 
   it("while the lore is read the finish page shows the pass, how far through it, and what it has found, as counts only (#4213)", async () => {
