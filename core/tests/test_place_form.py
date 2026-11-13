@@ -192,9 +192,20 @@ class OnTheCard(NamesTest):
         self.assertIn("📏 **Size:** a town or city (DMbot read this; tap", dm_card)
         self.assertIn("🧭 **Kind of place:** water (DMbot read this; tap", dm_card)
         player_card = await self.card(MANAGER)
+        self.assertIn("Maer Dualdon", player_card)  # (the card was drawn)
         self.assertNotIn("Size:", player_card)
         self.assertNotIn("Kind of place:", player_card)
         self.assertNotIn("DMbot read this", player_card)
+
+    async def test_dmbots_own_guess_is_left_unpicked_so_the_dm_can_pick_it(self) -> None:
+        # (#4286: picking the option already chosen sends nothing, so a read is never pre-chosen)
+        await self.read_by_dmbot()
+        text, view = await self.screen()
+        self.assertIn("DMbot read: a town or city. Is that right?", text)
+        self.assertEqual([o.value for o in view.pick.options if o.default], [])
+        self.assertEqual([o.value for o in view.form_pick.options if o.default], [])
+        self.assertEqual([o.value for o in place_size.options("settlement") if o.default],
+                         ["settlement"])  # fmt: skip
 
     async def test_a_player_sees_what_the_dm_said_with_no_hint(self) -> None:
         await self.read_by_dmbot()
