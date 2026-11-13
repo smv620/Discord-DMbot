@@ -6,10 +6,11 @@ connection's `assumed` mark, and a new queued action, `link-right`, is the DM's 
 
 from __future__ import annotations
 
-# `memory_relations.assumed` is 0462's. The DM's relationship door (`dmbot_web_relationships`, which
-# answers a DM of the campaign and nobody else) now sends it on each connection, so the page can say
-# "(assumed)" and offer the button; no other door is changed, and a player never gets an assumed
-# row at all (it is held back, `test_web_assumed_links.py`), so nothing here shows them anything.
+# `memory_relations.assumed` is 0462's. The relationship door (`dmbot_web_relationships`, which
+# also serves a peeking player) now sends it on each connection, so the page can say "(assumed)"
+# and offer the button. Only the DM is ever told: `web/relationships.edges_from` puts it in the
+# answer for a DM alone, and an assumed row is held back, so the players' views never carry the
+# row at all (`test_web_assumed_links.py`).
 #
 # `link-right` names one connection as its target, like the other link edits, and carries no text
 # and no flag; the bot applies it with `MemoryStore.confirm_assumed`. The action list and the queue

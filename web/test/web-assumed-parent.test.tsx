@@ -78,6 +78,11 @@ describe("an assumed parent", () => {
     expect(screen.queryByText(w.assumedMark)).toBeNull();
     expect(screen.queryByRole("button", { name: w.rightLabel(1) })).toBeNull();
   });
+  it("drops the mark for a peeking player, who is shown the full view but cannot edit", async () => {
+    await openPanel(pageWith({ ...graph([link()], false), view: "full" }));
+    expect(screen.queryByText(w.assumedMark)).toBeNull();
+    expect(screen.queryByRole("button", { name: w.rightLabel(1) })).toBeNull();
+  });
   it("shows today's panel while the switch is off", async () => {
     live.on = false;
     await openPanel(pageWith(graph([link()])));
