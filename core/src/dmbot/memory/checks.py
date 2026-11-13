@@ -205,6 +205,20 @@ class Nesting:
             return seen | {self._setting} | self._stated(self._setting)
         return seen
 
+    @property
+    def levels(self) -> Mapping[str, str]:
+        """How big each place is that has a size."""
+        return self._levels
+
+    def outer(self, place: str) -> set[str]:
+        """The places this one is directly inside: the stated ones, or, for a smaller place with
+        none stated, the campaign's setting (as `above` counts it). One step up the tree, for
+        reading a place's land, climate or ruler up it (#4256)."""
+        stated = set(self._in.get(place, ()))
+        if stated or self._setting is None or place == self._setting:
+            return stated
+        return {self._setting} if self._setting in self.above(place) else set()
+
     def related(self, a: str, b: str) -> bool:
         """Can someone be in both at once? When one is inside the other (being in both is being in
         the smaller one), and when the two are of different sizes (#4173): a bank and the town it

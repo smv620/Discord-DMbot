@@ -38,11 +38,13 @@ class TheWords(unittest.TestCase):
 
 class Stored(MemoryTest):
     async def test_on_the_shore_of_keeps_its_order_whichever_id_is_first(self) -> None:
-        orders = set()
-        for n in range(6):  # (ids are random: six pairs meet both orders all but surely)
-            town = await self.add(f"Targos {n}", type="place", status=CONFIRMED)
-            lake = await self.add(f"Maer Dualdon {n}", type="place", status=CONFIRMED)
-            orders.add(town < lake)
+        # Both id orders, made certain (#4312: six random pairs all fell one way 1 run in 32): of
+        # each two new places, the town is the smaller id once and the larger id once.
+        for town_first in (True, False):
+            a = await self.add(f"Targos {town_first}", type="place", status=CONFIRMED)
+            b = await self.add(f"Maer Dualdon {town_first}", type="place", status=CONFIRMED)
+            town, lake = sorted((a, b), reverse=not town_first)
+            self.assertEqual(town < lake, town_first)
             written = await self.memory.add_relation(
                 GUILD_A, self.c, town, "next_to", lake, source=BY_DM, confidence=1.0,
                 status=CONFIRMED, detail="on the shore of",
@@ -51,7 +53,6 @@ class Stored(MemoryTest):
             self.assertEqual(
                 (rel.subject_id, rel.object_id, rel.detail), (town, lake, "on the shore of")
             )
-        self.assertEqual(orders, {True, False})
 
     async def test_plain_next_to_is_one_fact_whichever_way_it_is_said(self) -> None:
         a = await self.add("Bryn Shander", type="place", status=CONFIRMED)
