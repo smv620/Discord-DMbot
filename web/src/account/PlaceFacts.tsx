@@ -20,16 +20,58 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
   const form: Form | null = row.form === "water" || row.form === "route" ? row.form : null;
   const id = `place-${row.id}`;
 
-  async function run(change: NameChange, ok: string): Promise<void> {
+  // The size and the kind are chosen first and saved with one Save (arrow keys move through a list without saving each step, as the
+  // kind editor does). Each is its own queued change, so each has its own Undo; only what changed is sent.
+  const sizeNow = size ?? "";
+  const formNow = form ?? "land";
+  const [pickSize, setPickSize] = useState(sizeNow);
+  const [pickForm, setPickForm] = useState<string>(formNow);
+  // The choice follows the row when a read changes it (after a Save), but is not reset by the first paint: only a change of what is saved resets it.
+  const seen = useRef({ id: row.id, size: sizeNow, form: formNow });
+  if (seen.current.id !== row.id || seen.current.size !== sizeNow || seen.current.form !== formNow) {
+    seen.current = { id: row.id, size: sizeNow, form: formNow };
+    if (pickSize !== sizeNow) setPickSize(sizeNow);
+    if (pickForm !== formNow) setPickForm(formNow);
+  }
+  const changed = pickSize !== sizeNow || pickForm !== formNow;
+
+  async function run(change: NameChange, ok: string): Promise<boolean> {
+    const problem = await act(change, ok);
+    if (problem === null) {
+      setNote({ ok: true, text: ok });
+      return true;
+    }
+    if (problem !== "") setNote({ ok: false, text: problem });
+    return false;
+  }
+
+  async function save(): Promise<void> {
+    if (flight.current || !changed) return;
+    flight.current = true;
+    setBusy(true);
+    setNote(null);
+    let fine = true;
+    if (pickSize !== sizeNow) {
+      fine = isSize(pickSize)
+        ? await run({ action: "place-size", size: pickSize }, w.noted(row.name, pickSize))
+        : await run({ action: "place-size", size: null }, w.notedNone(row.name));
+    }
+    if (fine && pickForm !== formNow) {
+      const next: Form | null = (FORMS as readonly string[]).includes(pickForm) ? (pickForm as Form) : null;
+      await run({ action: "place-form", form: next }, w.notedForm(row.name, next));
+    }
+    flight.current = false;
+    setBusy(false);
+  }
+
+  async function setting(on: boolean): Promise<void> {
     if (flight.current) return;
     flight.current = true;
     setBusy(true);
     setNote(null);
-    const problem = await act(change, ok);
+    await run({ action: "place-setting", setting: on }, on ? w.notedSetting(row.name) : w.notedNoSetting);
     flight.current = false;
     setBusy(false);
-    if (problem === null) setNote({ ok: true, text: ok });
-    else if (problem !== "") setNote({ ok: false, text: problem });
   }
 
   const canSetting = row.setting === true || (size !== null && BIG.includes(size));
@@ -49,18 +91,8 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
       )}
       {row.setting === true && <p>{w.settingLine}</p>}
       <label class="field" for={`${id}-size`}>
-        {w.sizeAsk}
-        <select
-          id={`${id}-size`}
-          value={size ?? ""}
-          disabled={busy}
-          aria-describedby={`${id}-why`}
-          onChange={(e) => {
-            const picked = (e.target as HTMLSelectElement).value;
-            if (picked === "") return void run({ action: "place-size", size: null }, w.notedNone(row.name));
-            if (isSize(picked)) void run({ action: "place-size", size: picked }, w.noted(row.name, picked));
-          }}
-        >
+        {w.sizeLabel}
+        <select id={`${id}-size`} value={pickSize} disabled={busy} aria-describedby={`${id}-why`} onChange={(e) => setPickSize((e.target as HTMLSelectElement).value)}>
           <option value="">{`${w.notSure[0]}: ${w.notSure[1]}`}</option>
           {SIZES.map((s) => (
             <option key={s} value={s}>{`${w.sizes[s][0]}: ${w.sizes[s][1]}`}</option>
@@ -72,27 +104,21 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
       </span>
       <label class="field" for={`${id}-form`}>
         {w.formAsk}
-        <select
-          id={`${id}-form`}
-          value={form ?? "land"}
-          disabled={busy}
-          onChange={(e) => {
-            const picked = (e.target as HTMLSelectElement).value;
-            const next: Form | null = (FORMS as readonly string[]).includes(picked) ? (picked as Form) : null;
-            void run({ action: "place-form", form: next }, w.notedForm(row.name, next));
-          }}
-        >
+        <select id={`${id}-form`} value={pickForm} disabled={busy} onChange={(e) => setPickForm((e.target as HTMLSelectElement).value)}>
           {(["land", ...FORMS] as const).map((f) => (
             <option key={f} value={f}>{`${w.forms[f]![0]}: ${w.forms[f]![1]}`}</option>
           ))}
         </select>
       </label>
+      <button type="button" class="button secondary" disabled={busy || !changed} onClick={() => void save()}>
+        {w.save}
+      </button>
       {canSetting ? (
         <button
           type="button"
           class="button secondary"
           disabled={busy}
-          onClick={() => void run({ action: "place-setting", setting: row.setting !== true }, row.setting === true ? w.notedNoSetting : w.notedSetting(row.name))}
+          onClick={() => void setting(row.setting !== true)}
         >
           {row.setting === true ? w.settingRemove : w.settingMake}
         </button>

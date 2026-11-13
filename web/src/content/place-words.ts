@@ -7,7 +7,7 @@ export type Form = (typeof FORMS)[number];
 
 export const placeWords = {
   sizeLabel: "📏 Size",
-  sizeAsk: "How big is this place?",
+  save: "Save",
   // [the choice, its example] for each size, then Not sure.
   sizes: {
     plane: ["Plane", "Like the Feywild"],

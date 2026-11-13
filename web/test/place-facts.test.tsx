@@ -37,6 +37,12 @@ async function openPlace(name: string, path = DM) {
   return { api, row: within(row) };
 }
 
+// (a press on a disabled button is ignored, so wait until the choice has switched Save on)
+async function pressSave(row: ReturnType<typeof within>) {
+  await waitFor(() => expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(row.getByRole("button", { name: w.save }));
+}
+
 describe("a place's size on the Names page", () => {
   it("says the size DMbot read, with the line that it may be wrong", async () => {
     const { row } = await openPlace("Saltmarsh");
@@ -46,7 +52,7 @@ describe("a place's size on the Names page", () => {
 
   it("offers each size with its example under it, then Not sure, and the why line", async () => {
     const { row } = await openPlace("Saltmarsh");
-    const select = (await row.findByLabelText(w.sizeAsk)) as HTMLSelectElement;
+    const select = (await row.findByLabelText(w.sizeLabel)) as HTMLSelectElement;
     const options = [...select.options].map((o) => o.textContent);
     expect(options).toEqual([`${w.notSure[0]}: ${w.notSure[1]}`, ...SIZES.map((s) => `${w.sizes[s][0]}: ${w.sizes[s][1]}`)]);
     expect(options).toContain("Plane: Like the Feywild");
@@ -55,7 +61,8 @@ describe("a place's size on the Names page", () => {
 
   it("a pick is queued as one change and says Noted, and the line then reads as the DM's", async () => {
     const { api, row } = await openPlace("Saltmarsh");
-    fireEvent.change(await row.findByLabelText(w.sizeAsk), { target: { value: "region" } });
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "region" } });
+    await pressSave(row);
     expect(await row.findByText(w.noted("Saltmarsh", "region"))).toBeTruthy();
     await waitFor(() => expect(row.getByText(w.sizeLine("region"))).toBeTruthy()); // (no "DMbot read this" now)
     expect(api.calls.filter((c) => c.includes('"place-size"'))).toHaveLength(1);
@@ -63,9 +70,35 @@ describe("a place's size on the Names page", () => {
 
   it("Not sure clears it, and says so", async () => {
     const { row } = await openPlace("Saltmarsh");
-    fireEvent.change(await row.findByLabelText(w.sizeAsk), { target: { value: "" } });
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "" } });
+    await pressSave(row);
     expect(await row.findByText(w.notedNone("Saltmarsh"))).toBeTruthy();
     await waitFor(() => expect(row.queryByText(/^Size:/)).toBeNull());
+  });
+});
+
+describe("choosing, then one Save", () => {
+  it("moving through the lists saves nothing until Save, and Save sends only what changed", async () => {
+    const { api, row } = await openPlace("Saltmarsh");
+    const size = (await row.findByLabelText(w.sizeLabel)) as HTMLSelectElement;
+    const save = row.getByRole("button", { name: w.save }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true); // (nothing chosen yet)
+    for (const step of ["plane", "world", "region", "district"]) fireEvent.change(size, { target: { value: step } }); // (arrow keys)
+    fireEvent.change(row.getByLabelText(w.formAsk), { target: { value: "route" } });
+    expect(api.calls.filter((c) => c.includes('"place-'))).toHaveLength(0);
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    expect(await row.findByText(w.notedForm("Saltmarsh", "route"))).toBeTruthy();
+    expect(api.calls.filter((c) => c.includes('"place-size"'))).toHaveLength(1); // (the last pick only)
+    expect(api.calls.filter((c) => c.includes('"place-form"'))).toHaveLength(1);
+  });
+
+  it("choosing the size it already has leaves Save off", async () => {
+    const { row } = await openPlace("Saltmarsh");
+    const size = (await row.findByLabelText(w.sizeLabel)) as HTMLSelectElement;
+    fireEvent.change(size, { target: { value: "region" } });
+    fireEvent.change(size, { target: { value: "settlement" } }); // (back to what DMbot read)
+    expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -75,6 +108,7 @@ describe("a place's kind and setting", () => {
     const select = (await row.findByLabelText(w.formAsk)) as HTMLSelectElement;
     expect([...select.options].map((o) => o.textContent)).toEqual(["Land or a building: A town, a forest, an inn", "Water: A lake, sea, bay or river", "A road or route: A named road, trail or pass"]);
     fireEvent.change(select, { target: { value: "water" } });
+    await pressSave(row);
     expect(await row.findByText(w.notedForm("Saltmarsh", "water"))).toBeTruthy();
     await waitFor(() => expect(row.getByText(w.formLine("water"))).toBeTruthy());
   });
@@ -83,7 +117,9 @@ describe("a place's kind and setting", () => {
     const { row } = await openPlace("Saltmarsh");
     expect(await row.findByText(w.tooSmall)).toBeTruthy(); // (a town is smaller than a region)
     expect(row.queryByRole("button", { name: w.settingMake })).toBeNull();
-    fireEvent.change(row.getByLabelText(w.sizeAsk), { target: { value: "region" } });
+    fireEvent.change(row.getByLabelText(w.sizeLabel), { target: { value: "region" } });
+    await pressSave(row);
+    expect(await row.findByText(w.noted("Saltmarsh", "region"))).toBeTruthy();
     fireEvent.click(await row.findByRole("button", { name: w.settingMake }));
     expect(await row.findByText(w.notedSetting("Saltmarsh"))).toBeTruthy();
     expect(await row.findByText(w.settingLine)).toBeTruthy();
@@ -99,13 +135,13 @@ describe("who sees it and when", () => {
     await screen.findByRole("list", { name: namesPage.listLabel });
     const person = rows().find((li) => li.classList.contains("name-row") && !li.textContent?.includes("Saltmarsh"))!;
     fireEvent.click(within(person).getAllByRole("button")[0]!);
-    expect(within(person).queryByLabelText(w.sizeAsk)).toBeNull();
+    expect(within(person).queryByLabelText(w.sizeLabel)).toBeNull();
   });
 
   it("nothing shows while the switch is off", async () => {
     live.on = false;
     const { row } = await openPlace("Saltmarsh");
-    expect(row.queryByLabelText(w.sizeAsk)).toBeNull();
+    expect(row.queryByLabelText(w.sizeLabel)).toBeNull();
     expect(row.queryByText(/^Size:/)).toBeNull();
   });
 });
