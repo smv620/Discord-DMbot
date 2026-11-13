@@ -2508,6 +2508,19 @@ def create_app(
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/names/{entity_id}/world/table")
+    async def me_campaign_place_world_table(
+        ref: str, entity_id: str, signed: Signed
+    ) -> dict[str, Any]:
+        """What the table may be told of a place's land, climate and ruler (#4311): any member of
+        the server, cut by the gate and the one players' rule."""
+        session, _token = signed
+        try:
+            return await place_world.read_table(db, session, ref, entity_id)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/private-scenes")
     async def me_campaign_private_scenes(ref: str, signed: Signed) -> dict[str, Any]:
         """The times two player characters were alone together while the party was split

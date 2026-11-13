@@ -49,6 +49,8 @@ export const placeWorldWords = {
     noGroups: "No group yet. Add the group as a name first.",
   },
   readMark: " (DMbot read this)",
+  // The reader's side (#4311): what the table knows, shown on a place for anyone who may see it.
+  table: { show: "🗺️ Land, climate, ruler", none: "Nothing the table knows yet.", failed: "Couldn't load this.", loading: "Loading…" },
   landLine: (word: string, part: boolean): string => `🗺️ Land: ${part ? "partly " : ""}${word}`,
   climateLine: (word: string, how: string): string => `Climate: ${word}${how ? ` and ${how}` : ""}`,
   rulerLine: (verb: string, group: string): string => `👑 ${verb}: ${group}`,
