@@ -120,9 +120,11 @@ def _date(timestamp: int) -> str:
 # Says what changed in the current consent.TERMS_VERSION; rewrite it when that goes up.
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
-    "**What's new:** anyone at the table can now ask DMbot a quick rules question. DMbot also "
-    "reads what you type in its chat channel while it is listening. That is why it is "
-    "asking you again. Until you press "
+    "**What's new:** DMbot can now keep a picture you post in the table's chat, describe it, and "
+    "give it a link you can share (the table's chat is the voice channel's chat, or the one "
+    "channel your DM picks), and DMbot no longer has a "
+    "chat channel of its own: anyone can ask it a question in the table's chat. That is why it "
+    "is asking you again. Until you press "
     f"**{CONSENT_LABEL}**, it records nothing from you. Don't want that? Press "
     f"**{DECLINE_LABEL}** and keep playing."
 )
@@ -175,12 +177,16 @@ def request_text(
         AGE_LINE,
         UNDER_LINE,
         f"• Press **{CONSENT_LABEL}** and DMbot records what you say while it is listening. "
-        "It also reads what you type in the voice channel's chat, in DMbot's chat channel and "
-        "in one more channel if your DM picks one. It turns it all into text. "
+        "It also reads what you type in the table's chat: the voice channel's chat, and one more "
+        "channel if your DM picks one. It turns it all into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",
-        "• If you ask DMbot a question in its chat channel, your name and question are posted "
-        "there for everyone to read.",
+        "• If you post a picture in the table's chat, DMbot sends it to the AI to be described "
+        "and keeps it with the campaign. Only post pictures you have the right to share: by "
+        "posting one, you let your table use it in this game. Anyone with its link can see it, "
+        "until you or your DM make it private or delete it.",
+        '• If you ask DMbot a question in the table\'s chat ("Hey DMbot, …"), your name and '
+        "question are posted there for everyone to read.",
         f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice and your typing. "
         "You can still play as normal.",
         "DMbot is just for your game. Please don't use it or its text for anything else.",
