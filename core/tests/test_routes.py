@@ -8,9 +8,11 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
+from psycopg.errors import CheckViolation
+
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory import link_words
+from dmbot.memory import backup, link_words
 from dmbot.memory import route_words as rw
 from dmbot.memory.checks import duplicate_of
 from dmbot.memory.models import CONFIRMED, Relation
@@ -22,7 +24,8 @@ class TheWords(unittest.TestCase):
     def test_the_words_said_fold_to_one_means(self) -> None:
         for said, kept in (
             ("Highway", rw.ROAD), ("by  road", rw.ROAD), ("teleportation circle", rw.PORTAL),
-            ("airship", rw.AIR), ("water trade route", rw.SEA), ("over the pass", rw.WILD),
+            ("airship", rw.AIR), ("water trade route", rw.SEA), ("across the tundra", rw.WILD),
+            ("trade route", ""), ("by water", ""), ("over the pass", ""),
             ("downriver", rw.RIVER), ("by mule train", ""), ("", ""),
         ):  # fmt: skip
             with self.subTest(said=said):
@@ -41,6 +44,15 @@ class TheWords(unittest.TestCase):
         # from the second place: the same both ways, "is reached … from" when made one way
         self.assertEqual(rw.backward(rw.RIVER), "is connected by river to")
         self.assertEqual(rw.backward(rw.PORTAL, one_way=True), "is reached through a portal from")
+
+    def test_a_means_must_be_in_the_words_themselves(self) -> None:
+        self.assertTrue(rw.said_in("A highway runs from Targos to Bryn Shander", rw.ROAD))
+        self.assertTrue(rw.said_in("They sailed by ship to Luskan", rw.SEA))
+        self.assertFalse(rw.said_in("Targos trades with Bryn Shander", rw.ROAD))
+        self.assertFalse(rw.said_in("the roadside inn", rw.ROAD))  # (whole words only)
+
+    def test_wild_reads_from_the_first_place(self) -> None:
+        self.assertTrue(rw.forward(rw.WILD).endswith(" to"))
 
     def test_the_card_words(self) -> None:
         self.assertEqual(link_words.link_words("route_to", rw.SEA), "is connected by sea to")
@@ -123,7 +135,7 @@ class Stored(MemoryTest):
     async def test_the_database_keeps_a_state_on_routes_only(self) -> None:
         targos, bryn = await self.towns()
         await self.connect(targos, bryn, "road", route_state=rw.PLANNED)
-        with self.assertRaises(Exception) as caught:
+        with self.assertRaises(CheckViolation) as caught:
             async with self.db.guild(GUILD_A) as conn:
                 await conn.execute(
                     "UPDATE memory_relations SET predicate = 'next_to' WHERE route_state <> ''"
@@ -143,7 +155,52 @@ class Stored(MemoryTest):
             {**r, "predicate": "next_to"} if r.get("route_state") else r
             for r in data["sections"]["memory"]
         ]
-        with self.assertRaises(CampaignError):
+        with self.assertRaises(CampaignError) as caught:
             await self.campaigns.import_backup(
                 GUILD_B, {**data, "sections": {**data["sections"], "memory": damaged}}, DM
             )
+        self.assertEqual(str(caught.exception), backup.DAMAGED)
+
+    async def test_a_backup_from_before_routes_had_a_state_loads(self) -> None:
+        targos, bryn = await self.towns()
+        await self.connect(targos, bryn, "road")
+        data = await self.campaigns.export(GUILD_A, self.c)
+        old = [
+            {k: v for k, v in r.items() if k != "route_state"} for r in data["sections"]["memory"]
+        ]
+        restored = await self.campaigns.import_backup(
+            GUILD_B, {**data, "sections": {**data["sections"], "memory": old}}, DM
+        )
+        copy = await self.snapshot(GUILD_B, restored.id)
+        self.assertEqual([r["route_state"] for r in copy["memory_relations"]], [""])
+
+    async def test_a_journey_keeps_where_it_set_out_from_whichever_id_is_first(self) -> None:
+        for n, town_first in enumerate((True, False)):
+            a = await self.add(f"Targos {n}", type="place", status=CONFIRMED)
+            b = await self.add(f"Bryn Shander {n}", type="place", status=CONFIRMED)
+            start, end = sorted((a, b), reverse=not town_first)
+            leg = await self.connect(
+                start, end, "road", route_state=rw.TRAVELLED, from_session_at=100
+            )
+            self.assertEqual((leg.subject_id, leg.object_id), (start, end))
+            back = await self.connect(
+                end, start, "road", route_state=rw.TRAVELLED, from_session_at=100
+            )
+            self.assertNotEqual(back.id, leg.id)  # (the way back is another journey)
+
+    async def test_a_route_said_with_no_way_is_the_known_one(self) -> None:
+        targos, bryn = await self.towns()
+        road = await self.connect(targos, bryn, "road")
+        plain = await self.connect(bryn, targos, "")
+        self.assertEqual(plain.id, road.id)
+        self.assertEqual(len(await self.routes()), 1)
+
+    async def test_a_merge_keeps_journeys_from_different_sessions_apart(self) -> None:
+        targos, bryn = await self.towns()
+        twin = await self.add("Targos Town", type="place", status=CONFIRMED)
+        await self.connect(targos, bryn, "road", route_state=rw.TRAVELLED, from_session_at=100)
+        await self.connect(twin, bryn, "road", route_state=rw.TRAVELLED, from_session_at=200)
+        await self.memory.merge(GUILD_A, self.c, targos, twin, source=BY_DM, dm_said_same=True)
+        legs = [r for r in await self.routes() if r.route_state == rw.TRAVELLED]
+        self.assertEqual(sorted(r.from_session_at or 0 for r in legs), [100, 200])
+        self.assertEqual({r.subject_id for r in legs}, {targos})

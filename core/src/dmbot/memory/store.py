@@ -6151,7 +6151,7 @@ class MemoryStore:
             and pred.key == "kin_of"
             and kin.role_of(detail)
         )
-        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways)
+        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways, route_state)
         # A disguise is hidden by nature (#3091): a NEW one is made secret however it is made, and
         # the DM reveals it with the connection's own switch. One that already exists keeps the
         # DM's choice (the upgrade below reads the caller's `secret`).
@@ -9292,6 +9292,7 @@ async def _move_relations(
             subject, obj = ordered(
                 pred, subject, obj, str(row["detail"]), bool(row["directional"]),
                 row.get("both_ways"),  # (the DM's direction stays as it was, #4154)
+                str(row.get("route_state") or ""),  # (and a journey's, #4173 slice 6d)
             )  # fmt: skip
         # (a join moves a connection AND makes it secret in this one update: a second update of
         # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync

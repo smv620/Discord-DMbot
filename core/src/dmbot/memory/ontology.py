@@ -704,7 +704,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
             "A portal links Waterdeep and Luskan.",
         ),
         inverse_label="is connected to",
-        synonyms=("road_to", "connected_by_road", "linked_by_portal", "trade_route_to"),
+        synonyms=("connected_by_way", "reachable_from"),  # (never one that names a means)
     ),
     PredicateTerm(
         "contains",

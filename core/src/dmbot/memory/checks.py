@@ -106,6 +106,7 @@ def ordered(
     detail: str = "",
     directional: bool = False,
     both_ways: bool | None = None,
+    route_state: str = "",
 ) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
     "B ally A" are the same fact (inverse consistency by construction). Not a family connection
@@ -116,6 +117,8 @@ def ordered(
         return subject_id, object_id
     if p.key == "next_to" and next_words.one_way(detail):
         return subject_id, object_id  # "Targos is on the shore of Maer Dualdon" keeps its order
+    if p.key == route_words.ROUTE_TO and route_state != route_words.KNOWN:
+        return subject_id, object_id  # a journey goes from where they set out (#4173 slice 6d)
     if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
@@ -128,6 +131,8 @@ def _same_order(old: Relation, new: Relation) -> bool:
     direction must agree on it."""
     if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
         return True
+    if old.route_state != route_words.KNOWN or new.route_state != route_words.KNOWN:
+        return False  # (a journey or a plan has a direction: back the other way is another one)
     # one the DM turned one way (#4154) is still the same fact as a two-way one said again, in
     # either order: the DM's direction is kept on the old row
     if any(
@@ -154,7 +159,7 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         if old.id != new.id
         and old.predicate == new.predicate
         and _same_order(old, new)
-        and old.detail.casefold() == new.detail.casefold()
+        and (old.detail.casefold() == new.detail.casefold() or _plain_route(new))
         and old.route_state == new.route_state
         and _same_leg(old, new)
         and same_time(old, new)
@@ -163,6 +168,12 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
     if live:
         return live[0]
     return same[0] if same else None
+
+
+def _plain_route(new: Relation) -> bool:
+    """A route said with no means ("Targos links to Bryn Shander") is the same as a route already
+    known between them by any means (#4173 slice 6d: no second, vaguer line beside "by road")."""
+    return new.predicate == route_words.ROUTE_TO and not new.detail
 
 
 def _same_leg(old: Relation, new: Relation) -> bool:

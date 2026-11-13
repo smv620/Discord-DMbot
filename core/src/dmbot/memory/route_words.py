@@ -12,6 +12,7 @@ database."""
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
 
 ROUTE_TO = "route_to"  # (the kind, `ontology`)
@@ -37,7 +38,7 @@ _MEANS: dict[str, Means] = {
     AIR: Means("is connected by air to", "are connected by air", "by air"),
     PORTAL: Means("is linked by a portal to", "are linked by a portal", "through a portal"),
     WILD: Means(
-        "is reached across the wild from", "are connected through the wild", "across the wild"
+        "is connected across the wild to", "are connected across the wild", "across the wild"
     ),
 }
 # The words a reader or the DM may give for each (as `next_words` takes several for one)
@@ -45,14 +46,14 @@ _SAID: dict[str, str] = {
     "road": ROAD, "by road": ROAD, "highway": ROAD, "trail": ROAD, "cart track": ROAD,
     "causeway": ROAD,
     "river": RIVER, "by river": RIVER, "upriver": RIVER, "downriver": RIVER, "by boat": RIVER,
-    "sea": SEA, "by sea": SEA, "ship": SEA, "by ship": SEA, "by water": SEA, "trade route": SEA,
-    "sea route": SEA, "water trade route": SEA, "ferry": SEA, "lake crossing": SEA,
+    "sea": SEA, "by sea": SEA, "ship": SEA, "by ship": SEA, "sea route": SEA,
+    "water trade route": SEA, "sea trade route": SEA, "ferry": SEA, "lake crossing": SEA,
     "air": AIR, "by air": AIR, "airship": AIR, "by airship": AIR, "flying": AIR,
     "griffon route": AIR,
-    "portal": PORTAL, "permanent portal": PORTAL, "gate": PORTAL, "magic gate": PORTAL,
+    "portal": PORTAL, "permanent portal": PORTAL, "magic gate": PORTAL,
     "teleportation circle": PORTAL,
     "wild": WILD, "path through the wild": WILD, "through the wild": WILD, "cross-country": WILD,
-    "overland": WILD, "on foot": WILD, "across the tundra": WILD, "over the pass": WILD,
+    "overland": WILD, "across the tundra": WILD,
 }  # fmt: skip
 OTHER_FORWARD = "is connected to"
 OTHER_PAIR = "are connected"
@@ -107,3 +108,10 @@ def backward(detail: str, *, one_way: bool = False) -> str:
     if means:
         return f"is reached {_MEANS[means].by} from"
     return f"is reached (“{detail}”) from" if detail else "is reached from"
+
+
+def said_in(text: str, means: str) -> bool:
+    """Does the text itself name this means, in any of its words ("a highway runs" names a road)?
+    A route's means must be stated (Supervisor's condition): the AI's choice alone is not enough."""
+    words = f" {' '.join(re.findall(r'[\w-]+', text.casefold()))} "
+    return any(f" {said} " in words for said, kept in _SAID.items() if kept == means)
