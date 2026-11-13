@@ -3303,21 +3303,21 @@ class ConnectionOffer(_Menu):
             return (
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
+                + self._scope(c)
                 + self._change_line(c, how, handed[0])
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + inferred_line(c.inferred)
                 + f"{note}"
-                + self._scope(c)
             )
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
-            f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            + self._scope(c)
+            + f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + inferred_line(c.inferred)
             + f"{note}"
-            + self._scope(c)
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3329,7 +3329,6 @@ class ConnectionOffer(_Menu):
         )
         if len(mine) < 2:
             return ""
-        keeps = f"{len(mine)} from {_md(c.upload)}"
         # "Connection 1 of 9" counts everything waiting; Keep all is only this upload's, so say what
         # becomes of the rest and why (the owner's test, 2026-11-10: "1 of 9" beside "Keep all 3"):
         # another file's are never kept unseen, and one DMbot guessed waits for its own Keep.
@@ -3342,13 +3341,24 @@ class ConnectionOffer(_Menu):
         if elsewhere:
             left.append(f"{elsewhere} from {'another file' if elsewhere == 1 else 'other files'}")
         if guessed:
-            left.append(f"{guessed} guessed by DMbot")
+            left.append(f"{guessed} DMbot guessed")
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return f"\n✅ Keep all keeps the {keeps}."
-        decide = " and ".join(left)
-        return f"\n✅ Keep all keeps the {keeps}. For you to decide one by one: {decide}."
+            return f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
+        decide = left[0] if len(left) == 1 else ", ".join(left[:-1]) + " and " + left[-1]
+        # (the counter above counts every one waiting; this says which the button covers and
+        # which the DM checks, so the two numbers are never read as one, #4320)
+        rest = len(self.shown) - len(mine)
+        others = (
+            "The other one you check on its own"
+            if rest == 1
+            else (f"The other {rest} you check one at a time")
+        )
+        return (
+            f"✅ Keep all {len(mine)} keeps just the {len(mine)} from {_md(c.upload)}. "
+            f"{others}: {decide}.\n"
+        )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
