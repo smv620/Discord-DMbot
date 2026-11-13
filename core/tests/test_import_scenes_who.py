@@ -25,6 +25,7 @@ class ImportScenesAndWho(unittest.IsolatedAsyncioTestCase):
             consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({8}))),
             _write_scenes=scenes,
             _write_who=who,
+            _walk_story_chain=AsyncMock(),  # (#4173 slice 4: its own step, tested elsewhere)
         )
 
     async def run_it(self, me: Any) -> None:
@@ -86,6 +87,7 @@ class TheRealWhoStep(unittest.IsolatedAsyncioTestCase):
         )
         me.import_job = SimpleNamespace(store=SimpleNamespace(renew_scan=AsyncMock()))
         me._write_scenes = AsyncMock()
+        me._walk_story_chain = AsyncMock()
         me._write_who = lambda *a: DMBot._write_who(me, *a)
         with helper.patches():
             await DMBot._import_scenes_and_who(me, 1, READY_C, SimpleNamespace(dm_user_ids=(7,)))  # type: ignore[arg-type]

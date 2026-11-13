@@ -49,6 +49,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "memory_private_scenes": ("memory_private_scenes", "memory_private_scene_entries"),
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
+    "memory_story_chain": ("memory_story_chain",),  # where the story is (#4173 slice 4)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),

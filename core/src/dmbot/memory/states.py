@@ -91,9 +91,11 @@ async def ended_since(w: Scope, entity_ids: Collection[str]) -> dict[str, Ended]
     return {r["entity_id"]: Ended(r["from_session_at"], r["created_at"]) for r in rows}
 
 
-async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
+async def place_nesting(w: Scope, onto: Ontology, *, players: bool = False) -> Nesting:
     """The places inside places now: live `located_in` facts that haven't ended, between two
-    entries of a place kind. One read, only those facts."""
+    entries of a place kind. One read, only those facts. `players`: only the ones a player may be
+    told of (never secret, held back or DMbot's assumption, #4173 slice 3), for what is read up
+    the tree for a player, so a "(same as Kelvenmoor)" never names a parent they weren't told."""
     places = sorted(k for k in onto.types if onto.is_a(k, "place"))
     cur = await w.conn.execute(
         "SELECT r.subject_id, r.object_id FROM memory_relations r"
@@ -105,7 +107,8 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         " AND r.status <> 'rejected'"
         " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
         " AND r.to_session_at IS NULL"
-        " AND s.type = ANY(%s) AND o.type = ANY(%s)",
+        + (" AND NOT r.secret AND NOT r.unrevealed AND NOT r.assumed" if players else "")
+        + " AND s.type = ANY(%s) AND o.type = ANY(%s)",
         (*w.ids, NESTS, places, places),
     )
     pairs = [(str(r["subject_id"]), str(r["object_id"])) for r in await cur.fetchall()]
@@ -125,7 +128,21 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         w.ids,
     )
     row = await cur.fetchone()
-    return Nesting(pairs, levels, str(row["id"]) if row else None)
+    # and the places open on where the story is (#4173 slice 5): a bigger place someone is said
+    # to be in, not open on any chain, is a move away from a smaller one. Working state only, so
+    # never for what a player is told.
+    # (None until a session has been walked: the 'mark' row says one has, even if every chain
+    # ended empty)
+    open_places: set[str] | None = None
+    if not players:
+        cur = await w.conn.execute(
+            "SELECT entity_id FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s",
+            w.ids,
+        )
+        chain_rows = await cur.fetchall()
+        if chain_rows:
+            open_places = {str(r["entity_id"]) for r in chain_rows if r["entity_id"] is not None}
+    return Nesting(pairs, levels, str(row["id"]) if row else None, open_places)
 
 
 async def load_extras(w: Scope, onto: Ontology, facts: Sequence[Relation]) -> Extras:

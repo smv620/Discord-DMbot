@@ -9,8 +9,9 @@ import unittest
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import place_levels as pl
+from dmbot.memory import whereabouts
 from dmbot.memory.checks import TOO_MANY, Nesting, check_relation
-from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName
+from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName, Relation
 from dmbot.memory.models import DM as BY_DM
 from dmbot.memory.store import ONLY_PLACES
 from tests.test_memory_states import ONTO, fact
@@ -138,6 +139,91 @@ class TheRule(unittest.TestCase):
 
 
 SEEN = "was last seen in"
+SIZES = {
+    "bank": "building", "bakery": "building", "waterdeep": "settlement",
+    "neverwinter": "settlement", "docks": "district",
+}  # fmt: skip
+
+
+class WhereTheStoryIs(unittest.TestCase):
+    """Slice 5 (Supervisor's ruling, 2026-11-13): a bigger place open on where the story is holds
+    the smaller one; a bigger place elsewhere is a move, not a question; the same size is still
+    the DM's question; with no chain walked, the rule is as before."""
+
+    def test_a_building_and_the_town_the_story_is_in_are_one_place(self) -> None:
+        nest = Nesting((), SIZES, open_places={"waterdeep"})
+        self.assertEqual(nest.relation("bank", "waterdeep"), pl.ONE)
+
+    def test_a_building_and_a_town_the_story_is_not_in_are_a_move(self) -> None:
+        nest = Nesting((), SIZES, open_places={"neverwinter"})
+        self.assertEqual(nest.relation("bakery", "waterdeep"), pl.MOVE)
+        self.assertEqual(nest.relation("waterdeep", "bakery"), pl.MOVE)  # (either way round)
+
+    def test_a_building_known_to_be_in_another_town_is_a_move(self) -> None:
+        nest = Nesting([("bakery", "neverwinter")], SIZES)
+        self.assertEqual(nest.relation("bakery", "waterdeep"), pl.MOVE)
+
+    def test_two_buildings_are_still_rivals(self) -> None:
+        nest = Nesting((), SIZES, open_places={"waterdeep"})
+        self.assertEqual(nest.relation("bank", "bakery"), pl.RIVALS)
+
+    def test_with_no_chain_every_pair_of_sizes_is_one_place_as_before(self) -> None:
+        self.assertEqual(Nesting((), SIZES).relation("bank", "waterdeep"), pl.ONE)
+
+    def test_walked_with_nothing_open_is_a_move(self) -> None:
+        # (the reviewer: a walk that left every chain empty is still a walk)
+        self.assertEqual(Nesting((), SIZES, open_places=()).relation("bank", "waterdeep"), pl.MOVE)
+
+    def test_only_stated_links_count_as_inside(self) -> None:
+        nest = Nesting([("room", "bakery"), ("bakery", "waterdeep")], SIZES, "waterdeep")
+        self.assertTrue(nest.stated_inside("room", "waterdeep"))
+        self.assertFalse(nest.stated_inside("bank", "waterdeep"))  # (only the setting's default)
+
+    def test_a_move_is_never_the_too_many_flag(self) -> None:
+        nest = Nesting([("bakery", "neverwinter")], SIZES)
+        in_bakery = fact(1, "mira", "located_in", "bakery")
+        in_town = fact(2, "mira", "located_in", "waterdeep")
+        got = check_relation(ONTO, in_town, "character", "place", [in_bakery], nesting=nest)
+        self.assertEqual([p.kind for p in got], [])
+
+
+def _seen(place: str, rid: str, start: int | None) -> Relation:
+    return Relation(
+        rid, "mira", "located_in", place, SEEN, 1.0, CONFIRMED, "dm", (), start, None, None,
+        None, False, 0,
+    )  # fmt: skip
+
+
+class TheMoveRule(unittest.TestCase):
+    def settle(self, new: Relation, old: Relation, nest: Nesting) -> whereabouts.Settled:
+        return whereabouts.settle(new, "character", "place", [old], relation=nest.relation)
+
+    def test_a_later_move_ends_the_old_place_with_its_own_reason(self) -> None:
+        nest = Nesting([("bakery", "neverwinter")], SIZES)
+        old = _seen("bakery", "1" * 32, 100)
+        got = self.settle(_seen("waterdeep", "2" * 32, 200), old, nest)
+        self.assertEqual(
+            dict(got.ends), {old.id: {"to_session_at": 200, "end_reason": whereabouts.MOVED}}
+        )
+
+    def test_a_move_with_no_order_ends_nothing_and_flags_nothing(self) -> None:
+        nest = Nesting([("bakery", "neverwinter")], SIZES)
+        got = self.settle(_seen("waterdeep", "2" * 32, None), _seen("bakery", "1" * 32, 100), nest)
+        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+
+    def test_an_older_move_read_late_is_history_with_the_reason(self) -> None:
+        nest = Nesting([("bakery", "neverwinter")], SIZES)
+        got = self.settle(_seen("waterdeep", "2" * 32, 100), _seen("bakery", "1" * 32, 200), nest)
+        self.assertEqual(
+            dict(got.new_changes), {"to_session_at": 200, "end_reason": whereabouts.MOVED}
+        )
+
+    def test_reopening_puts_the_present_wording_back(self) -> None:
+        self.assertEqual(
+            whereabouts.reopened("lived in"),
+            {"to_session_at": None, "end_reason": None, "detail": "lives in"},
+        )
+        self.assertEqual(whereabouts.reopened(SEEN), {"to_session_at": None, "end_reason": None})
 
 
 class TheStore(MemoryTest):
@@ -335,6 +421,171 @@ class TheStore(MemoryTest):
         await self.relate(mira, "located_in", bank, status=CONFIRMED)
         written = await self.relate(mira, "located_in", bakery, source="cleaner", confidence=0.7)
         self.assertEqual([f.kind for f in written.value[1]], [TOO_MANY])
+
+    async def open_on_the_chain(self, *places: str) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            for rank, place in enumerate(places):
+                await conn.execute(
+                    "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank,"
+                    " entity_id, updated_at) VALUES (%s, %s, 'main', %s, %s, 1)",
+                    (GUILD_A, self.c, rank, place),
+                )
+
+    async def ties(self, who: str) -> dict[str, tuple[int | None, str | None]]:
+        return {
+            r.object_id: (r.to_session_at, r.end_reason)
+            for r in await self.memory.relations(GUILD_A, self.c, entity_id=who)
+            if r.predicate == "located_in" and r.subject_id == who
+        }
+
+    async def test_the_bakery_then_waterdeep_then_the_bakery_is_in_waterdeep(self) -> None:
+        # (Supervisor's case: read as a move, then reopened by the link, with no flag)
+        mira = await self.add("Mira", status=CONFIRMED)
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        other = await self.sized("Neverwinter", "settlement")
+        await self.open_on_the_chain(other)
+        await self.relate(mira, "located_in", bakery, status=CONFIRMED, detail=SEEN,
+                          from_session_at=100)  # fmt: skip
+        written = await self.relate(mira, "located_in", town, status=CONFIRMED, detail=SEEN,
+                                    from_session_at=200)  # fmt: skip
+        self.assertEqual([f.kind for f in written.value[1]], [])
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+        linked = await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual([f.kind for f in linked.value[1]], [])
+        self.assertEqual(await self.ties(mira), {bakery: (None, None), town: (None, None)})
+        assert linked.batch is not None  # (one Undo takes the link and the reopening back)
+        await self.memory.undo(GUILD_A, self.c, linked.batch)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+
+    async def test_the_bank_and_the_town_the_story_is_in_stay_one_place(self) -> None:
+        mira = await self.add("Mira", status=CONFIRMED)
+        bank = await self.sized("The Copper Bank", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.open_on_the_chain(town)
+        await self.relate(mira, "located_in", bank, status=CONFIRMED, detail=SEEN,
+                          from_session_at=100)  # fmt: skip
+        await self.relate(mira, "located_in", town, status=CONFIRMED, detail=SEEN,
+                          from_session_at=200)  # fmt: skip
+        self.assertEqual(await self.ties(mira), {bank: (None, None), town: (None, None)})
+
+    async def test_a_link_elsewhere_reopens_nothing(self) -> None:
+        mira = await self.add("Mira", status=CONFIRMED)
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        other = await self.sized("Neverwinter", "settlement")
+        await self.open_on_the_chain(other)
+        await self.relate(mira, "located_in", bakery, status=CONFIRMED, detail=SEEN,
+                          from_session_at=100)  # fmt: skip
+        await self.relate(mira, "located_in", town, status=CONFIRMED, detail=SEEN,
+                          from_session_at=200)  # fmt: skip
+        await self.relate(bakery, "located_in", other, status=CONFIRMED)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+
+    async def moved_away(self, first: str, then: str) -> tuple[str, str]:
+        """Mira seen in `first` @100 then in `then` @200 while the story is in Neverwinter."""
+        mira = await self.add("Mira", status=CONFIRMED)
+        await self.open_on_the_chain(await self.sized("Neverwinter", "settlement"))
+        for at, place in ((100, first), (200, then)):
+            await self.relate(mira, "located_in", place, status=CONFIRMED, detail=SEEN,
+                              from_session_at=at)  # fmt: skip
+        return mira, await self.sized("The Copper Bank", "building")
+
+    async def test_the_town_then_the_bakery_reopens_the_town(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(town, bakery)
+        self.assertEqual((await self.ties(mira))[town], (200, whereabouts.MOVED))
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual(await self.ties(mira), {bakery: (None, None), town: (None, None)})
+
+    async def test_a_room_inside_the_bakery_is_reopened_too(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        room = await self.sized("The Back Room", "room")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.relate(room, "located_in", bakery, status=CONFIRMED)
+        mira, _ = await self.moved_away(room, town)
+        self.assertEqual((await self.ties(mira))[room], (200, whereabouts.MOVED))
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual((await self.ties(mira))[room], (None, None))
+
+    async def test_a_link_the_dm_keeps_later_reopens_and_one_undo_takes_it_back(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(bakery, town)
+        proposed = await self.relate(
+            bakery, "located_in", town, status="proposed", source="cleaner", confidence=0.7
+        )
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+        kept = await self.memory.update_relation(
+            GUILD_A, self.c, proposed.value[0].id, status=CONFIRMED, source=BY_DM
+        )
+        self.assertEqual((await self.ties(mira))[bakery], (None, None))
+        assert kept.batch is not None
+        await self.memory.undo(GUILD_A, self.c, kept.batch)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+
+    async def test_dmbots_guess_reopens_nothing_until_the_dm_says_its_right(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(bakery, town)
+        guess = await self.relate(bakery, "located_in", town, status=CONFIRMED, assumed=True)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+        await self.memory.confirm_assumed(GUILD_A, self.c, guess.value[0].id, source=BY_DM)
+        self.assertEqual((await self.ties(mira))[bakery], (None, None))
+
+    async def test_a_rival_place_since_keeps_it_ended(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, bank = await self.moved_away(bakery, town)
+        await self.relate(mira, "located_in", bank, status=CONFIRMED, detail=SEEN,
+                          from_session_at=300)  # fmt: skip
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual((await self.ties(mira))[bakery][1], whereabouts.MOVED)
+
+    async def test_the_database_keeps_moved_to_places_and_hand_overs_to_items(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.moved_away(bakery, town)
+        for reason, pred in (("sold", "located_in"), ("moved", "owns")):
+            with self.subTest(reason=reason):
+                with self.assertRaises(Exception) as caught:
+                    async with self.db.guild(GUILD_A) as conn:
+                        await conn.execute(
+                            "UPDATE memory_relations SET end_reason = %s, predicate = %s"
+                            " WHERE end_reason = 'moved'",
+                            (reason, pred),
+                        )
+                self.assertIn("check", str(caught.exception).lower())
+
+    async def test_a_backup_with_moved_on_an_open_tie_or_an_item_is_refused(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.moved_away(bakery, town)
+        data = await self.campaigns.export(GUILD_A, self.c)
+        for change in ({"to_session_at": None}, {"predicate": "owns"}):
+            with self.subTest(change=change):
+                damaged = [
+                    {**r, **change} if r.get("end_reason") == whereabouts.MOVED else r
+                    for r in data["sections"]["memory"]
+                ]
+                broken = {**data, "sections": {**data["sections"], "memory": damaged}}
+                with self.assertRaises(CampaignError):
+                    await self.campaigns.import_backup(GUILD_B, broken, DM)
+
+    async def test_a_backup_carries_a_moved_end(self) -> None:
+        mira = await self.add("Mira", status=CONFIRMED)
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.open_on_the_chain(await self.sized("Neverwinter", "settlement"))
+        await self.relate(mira, "located_in", bakery, status=CONFIRMED, detail=SEEN,
+                          from_session_at=100)  # fmt: skip
+        await self.relate(mira, "located_in", town, status=CONFIRMED, detail=SEEN,
+                          from_session_at=200)  # fmt: skip
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        copy = await self.snapshot(GUILD_B, restored.id)
+        self.assertIn(whereabouts.MOVED, [r["end_reason"] for r in copy["memory_relations"]])
 
 
 class TheMenu(unittest.TestCase):
