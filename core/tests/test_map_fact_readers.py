@@ -8,6 +8,9 @@ from __future__ import annotations
 import re
 import unittest
 from pathlib import Path
+from typing import Any
+
+from dmbot.memory import map_facts as mf
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
@@ -61,17 +64,14 @@ class OneReader(unittest.TestCase):
 class ThePlayersRule(unittest.TestCase):
     """`map_facts.for_players`, the one rule Discord and the website share (#4287)."""
 
-    def fact(self, layer: str = "climate", value: str = "cold", **kw: object) -> object:
-        from dmbot.memory import map_facts as mf
-
-        base = {"id": "f", "place_id": "town", "layer": layer, "value": value, "words": "",
-                "how": "", "part": "", "status": mf.CONFIRMED, "source": "dm",
-                "table_knows": True}  # fmt: skip
-        return mf.Fact(**{**base, **kw})  # type: ignore[arg-type]
+    def fact(self, layer: str = "climate", value: str = "cold", **kw: Any) -> mf.Fact:
+        base: dict[str, Any] = {
+            "id": "f", "place_id": "town", "layer": layer, "value": value, "words": "",
+            "how": "", "part": "", "status": mf.CONFIRMED, "source": "dm", "table_knows": True,
+        }  # fmt: skip
+        return mf.Fact(**{**base, **kw})
 
     def test_each_part_of_the_rule(self) -> None:
-        from dmbot.memory import map_facts as mf
-
         known = {"town", "guild"}
         shown = self.fact()
         ruler = self.fact(mf.CONTROL, "guild")
