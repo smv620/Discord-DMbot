@@ -7,7 +7,7 @@ database. The store keeps the rows (`memory_map_facts`); every read of them goes
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 from dmbot.memory import place_levels
@@ -230,3 +230,19 @@ def meet(layer: str, old_source: str, old_status: str, new_source: str, changed:
     if changed:  # (no reader says words of change yet: slice 2's phrases never do)
         return CLOSE
     return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
+
+
+def for_players(facts: Iterable[Fact], known: Collection[str]) -> list[Fact]:
+    """THE players' rule for a place's land, climate and ruler (#4256; written once, so Discord's
+    `map_fact_store.facts_for` and the website's player view (#4287) can never disagree): a row is
+    shown only when the DM has confirmed it and marked it as known to the table, the place is an
+    entry this viewer knows, and for a ruler, so is the group (`known`: the entries the gate shows
+    this viewer). A value DMbot read from the DM's notes is the DM's until the DM confirms it."""
+    return [
+        f
+        for f in facts
+        if f.table_knows
+        and f.status == CONFIRMED
+        and f.place_id in known
+        and (f.layer != CONTROL or f.value in known)
+    ]

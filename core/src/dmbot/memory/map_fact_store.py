@@ -71,14 +71,7 @@ async def facts_for(
             }
         else:
             known = set(shown)
-        facts = [
-            f
-            for f in facts
-            if f.table_knows
-            and f.status == mf.CONFIRMED
-            and f.place_id in known
-            and (f.layer != mf.CONTROL or f.value in known)
-        ]
+        facts = mf.for_players(facts, known)
     out: dict[str, list[mf.Fact]] = {}
     for f in sorted(facts, key=lambda f: mf.LAYERS.index(f.layer)):
         out.setdefault(f.place_id, []).append(f)
