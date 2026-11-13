@@ -2,7 +2,7 @@
 ruling, 2026-11-13, from the design's rule 3, `docs/design/mapbot_layers.md` section 13: two yeses,
 and nothing reads a map closely before a DM's yes to using it).
 
-Until MapBot slice 3 keeps each map's own yes (`campaign_maps`: who said yes to keeping it, and
+Until MapBot slice 3 keeps each map's own yes (the map store, #4345: who said yes to keeping it, and
 the DM's yes to using it), the only map that has both is one the campaign's own DM posted: the
 DM's own upload is both yeses. A player's map gets no close read (no sizes, no links) until then;
 its plain read, its short transcript line and its note stay as they were. Slice 3 widens this one
