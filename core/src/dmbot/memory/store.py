@@ -20,6 +20,7 @@ import itertools
 import logging
 import time
 import unicodedata
+from collections import Counter
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -48,6 +49,7 @@ from dmbot.memory import (
     knowers,
     lineage,
     link_words,
+    map_fact_store,
     merge_restore,
     notify,
     place_levels,
@@ -61,6 +63,7 @@ from dmbot.memory import (
 from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import lies as lies_mod
+from dmbot.memory import map_facts as mf
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import short_names as short_names_mod
@@ -153,6 +156,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     ROLES,
+    SETTING_GUESS_SOURCE,
     SHORT_NAME_SOURCE,
     SOURCES,
     SPECIES,
@@ -418,6 +422,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
         r.get("players_text"), place_level=r.get("place_level"),
         place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
+        setting_from=r.get("setting_from"),
         form=r.get("form"), form_from=r.get("form_from"),
     )  # fmt: skip
 
@@ -1200,13 +1205,124 @@ class MemoryStore:
                 level = row.get("place_level")
                 if level not in SETTING_LEVELS:
                     raise MemoryRuleError(SETTING_SIZE)
-            if [r["id"] for r in now] == ([entity_id] if entity_id else []):
+            if [r["id"] for r in now] == ([entity_id] if entity_id else []) and all(
+                r.get("setting_from") == DM for r in now
+            ):  # (the same place again, already the DM's word: nothing to write)
                 return Written(_entity(row) if row else None, None)
             for r in now:  # (first: one setting at most)
-                await w.update(ENTITIES, r["id"], {"setting": False})
-            if entity_id is not None:
-                row = await w.update(ENTITIES, entity_id, {"setting": True})
+                if r["id"] != entity_id:
+                    # (the DM taking away DMbot's guess is a no to it: never guessed again)
+                    gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
+                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+            if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
+                row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
+
+    async def guess_setting(
+        self, guild_id: int, campaign_id: str, world: str, *, source: str
+    ) -> Written[Entity | None]:
+        """DMbot's guess at the campaign's setting, from its shared adventure (#4173 slice 2b,
+        `setting_worlds.world_for`): the place named `world` (found by name, or made, hidden from
+        the players until the DM keeps it), at world size, marked as DMbot's guess. One change, so
+        one Undo. Nothing when the campaign has a setting already or the DM once said ✖ Not the
+        setting to a guess: DMbot never guesses twice, and never over the DM."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            said = await w.select(ENTITIES, " AND (setting OR setting_from = 'declined')", [])
+            if said:
+                return Written(None, None)
+            onto = await _load_ontology(w)
+
+            def bare(name: str) -> str:  # ("the Flanaess" and "Flanaess" are one world)
+                key = name_key(name)
+                return key[4:] if key.startswith("the ") else key
+
+            key = bare(world)
+            found = [
+                r
+                for r in await w.select(
+                    ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
+                )
+                if bare(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+            ]
+            if len(found) > 1:
+                return Written(None, None)  # (two places of that name: DMbot can't tell which)
+            if found:
+                place = found[0]
+                if place.get("place_level") not in SETTING_LEVELS:
+                    return Written(None, None)  # (the DM's Faerûn is smaller: never over the DM)
+                row = await w.update(
+                    ENTITIES, str(place["id"]), {"setting": True, "setting_from": place_levels.READ}
+                )
+                return Written(_entity(row), w.batch)
+            name = clean_text(world)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "place", "name": name, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": SETTING_GUESS_SOURCE,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None,
+                    # (the players hear of it once the DM keeps it: the ux-critic on #4173)
+                    "hidden_from_players": True,
+                    "place_level": "world", "place_level_from": place_levels.READ,
+                    "setting": True, "setting_from": place_levels.READ,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            return Written(_entity(row), w.batch)
+
+    async def keep_setting(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's ✅ Keep as the setting, on DMbot's guess: the DM's word now, so smaller places
+        count as inside it, and a place DMbot made for the guess is shown to the players (it was
+        hidden only while it was a guess). One change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _entity_row(w, entity_id)
+            if not row.get("setting"):
+                raise MemoryRuleError(NOT_FOUND)
+            change: dict[str, Any] = {"setting_from": DM}
+            # (only the place DMbot made for the guess, hidden for it: never a place the DM or the
+            # scene gate hid, which a guess found by name may be)
+            if (
+                row.get("setting_from") == place_levels.READ
+                and row.get("hidden_from_players")
+                and row.get("source") == SETTING_GUESS_SOURCE
+            ):
+                change["hidden_from_players"] = False
+            if any(row.get(k) != v for k, v in change.items()):
+                row = await w.update(ENTITIES, entity_id, change)
+            return Written(_entity(row), w.batch)
+
+    async def decline_setting(
+        self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's ✖ Not the setting, on DMbot's guess: no setting, and DMbot never guesses again
+        for this campaign (the mark stays on the place, `setting_from = 'declined'`). One change,
+        so one Undo. A setting the DM made is taken away with 🌍 Remove as setting instead."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _entity_row(w, entity_id)
+            if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
+                raise MemoryRuleError(NOT_FOUND)
+            change: dict[str, Any] = {"setting": False, "setting_from": "declined"}
+            # A place DMbot made for the guess goes with it (Supervisor's review of #4299): the bot
+            # never keeps a place the DM didn't ask for. Rejected, so it leaves every list, with
+            # its declined mark kept, so the "never again" check still finds it; Undo brings it
+            # back as a guess. Only while it is still hidden and nothing else points at it.
+            if row.get("source") == SETTING_GUESS_SOURCE and row.get("hidden_from_players"):
+                tied = await w.select(
+                    RELATIONS,
+                    " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+                    [entity_id, entity_id],
+                )
+                if not tied:
+                    change["status"] = REJECTED
+            row = await w.update(ENTITIES, entity_id, change)
+            return Written(_entity(row), w.batch)
 
     async def set_place_level(
         self, guild_id: int, campaign_id: str, entity_id: str, level: str | None, *, source: str
@@ -1229,7 +1345,10 @@ class MemoryStore:
                 change: dict[str, Any] = {"place_level": level, "place_level_from": said}
                 if current.get("setting") and level not in SETTING_LEVELS:
                     change["setting"] = False  # (too small to be the setting now, #4173 slice 2)
+                    change["setting_from"] = None
                 row = await w.update(ENTITIES, entity_id, change)
+                # (a climate only a region or bigger has: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
 
     async def set_place_form(
@@ -1250,7 +1369,117 @@ class MemoryStore:
             said = place_levels.BY_DM if form is not None else None
             if (current.get("form"), current.get("form_from")) != (form, said):
                 row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
+                # (water or a road has no land type: #4256, in the same Undo)
+                await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
+
+    # ---- A place's land, climate and who rules it (#4256, MapBot layers slice 2) ----------------
+
+    async def map_facts(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
+    ) -> dict[str, list[mf.Fact]]:
+        """Each place's open land, climate and ruler rows, as `viewer` may see them: the one reader
+        (`map_fact_store.facts_for`, the players' rule of design §8.3). `shown`: the entries the
+        caller's own list shows that viewer, if it has one."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
+
+    async def map_facts_up(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        viewer: gate.Viewer,
+        shown: Collection[str] | None = None,
+    ) -> dict[str, mf.Held]:
+        """For one place, each layer's value: its own, or the nearest bigger place's, read up the
+        place tree and never stored (§6). Only places the viewer may see are read up through
+        (`shown`, the caller's own list for that viewer, or else the gate)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            nesting = await states.place_nesting(scope, onto)
+            seen = None if viewer.dm or shown is not None else await gate.visible_to(scope, viewer)
+            inside: dict[str, list[str]] = {}
+            reach = {place_id}
+            todo = [place_id]
+            while todo:
+                inner = todo.pop()
+                for outer in sorted(nesting.outer(inner)):
+                    if not viewer.dm and (
+                        (shown is not None and outer not in shown)
+                        or (seen is not None and not seen.knows(gate.ENTRY, outer))
+                    ):
+                        continue  # (a player is never told of a place they don't know)
+                    inside.setdefault(inner, []).append(outer)
+                    if outer not in reach:
+                        reach.add(outer)
+                        todo.append(outer)
+            levels = nesting.levels
+            own = await map_fact_store.facts_for(scope, sorted(reach), viewer, shown)
+        out: dict[str, mf.Held] = {}
+        for layer in mf.LAYERS:
+            held = mf.read_up(place_id, layer, own, inside, levels)
+            if held is not None:
+                out[layer] = held
+        return out
+
+    async def set_map_fact(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        layer: str,
+        value: str | None,
+        *,
+        how: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's word for a place's land, climate or ruler (the edit screen): one change, so one
+        Undo. None is "Not sure" and clears it. For control, `value` is the group's id."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how)
+            return Written(None, w.batch)
+
+    async def show_map_facts(
+        self, guild_id: int, campaign_id: str, place_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️: whether players who can see this place see its land, climate and
+        ruler. One change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            changed = await map_fact_store.show_to_table(w, onto, place_id, shown)
+            return Written(changed, w.batch)
+
+    async def keep_map_facts(
+        self, guild_id: int, campaign_id: str, place_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ Keep what DMbot read, for one place: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            kept = await map_fact_store.keep_read(w, onto, place_id)
+            return Written(kept, w.batch)
+
+    async def add_read_map_facts(
+        self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str
+    ) -> Written[Counter[str]]:
+        """What a text reader found about places, as `read` for the DM to check (§7.2), in one
+        change of its own (its own Undo). Counts only."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            counts = await map_fact_store.add_read(w, onto, found)
+            return Written(counts, w.batch if counts["written"] or counts["same"] else None)
 
     async def set_unique(
         self, guild_id: int, campaign_id: str, entity_id: str, unique: bool, *, source: str
@@ -4895,7 +5124,8 @@ class MemoryStore:
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
         if gone.get("setting"):  # the campaign's setting follows the place it is (#4173)
-            await w.update(ENTITIES, gone_id, {"setting": False})  # (first: one setting at most)
+            # (first: one setting at most; the kept place takes who said it, a guess stays a guess)
+            await w.update(ENTITIES, gone_id, {"setting": False, "setting_from": None})
             now = await _entity_row(w, keep_id)  # (with the merged size: a setting stays big)
             if (
                 not now.get("setting")
@@ -4903,12 +5133,17 @@ class MemoryStore:
                 and onto.is_a(now["type"], "place")
                 and now.get("place_level") in SETTING_LEVELS
             ):
-                await w.update(ENTITIES, keep_id, {"setting": True})
+                await w.update(
+                    ENTITIES, keep_id, {"setting": True, "setting_from": gone.get("setting_from")}
+                )
         before_moves = await merge_restore.snapshot(
             w.conn, w.ids, keep_id, gone_id, kept["played_by"]
         )
         await _move_rule_links(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
         await _move_story_languages(w, onto.is_a(kept["type"], "character"), keep_id, gone_id)
+        await map_fact_store.move_on_merge(  # land, climate, ruler (#4256)
+            w, onto, str(kept["type"]), keep_id, gone_id
+        )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:

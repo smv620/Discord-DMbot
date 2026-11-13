@@ -138,6 +138,14 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
   });
 
+  it("has the owner's line about pictures and maps, and TERMS_VERSION did not change for it (#4275)", () => {
+    const text = terms().replace(/\s+/g, " ");
+    expect(text).toContain("Pictures and maps you add. When you add a picture or a map, in Discord or on the website, you confirm you have the right to use it and to let DMbot keep it in this campaign.");
+    // It sits right after the adventure-or-rulebook item.
+    expect(text.indexOf("game master can delete it.")).toBeLessThan(text.indexOf("Pictures and maps you add."));
+    expect(text.indexOf("Pictures and maps you add.")).toBeLessThan(text.indexOf("What DMbot makes from a session belongs to the campaign"));
+  });
+
   it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {
     expect(terms()).toContain("at least 16");
     expect(privacy()).toContain("at least 16");
