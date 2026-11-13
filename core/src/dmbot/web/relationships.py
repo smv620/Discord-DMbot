@@ -112,7 +112,11 @@ def edges_from(
         subject_kind = kinds.get(str(row["a"]), "")  # (the words read from row["a"])
         directional = bool(row.get("directional", False))
         both_ways = row.get("both_ways")  # (the DM's direction for it, #4154: None is the default)
-        if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional, both_ways):
+        # a journey or a plan on a route (#4173 slice 6d), from the doors since migration 0469
+        state = str(row.get("route_state") or "")
+        if reads_both_ways(
+            str(row["predicate"]), str(row["detail"] or ""), directional, both_ways, state
+        ):
             direction = "both"
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
@@ -141,6 +145,7 @@ def edges_from(
                     feeling=is_dm,
                     # "has met" / "has heard of" leads a knows line (#3882), feeling kept
                     knows_how=how,
+                    route_state=state,
                 ),
                 "rawWords": str(row["detail"]) if own else None,
                 "standing": dm_word,
@@ -158,6 +163,7 @@ def edges_from(
                     subject_kind,
                     knows_how=how,
                     both_ways=both_ways,
+                    route_state=state,
                 ),
                 # "are rivals" for a line that reads both ways, said of the two names together
                 # (#4154): the page writes "Cerric ↔ Wit · are rivals" and never works words out.

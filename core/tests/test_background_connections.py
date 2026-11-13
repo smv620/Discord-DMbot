@@ -1014,6 +1014,31 @@ class ThePath(NamesTest):
              frozenset(("Termalaine", "Lonelywood")): ""},
         )  # fmt: skip
 
+    async def test_a_road_and_a_river_between_one_pair_are_two_offers(self) -> None:
+        # (#4173 slice 6d part 2, Supervisor's test) both are offered; the same road twice is one
+        text = (
+            "A highway runs from Targos to Bryn Shander. Boats go downriver from Targos to Bryn "
+            "Shander. The road from Targos reaches Bryn Shander."
+        )
+        names = [
+            name("Targos", "place", "from Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Targos", "route to", "Bryn Shander",
+                    "Boats go downriver from Targos to Bryn Shander"), "words": "downriver"},
+            {**link("Bryn Shander", "route to", "Targos",
+                    "The road from Targos reaches Bryn Shander"), "words": "road"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = sorted(w.detail for w in await self.waiting() if w.predicate == "route_to")
+        self.assertEqual(got, ["river", "road"])
+
     def test_two_places_read_as_inside_and_beside_each_other_keep_the_in(self) -> None:
         # (#4173 slice 6a) never both: the "in" is offered, as before, until 6b's question asks
         found = [bg.Found(n, "place", (), (), "") for n in ("Targos", "Ten-Towns", "Maer Dualdon")]

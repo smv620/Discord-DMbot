@@ -137,6 +137,11 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
     for link in live:
+        if link.get("route_state"):
+            # A journey or a plan on a route (#4173 slice 6d) is never drawn as a road: the page
+            # has no words for one yet (the website half of slice 6d), so until then it is left
+            # out for everyone, and the DM's lists and Discord card say it
+            continue
         a, b = str(link["a"]), str(link["b"])
         via = split.links.get(str(link["id"]))
         if via is not None:

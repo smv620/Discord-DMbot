@@ -196,6 +196,7 @@ def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) ->
         subject_kind,
         feeling=feeling,
         knows_how=r.knows_how if r.predicate == "knows" else None,
+        route_state=r.route_state,  # (a journey or a plan, #4173 slice 6d)
     )  # (family reads with its role: "is the niece of"; a knows says whether they met, #3881)
 
 
@@ -225,7 +226,7 @@ def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> s
     # (as this reader is shown it, as on the website: a player's old friend line is a one-way
     # "knows", #3611)
     predicate, detail = for_reader(shown.predicate, shown.detail, feeling=feeling)
-    if reads_both_ways(predicate, detail, r.directional, r.both_ways):
+    if reads_both_ways(predicate, detail, r.directional, r.both_ways, r.route_state):
         words = pair_words(predicate, _md(detail), r.knows_how if predicate == "knows" else None)
         return f"{subject.name} and {obj.name} {words}"
     words = fact_words(shown, subject.type, feeling=feeling)
@@ -341,7 +342,7 @@ def _rows(
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
         ahead = r.subject_id == entity_id or reads_both_ways(
-            r.predicate, r.detail, r.directional, r.both_ways
+            r.predicate, r.detail, r.directional, r.both_ways, r.route_state
         )
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
@@ -368,10 +369,12 @@ def _rows(
                             r.directional,
                             subject_kind,
                             both_ways=r.both_ways,
+                            route_state=r.route_state,
                         )
                         or "is connected to"
                     )
-                    if r.predicate in ("kin_of", "located_in")
+                    # (and a route: "is where the party arrived by road from", #4173 slice 6d)
+                    if r.predicate in ("kin_of", "located_in", "route_to")
                     # a two-way kind the DM made one-way: "is seen as a rival by" (#4154)
                     else (ONE_WAY_BACK.get(r.predicate) if r.both_ways is False else None)
                     or (KNOWS_HOW_BACK.get(r.knows_how) if r.predicate == "knows" else None)

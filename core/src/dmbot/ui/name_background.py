@@ -40,6 +40,7 @@ from dmbot.memory import (
     picture_read,
     place_levels,
     pronouns,
+    route_words,
     story_chain,
     traits_read,
     who_ask,
@@ -2406,6 +2407,13 @@ async def queue_links(
     ]
     # (DMbot's assumed place is not known yet: a text that states it asks, #4173 slice 3)
     have = {(r.subject_id, r.predicate, r.object_id) for r in live if not r.assumed}
+    # a route by its means too (#4173 slice 6d): a known road never hides a river; a plain route
+    # is any route between the pair
+    have |= {
+        (r.subject_id, f"{r.predicate}:{r.detail}", r.object_id)
+        for r in live
+        if r.predicate == route_words.ROUTE_TO and r.detail and not r.assumed
+    }
     assumed_have = {(r.subject_id, r.predicate, r.object_id) for r in live if r.assumed}
     symmetric = await symmetric_kinds(memory, campaign)
     # the feeling each held "knows" carries, by direction (#3175)
@@ -2424,7 +2432,12 @@ async def queue_links(
             return feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
                 c.words
             )
-        if (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have):
+        how = (
+            f"{c.how}:{route_words.canonical(c.words)}"
+            if c.how == route_words.ROUTE_TO and route_words.canonical(c.words)
+            else c.how
+        )
+        if (a, how, b) in have or (c.how in symmetric and (b, how, a) in have):
             return True
         # A friendship or enmity stored the old way (ally_of, enemy_of) is the same fact as
         # "knows" with the feeling that matches it (#3175): not offered a second time.

@@ -889,6 +889,16 @@ def merge(
     return out
 
 
+def _once_words(c: Connection) -> tuple[str, bool] | None:
+    """What besides the pair and kind makes a line one fact (`keep_connections`): a place tie's
+    word, a route's means, nothing for the rest."""
+    if c.how == "located_in":
+        return place_words.slot(c.words)
+    if c.how == route_words.ROUTE_TO:
+        return (route_words.canonical(c.words), False)
+    return None
+
+
 def _own_label(raw: str, quote: str) -> str:
     """The text's own words as a connection's label, or "" when they can't be one. The label is the
     one free text of a connection: its words must be the quote's own, so nothing carried in from
@@ -1316,7 +1326,8 @@ def keep_connections(
         # a spelling that two names claim is no end: DMbot would be guessing which one is meant
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
-    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of"}
+    # (a route read from either town is one route: a reader writes no one-way route, #4173 6d)
+    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of", route_words.ROUTE_TO}
     # (a public other spelling fits an end by its words too, for the name it belongs to; a secret
     # one never does)
     spellings = {
@@ -1541,7 +1552,9 @@ def keep_connections(
                 # catch-all line for the pair (a mentor who is also a rival) is not offered.
                 # (the place tie is one fact for each of its words: lives in and worked in the
                 # same town are both kept, #3363)
-                once = (ka, c.how, kb, place_words.slot(c.words) if c.how == "located_in" else None)
+                # and a route is one fact for each means: a road and a river between two towns are
+                # both kept (#4173 slice 6d, the queue keys on it since migration 0468)
+                once = (ka, c.how, kb, _once_words(c))
                 if once in seen:
                     handed_at = held_lines.get(once)
                     if made.change and handed_at is not None and not out[handed_at].change:
