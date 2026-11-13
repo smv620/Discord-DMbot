@@ -91,9 +91,11 @@ async def ended_since(w: Scope, entity_ids: Collection[str]) -> dict[str, Ended]
     return {r["entity_id"]: Ended(r["from_session_at"], r["created_at"]) for r in rows}
 
 
-async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
+async def place_nesting(w: Scope, onto: Ontology, *, players: bool = False) -> Nesting:
     """The places inside places now: live `located_in` facts that haven't ended, between two
-    entries of a place kind. One read, only those facts."""
+    entries of a place kind. One read, only those facts. `players`: only the ones a player may be
+    told of (never secret, held back or DMbot's assumption, #4173 slice 3), for what is read up
+    the tree for a player, so a "(same as Kelvenmoor)" never names a parent they weren't told."""
     places = sorted(k for k in onto.types if onto.is_a(k, "place"))
     cur = await w.conn.execute(
         "SELECT r.subject_id, r.object_id FROM memory_relations r"
@@ -105,7 +107,8 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         " AND r.status <> 'rejected'"
         " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
         " AND r.to_session_at IS NULL"
-        " AND s.type = ANY(%s) AND o.type = ANY(%s)",
+        + (" AND NOT r.secret AND NOT r.unrevealed AND NOT r.assumed" if players else "")
+        + " AND s.type = ANY(%s) AND o.type = ANY(%s)",
         (*w.ids, NESTS, places, places),
     )
     pairs = [(str(r["subject_id"]), str(r["object_id"])) for r in await cur.fetchall()]

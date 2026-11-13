@@ -182,13 +182,14 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id", "knows_how", "end_reason", "both_ways"),
+     "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
-    # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154)
+    # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
+    # assumed: stated, the only kind before #4173 slice 3
     defaults={
         "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
-        "knows_how": "", "end_reason": None, "both_ways": None,
+        "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
     },
 )  # fmt: skip
 CORRECTIONS = Table(
@@ -908,6 +909,7 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "knows_how": "",  # how two people know each other was not kept before #3881
         "end_reason": None,  # why a tie ended was not kept before #4115
         "both_ways": None,  # no DM set a direction before #4154: the kind's default
+        "assumed": False,  # nothing was assumed before #4173 slice 3
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)

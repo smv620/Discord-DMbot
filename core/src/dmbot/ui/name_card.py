@@ -299,6 +299,12 @@ class Row:
     )
 
 
+# A place's parent DMbot assumed from where the story was (#4173 slice 3): the DM's card only
+# (players never get the row), with ✅ That's right on the place's own card.
+ASSUMED_MARK = " (assumed)"
+RIGHT_BUTTON = "✅ That's right"
+RIGHT_NOTE = "📍 Noted: **{place}** is in **{parent}**."
+ONLY_DM_RIGHT = "Only the DM can say where a place is."
 USED_TO_HAVE = "used to have"  # an ended owns or carries, in the DM's edit menus (#4115)
 USED_TO_HAVE_BACK = "used to be with"
 
@@ -322,6 +328,8 @@ def _rows(
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.assumed and not secrets:
+            continue  # (DMbot's assumption is the DM's until they say it's right: #4173 slice 3)
         ended_holding = r.predicate in hand_over.HELD and r.to_session_at is not None
         if ended_holding and not history:
             # (an item sold or stolen is no longer had (#4115): the item's own card tells it in
@@ -398,6 +406,7 @@ def _groups(
         groups.setdefault(row.words, []).append(
             f"**{_md(row.other)}**"
             + (f" {row.after}" if row.after else "")
+            + (ASSUMED_MARK if row.relation.assumed else "")
             + (" 🤫" if row.secret else "")
         )
     return groups
@@ -409,6 +418,7 @@ def connection_line(row: Row) -> str:
     return (
         f"{row.words} **{_md(row.other)}**"
         + (f" {row.after}" if row.after else "")
+        + (ASSUMED_MARK if row.relation.assumed else "")
         + (" 🤫" if row.secret else "")
     )
 
@@ -655,6 +665,38 @@ def _a_person_or_place(onto: Any, type_key: str) -> bool:
     return any(onto.is_a(type_key, kind) for kind in ("character", "faction", "place"))
 
 
+async def confirm_assumed(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, relation_id: str
+) -> None:
+    """The DM's ✅ That's right on a place's assumed parent (#4173 slice 3): the "(assumed)" mark
+    goes, and from then on the usual rule for what players see applies. One change, one Undo; the
+    card is drawn again with a note."""
+    await _answer_first(interaction, in_place=True)
+    campaign = await _campaign_for(interaction, campaign_id)
+    memory = _memory(interaction)
+    if campaign is None or memory is None:
+        return
+    if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+        await _tell(interaction, ONLY_DM_RIGHT)
+        return
+    try:
+        written = await memory.confirm_assumed(
+            campaign.guild_id, campaign.id, relation_id, source=DM
+        )
+    except MemoryRuleError:  # (gone meanwhile: the card is drawn as it is now)
+        await show_card(interaction, campaign_id, entity_id, replace=True)
+        return
+    changed(interaction, campaign)
+    place = await memory.entity(campaign.guild_id, campaign.id, written.value.subject_id)
+    parent = await memory.entity(campaign.guild_id, campaign.id, written.value.object_id)
+    note = (
+        RIGHT_NOTE.format(place=_md(place.name), parent=_md(parent.name))
+        if place is not None and parent is not None
+        else None
+    )
+    await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
+
+
 async def show_card(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -861,6 +903,20 @@ async def show_card(
         and not any(e.entity_id == entity_id and e.key == own and e.secret for e in names.names)
         and await _spoken_recaps(interaction, campaign)
     )
+    # A place's own parent DMbot assumed (#4173 slice 3): ✅ That's right, for a DM only
+    assumed_parent = (
+        next(
+            (
+                r.id
+                for r in connections
+                if r.assumed and r.subject_id == entity_id and r.status == CONFIRMED
+                and r.to_session_at is None
+            ),
+            None,
+        )
+        if secrets and entity.type == "place"
+        else None
+    )  # fmt: skip
     view = NameCard(
         campaign.id,
         entity_id,
@@ -869,6 +925,7 @@ async def show_card(
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
+        assumed=assumed_parent,
         clue=entity.type == "clue",
         thread=is_thread and secrets,
         promise=entity.type == "promise" and secrets,
@@ -1057,6 +1114,7 @@ class NameCard(_Menu):
         deed: bool = False,
         companion: bool = False,
         size: bool = False,
+        assumed: str | None = None,
         setting: bool | None = None,
         languages: bool = False,
         thread: bool = False,
@@ -1142,6 +1200,12 @@ class NameCard(_Menu):
                     self.add_item(
                         _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
                     )
+                    break
+        self.assumed = assumed  # the place's assumed parent, its connection's id (#4173 slice 3)
+        if assumed is not None:  # (DMbot's guess of where it is: the DM says it's right)
+            for row in (3, 2, 1, 0):  # (row 0 too, so a full card still lets the DM clear it)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._assumed_right, label=RIGHT_BUTTON, row=row))
                     break
         self.is_setting = bool(setting)
         if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
@@ -1272,6 +1336,11 @@ class NameCard(_Menu):
         await place_size.flip_setting(
             interaction, self.campaign_id, self.entity_id, not self.is_setting
         )
+
+    async def _assumed_right(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        if self.assumed is not None:
+            await confirm_assumed(interaction, self.campaign_id, self.entity_id, self.assumed)
 
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()

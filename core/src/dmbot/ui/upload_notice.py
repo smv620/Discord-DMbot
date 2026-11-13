@@ -304,6 +304,7 @@ async def add_sure(
     DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
     again just before. Never raises."""
     from dmbot.memory import auto_accept as auto
+    from dmbot.memory import backstory_keep
     from dmbot.ui.names import background_kind
 
     try:
@@ -328,6 +329,12 @@ async def add_sure(
             links is not None and connections
         ):  # (a bot without the connections store adds the names only)
             await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
+            # (a place's parent assumed from where the story was, once both places are kept: never
+            # a question, #4173 slice 3)
+            try:  # (never at the cost of the upload's notice and its Undo)
+                await backstory_keep.keep_assumed(memory, links, guild, cid)
+            except Exception as exc:
+                log.warning("Assumed places couldn't be kept (%s)", type(exc).__name__)
         if bot.lookup is not None:
             bot.lookup.drop([cid])
         counts = {**tally.kinds}

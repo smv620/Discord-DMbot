@@ -300,9 +300,11 @@ def check_relation(
     # neither judged against facts nor are facts judged against it. Every other proposal is.
     if waiting_guess(new):
         return problems
+    # (an assumed parent, #4173 slice 3, is never anyone's rival: Supervisor's condition)
     live = [
         r for r in existing
         if r.status != REJECTED and not waiting_guess(r) and r.id != new.id and same_time(r, new)
+        and not r.assumed
     ]  # fmt: skip
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.

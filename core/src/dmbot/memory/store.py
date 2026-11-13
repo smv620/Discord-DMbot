@@ -100,6 +100,7 @@ from dmbot.memory._changes import (
 )
 from dmbot.memory.checks import (
     HELD_TWICE,
+    NESTS,
     Ended,
     check_relation,
     duplicate_of,
@@ -339,6 +340,11 @@ PARTY_NAME = "The party"
 NAMES_NOT_SHOWN = "Show both names to the players first, then this connection."
 ONLY_DM_SAYS = "Only the DM can say that."
 TWO_ENTRIES = "A relationship needs two different entries."
+# (#4173 slice 3: an assumed parent never goes over one the story or the DM said)
+STATED_PARENT = "That place is already inside another place."
+ASSUMED_FIRST = (
+    "DMbot assumed where that place is. Tap ✅ That's right on the place's own card first."
+)
 SAY_WHO_PLAYS = "Say who plays a character on the character itself."
 DESCRIBED_AS = "Say who they are described as."
 WORD_TOO_LONG = "That relationship word is too long."
@@ -476,7 +482,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
-        r.get("end_reason"), r.get("both_ways"),
+        r.get("end_reason"), r.get("both_ways"), bool(r.get("assumed")),
     )  # fmt: skip
 
 
@@ -505,6 +511,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "knows_how": rel.knows_how,
         "end_reason": rel.end_reason,
         "both_ways": rel.both_ways,
+        "assumed": rel.assumed,
     }
 
 
@@ -1288,7 +1295,7 @@ class MemoryStore:
         (`shown`, the caller's own list for that viewer, or else the gate)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
-            nesting = await states.place_nesting(scope, onto)
+            nesting = await states.place_nesting(scope, onto, players=not viewer.dm)
             seen = None if viewer.dm or shown is not None else await gate.visible_to(scope, viewer)
             inside: dict[str, list[str]] = {}
             reach = {place_id}
@@ -5893,6 +5900,7 @@ class MemoryStore:
         keep_flags: bool = False,
         by_hand: bool = False,
         knows_how: str = "",
+        assumed: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -5910,7 +5918,7 @@ class MemoryStore:
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided, keep_flags=keep_flags,
-                by_hand=by_hand, knows_how=knows_how,
+                by_hand=by_hand, knows_how=knows_how, assumed=assumed,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -5950,6 +5958,7 @@ class MemoryStore:
         by_hand: bool = False,
         knows_how: str = "",
         both_ways: bool | None = None,
+        assumed: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -5960,7 +5969,10 @@ class MemoryStore:
         the extractor's, whoever pressed the button). `knows_how` (#3881): on a `knows` only, how
         the two know each other ("met", "aware" or ""); restating a known one only ever moves it up,
         and "met" moves the other's existing `knows` back up too. `both_ways` (#4154): the DM's
-        direction for a new row (None: its kind's default), which also decides its stored order."""
+        direction for a new row (None: its kind's default), which also decides its stored order.
+        `assumed` (#4173 slice 3): a place's parent DMbot assumed from where the story was, kept
+        held back, never flagged and never written over a stated parent; a stated parent written
+        here replaces the place's assumed one (see `_replace_assumed`)."""
         source = made_by or w.source
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
@@ -5992,6 +6004,12 @@ class MemoryStore:
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
         }
+        if assumed:
+            if pred.key != NESTS or set(types.values()) != {"place"}:
+                raise ValueError("Only a place's parent place is ever assumed")
+            if await _has_parent(w, subject_id, object_id):
+                raise MemoryRuleError(STATED_PARENT)
+            unrevealed = True  # (players see it only once the DM says it's right: Supervisor)
         found: list[dict[str, Any]] = []
         if mention_ids:
             found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
@@ -6015,7 +6033,7 @@ class MemoryStore:
             pred.version, unrevealed, directional, (decided or None),
             # (between two people only: a character "knows" a place or a secret, never "met" it)
             knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
-            both_ways=both_ways,
+            both_ways=both_ways, assumed=assumed,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -6041,11 +6059,17 @@ class MemoryStore:
             if live and new.knows_how == KNOWS_MET:
                 hidden = bool(upgrade.get("secret", same.secret)) or same.unrevealed
                 await _met_back(w, s, o, existing, hidden=hidden)
+            if same.assumed and not assumed and live and status == CONFIRMED:
+                # (stated and kept now: the guess was right; a mere proposal changes nothing)
+                upgrade = {**upgrade, "assumed": False}
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
             revived, _ = await _settle_whereabouts(w, _relation(row), types, by_hand=by_hand)
             return revived, []
+        if pred.key == NESTS and not assumed and status == CONFIRMED and to_session_at is None:
+            gone = await _replace_assumed(w, s, types)
+            existing = [r for r in existing if r.id not in gone]
         await w.insert(RELATIONS, _relation_row(new))
         if new.knows_how == KNOWS_MET:
             await _met_back(w, s, o, existing, hidden=new.secret or new.unrevealed)
@@ -6059,8 +6083,27 @@ class MemoryStore:
                 w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,
                 session_started_at=mention["session_started_at"], trusted=True,
             )  # fmt: skip
+        if assumed:  # (never an alert or a question on its own: Supervisor's condition)
+            return new, []
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
         return new, flags
+
+    async def confirm_assumed(
+        self, guild_id: int, campaign_id: str, relation_id: str, *, source: str
+    ) -> Written[Relation]:
+        """The DM's ✅ That's right on a place's assumed parent (#4173 slice 3): the mark goes and
+        the connection is the DM's own from now on, with the usual rule for what players see (it
+        stays held back until said at the table or revealed). Only the DM; one change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(ONLY_DM_SAYS)
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None or current["status"] == REJECTED:
+                raise MemoryRuleError(NOT_FOUND)
+            if not current["assumed"]:
+                return Written(_relation(current), None)
+            row = await w.update(RELATIONS, relation_id, {"assumed": False})
+            return Written(_relation(row), w.batch)
 
     async def set_knows_how(
         self, guild_id: int, campaign_id: str, relation_id: str, how: str, *, source: str
@@ -6173,6 +6216,16 @@ class MemoryStore:
                 _check_choice(status, FACT_STATUSES, "relation status")
                 check_status_change(current["status"], status, source)
                 changes["status"] = status
+                if (
+                    status == CONFIRMED
+                    and current["predicate"] == NESTS
+                    and not current["assumed"]
+                    and current["to_session_at"] is None
+                ):
+                    # (a stated parent kept now replaces DMbot's assumed one: #4173 slice 3)
+                    subject = current["subject_id"]
+                    kind = (await _entity_row(w, subject))["type"]
+                    await _replace_assumed(w, subject, {subject: kind})
             if secret is not None:
                 if current["predicate"] == threads_mod.LED_TO and not secret:
                     raise MemoryRuleError("A “led to” link stays the DM's alone.")
@@ -6201,6 +6254,8 @@ class MemoryStore:
                             raise MemoryRuleError(unnamed_mod.NAME_BEFORE_SHOWING)
                         raise MemoryRuleError(NAMES_NOT_SHOWN)
                 changes["unrevealed"] = unrevealed
+                if not unrevealed and current.get("assumed"):
+                    changes["assumed"] = False  # (the DM's own 👁️ Reveal says it's right)
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
@@ -6381,6 +6436,11 @@ class MemoryStore:
         it back. Only the DM."""
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
+            if kind == gate.CONNECTION and chosen:
+                # (the DM saying who knows DMbot's assumed place is the DM's word on it: #4173)
+                row = await w.get(RELATIONS, statement_id)
+                if row is not None and row["assumed"]:
+                    await w.update(RELATIONS, statement_id, {"assumed": False})
             return Written(chosen, w.batch)
 
     async def learn_statement(
@@ -6398,6 +6458,7 @@ class MemoryStore:
         kept, the gate shows the statement (and the entries it names) to that character's player.
         One change, so one Undo. Only the DM. Returns whether anything changed."""
         async with self._write(guild_id, campaign_id, source) as w:
+            await _not_assumed(w, kind, statement_id)
             changed = await knowers.learn(w, kind, statement_id, character_id)
             return Written(changed, w.batch)
 
@@ -6418,6 +6479,7 @@ class MemoryStore:
             changed = 0
             for statement_id, character_id in pairs:
                 try:  # (`learn` checks before it writes: a refused one leaves the others)
+                    await _not_assumed(w, kind, statement_id)
                     changed += int(await knowers.learn(w, kind, statement_id, character_id))
                 except MemoryRuleError:
                     continue
@@ -7777,7 +7839,8 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
         return False
     before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
-    return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
+    # (a reveal of DMbot's assumed place also clears its mark: still the DM's reveal, #4173)
+    return bool(changed_keys) and changed_keys <= {"secret", "unrevealed", "assumed"}
 
 
 async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
@@ -8225,6 +8288,7 @@ async def reveal_stated_in(w: Changes, relation_id: str) -> bool:
     if (
         row is None
         or not row["unrevealed"]
+        or row.get("assumed")  # (only the DM confirms DMbot's assumption: Supervisor, #4173)
         or row["secret"]
         or row["status"] != CONFIRMED
         or row["to_session_at"] is not None
@@ -8627,6 +8691,49 @@ async def _settle_whereabouts(
     for ended_id, changes in settled.ends.items():
         await w.update(RELATIONS, ended_id, dict(changes))
     return rel, set(settled.ends)
+
+
+async def _not_assumed(w: Changes, kind: str, statement_id: str) -> None:
+    """A place's assumed parent (#4173 slice 3) is never learned by a character on the way: the
+    players see it only once the DM has said it's right (Supervisor's ruling). The DM's own "Who
+    knows" list on it is their word, and clears the mark (`set_statement_knowers`)."""
+    if kind != gate.CONNECTION:
+        return
+    row = await w.get(RELATIONS, statement_id)
+    if row is not None and row["assumed"]:
+        raise MemoryRuleError(ASSUMED_FIRST)
+
+
+async def _has_parent(w: Changes, place_id: str, parent_id: str) -> bool:
+    """Is there a reason not to assume this parent (#4173 slice 3)? The place has a live parent
+    place already, said or assumed (one guess per place), or the DM turned this very one down: a
+    guess never brings back what the DM removed (the reviewer on slice 3)."""
+    rows = await w.select(
+        RELATIONS,
+        " AND subject_id = %s AND predicate = %s"
+        " AND ((status <> %s AND to_session_at IS NULL"
+        "       AND object_id IN (SELECT id FROM memory_entities WHERE type = 'place'))"
+        "      OR (status = %s AND object_id = %s))",
+        [place_id, NESTS, REJECTED, REJECTED, parent_id],
+    )
+    return bool(rows)
+
+
+async def _replace_assumed(w: Changes, subject_id: str, types: Mapping[str, str]) -> set[str]:
+    """A stated parent replaces a place's assumed one (#4173 slice 3, Supervisor's ruling): the
+    assumed row ends as rejected, a correction and not a "used to be in" line, in the caller's
+    change so one Undo takes both back, and it is never flagged. Returns the ids it ended."""
+    if types.get(subject_id) != "place":
+        return set()
+    rows = await w.select(
+        RELATIONS,
+        " AND subject_id = %s AND predicate = %s AND assumed AND status <> %s"
+        " AND to_session_at IS NULL",
+        [subject_id, NESTS, REJECTED],
+    )
+    for row in rows:
+        await w.update(RELATIONS, row["id"], {"status": REJECTED})
+    return {str(r["id"]) for r in rows}
 
 
 async def _flag_problems(
@@ -9037,6 +9144,12 @@ async def _move_relations(
                 }  # fmt: skip
             if knows_rank(moved.knows_how) > knows_rank(twin.knows_how):  # (#3881: only up)
                 upgrade = {**upgrade, "knows_how": moved.knows_how}
+            if twin.assumed and not moved.assumed and moved.status == CONFIRMED:
+                # (the DM's stated fact folded into DMbot's guess of it: the fact wins, and what
+                # the players were shown stays shown, #4173 slice 3)
+                upgrade = {**upgrade, "assumed": False}
+                if twin.unrevealed and not moved.unrevealed:
+                    upgrade["unrevealed"] = False
             gone_rows.append(moved.id)
             folded[moved.id] = twin.id
             forget(moved)
@@ -9045,8 +9158,8 @@ async def _move_relations(
                 upgrades.append((twin.id, upgrade))
                 state[twin.id] = _relation({**_relation_row(twin), **upgrade})
             continue
-        if pred is not None and moved.status != REJECTED:
-            to_check.append((moved, others))
+        if pred is not None and moved.status != REJECTED and not moved.assumed:
+            to_check.append((moved, others))  # (an assumed one is never flagged: #4173)
     await w.update_rows(RELATIONS, moves)
     # (the bulk write skips the flag hooks, and the players' points of view must not carry a
     # connection over to ends it was not known about: #3073)
@@ -9104,6 +9217,18 @@ async def _move_relations(
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
+    # A place that now has a stated parent keeps no assumed one (#4173 slice 3: a merge of a place
+    # with a guess and one with a stated parent)
+    if any(r["predicate"] == NESTS and r["subject_id"] == gone_id for r in rows):
+        keep_type = (await _entity_row(w, keep_id))["type"]
+        stated = await w.select(
+            RELATIONS,
+            " AND subject_id = %s AND predicate = %s AND NOT assumed AND status = %s"
+            " AND to_session_at IS NULL",
+            [keep_id, NESTS, CONFIRMED],
+        )
+        if stated:
+            await _replace_assumed(w, keep_id, {keep_id: keep_type})
 
     return companions
 

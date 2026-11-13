@@ -109,6 +109,11 @@ STORE = {
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
+    "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
+    "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
+    "_not_assumed": DM_ONLY + ": refuses learning an assumed connection (#4173 slice 3)",
+    "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
+    "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
     "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
     "_replace_relation_in": DM_ONLY
