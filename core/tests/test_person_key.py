@@ -81,5 +81,44 @@ class FromSettings(unittest.TestCase):
             person_key.from_settings(SimpleNamespace())
 
 
+class TheSettingsRead(unittest.TestCase):
+    def test_the_bot_and_the_api_both_read_the_secret_and_neither_shows_it(self) -> None:
+        from dmbot.config import load_settings
+        from dmbot.web.settings import load_web_settings
+
+        bot = load_settings(
+            {
+                "DISCORD_TOKEN": "t",
+                "EARS_SHARED_SECRET": "s",
+                "DATABASE_URL": "postgres://x",
+                "DMBOT_PERSON_KEY": SECRET,
+            }
+        )
+        web = load_web_settings(
+            {
+                "DATABASE_URL": "postgresql://x",
+                "DISCORD_CLIENT_ID": "1",
+                "DISCORD_CLIENT_SECRET": "s",
+                "WEB_SECRET_KEY": "k" * 40,
+                "WEB_SITE_URL": "https://dmbot.example/",
+                "WEB_API_URL": "https://api.dmbot.example",
+                "DMBOT_PERSON_KEY": SECRET,
+            }
+        )
+        self.assertEqual((bot.person_key, web.person_key), (SECRET, SECRET))
+        self.assertNotIn(SECRET, repr(bot) + repr(web))
+
+
+class TheRegistry(unittest.TestCase):
+    def tearDown(self) -> None:
+        person_key.configure("")
+
+    def test_configure_says_whether_a_key_is_usable_and_key_for_follows_it(self) -> None:
+        self.assertFalse(person_key.configure("short"))
+        self.assertIsNone(person_key.key_for(ALICE))
+        self.assertTrue(person_key.configure(SECRET))
+        self.assertEqual(person_key.key_for(ALICE), PersonKeys(SECRET).of(ALICE))
+
+
 if __name__ == "__main__":
     unittest.main()
