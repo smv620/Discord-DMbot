@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import place_levels
+from dmbot.memory import map_facts, place_levels
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
@@ -285,6 +285,10 @@ ACTIONS = (
     "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
     "place-setting",  # the campaign's setting (#4173 slice 2): {setting: true | false}
     "place-form",  # land, water or a road (#4173 slice 6a): {form}, water or route; null is land
+    "map-terrain",  # a place's land (#4287): {value, how}; null value is "Not sure"
+    "map-climate",  # its climate (#4287): {value, how}
+    "map-control",  # who rules it (#4287): {group, how}; null group is "Not sure"
+    "map-show",  # whether players who can see it see its land, climate and ruler: {shown}
 )
 
 KIND_WORD = re.compile(
@@ -430,6 +434,31 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         if form is not None and form not in place_levels.FORMS:
             raise RecapError("bad_name")
         text = form or ""
+    elif action in ("map-terrain", "map-climate", "map-control"):  # (#4287) a value and its shade
+        layer = action[4:]
+        how = body.get("how") or ""
+        if not isinstance(how, str) or (how and how not in map_facts.HOWS[layer]):
+            raise RecapError("bad_name")
+        if layer == "control":
+            group = body.get("group")
+            if group is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(group, str) or not ID_PATTERN.match(group) or not how:
+                raise RecapError("bad_name")
+            text = f"{group} {how}" if group else ""
+        else:
+            value = body.get("value")
+            if value is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(value, str) or value not in map_facts.VALUES[layer]:
+                raise RecapError("bad_name")
+            text = f"{value} {how}".strip() if value else ""
+    elif action == "map-show":  # 🙈 / 👁️ (#4287)
+        if not isinstance(body.get("shown"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["shown"])
     elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
         target = str(body.get("alias") or "")
         if not ID_PATTERN.match(target):

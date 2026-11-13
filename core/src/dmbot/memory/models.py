@@ -554,6 +554,10 @@ class Relation:
     # The DM's direction for it (#4154): None reads as its kind's default (`link_words.BOTH_WAYS`),
     # True both ways (A ↔ B), False one way, from the first name.
     both_ways: bool | None = None
+    # DMbot assumed it from where the story was (#4173 slice 3: a place's parent, never stated):
+    # "(assumed)" on the DM's card, held back from the players, until the DM says ✅ That's right
+    # or a stated parent replaces it.
+    assumed: bool = False
 
 
 @dataclass(frozen=True, slots=True)

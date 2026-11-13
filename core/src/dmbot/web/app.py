@@ -62,6 +62,7 @@ from dmbot.web import (
     imports,
     line_fixes,
     lore,
+    member_lookup,
     met_list,
     my_lines,
     names_smart,
@@ -71,6 +72,7 @@ from dmbot.web import (
     past_sessions,
     pc_icons,
     pictures,
+    place_world,
     private_scenes,
     recap_style,
     relationships,
@@ -912,6 +914,7 @@ def create_app(
         "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
+        "bad_id": (422, "bad_id"),  # a typed Discord id that is not a long number (#4225)
         "undone": (409, "undone"),  # Undo this upload: taken back, or changed nothing (#3879)
         "too_late": (409, "too_late"),  # Undo this upload: past its 7 days (#3879)
         "hour_full": (429, "hour_full"),  # thirty talk messages from the campaign this hour (#2545)
@@ -2495,6 +2498,16 @@ def create_app(
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/names/{entity_id}/world")
+    async def me_campaign_place_world(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        """A place's land, climate and ruler (#4287): DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await place_world.read(db, session, ref, entity_id)
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/private-scenes")
     async def me_campaign_private_scenes(ref: str, signed: Signed) -> dict[str, Any]:
         """The times two player characters were alone together while the party was split
@@ -3687,6 +3700,34 @@ def create_app(
         session, _token = signed
         try:
             return await upload_notice.read_undo(db, session, ref, undo_id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # Who is this Discord ID? (#4225, point 5): a person picker's typed id, looked up by the bot in
+    # the server; the page shows the name before the id is used. No campaign is touched.
+    member_lookup_limit = RateLimit(60, count=30)  # questions asked: 30 a minute, per account
+
+    @app.post("/me/member-lookup/{guild}")
+    async def me_member_lookup(guild: int, body: dict[str, Any], signed: Signed) -> JSONResponse:
+        """Ask who a typed Discord id is in this server; answers `{id}` to poll."""
+        session, _token = signed
+        if member_lookup_limit.take(f"member-lookup:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            made = await member_lookup.ask(db, session, guild, body.get("id"))
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return JSONResponse({"id": made}, status_code=202)
+
+    @app.get("/me/member-lookup/{guild}/{lookup_id}")
+    async def me_member_lookup_state(guild: int, lookup_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the question stands: `state` (waiting, working, done, failed), `outcome` (found or
+        not_here), the `name` once found and whether they have `agreed` to be recorded here."""
+        session, _token = signed
+        try:
+            return await member_lookup.read(db, session, guild, lookup_id)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

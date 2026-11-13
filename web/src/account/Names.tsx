@@ -17,6 +17,8 @@ import { MET_LIST_LIVE } from "../content/met-list-switch";
 import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
+import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
+import { PLACE_FACTS_LIVE } from "../content/place-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
@@ -999,6 +1001,14 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
           {words.saveSpelling}
         </button>
       </form>
+
+      {PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorld && (
+        <LazyPanel load={() => import("./PlaceWorld")} what="the place's land, climate and ruler" props={{ api, refId, row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+
+      {PLACE_FACTS_LIVE && row.kind === "place" && row.placeLevel !== undefined && (
+        <LazyPanel load={() => import("./PlaceFacts")} what="the place's size" props={{ row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
 
       {PLAYERS_LINE_LIVE && row.playersText !== undefined && (
         <LazyPanel load={() => import("./PlayersLine")} what="the line for the players" props={{ row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />

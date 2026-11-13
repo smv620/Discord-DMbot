@@ -2045,6 +2045,15 @@ export interface NameRow {
   secret: boolean;
   /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
   hidden?: boolean;
+  /** A place's size (#4173): plane, world, region, settlement, district, street, building or room; null when it has none. Only places have one. */
+  placeLevel?: string | null;
+  /** Who set it: "read" (DMbot read it from the lore's words) or "dm"; null when there is no size. */
+  placeLevelFrom?: "read" | "dm" | null;
+  /** Land, water or a road (#4173 slice 6a): "water", "route", or null for land. */
+  form?: "water" | "route" | null;
+  formFrom?: "read" | "dm" | null;
+  /** True on the campaign's one setting, a confirmed place (#4173 slice 2). */
+  setting?: boolean;
   /** For a DM: which of `others` are secret names. */
   secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
@@ -2180,6 +2189,14 @@ export type NameChange =
   | { action: "told-add" | "told-remove"; alias: string; character: string }
   // The line the players are told about a name; a blank clears it (#3568).
   | { action: "players-line"; line: string }
+  // A place's size, kind and setting (#4173): `size` null is "Not sure"; `form` null is land; the bot refuses a name that is not a place.
+  | { action: "place-size"; size: string | null }
+  | { action: "place-form"; form: "water" | "route" | null }
+  | { action: "place-setting"; setting: boolean }
+  // A place's land, climate and ruler (#4287): a null value (or group) is "Not sure"; `how` is the shade ("" for none).
+  | { action: "map-terrain" | "map-climate"; value: string | null; how: string }
+  | { action: "map-control"; group: string | null; how: string }
+  | { action: "map-show"; shown: boolean }
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
   | { action: "kind"; kind: string; player?: string; confirmed?: true }
@@ -2903,6 +2920,8 @@ export interface AccountApi {
   answerMet?(ref: string, id: string, answer: MetAnswer, onLook?: (look: WaitingLook) => void): Promise<void>;
   /** "Private scenes" (#4102): the DM's list. A DM only. */
   privateScenes?(ref: string): Promise<PrivateScene[]>;
+  /** A place's land, climate and ruler (#4287), for a DM only: its rows and the campaign's groups for the ruler menu. */
+  placeWorld?(ref: string, placeId: string): Promise<PlaceWorld>;
   /** "Not private": DMbot never counts this scene again. Resolves with the two names; refuses `gone` when it was already marked. */
   notPrivateScene?(ref: string, id: string): Promise<{ first: string; second: string }>;
   /** "Yes, that's right" or the Undo of one of them: queued for the bot, which applies it as the DM; resolves when
@@ -3460,7 +3479,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
@@ -3624,4 +3643,25 @@ export function httpApi(
     ...lazyArea(NAMES_METHODS, () => import("./api-names"), helpers),
     ...lazyArea(CAMPAIGN_METHODS, () => import("./api-campaign"), helpers),
   };
+}
+
+/** One open row of a place's land, climate or ruler (#4287). `read` is true until the DM confirms it ("DMbot read this"). */
+export interface PlaceWorldRow {
+  layer: "terrain" | "climate" | "control";
+  value: string;
+  words: string;
+  group: string | null;
+  groupName: string | null;
+  how: string;
+  part: string;
+  read: boolean;
+  source: string;
+  shown: boolean;
+}
+export interface PlaceWorld {
+  /** The place's size and form (null when none): a climate is for a region or bigger, land only for land. */
+  level: string | null;
+  form: "water" | "route" | null;
+  rows: PlaceWorldRow[];
+  groups: { id: string; name: string }[];
 }
