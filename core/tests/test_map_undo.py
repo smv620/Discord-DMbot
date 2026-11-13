@@ -11,7 +11,7 @@ from typing import Any
 
 from dmbot.campaigns import CampaignStore
 from dmbot.memory._changes import DEPENDENTS, MAP_PICTURE_GONE, MAPS
-from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, PictureStore
 from tests.pg import DatabaseTest
@@ -65,7 +65,7 @@ class MapUndo(DatabaseTest):
     async def add(self, picture_id: int) -> tuple[str, int]:
         """A map kept the way `MapStore.add_map` keeps it: the row, and its picture pinned."""
         map_id = uuid.uuid4().hex
-        async with self.memory._write(GUILD, self.camp, DM) as w:
+        async with self.memory.map_write(GUILD, self.camp) as w:
             await w.insert(MAPS, {
                 "id": map_id, "picture_id": picture_id, "title": "", "covers": None,
                 "kind": "region", "width": None, "height": None, "scale_value": None,
@@ -83,13 +83,13 @@ class MapUndo(DatabaseTest):
             return map_id, w.batch
 
     async def change(self, map_id: str, **cells: object) -> int:
-        async with self.memory._write(GUILD, self.camp, DM) as w:
+        async with self.memory.map_write(GUILD, self.camp) as w:
             await w.update(MAPS, map_id, dict(cells))
             assert w.batch is not None
             return w.batch
 
     async def remove(self, map_id: str, picture_id: int) -> int:
-        async with self.memory._write(GUILD, self.camp, DM) as w:
+        async with self.memory.map_write(GUILD, self.camp) as w:
             await w.delete(MAPS, map_id)
             await w.conn.execute(
                 "UPDATE campaign_pictures SET permanent = FALSE WHERE id = %s", (picture_id,)

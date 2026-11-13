@@ -757,6 +757,15 @@ class MemoryStore:
         await report_fixed.give_back(conn, guild_id, campaign_id, [k for _, k in keys])
 
     @asynccontextmanager
+    async def map_write(self, guild_id: int, campaign_id: str) -> AsyncIterator[Changes]:
+        """One DM action on a map (`maps/store.py`), as one batch of the change log, so it is one
+        Undo (#4346, design rule 8). The map store writes `campaign_maps` through the `Changes` it
+        is handed, and its picture's permanent flag in the same transaction; `w.batch` is the
+        Undo's number. A failure anywhere writes nothing."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            yield w
+
+    @asynccontextmanager
     async def _read(
         self, guild_id: int, campaign_id: str, *, snapshot: bool = False
     ) -> AsyncIterator[Scope]:
