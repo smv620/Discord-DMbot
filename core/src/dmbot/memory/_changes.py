@@ -17,6 +17,7 @@ from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
+from dmbot.pictures.store import _lock as pictures_lock
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
@@ -1070,7 +1071,11 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
-    if pictures:  # a map's picture is kept permanent exactly while it is a map (#4346)
+    # A map's picture is kept permanent exactly while it is a map (#4346). Undoing an add clears a
+    # pin the DM set before it was a map, as removing a map does (Supervisor's ruling on #4344).
+    # An Undo that pins again does not re-check the 80% share: the picture was permanent until the
+    # change it undoes, and the share's size is a setting the log doesn't see (put to Supervisor).
+    if pictures:
         await conn.execute(
             "UPDATE campaign_pictures p SET permanent = EXISTS (SELECT 1 FROM campaign_maps m"
             " WHERE m.guild_id = p.guild_id AND m.campaign_id = p.campaign_id"
@@ -1202,6 +1207,10 @@ async def _map_pictures_kept(
     }
     if not pictures:
         return []
+    # (the picture store's lock first, as `MapStore` and `PictureStore.delete` take it before any
+    # picture or map row: one order, so an Undo racing a delete waits instead of deadlocking, and a
+    # picture store making room never soft-deletes a picture this Undo is pinning again)
+    await pictures_lock(conn, *ids)
     cur = await conn.execute(
         "SELECT id FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
         " AND id = ANY(%s) AND deleted_at IS NULL FOR UPDATE",
