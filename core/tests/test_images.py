@@ -305,5 +305,50 @@ class TheSizeLimit(unittest.TestCase):
         self.assertGreater(len(over), 5 * 1024 * 1024)  # one step more would not fit
 
 
+class CloseRead(unittest.TestCase):
+    """#4173 slice 6b-1: the close read's parser keeps only what is on its lists."""
+
+    def test_words_and_names_off_the_list_are_dropped(self) -> None:
+        raw = json.dumps({
+            "level": "region",
+            "places": [
+                {"name": "Targos", "where": "north", "level": "settlement", "form": "land"},
+                {"name": "Maer Dualdon", "where": "west", "level": "huge", "form": "lava"},
+            ],
+            "links": [
+                {"a": "Targos", "kind": "next_to", "b": "Maer Dualdon", "word": "lakeside",
+                 "sure": True},
+                {"a": "Targos", "kind": "route_to", "b": "Maer Dualdon", "word": "teleport",
+                 "sure": False},
+                {"a": "Targos", "kind": "in", "b": "Nowhere", "word": "", "sure": True},
+                {"a": "Targos", "kind": "in", "b": "Targos", "word": "", "sure": True},
+                {"a": "Targos", "kind": "owns", "b": "Maer Dualdon", "word": "", "sure": True},
+            ],
+            "layout": "A lake.",
+        })  # fmt: skip
+        got = images.parse_close_map(raw)
+        assert got is not None
+        self.assertEqual(got.level, "region")
+        self.assertEqual(
+            [(p.level, p.form) for p in got.places], [("settlement", "land"), ("", "")]
+        )
+        self.assertEqual(
+            [(k.kind, k.word, k.sure) for k in got.links],
+            [("next_to", "on the shore of", True), ("route_to", "", False)],
+        )
+
+    def test_an_answer_of_the_wrong_shape_is_none(self) -> None:
+        self.assertIsNone(images.parse_close_map("not json"))
+        self.assertIsNone(images.parse_close_map(json.dumps({"places": [], "layout": ""})))
+
+
+class MayUse(unittest.TestCase):
+    def test_only_the_dms_own_map_today(self) -> None:
+        from dmbot.map_use import may_use_map
+
+        self.assertTrue(may_use_map((7, 9), 7))
+        self.assertFalse(may_use_map((7,), 8))
+
+
 if __name__ == "__main__":
     unittest.main()
