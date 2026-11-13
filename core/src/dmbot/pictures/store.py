@@ -335,6 +335,14 @@ class PictureStore:
             if row is None:
                 return "That picture isn't kept any more."
             pic = _picture(row)
+            if not permanent:  # a map's picture stays kept while it is a map (#4344)
+                cur = await conn.execute(
+                    "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                    " AND picture_id = %s",
+                    (guild_id, campaign_id, picture_id),
+                )
+                if await cur.fetchone() is not None:
+                    return "It's a map, so it stays. Remove the map first."
             if permanent and not pic.permanent:
                 usage = await _usage(conn, guild_id, campaign_id, storage_mb)
                 if usage.permanent_bytes + pic.stored_bytes > usage.permanent_limit_bytes:
@@ -361,6 +369,13 @@ class PictureStore:
             row = await cur.fetchone()
             if row is None:
                 return None
+            # A picture that is gone is no map either (#4344: a poster who deletes their picture
+            # takes its map with it, in the same step).
+            await conn.execute(
+                "DELETE FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                " AND picture_id = %s",
+                (guild_id, campaign_id, picture_id),
+            )
             await conn.execute(
                 "UPDATE campaign_pictures SET deleted_at = %s, permanent = FALSE, description = ''"
                 " WHERE id = %s",
