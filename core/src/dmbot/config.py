@@ -72,6 +72,11 @@ class Settings:
     # The careful tier's last editing pass over each finished recap (#2952). On unless
     # RECAP_FINAL_READ is 0.
     recap_final_read: bool = True
+    # The writer's message front (the beats, the transcript and the blocks after it) is marked to be
+    # remembered between the writer, its retries and its revisions (#4054). A write costs 1.25 times
+    # an input token, so it is off until the server's logs show that recaps revise or retry often
+    # enough to pay for it. Off unless RECAP_CACHE.
+    recap_cache: bool = False
     # The disk check (#4075): a warning at this percent of the disk used, and the owner told at the
     # alert one.
     disk_warn_pct: int = 85
@@ -687,6 +692,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
         recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
+        recap_cache=_on_off(get, "RECAP_CACHE"),
         disk_warn_pct=disk_warn_pct,
         disk_alert_pct=disk_alert_pct,
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
