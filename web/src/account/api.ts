@@ -1216,6 +1216,10 @@ export interface ImportPreview {
 export interface ImportMember {
   userId: string;
   name: string;
+  /** Their Discord username when the bot has seen them (#4225): shown after the name when it differs. */
+  username?: string | null;
+  /** The DM has played with them before, in any campaign or server (#4226): listed first and marked. */
+  before?: boolean;
   /** Whether they are recorded now: lines of a member who has not agreed are dropped. Missing when
    * only a suggestion has named them: Check says what is dropped. */
   agreed?: boolean;
@@ -2096,6 +2100,17 @@ export interface SmartNamesAnswer {
   capped?: boolean;
 }
 
+/** One being the party met that nobody named (#4084, core 0438): `count` 1 is one being, 0 is "several". */
+export interface MetItem {
+  id: string;
+  what: string;
+  count: number;
+  /** Unix seconds of the session it was met in, or null. */
+  sessionStartedAt: number | null;
+}
+/** The DM's answer to one of them: a name for it, the name it is already (an entry id), or take it off the list. */
+export type MetAnswer = { action: "name"; name: string } | { action: "join"; target: string } | { action: "remove" };
+
 /** One match DMbot made by itself that the DM has not answered (#3602). Names, the change's number and
  * when only: never a line of the transcript. */
 /** One time two player characters were alone together while the party was split (#4102, core 0439): names, the session's start (Unix
@@ -2576,6 +2591,7 @@ export type ApiErrorKind =
   | "unknown-id" // Discord does not know that ID (#3004)
   | "lookup-failed" // Discord could not be asked: nothing was linked (#3004)
   | "name-exists" // another name already goes by that (#2295)
+  | "met-waiting" // the name is still waiting in the name check (#4084)
   | "needs-confirm" // a removal sent without its confirmation (#2295)
   | "bad-page" // a page of the Names list that isn't there any more (#2295)
   | "no-tries" // no Try again left, so no rewrite (#2114)
@@ -2881,6 +2897,10 @@ export interface AccountApi {
   /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
    * an API older than that. */
   nameMatches?(ref: string): Promise<MatchRow[]>;
+  /** "Met but not named" (#4084): the creatures and people the party met that nobody named. A DM only. */
+  metList?(ref: string): Promise<MetItem[]>;
+  /** Queues one answer and waits for the bot. Refusals: `name-exists`, `met-waiting`, `gone`, `bad-name`, `bad-target`. */
+  answerMet?(ref: string, id: string, answer: MetAnswer, onLook?: (look: WaitingLook) => void): Promise<void>;
   /** "Private scenes" (#4102): the DM's list. A DM only. */
   privateScenes?(ref: string): Promise<PrivateScene[]>;
   /** "Not private": DMbot never counts this scene again. Resolves with the two names; refuses `gone` when it was already marked. */
@@ -3440,7 +3460,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

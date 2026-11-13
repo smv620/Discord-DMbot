@@ -283,6 +283,8 @@ ACTIONS = (
     "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
     "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
     "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
+    "place-setting",  # the campaign's setting (#4173 slice 2): {setting: true | false}
+    "place-form",  # land, water or a road (#4173 slice 6a): {form}, water or route; null is land
 )
 
 KIND_WORD = re.compile(
@@ -414,11 +416,20 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_name")
         if len(text) > PLAYERS_TEXT_MAX:
             raise RecapError("too_long")
+    elif action == "place-setting":  # make it the setting, or stop it being one (the flag)
+        if not isinstance(body.get("setting"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["setting"])
     elif action == "place-size":  # one size word, or null for "Not sure" (the door checks too)
         size = body.get("size")
         if size is not None and size not in place_levels.LEVELS:
             raise RecapError("bad_name")
         text = size or ""
+    elif action == "place-form":  # one form word, or null for land (the door checks too)
+        form = body.get("form")
+        if form is not None and form not in place_levels.FORMS:
+            raise RecapError("bad_name")
+        text = form or ""
     elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
         target = str(body.get("alias") or "")
         if not ID_PATTERN.match(target):

@@ -12,12 +12,22 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
+import psycopg
 
 from dmbot import wizard_finish
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import channel_sync
+from dmbot.memory import sheets
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.store import MemoryStore
+from dmbot.rules.homebrew import HomebrewStore
+from dmbot.rules.homebrew_import import HomebrewImporter
+from dmbot.rules.homebrew_sources import SourceStore
+from dmbot.rules.house import HouseRuleStore
 from tests.pg import DatabaseTest
+from tests.test_homebrew_import import URL as HOMEBREW_URL
+from tests.test_homebrew_import import Fetches
+from tests.test_sheets import answer as sheet_answer
 
 GUILD = 111
 DM = 1001
@@ -45,6 +55,12 @@ class FinishTest(DatabaseTest):
         self.bot = SimpleNamespace(
             campaigns=self.campaigns,
             memory=MemoryStore(self.db),
+            house_rules=HouseRuleStore(self.db),
+            homebrew=HomebrewStore(self.db),
+            sources=SourceStore(self.db),
+            importer=HomebrewImporter(
+                HomebrewStore(self.db), SourceStore(self.db), fetch=Fetches()
+            ),
             get_guild=lambda gid: self.guild if gid == GUILD else None,
             create_refusal=AsyncMock(return_value=None),
         )
@@ -110,6 +126,421 @@ class FinishTest(DatabaseTest):
                 await asyncio.sleep(0.01)
 
         self.worker = asyncio.create_task(work())
+
+
+class TheProgress(FinishTest):
+    """The finer counts on the finish row while the lore is read (#4213): numbers and one stage
+    word, copied from the reader's own row, at most once a second, cleared between documents."""
+
+    def slow_reader(self) -> None:
+        async def work() -> None:
+            while True:
+                rows = await self.sql(
+                    "SELECT id FROM lore_uploads WHERE state = 'waiting' ORDER BY seq LIMIT 1"
+                )
+                if rows:
+                    for done, names in ((10, 2), (60, 5), (120, 9)):
+                        await self.sql(
+                            "UPDATE lore_uploads SET state = 'working', stage = 'first_read',"
+                            " done = %s, total = 120, names_found = %s, links_found = 1"
+                            " WHERE id = %s",
+                            done, names, rows[0]["id"],
+                        )  # fmt: skip
+                        await asyncio.sleep(0.15)
+                    await self.sql(
+                        "UPDATE lore_uploads SET state = 'done', text = '' WHERE id = %s",
+                        rows[0]["id"],
+                    )
+                await asyncio.sleep(0.01)
+
+        self.worker = asyncio.create_task(work())
+
+    async def watch(self) -> list[tuple[Any, ...]]:
+        seen: list[tuple[Any, ...]] = []
+
+        async def look() -> None:
+            while True:
+                rows = await self.sql(
+                    "SELECT pass_word, pass_done, pass_total, found_names, found_links"
+                    " FROM wizard_finishes"
+                )
+                if rows:
+                    seen.append(tuple(rows[0].values()))
+                await asyncio.sleep(0.01)
+
+        self.watcher: asyncio.Task[None] = asyncio.create_task(look())
+        return seen
+
+    async def test_the_readers_counts_reach_the_finish_row_and_clear_at_the_end(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.slow_reader()
+        seen = await self.watch()
+        with (
+            patch.object(wizard_finish, "LORE_POLL_S", 0.05),
+            patch.object(wizard_finish, "PROGRESS_EVERY_S", 0.0),
+        ):
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.worker and self.worker.cancel()
+        self.watcher.cancel()
+        self.assertIn(("first_read", 60, 120, 5, 1), seen)
+        self.assertEqual(
+            await self.sql(
+                "SELECT pass_word, pass_done, pass_total, found_names, found_links"
+                " FROM wizard_finishes"
+            ),
+            [{"pass_word": "", "pass_done": 0, "pass_total": 0, "found_names": 0,
+              "found_links": 0}],
+        )  # fmt: skip
+
+    async def test_at_most_one_write_a_second_for_a_run(self) -> None:
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        self.slow_reader()
+        seen = await self.watch()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):  # (polls every 20 ms, cap 1 s)
+            await wizard_finish.run_round(self.bot, GUILD)
+        self.worker and self.worker.cancel()
+        self.watcher.cancel()
+        counted = {row for row in seen if row[1] > 0}
+        self.assertLessEqual(len(counted), 1)  # (the whole read took under a second)
+
+    async def test_the_state_door_sends_the_counts_and_the_stage_word_and_only_a_word_fits(
+        self,
+    ) -> None:
+        # (the door needs a signed-in member of the server, so its text is read back instead)
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_finish_state'"
+        )
+        for key, column in (
+            ("pass", "pass_word"), ("passDone", "pass_done"), ("passTotal", "pass_total"),
+            ("foundNames", "found_names"), ("foundLinks", "found_links"),
+        ):  # fmt: skip
+            self.assertIn(f"'{key}', r.{column}", door["d"])
+        await self.queue()
+        with self.assertRaises(psycopg.errors.CheckViolation):  # (a sentence is not a pass word)
+            await self.sql("UPDATE wizard_finishes SET pass_word = 'Belleros sold it'")
+
+
+class TheHouseRules(FinishTest):
+    """Step 7's house-rule documents are read into the campaign (#4211) through the House rules
+    page's own reader; the typed box is stored by the page as a document and read the same way."""
+
+    async def rules(self) -> list[tuple[int, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        return sorted(
+            (r.number, r.rule) for r in await self.bot.house_rules.list(GUILD, campaign.id)
+        )
+
+    async def finish(self, docs: tuple[tuple[str, str, str], ...]) -> dict[str, Any]:
+        await self.draft(docs=docs)
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_numbered_file_is_added_with_its_numbers(self) -> None:
+        text = (
+            "House rules\n3. Potions are bonus.\n"
+            "7. Crits max the die. (instead of: Crits double the dice.)"
+        )
+        row = await self.finish((("house", "rules.txt", text),))
+        self.assertEqual((row["state"], row["error"], row["stage"]), ("done", "", "clean"))
+        self.assertEqual(await self.rules(), [(3, "Potions are bonus."), (7, "Crits max the die.")])
+
+    async def test_a_typed_list_with_no_numbers_is_numbered_in_order(self) -> None:
+        text = "# my rules\nFlanking gives advantage.\n\nHealing potions are a bonus action."
+        await self.finish((("house", "Typed house rules", text),))
+        self.assertEqual(
+            await self.rules(),
+            [(1, "Flanking gives advantage."), (2, "Healing potions are a bonus action.")],
+        )
+
+    async def test_a_document_with_no_rule_keeps_its_word_and_the_campaign_stands(self) -> None:
+        row = await self.finish((("house", "empty.txt", "# only a note\n"),
+                                 ("house", "ok.txt", "1. One rule.")))  # fmt: skip
+        self.assertEqual(row["state"], "done")
+        self.assertEqual(row["error"], "house_unreadable")
+        self.assertIn("house_unreadable:1", row["notes"])
+        self.assertEqual(await self.rules(), [(1, "One rule.")])
+
+    async def test_two_plain_documents_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "Flanking gives advantage.\nPotions are bonus."),
+            ("house", "Typed house rules", "Crits max the die.\nNo evil gods."),
+        ))  # fmt: skip
+        self.assertEqual(len(await self.rules()), 4)
+
+    async def test_two_numbered_files_with_the_same_numbers_keep_every_rule(self) -> None:
+        await self.finish((
+            ("house", "a.txt", "1. First A.\n2. Second A."),
+            ("house", "b.txt", "1. First B.\n2. Second B."),
+        ))  # fmt: skip
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["First A.", "First B.", "Second A.", "Second B."],
+        )
+
+    async def test_bullets_and_numbers_with_a_bracket_are_dropped_from_a_plain_list(self) -> None:
+        await self.finish((("house", "t", "- Flanking gives advantage.\n1) Potions are bonus."),))
+        self.assertEqual(
+            sorted(r for _, r in await self.rules()),
+            ["Flanking gives advantage.", "Potions are bonus."],
+        )
+
+    async def test_no_house_rules_store_gives_the_failed_word_and_the_campaign_stands(self) -> None:
+        self.bot.house_rules = None
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertEqual((row["state"], row["error"]), ("done", "house_failed"))
+
+    async def test_a_retaken_run_adds_nothing_twice(self) -> None:
+        docs = (("house", "rules.txt", "1. One rule.\n2. Another."),)
+        await self.finish(docs)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        from dmbot import wizard_house
+
+        again = await wizard_house.read_documents(
+            self.bot.house_rules, GUILD, campaign.id, DM, [{"text": docs[0][2], "name": "r"}]
+        )
+        self.assertEqual(again[0], 0)
+        self.assertEqual(len(await self.rules()), 2)
+
+    async def test_house_is_a_stage_and_nothing_is_left_for_the_pages(self) -> None:
+        self.assertIn("house", wizard_finish.STAGES)
+        row = await self.finish((("house", "rules.txt", "1. One rule."),))
+        self.assertNotEqual(row["error"], wizard_finish.DOCS_LEFT)
+
+    async def test_a_homebrew_file_is_loaded_and_a_file_with_no_entry_keeps_its_word(self) -> None:
+        row = await self.finish((
+            ("homebrew", "h.txt", "## Hollow King (monster)\n\nIt rules the crypt.\n"),
+            ("homebrew", "empty.txt", "# a note only\n"),
+        ))  # fmt: skip
+        self.assertEqual((row["state"], row["error"]), ("done", "homebrew_unreadable"))
+        self.assertIn("homebrew_unreadable:1", row["notes"])
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(
+            [e.name for e in await self.bot.homebrew.list(GUILD, campaign.id)], ["Hollow King"]
+        )
+
+    async def test_a_homebrew_link_is_added_and_a_bad_one_is_counted(self) -> None:
+        await self.draft(
+            {"name": "Frostmaiden", "data_use": True,
+             "homebrew_links": [HOMEBREW_URL, "https://example.com/x"]},
+        )  # fmt: skip
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "homebrew_link_failed"))
+        self.assertIn("homebrew_link_failed:1", row["notes"])
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(len(await self.bot.homebrew.list(GUILD, campaign.id)), 1)
+
+    async def test_links_without_the_right_to_use_confirmation_read_nothing(self) -> None:
+        await self.draft({"name": "Frostmaiden", "homebrew_links": [HOMEBREW_URL]}, rights=0)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("failed", "no_rights"))
+        self.assertEqual(await self.sql("SELECT 1 FROM site_approvals"), [])
+
+    async def test_a_homebrew_document_without_the_confirmation_reads_nothing(self) -> None:
+        await self.draft(docs=(("homebrew", "h.txt", "## Hollow King (monster)\n\nWords.\n"),),
+                         rights=0)  # fmt: skip
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual((await self.run_row())["error"], "no_rights")
+
+    async def test_a_second_run_does_not_double_the_notes(self) -> None:
+        notes = wizard_finish._with_pairs("homebrew_unreadable:1", {"homebrew_unreadable": 1})
+        self.assertEqual(notes, "homebrew_unreadable:1")
+
+    async def test_the_door_refuses_finish_for_links_without_the_confirmation(self) -> None:
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_finish'"
+        )
+        self.assertIn("jsonb_array_length(d.answers->'homebrew_links')", door["d"])
+
+    async def test_homebrew_is_a_stage_and_the_door_takes_the_links_key(self) -> None:
+        self.assertIn("homebrew", wizard_finish.STAGES)
+        [door] = await self.sql(
+            "SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p"
+            " WHERE p.pronamespace = current_schema()::regnamespace"
+            " AND p.proname = 'dmbot_web_wizard_set'"
+        )
+        self.assertIn("'homebrew_links'", door["d"])
+        from dmbot.web import wizard
+
+        self.assertEqual(
+            wizard.check_patch({"homebrew_links": [" https://a.example/x ", ""]}),
+            {"homebrew_links": ["https://a.example/x"]},
+        )
+
+
+class TheLinks(FinishTest):
+    """A web link in a document step (#4206): lore links go to the lore reader as link uploads (its
+    own guarded fetch); house and homebrew links are opened once with the same guarded fetch, and a
+    link that cannot be read keeps its word while the campaign stands."""
+
+    async def add_doc(
+        self, slot: str, address: str, name: str = "A page", source: str = "link"
+    ) -> None:
+        await self.sql(
+            "INSERT INTO wizard_documents (guild_id, user_id, id, slot, name, source, text, status,"
+            " created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, 'ok', %s)",
+            GUILD, DM, f"{abs(hash((slot, address))) % 10**30:032x}", slot, name, source, address,
+            NOW,
+        )  # fmt: skip
+
+    async def finish(self) -> dict[str, Any]:
+        await self.queue()
+        self.reader()
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def test_a_lore_link_is_queued_as_a_link_upload_with_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        # (the stand-in reader blanks the text and keeps the link until it ends: checked at queue)
+        [up] = await self.sql("SELECT source, text, link, choice FROM lore_uploads")
+        self.assertEqual((up["source"], up["text"], up["choice"]), ("link", "", "world"))
+        self.assertTrue(up["link"].startswith("https://docs.google.com/"))
+
+    async def test_a_bad_address_in_a_lore_step_is_a_failed_read_and_nothing_is_queued(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("lore", "http://example.com/page")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "lore_failed"))
+        self.assertEqual(await self.sql("SELECT 1 FROM lore_uploads"), [])
+
+    async def test_a_house_link_is_read_once_and_its_rules_are_added(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return SimpleNamespace(text="1. Flanking gives advantage."), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(len(calls), 1)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        rules = await self.bot.house_rules.list(GUILD, campaign.id)
+        self.assertEqual([r.rule for r in rules], ["Flanking gives advantage."])
+
+    async def test_a_house_link_that_cannot_be_read_keeps_its_word_and_the_campaign_stands(
+        self,
+    ) -> None:
+        await self.draft()
+        await self.add_doc("house", "https://example.com/private")
+
+        async def nothing(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, "That page needs a sign-in."
+
+        with patch("dmbot.ui.name_lists.read_link_once", nothing):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+        self.assertIn("doc_link_failed:1", row["notes"])
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+
+class TheBusyLinks(TheLinks):
+    """Another link being opened for the server (a DM's paste in Discord) is waited for, not
+    counted as a failed link; a document with a bad address never reaches the fetch."""
+
+    DOC = "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+
+    async def test_a_busy_server_is_waited_for_and_the_rules_are_added(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+        answers: list[Any] = [(None, LINK_BUSY), (SimpleNamespace(text="1. One rule."), None)]
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            result: tuple[Any, str | None] = answers.pop(0)
+            return result
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(len(await self.bot.house_rules.list(GUILD, campaign.id)), 1)
+
+    async def test_busy_for_too_long_is_a_failed_link_and_the_campaign_stands(self) -> None:
+        from dmbot.ui.name_lists import LINK_BUSY
+
+        await self.draft()
+        await self.add_doc("house", self.DOC)
+
+        async def busy(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return None, LINK_BUSY
+
+        with (
+            patch("dmbot.ui.name_lists.read_link_once", busy),
+            patch.object(wizard_finish, "LORE_WAIT_S", 0.05),
+        ):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", "doc_link_failed"))
+
+    async def test_a_bad_address_never_reaches_the_fetch(self) -> None:
+        await self.draft()
+        await self.add_doc("house", "http://example.com/page")
+        await self.add_doc("homebrew", "https://example.com/" + "x" * 2100)
+        calls: list[str] = []
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            calls.append(link)
+            return None, None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual(calls, [])
+        self.assertIn("doc_link_failed:2", row["notes"])
+
+    async def test_a_homebrew_link_document_is_read_and_loaded(self) -> None:
+        await self.draft()
+        await self.add_doc(
+            "homebrew", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit"
+        )
+
+        async def fake(guild_id: int, link: str) -> tuple[Any, str | None]:
+            return SimpleNamespace(text="## Hollow King (monster)\n\nIt rules the crypt.\n"), None
+
+        with patch("dmbot.ui.name_lists.read_link_once", fake):
+            row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        self.assertEqual(
+            [e.name for e in await self.bot.homebrew.list(GUILD, campaign.id)], ["Hollow King"]
+        )
+
+    async def test_a_lore_link_is_queued_with_its_exact_address_and_no_text(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", self.DOC)
+        seen: list[tuple[str, str]] = []
+        real = wizard_finish.WizardFinishes.queue_lore
+
+        async def spy(self_: Any, *args: Any, **kw: Any) -> str:
+            seen.append((args[3], kw.get("link", "")))
+            return await real(self_, *args, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "queue_lore", spy):
+            await self.finish()
+        self.assertEqual(seen, [(self.DOC, self.DOC)])  # (the text argument is dropped for a link)
 
 
 class TheRun(FinishTest):
@@ -450,6 +881,105 @@ class TheCharacters(FinishTest):
         self.assertIsNone(by_name["Mira Dawn"].played_by)  # (pending: answered later)
         self.assertEqual((await self.run_row())["state"], "done")
 
+    async def aliases_of(self, name: str) -> list[tuple[str, str, str]]:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        found = await self.bot.memory.aliases(GUILD, campaign.id, entity_id=entity.id)
+        return sorted((a.text, a.kind, a.status) for a in found)
+
+    async def test_a_full_name_with_no_short_name_gets_its_first_name_as_a_confirmed_one(
+        self,
+    ) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            await self.aliases_of("Cerric Vanya'elen"),
+            [("Cerric", "short", "confirmed"), ("Cerric Vanya'elen", "full", "confirmed")],
+        )
+
+    async def test_a_short_name_the_dm_typed_is_the_one_kept(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "Ric", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
+
+    async def test_two_characters_with_one_first_name_get_none(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Mira Vale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Mira Dawn", "Mira Vale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_one_word_name_a_title_or_a_name_another_character_has_gets_none(self) -> None:
+        chars = [
+            {"full": "Zed", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Captain Rook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Zed", "Captain Rook", "Dane Holt"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_a_creature_an_epithet_or_a_too_short_first_word_gets_none(self) -> None:
+        chars = [
+            {"full": "Goblin Sam", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Red Ilsa", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Al Brook", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "jon Hale", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        for name in ("Goblin Sam", "Red Ilsa", "Al Brook", "jon Hale"):
+            self.assertEqual([t for t, _, _ in await self.aliases_of(name)], [name])
+
+    async def test_another_characters_short_name_counts_as_taken(self) -> None:
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Tom Vale", "party_name": "Mira", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Mira Dawn")], ["Mira Dawn"])
+        self.assertIn("Mira", [t for t, _, _ in await self.aliases_of("Tom Vale")])
+
+    async def test_an_ordinary_first_name_is_added(self) -> None:
+        chars = [{"full": "Wit Sparrow", "party_name": "", "sheet_url": "", "player": "pending"}]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertIn("Wit", [t for t, _, _ in await self.aliases_of("Wit Sparrow")])
+
+    async def test_a_retried_run_adds_the_first_name_once(self) -> None:
+        chars = [
+            {"full": "Cerric Vanya'elen", "party_name": "", "sheet_url": "", "player": "pending"}
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await wizard_finish._make_characters(
+            self.bot, self.guild, GUILD, campaign.id, {"characters": chars}
+        )
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts.count("Cerric"), 1)
+
     async def test_a_player_number_who_is_not_in_the_server_is_not_kept(self) -> None:
         chars = [{"full": "Cerric Vale", "party_name": "", "sheet_url": "", "player": "9999"}]
         await self.draft({"name": "Frostmaiden", "characters": chars})
@@ -641,12 +1171,8 @@ class TheSupplements(FinishTest):
 
 
 class TheDocumentsNotReadYet(FinishTest):
-    async def test_house_homebrew_and_ruleset_documents_are_not_dropped_in_silence(self) -> None:
-        docs = (
-            ("house", "h.txt", "No flanking."),
-            ("homebrew", "b.txt", "A hollow king."),
-            ("ruleset", "r.txt", "My rules."),
-        )
+    async def test_ruleset_documents_are_not_dropped_in_silence(self) -> None:
+        docs = (("ruleset", "r.txt", "My rules."),)
         await self.draft(docs=docs)
         await self.queue()
         await wizard_finish.run_round(self.bot, GUILD)
@@ -675,3 +1201,240 @@ class TheDocumentsNotReadYet(FinishTest):
         ):
             await wizard_finish.run_round(self.bot, GUILD)
         self.assertEqual((await self.run_row())["error"], "lore_failed")
+
+
+NUMBER, OTHER_NUMBER, THIRD = 12345678, 87654321, 5550001
+LINK = sheets.sheet_url(NUMBER)
+
+
+class TheSheets(FinishTest):
+    """Public D&D Beyond links given in the wizard (#4205): linked and read once, whatever D&D
+    Beyond says, and the campaign stands."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.reads: list[int] = []
+        self.errors: dict[int, sheets.SheetError] = {}
+
+        async def fetch_sheet(character: int) -> dict[str, Any]:
+            self.reads.append(character)
+            if character in self.errors:
+                raise self.errors[character]
+            return sheets.parse(sheet_answer())
+
+        self.store = SheetStore(self.db)
+        self.changed: list[str] = []
+        self.bot.sheets = self.store
+        self.bot.fetch_sheet = fetch_sheet
+        self.bot.sheets_changed = lambda g, c: self.changed.append(c)
+
+    def party(self, *links: str) -> dict[str, Any]:
+        names = ("Cerric Vale", "Mira Dawn", "Wit Sparrow")
+        return {
+            "name": "Frostmaiden",
+            "characters": [
+                {"full": n, "party_name": "", "sheet_url": link, "player": str(DM)}
+                for n, link in zip(names, links, strict=False)
+            ],
+        }
+
+    async def finish(self, answers: dict[str, Any]) -> dict[str, Any]:
+        await self.draft(answers)
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        return await self.run_row()
+
+    async def made(self) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        found = await self.bot.memory.entities(GUILD, campaign.id)
+        return [e for e in found if e.role == "player_character"]
+
+    async def sheet_of(self, name: str) -> Any:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        return await self.store.sheet(GUILD, campaign.id, entity.id)
+
+    async def test_a_public_link_is_linked_and_read_once_and_the_row_is_clean(self) -> None:
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"], row["notes"]), ("done", "", ""))
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(len(self.changed), 1)
+
+    async def test_a_private_sheet_keeps_the_link_and_the_campaign_stands(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_private"))
+        self.assertEqual(row["notes"], "sheet_private:1")
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))  # (read again later)
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_a_slow_or_busy_read_keeps_the_link_with_its_own_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("later", limited=True)
+        row = await self.finish(self.party(LINK))
+        self.assertEqual(
+            (row["state"], row["error"], row["notes"]), ("done", "sheet_slow", "sheet_slow:1")
+        )
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_each_word_has_its_count_and_the_first_problem_is_the_rows_word(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.errors[OTHER_NUMBER] = sheets.SheetError("later", limited=True)
+        self.errors[THIRD] = sheets.SheetError("no", refused=True)
+        links = (LINK, sheets.sheet_url(OTHER_NUMBER), sheets.sheet_url(THIRD))
+        row = await self.finish(self.party(*links))
+        self.assertEqual(row["error"], "sheet_private")
+        self.assertEqual(row["notes"], "sheet_private:2 sheet_slow:1")
+
+    async def test_a_link_that_is_not_a_dndbeyond_character_is_never_fetched(self) -> None:
+        row = await self.finish(self.party("https://evil.example.com/characters/12345678"))
+        self.assertEqual((row["error"], row["notes"]), ("sheet_bad", "sheet_bad:1"))
+        self.assertEqual(self.reads, [])
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+
+    async def test_only_the_normalised_character_is_fetched(self) -> None:
+        row = await self.finish(self.party(f"{LINK}/share?x=1"))
+        self.assertEqual(row["error"], "")
+        self.assertEqual(self.reads, [NUMBER])
+        self.assertEqual((await self.sheet_of("Cerric Vale")).url, LINK)
+
+    async def test_a_retaken_run_reads_nothing_twice(self) -> None:
+        answers = self.party(LINK)
+        await self.finish(answers)
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.queue("b" * 32)  # (the retake: a new run on the same campaign)
+        run = await self.runs.claim_next(GUILD)
+        assert run is not None
+        word = await wizard_finish._read_sheets(
+            self.bot, self.runs, GUILD, run, campaign.id, answers
+        )
+        self.assertEqual((word, self.reads), ("", [NUMBER]))  # (still the one read)
+
+    async def waits(self) -> list[dict[str, Any]]:
+        return await self.sql("SELECT entity_id, url FROM sheet_waits")
+
+    async def test_a_link_on_a_character_with_no_player_yet_waits_and_is_counted(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["player"] = "pending"
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", "sheet_waiting"))
+        self.assertEqual(row["notes"], "sheet_waiting:1")
+        self.assertEqual(self.reads, [])  # (nothing is fetched for a link that waits)
+        self.assertIsNone(await self.sheet_of("Cerric Vale"))
+        [wait] = await self.waits()
+        self.assertEqual(wait["url"], LINK)
+
+    async def give_a_player(self, name: str, player: int = DM) -> str:
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        entity = next(e for e in await self.made() if e.name == name)
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", player, entity.id)
+        return str(campaign.id)
+
+    async def waiting_link(self) -> None:
+        answers = self.party(f"{LINK}/share?x=1")
+        answers["characters"][0]["player"] = "pending"
+        await self.finish(answers)
+
+    async def test_a_waiting_link_is_read_once_its_character_has_a_player(self) -> None:
+        await self.waiting_link()
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)  # no player yet
+        self.assertEqual(self.reads, [])
+        await self.give_a_player("Cerric Vale")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        self.assertEqual(self.reads, [NUMBER])
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual(found.url, LINK)
+        self.assertIsNotNone(found.sheet)
+        self.assertEqual(await self.waits(), [])  # (the row goes)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+
+    async def test_a_waiting_private_sheet_keeps_its_link_and_the_wait_goes(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 1)
+        found = await self.sheet_of("Cerric Vale")
+        self.assertEqual((found.url, found.sheet), (LINK, None))
+        self.assertEqual(await self.waits(), [])
+
+    async def test_one_waiting_sheet_is_read_each_round_oldest_first(self) -> None:
+        answers = self.party(LINK, sheets.sheet_url(OTHER_NUMBER))
+        for c in answers["characters"]:
+            c["player"] = "pending"
+        await self.finish(answers)
+        await self.give_a_player("Cerric Vale")
+        await self.give_a_player("Mira Dawn")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(len(self.reads), 1)
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(sorted(self.reads), sorted([NUMBER, OTHER_NUMBER]))
+
+    async def test_a_wait_for_an_entry_that_was_turned_down_is_not_read(self) -> None:
+        await self.waiting_link()
+        await self.give_a_player("Cerric Vale")
+        await self.sql("UPDATE memory_entities SET status = 'rejected' WHERE name = 'Cerric Vale'")
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+        self.assertEqual(self.reads, [])
+
+    async def test_a_link_nobody_got_a_player_for_is_let_go_after_ninety_days(self) -> None:
+        await self.waiting_link()
+        await self.sql("UPDATE sheet_waits SET created_at = 1")
+        await wizard_finish.run_sheet_waits(self.bot, GUILD)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_a_link_goes_with_its_campaign(self) -> None:
+        await self.waiting_link()
+        [campaign] = await self.campaigns.list_campaigns(GUILD)
+        await self.sql("DELETE FROM campaigns WHERE id = %s", campaign.id)
+        self.assertEqual(await self.waits(), [])
+
+    async def test_no_store_means_no_sweep(self) -> None:
+        self.bot.sheets = None
+        self.assertEqual(await wizard_finish.run_sheet_waits(self.bot, GUILD), 0)
+
+    async def test_a_character_that_was_not_made_is_skipped(self) -> None:
+        answers = self.party(LINK)
+        answers["characters"][0]["full"] = ""  # (nothing to make: refused as empty)
+        row = await self.finish(answers)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(self.reads, [])
+
+    async def test_the_stage_breaking_never_stops_the_run(self) -> None:
+        self.bot.fetch_sheet = AsyncMock(side_effect=RuntimeError("boom"))
+        row = await self.finish(self.party(LINK))
+        self.assertEqual((row["state"], row["error"]), ("done", "sheets_failed"))
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
+
+    async def test_the_progress_row_holds_the_stage_and_counts_only(self) -> None:
+        moves: list[tuple[str, int, int]] = []
+        real = wizard_finish.WizardFinishes.move
+
+        async def spy(
+            self_: Any,
+            guild_id: int,
+            run: Any,
+            *,
+            stage: str,
+            part: int = 0,
+            of_parts: int = 0,
+            **kw: Any,
+        ) -> None:
+            moves.append((stage, part, of_parts))
+            await real(self_, guild_id, run, stage=stage, part=part, of_parts=of_parts, **kw)
+
+        with patch.object(wizard_finish.WizardFinishes, "move", spy):
+            await self.finish(self.party(LINK, sheets.sheet_url(OTHER_NUMBER)))
+        self.assertIn(("sheets", 1, 2), moves)
+        self.assertIn(("sheets", 2, 2), moves)
+        self.assertIn("sheets", wizard_finish.STAGES)
+
+    async def test_no_log_line_holds_a_link(self) -> None:
+        self.errors[NUMBER] = sheets.SheetError("no", refused=True)
+        with self.assertLogs(level="INFO") as logged:
+            await self.finish(self.party(LINK))
+        text = "\n".join(logged.output)
+        self.assertNotIn("dndbeyond", text)
+        self.assertNotIn(str(NUMBER), text)

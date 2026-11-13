@@ -14,7 +14,15 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory._changes import ENTITIES, FLAGS, STATES, Changes, Scope
+from dmbot.memory._changes import (
+    ENTITIES,
+    FLAGS,
+    RULE_LINKS,
+    STATES,
+    STORY_LANGUAGES,
+    Changes,
+    Scope,
+)
 from dmbot.memory.checks import (
     ACTING,
     ACTS_AFTER_END,
@@ -107,7 +115,14 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         w.ids,
     )
     levels = {str(r["id"]): str(r["place_level"]) for r in await cur.fetchall()}
-    return Nesting(pairs, levels)
+    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it
+    cur = await w.conn.execute(
+        "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND setting"
+        " AND status = 'confirmed'",
+        w.ids,
+    )
+    row = await cur.fetchone()
+    return Nesting(pairs, levels, str(row["id"]) if row else None)
 
 
 async def load_extras(w: Scope, onto: Ontology, facts: Sequence[Relation]) -> Extras:
@@ -219,7 +234,9 @@ async def settle_kind(
     """After ANY write that gives entries a new kind: a condition the new kind can't have is
     closed (an item made a character is no longer `intact`; the history stays) and
     `unique_item` is cleared unless the new kind is an item, `audience_limited` unless it is
-    a clue, and a size (#4173) unless it is a place. Without it a backup of the campaign would be
+    a clue, a size (#4173) unless it is a place, and the links to the rules (species, class…, #4241)
+    and the story's languages (#4229) unless it is a character. Without it a backup of the
+    campaign would be
     refused as damaged when restored."""
     ids = sorted(set(entity_ids))
     if not ids:
@@ -233,7 +250,8 @@ async def settle_kind(
     # for each.
     flagged = await w.select(
         ENTITIES,
-        " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL)"
+        " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL"
+        " OR setting OR form IS NOT NULL)"
         " AND id = ANY(%s)",
         [ids],
     )
@@ -249,10 +267,20 @@ async def settle_kind(
         if r.get("place_level") is not None and not onto.is_a(type_key, "place"):
             undo["place_level"] = None  # only a place has a size (#4173)
             undo["place_level_from"] = None
+        if r.get("form") is not None and not onto.is_a(type_key, "place"):
+            undo["form"] = None  # only a place has a form (#4173 slice 6a)
+            undo["form_from"] = None
+        if r.get("setting") and not onto.is_a(type_key, "place"):
+            undo["setting"] = False  # only a place is the campaign's setting (#4173)
         if undo:
             clears[r["id"]] = undo
     if clears:
         await w.update_rows(ENTITIES, clears)
+    if not onto.is_a(type_key, "character"):  # only a character is linked to the rules (#4241)
+        await w.delete_where_in(RULE_LINKS, "entity_id", ids)  # (logged: Undo gives them back)
+    if not onto.is_a(type_key, "character"):  # only a character knows languages (#4229)
+        for row in await w.select(STORY_LANGUAGES, " AND entity_id = ANY(%s)", [ids]):
+            await w.delete(STORY_LANGUAGES, row["id"])  # (logged: Undo gives them back)
 
 
 async def move_states(

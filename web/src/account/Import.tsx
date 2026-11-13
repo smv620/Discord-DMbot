@@ -32,6 +32,7 @@ import {
 import CampaignNav from "./CampaignNav";
 import WorkProgress, { RunningCounts } from "./WorkProgress";
 import ClockOffer from "./ClockOffer";
+import { memberLabel } from "./memberLabel";
 import LazyPanel from "./LazyPanel";
 import { stageWords } from "../content/work-progress";
 
@@ -722,8 +723,11 @@ export default function Import({
     });
 
   const memberOptions = Object.values(known);
-  const label = (m: ImportMember): string =>
-    m.agreed === false ? `${m.name} (${words.notAgreedMark})` : m.name;
+  const label = (m: ImportMember): string => {
+    const named = memberLabel(m.userId, m.name, m.username);
+    const who = m.before === true ? `${named} · ${words.playedBeforeMark}` : named;
+    return m.agreed === false ? `${who} (${words.notAgreedMark})` : who;
+  };
 
   if (signedOut)
     return (

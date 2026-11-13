@@ -24,8 +24,9 @@ export const searchIndex: SearchEntry[] = [
   { path: "/help#dm-heading", title: "Help for the game master", about: "What the game master does, step by step.", words: ["game master", "dm help", "run a game", "campaign setup", "dungeon master"] },
   { path: "/help#player-heading", title: "Help for players", about: "What players need to know, including how to stop being recorded.", words: ["player", "players", "consent", "stop recording me", "stop recording", "opt out", "recording", "privacy of voice", "agree to be recorded", "delete my voice"] },
   { path: "/help#account-heading", title: "Help with your account", about: "Signing in, your account and your plan.", words: ["sign in", "login", "log in", "account help", "password", "email change", "delete account"] },
+  { path: "/help/questions", title: "Quick answers", about: "What DMbot knows when you ask it, in a few words each.", words: ["quick answers", "questions", "faq", "what does dmbot know", "ask dmbot"] },
   { path: "/help#emails-heading", title: "Help with emails from DMbot", about: "Which emails DMbot sends and how to stop them.", words: ["email", "emails", "unsubscribe", "stop emails", "newsletter", "notifications"] },
-  { path: "/help#snags-heading", title: "If something doesn't work", about: "What to try when something goes wrong.", words: ["broken", "error", "doesn't work", "fix", "bug", "wrong", "failed", "snag"] },
+  { path: "/help/snags", title: "If something doesn't work", about: "What to try when something goes wrong.", words: ["broken", "error", "doesn't work", "fix", "bug", "wrong", "failed", "snag"] },
   { path: "/players", title: "For players", about: "What DMbot does and does not do with a player's voice.", words: ["player", "players", "my voice", "who hears", "safe", "private", "what is recorded", "consent"] },
   { path: "/whats-new", title: "What's new", about: "The latest changes to DMbot.", words: ["new", "latest", "changes", "changelog", "update", "updates", "release", "added"] },
   { path: "/whats-new/older", title: "Older changes", about: "Everything that changed in DMbot before the latest.", words: ["older", "earlier", "past", "changelog", "history", "changes"] },
@@ -50,6 +51,7 @@ export const searchIndex: SearchEntry[] = [
   { path: "/account/house-rules", title: "House rules", about: "Your own rules for the table.", words: ["house rules", "my rules", "custom rules", "rule changes", "rulings", "rules document"] },
   { path: "/account/homebrew", title: "Homebrew", about: "Your own monsters, spells and items.", words: ["homebrew", "custom monsters", "custom spells", "my own items"] },
   { path: "/account/sharing", title: "Shared rules", about: "Share your rules with another campaign, or follow someone's.", words: ["share rules", "shared rules", "follow rules", "ruleset", "rule set", "publish rules", "share code"] },
+  { path: "/account/players", title: "People you play with", about: "The players DMbot remembers for you, and the DMs who remember you.", words: ["players", "remembered players", "forget a player", "who remembers me", "clear", "played with"] },
   { path: "/account/pictures", title: "Pictures", about: "Pictures for your names and scenes.", words: ["pictures", "images", "portraits", "art", "icons", "avatar", "drawing"] },
   { path: "/account/restore", title: "Load a backup", about: "Bring a saved campaign back.", words: ["restore", "load backup", "restore backup", "bring back", "recover", "undo delete", "lost campaign"] },
 ];
