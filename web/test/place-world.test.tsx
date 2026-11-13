@@ -203,6 +203,15 @@ describe("what the table may be told (#4311), for a reader who is not a DM", () 
     expect(row.queryByText(/forest/)).toBeNull();
   });
 
+  it("a place the reader does not know says 'nothing', the same as one with nothing set", async () => {
+    const { api, row } = await asReader();
+    api.placeWorldTable = async () => {
+      throw new ApiError("not-found");
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.table.show }));
+    expect(await row.findByText(w.table.none)).toBeTruthy();
+  });
+
   it("a DM gets the editor, not the reader's button, and nothing shows while the switch is off", async () => {
     live.on = false;
     const { row } = await asReader();

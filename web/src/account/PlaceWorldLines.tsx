@@ -5,7 +5,7 @@
 import { useState } from "preact/hooks";
 
 import { placeWorldWords as w } from "../content/place-world-words";
-import type { AccountApi, NameRow, PlaceWorldTable } from "./api";
+import { ApiError, type AccountApi, type NameRow, type PlaceWorldTable } from "./api";
 
 export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; refId: string; row: NameRow }) {
   const [open, setOpen] = useState(false);
@@ -20,8 +20,10 @@ export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; 
     try {
       setData(await api.placeWorldTable(refId, row.id));
       setFailed(false);
-    } catch {
-      setFailed(true);
+    } catch (error) {
+      // A place the reader does not know answers "not found", the same as a missing one: say "nothing" so the button gives no signal.
+      if (error instanceof ApiError && error.kind === "not-found") setData({ rows: [] });
+      else setFailed(true);
     }
   }
 
@@ -48,8 +50,8 @@ export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; 
             <>
               {land && <p>{w.landLine(landWord, land.how === "partly")}</p>}
               {climate && <p>{w.climateLine(warmWord, climate.how)}</p>}
-              {rulers.map((r) => (
-                <p key={`${r.groupName}-${r.how}`}>{w.rulerLine(w.ruler.lines[r.how] ?? w.ruler.lines["rules"]!, r.groupName ?? "")}</p>
+              {rulers.map((r, i) => (
+                <p key={i}>{w.rulerLine(w.ruler.lines[r.how] ?? w.ruler.lines["rules"]!, r.groupName ?? "")}</p>
               ))}
             </>
           )}

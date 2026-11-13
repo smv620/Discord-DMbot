@@ -69,7 +69,11 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
     the rows the DM confirmed and showed; then the gate says which entries this caller knows (a DM
     here sees the party's view, as the story graph does), and `map_facts.for_players`, the one
     players' rule, keeps a row only when the place, and for a ruler its group, are known. Words
-    only: no group the caller does not know is named, and an unconfirmed reading is never there."""
+    only: no group the caller does not know is named, and an unconfirmed reading is never there.
+    The door is open to every member of the server; a member outside the campaign has no characters
+    here, so the gate shows them nothing and they get `not_found` like anyone who does not know the
+    place. A ruler group merged into another is named as the one that survives: the merge moves
+    its rows."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if not _ID.fullmatch(place_id):
@@ -91,6 +95,10 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
     seen = gate.visible(relationships.viewer_of(known), graph_view.statements_of(known))
     asked = {place_id} | {str(r["group"]) for r in got["rows"] if r.get("group")}
     knows = {i for i in asked if seen.knows(gate.ENTRY, i)}
+    if place_id not in knows:
+        # A place this caller does not know answers exactly as a missing id does, so the route
+        # is no way to find out that a place exists.
+        raise RecapError("not_found")
     facts = [
         map_facts.Fact(
             id=str(r["id"]),
@@ -105,6 +113,9 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
             table_knows=True,  # (and only shown ones)
         )
         for r in got["rows"]
+        if not r[
+            "part"
+        ]  # (a row about only part of a place is not shown on the website: it is sent to no one)
     ]
     names = {str(r["group"]): str(r["groupName"] or "") for r in got["rows"] if r.get("group")}
     return {

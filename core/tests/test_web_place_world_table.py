@@ -9,10 +9,9 @@ from typing import Any
 
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import place_world
+from dmbot.web.discord import DiscordGuild
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB
-from tests.test_web_all_names import MEMBER
-from tests.test_web_api import THURSDAY
 from tests.test_web_relationships import Web
 
 
@@ -80,7 +79,9 @@ class TheTableSees(Web):
         await self.dm_sets("terrain", "hill")
         await self.dm_shows()
         await self.keep_from_bob(self.keep)
-        self.assertEqual(await self.bob_reads(), [])
+        # the same answer as for an id that is not there: the route cannot be used to find places
+        self.assertEqual(await self.refusal(self.bob_reads()), "not_found")
+        self.assertEqual(await self.refusal(self.bob_reads("f" * 32)), "not_found")
 
     async def test_a_ruler_the_player_does_not_know_is_left_out_and_never_named(self) -> None:
         secret = await self.add("The Hidden Hand", "faction")
@@ -92,13 +93,48 @@ class TheTableSees(Web):
         self.assertEqual([r["layer"] for r in rows], ["terrain"])
         self.assertNotIn("Hidden Hand", str(rows))
 
-    async def test_a_dm_asking_here_sees_the_players_view(self) -> None:
+    async def test_a_dm_asking_here_sees_the_players_view_not_their_own(self) -> None:
         await self.dm_sets("terrain", "hill")  # (never shown)
         got = await place_world.read_table(self.web, self.session, self.cref, self.keep)
         self.assertEqual(got["rows"], [])
+        await self.dm_shows()
+        got = await place_world.read_table(self.web, self.session, self.cref, self.keep)
+        self.assertEqual(
+            [r["value"] for r in got["rows"]], ["hill"]
+        )  # (shown, and the party knows the place)
+
+    async def test_every_way_of_holding_a_place_comes_through(self) -> None:
+        for how in ("rules", "claims", "occupies", "protects"):
+            await self.dm_sets("control", self.order, how)
+            await self.dm_shows()
+            (row,) = [r for r in await self.bob_reads() if r["layer"] == "control"]
+            self.assertEqual(row["how"], how)
+
+    async def test_a_row_that_has_ended_is_not_given(self) -> None:
+        await self.dm_sets("terrain", "hill")
+        await self.dm_shows()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_map_facts SET from_session_at = 1, to_session_at = 2"
+                " WHERE entity_id = %s",
+                (self.keep,),
+            )
+        self.assertEqual(await self.bob_reads(), [])
+
+    async def test_a_ruler_group_merged_into_another_is_named_as_the_one_that_survives(
+        self,
+    ) -> None:
+        await self.dm_sets("control", self.order, "rules")
+        await self.dm_shows()
+        other = await self.add("The Merged Order", "faction")
+        await self.memory.merge(
+            self.g, self.one.id, other, self.order, source=DM_SOURCE, dm_said_same=True
+        )
+        (row,) = [r for r in await self.bob_reads() if r["layer"] == "control"]
+        self.assertEqual(row["groupName"], "The Merged Order")  # (the merge moved the row)
 
     async def test_a_stranger_a_bad_id_and_a_name_that_is_not_a_place(self) -> None:
-        elsewhere = await self.signed(BOB, MEMBER.__class__(id=999, name="Elsewhere", manage=True))
+        elsewhere = await self.signed(BOB, DiscordGuild(id=999, name="Elsewhere", manage=True))
         self.assertEqual(
             await self.refusal(place_world.read_table(self.web, elsewhere, self.cref, self.keep)),
             "not_found",
@@ -111,4 +147,3 @@ class TheTableSees(Web):
             await self.refusal(place_world.read_table(self.web, self.player, self.cref, self.mira)),
             "not_found",
         )
-        _ = THURSDAY
