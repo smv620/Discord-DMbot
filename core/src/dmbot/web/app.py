@@ -71,6 +71,7 @@ from dmbot.web import (
     past_sessions,
     pc_icons,
     pictures,
+    place_world,
     private_scenes,
     recap_style,
     relationships,
@@ -2491,6 +2492,16 @@ def create_app(
             body = None
         try:
             return {"answer": await met_list.queue(db, session, ref, met_id, body)}
+        except RecapError as err:
+            status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/names/{entity_id}/world")
+    async def me_campaign_place_world(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
+        """A place's land, climate and ruler (#4287): DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await place_world.read(db, session, ref, entity_id)
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
