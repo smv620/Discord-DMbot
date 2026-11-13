@@ -54,6 +54,7 @@ from dmbot import (
     install,
     lore_upload,
     mail,
+    member_lookups,
     member_names,
     owner_presence,
     person_key,
@@ -720,6 +721,8 @@ WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answ
 WIZARD_FINISH_EVERY_S = 5
 MEMBER_NAMES_FIRST_S = 45  # people known only by number are given their Discord names (#4225)
 MEMBER_NAMES_EVERY_S = 60
+MEMBER_LOOKUP_FIRST_S = 20
+MEMBER_LOOKUP_EVERY_S = 3  # a typed Discord ID is answered while the DM waits (#4225)
 DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
@@ -1939,6 +1942,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.memory is not None
                 else []
             ),
+            self._watched(self._member_lookup_loop(), "member-lookups"),
             self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
             self._watched(self._hand_over_loop(), "hand-over-answers"),
@@ -14207,6 +14211,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             await disk_check.look(watch)  # (never raises)
             await asyncio.sleep(disk_check.CHECK_EVERY_S)
+
+    async def _member_lookup_loop(self) -> None:
+        """Every few seconds: answer the website's "who is this Discord ID?" questions, a few in
+        each server (#4225, point 5; `member_lookups`). A server's trouble never stops the
+        others."""
+        await asyncio.sleep(MEMBER_LOOKUP_FIRST_S)
+        while not self._closing:
+            for guild in list(self.guilds):
+                try:
+                    await member_lookups.run(self, guild.id)
+                except Exception as exc:
+                    log.warning("Member lookups: a server's round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(MEMBER_LOOKUP_EVERY_S)
 
     async def _member_names_loop(self) -> None:
         """Every minute: give the people DMbot knows only as `Player 1234` their Discord names, a
