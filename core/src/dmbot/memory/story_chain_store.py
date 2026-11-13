@@ -20,12 +20,13 @@ question, kept by itself once both places are kept (`backstory_keep.keep_assumed
 from __future__ import annotations
 
 import bisect
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.scene_moves import Move
 from dmbot.memory.session_chain import MAIN, Line, rejoined, walk
 from dmbot.memory.story_chain import Place
 
@@ -41,6 +42,7 @@ class Said:
     started_ms: int
     user_id: int
     text: str
+    number: int = 0  # its number in the session (as the story extractor numbers it)
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +104,7 @@ def lines_with_chains(
     clock: _Clock,
     plays: dict[int, list[str]],
     last_split: int | None = None,
+    moves: Mapping[int, tuple[Move, ...]] | None = None,
 ) -> list[tuple[Line | None, int | None]]:
     """Each line with its chain, and the split it ended (for Rejoin): (line, split start that
     ended just before it, or None). `last_split`: the split the stored chains were left in, when
@@ -121,7 +124,8 @@ def lines_with_chains(
         else:
             groups = {g for c in plays.get(s.user_id, []) if (g := clock.group(c, at)) is not None}
             key = chain_key(split_start, groups.pop()) if len(groups) == 1 else None
-        out.append((Line(s.text, dm, key), ended))
+        found = (moves or {}).get(s.number, ()) if dm else ()
+        out.append((Line(s.text, dm, key, found), ended))
     return out
 
 
@@ -136,7 +140,7 @@ def readable_lines(
     from dmbot.memory import extractor
 
     return [
-        Said(s.started_ms, s.user_id, s.text)
+        Said(s.started_ms, s.user_id, s.text, s.number)
         for s in extractor.readable(lines)
         if s.number not in recap and s.user_id in agreed
     ]
@@ -156,6 +160,7 @@ class StoryChains:
         dm_ids: Collection[int],
         label: str,
         agreed: Callable[[], Awaitable[Collection[int]]],
+        moves: Mapping[int, tuple[Move, ...]] | None = None,
     ) -> Result:
         """Walk one session from the chains as they were, keep the chains it ends with, and queue
         its assumed parents, all under the campaign's own lock, so two walks (a session's end and
@@ -175,11 +180,11 @@ class StoryChains:
             until = (said[-1].started_ms // 1000) if said else session_started_at
             clock = await _clock(conn, guild_id, campaign_id, until)
             plays = await _plays(conn, guild_id, campaign_id)
-            walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated)
+            walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated, moves)
             still = set(await agreed())  # (consent again, after the reads: #4153's rule)
             if any(s.user_id not in still for s in said):
                 said = [s for s in said if s.user_id in still]
-                walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated)
+                walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated, moves)
             await _save(conn, guild_id, campaign_id, walked, session_started_at)
             added = 0
             if pairs:  # (inside the lock: the next walk sees them as waiting)
@@ -199,13 +204,14 @@ def _walk_all(
     chains: dict[str, list[str]],
     found: Sequence[Place],
     stated: Collection[str],
+    moves: Mapping[int, tuple[Move, ...]] | None = None,
 ) -> tuple[dict[str, list[str]], list[tuple[str, str]]]:
     """The whole session, Rejoins included: the chains it ends with and the guesses it made."""
     given = set(stated)
     pairs: list[tuple[str, str]] = []
     batch: list[Line] = []
     left_in = max((int(k[1:].split("g")[0]) for k in chains if k != MAIN), default=None)
-    for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in):
+    for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in, moves):
         if ended is not None:  # (Rejoin: walk what came before, then join the groups)
             walked = walk(batch, found, chains, given)
             chains, batch = walked.chains, []
@@ -344,3 +350,23 @@ async def _plays(conn: Any, guild_id: int, campaign_id: str) -> dict[int, list[s
     for r in await cur.fetchall():
         out.setdefault(int(r["played_by"]), []).append(str(r["id"]))
     return out
+
+
+async def stored_vectors(
+    db: Database, guild_id: int, session_id: str, model: str, user_ids: Collection[int]
+) -> dict[tuple[int, int], list[float]]:
+    """The numbers PlotBot's search already keeps for these people's lines in one session (one per
+    line: a long line's first part), by (started_ms, user_id). Nothing is sent anywhere."""
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT DISTINCT ON (l.id) l.started_ms, l.user_id, v.vector FROM transcript_lines l"
+            " JOIN memory_vectors v ON v.guild_id = l.guild_id AND v.line_id = l.id"
+            " AND v.owner_kind = 'line' AND v.model = %s"
+            " WHERE l.guild_id = %s AND l.session_id = %s AND l.user_id = ANY(%s::bigint[])"
+            " ORDER BY l.id, v.owner_id",
+            (model, guild_id, session_id, list(user_ids)),
+        )
+        return {
+            (int(r["started_ms"]), int(r["user_id"])): [float(x) for x in r["vector"]]
+            for r in await cur.fetchall()
+        }

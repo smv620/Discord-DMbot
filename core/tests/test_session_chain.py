@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import unittest
 
+from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.session_chain import MAIN, Line, rejoined, walk
 from dmbot.memory.story_chain import Place
 
@@ -18,8 +19,8 @@ HALL = Place("hall", "building", ("Speaker's Hall",))
 PLACES = (DALE, TARGOS, BRYN, INN, ROOM, HALL)
 
 
-def dm(text: str, chain: str | None = MAIN) -> Line:
-    return Line(text, True, chain)
+def dm(text: str, chain: str | None = MAIN, moves: list[Move] | None = None) -> Line:
+    return Line(text, True, chain, tuple(moves or ()))
 
 
 def player(text: str, chain: str | None = MAIN) -> Line:
@@ -64,34 +65,64 @@ class PlayersAreRead(unittest.TestCase):
         self.assertEqual(got.chains[MAIN], ["dale", "targos"])
 
 
-class LeavingWords(unittest.TestCase):
+class Moves(unittest.TestCase):
+    """The AI's scene moves (the owner's change, 2026-11-13): the walk applies them, only to places
+    it knows, and "left" only to a place open on that chain."""
+
     def test_leaving_closes_the_place_and_what_is_inside(self) -> None:
-        got = run(dm("You left Targos at dawn."), chains={MAIN: ["dale", "targos", "inn"]})
-        self.assertEqual(got.chains[MAIN], ["dale"])
-
-    def test_left_for_is_a_heading_for(self) -> None:
-        # Supervisor's condition: "they left for Targos" doesn't close Targos
-        got = run(dm("They left for Targos."), chains={MAIN: ["dale", "targos", "inn"]})
-        self.assertEqual(got.chains[MAIN], ["dale"])  # (between places: Targos isn't open yet)
-        got = run(dm("They left for Bryn Shander."), chains={MAIN: ["dale", "targos", "inn"]})
-        self.assertEqual(got.chains[MAIN], ["dale"])  # (on the way: the town and inn closed)
-
-    def test_a_leaving_word_closes_only_a_place_open_on_that_chain(self) -> None:
-        # Supervisor's condition: "She left the letter in Bryn Shander" leaves no open place
         got = run(
-            dm("She left the letter in Bryn Shander."), chains={MAIN: ["dale", "targos", "inn"]}
-        )
-        self.assertEqual(got.chains[MAIN], ["dale", "targos", "inn"])  # (closes nothing)
-        self.assertEqual(got.pairs, [("bryn", "dale")])  # (still read, against the chain)
-        got = run(dm("They left Bryn Shander behind."), chains={MAIN: ["dale", "targos"]})
-        self.assertEqual(got.chains[MAIN], ["dale", "targos"])  # (Bryn wasn't open: nothing)
-
-    def test_on_the_road_closes_towns_and_smaller(self) -> None:
-        got = run(
-            dm("After three days on the road you are cold."),
+            dm("You leave Targos behind.", moves=[Move(1, LEAVE, "Targos")]),
             chains={MAIN: ["dale", "targos", "inn"]},
         )
         self.assertEqual(got.chains[MAIN], ["dale"])
+
+    def test_heading_for_closes_its_size_and_smaller_and_opens_nothing(self) -> None:
+        got = run(
+            dm("They left for Bryn Shander.", moves=[Move(1, HEADING, "Bryn Shander")]),
+            chains={MAIN: ["dale", "targos", "inn"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale"])
+
+    def test_left_the_letter_is_none_and_moves_nothing(self) -> None:
+        got = run(
+            dm("She left the letter in Bryn Shander.", moves=[Move(1, NONE, "Bryn Shander")]),
+            chains={MAIN: ["dale", "targos", "inn"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale", "targos", "inn"])  # (closes nothing)
+        self.assertEqual(got.pairs, [("bryn", "dale")])  # (still read, against the chain)
+
+    def test_a_leaving_closes_only_a_place_open_on_that_chain(self) -> None:
+        got = run(
+            dm("They left Bryn Shander behind.", moves=[Move(1, LEAVE, "Bryn Shander")]),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale", "targos"])
+
+    def test_travel_closes_towns_and_smaller(self) -> None:
+        got = run(
+            dm("After three days on the road you are cold.", moves=[Move(1, TRAVEL, "")]),
+            chains={MAIN: ["dale", "targos", "inn"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale"])
+
+    def test_a_move_on_a_place_nobody_knows_is_ignored(self) -> None:
+        got = run(
+            dm("You leave Neverwinter.", moves=[Move(1, LEAVE, "Neverwinter")]),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale", "targos"])
+
+    def test_a_players_moves_are_never_applied(self) -> None:
+        got = run(
+            Line("We leave Targos.", False, MAIN, (Move(1, LEAVE, "Targos"),)),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.chains[MAIN], ["dale", "targos"])
+
+    def test_no_keywords_without_the_ai(self) -> None:
+        # (the old fixed words are gone: with no move found, a named place is simply reached)
+        got = run(dm("They left for Bryn Shander."), chains={MAIN: ["dale", "targos"]})
+        self.assertEqual(got.chains[MAIN], ["dale", "bryn"])
 
 
 class Lists(unittest.TestCase):
@@ -157,19 +188,10 @@ class AfterTheReview(unittest.TestCase):
 
     def test_leaving_then_arriving_moves_to_the_new_place(self) -> None:
         got = run(
-            dm("They left Targos and reached Bryn Shander."), chains={MAIN: ["dale", "targos"]}
+            dm(
+                "They left Targos and reached Bryn Shander.",
+                moves=[Move(1, LEAVE, "Targos"), Move(1, ARRIVE, "Bryn Shander")],
+            ),
+            chains={MAIN: ["dale", "targos"]},
         )
         self.assertEqual(got.chains[MAIN], ["dale", "bryn"])
-
-    def test_the_noun_leaves_is_no_leaving(self) -> None:
-        got = run(dm("The leaves fall as you walk into Bryn Shander."), chains={MAIN: ["dale"]})
-        self.assertEqual(got.chains[MAIN], ["dale", "bryn"])
-
-    def test_a_place_someone_comes_from_moves_nothing(self) -> None:
-        got = run(dm("A messenger from Bryn Shander arrives."), chains={MAIN: ["dale", "targos"]})
-        self.assertEqual(got.chains[MAIN], ["dale", "targos"])
-        self.assertEqual(got.pairs, [("bryn", "dale")])  # (still read)
-
-    def test_on_the_road_to_is_a_heading_for(self) -> None:
-        got = run(dm("On the road to Bryn Shander, snow falls."), chains={MAIN: ["dale", "targos"]})
-        self.assertEqual(got.chains[MAIN], ["dale"])

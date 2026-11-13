@@ -4,15 +4,18 @@ the party and one for each split group. Each place named that has no parent gets
 place open on its chain as its assumed parent (slice 3's mark). Pure: no Discord, no database.
 
 The rulings this keeps:
-- Only the DM's lines move a chain. A DM line opens a place (closing every open place its size or
-  smaller), or closes with a leaving word. Players name far-off places all the time ("my cousin in
-  Waterdeep"), so a player's line never moves a chain; a place a player names still gets an assumed
-  parent from the chain as it stands.
-- A leaving word closes a place only when the place it names is open on that chain: "left Targos"
-  closes Targos and what is inside it; "left the letter in Bryn Shander" leaves no place.
-- "Left for Y", "set out for Y", "heading to Y" are a heading-for: everything open at Y's size or
-  smaller closes (they are between places), and Y opens only when the DM names it again.
-- "On the road", "days of travel", "through the wilds" close every settlement and smaller.
+- Only the DM's lines move a chain. A DM line opens a place it names (closing every open place its
+  size or smaller). Players name far-off places all the time ("my cousin in Waterdeep"), so a
+  player's line never moves a chain; a place a player names still gets an assumed parent from the
+  chain as it stands.
+- Whether a DM line leaves a place, heads for one, travels, or names one in passing is the AI's
+  call, never a keyword (the owner's change, 2026-11-13; `scene_moves`): each line carries the
+  moves found for it. "Left X" closes X and what is inside it, only when X is open on that chain;
+  "heading for Y" closes everything open at Y's size or smaller, and Y opens only when the DM names
+  it as reached; "travel" closes every settlement and smaller; "none" (a place named in passing,
+  a memory, a letter left somewhere) reads the place and moves nothing. A move naming a place the
+  campaign doesn't know is ignored: the AI's word never makes a place or opens a level by itself.
+- "X in Y" with Y the bigger place, in one breath: Y is taken first, so X sits inside it.
 - A sentence naming three or more places is a list (slice 3's rule): it opens nothing, closes
   nothing and gives no parent.
 - A place gets at most one guess (`stated` holds the places with a parent already).
@@ -26,45 +29,13 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import place_levels
+from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.story_chain import LIST_PLACES, Place
 
 MAIN = "main"  # the party's chain, when it is together
-# Words just before a place that make the line a heading-for it ("they left for Targos"); read
-# first, so "left for" is never a leaving
-_HEADING = re.compile(
-    r"\b(?:left|leaves?|leaving|set(?:s|ting)?\s+(?:out|off)|head(?:s|ed|ing)?|bound"
-    r"|travel(?:s|led|ed|ling|ing)?|journey(?:s|ed|ing)?|march(?:es|ed|ing)?|r(?:ide|ides|ode|iding)"
-    r"|on\s+(?:the|their|our|his|her)\s+way|mak(?:e|es|ing)\s+(?:their|our|his|her)\s+way"
-    r"|(?:on\s+)?the\s+road)"
-    r"\s+(?:back\s+)?(?:for|to|towards?)\s+(?:the\s+)?$",
-    re.IGNORECASE,
-)
-# Words just before a place that leave it ("they left Targos", "departed from the inn")
-_LEAVING = re.compile(
-    r"\b(?:left|leaves?|leaving|depart(?:s|ed|ing)?(?:\s+from)?|out\s+of|fled|flee(?:s|ing)?)"
-    r"\s+(?:the\s+)?$",
-    re.IGNORECASE,
-)
-# A place named in passing: read against the chain, it moves nothing. Two shapes (the reviewer on
-# slice 4): something left somewhere, a leaving verb with its own object and then "in/at/with/on"
-# just before the place, in the same clause ("She left the letter in Bryn Shander": Supervisor's
-# condition on #4173, that line closes nothing; "They left Targos and reached Bryn Shander" is a
-# new clause and does move); and a place someone comes from ("A messenger from Bryn Shander").
-_IN_PASSING = re.compile(
-    r"(?:\b(?:left|leaving|depart(?:s|ed|ing)?|fled)\b"
-    r"(?:(?!\b(?:and|then|but|before|after|until|when)\b)[^,;:])*"
-    r"\b(?:in|at|with|on)\s+(?:the\s+)?|\bfrom\s+(?:the\s+)?)$",
-    re.IGNORECASE,
-)
 # "X in Y" with Y the bigger place, in one breath: Y opens first, so X sits inside it (the
 # reviewer on slice 4: "rooms at the Three Flags Sailing in Targos")
 _INSIDE = re.compile(r"^\s*,?\s*(?:in|at|of|inside|within|near)\s+(?:the\s+)?$", re.IGNORECASE)
-# Travel between places: closes every settlement and smaller
-_TRAVEL = re.compile(
-    r"\b(?:on\s+the\s+(?:road|trail)|days?\s+of\s+travel|through\s+the\s+wild(?:s|erness)?)\b",
-    re.IGNORECASE,
-)
-_BEFORE = 60  # how far back from a place the heading and leaving words are looked for
 _SENTENCE_END = re.compile(r"[.!?]+(?=\s)|\n")
 _ON_THE_ROAD = place_levels.RANK["settlement"]
 
@@ -77,6 +48,7 @@ class Line:
     text: str
     dm: bool
     chain: str | None
+    moves: tuple[Move, ...] = ()  # the AI's scene moves on this line (DM lines only)
 
 
 @dataclass(slots=True)
@@ -149,38 +121,48 @@ def walk(
                 line.text[a[1] : b[0]]
             ):
                 order[b[0]] = order[a[0]] - 0.5
-        events: list[tuple[float, str, Place | None, int]] = [
-            (order[s[0]], "place", s[2], s[0]) for s in spots
-        ]
-        if line.dm:
-            events += [
-                (float(m.start()), "travel", None, m.start()) for m in _TRAVEL.finditer(line.text)
-            ]
-        for _, kind, p, at in sorted(events, key=lambda e: e[0]):
-            if kind == "travel":
-                chain[:] = [e for e in chain if ranks[e] < _ON_THE_ROAD]
-                continue
-            assert p is not None
+        events = [(order[s[0]], s[2], s[0]) for s in spots]
+        # (each place the AI named on this line, by any of its spellings; one it can't find is
+        # ignored: the AI's word never makes a place)
+        said = {sp.casefold(): p for p in usable for sp in p.spellings}
+        moved: dict[str, str] = {}
+        travel = False
+        for m in line.moves if line.dm else ():
+            if m.kind == TRAVEL:
+                travel = True
+            elif m.place.casefold() in said:
+                moved[said[m.place.casefold()].entity_id] = m.kind
+        if travel:
+            chain[:] = [e for e in chain if ranks[e] < _ON_THE_ROAD]
+        named = {s[2].entity_id for s in spots}
+        for entity_id, kind in moved.items():  # (a move whose place the line doesn't spell out)
+            if entity_id not in named:
+                _move(chain, ranks, entity_id, kind)
+        for _, p, at in sorted(events, key=lambda e: e[0]):
             if at in listed:
                 continue  # (a list says nothing about what is inside what)
+            kind = moved.get(p.entity_id, ARRIVE)
+            if kind in (LEAVE, HEADING):
+                _move(chain, ranks, p.entity_id, kind)
+                continue
             rank = ranks[p.entity_id]
-            before = line.text[max(0, at - _BEFORE) : at]
-            if line.dm and _HEADING.search(before):
-                chain[:] = [e for e in chain if ranks[e] < rank]  # (between places now)
-                continue
-            if line.dm and _LEAVING.search(before):
-                if p.entity_id in chain:  # (only a place open on this chain is left)
-                    del chain[chain.index(p.entity_id) :]
-                continue
             parent = _parent(chain, ranks, rank)
             if parent is not None and p.entity_id not in given and parent != p.entity_id:
                 out.pairs.append((p.entity_id, parent))
                 given.add(p.entity_id)
-            in_passing = bool(_IN_PASSING.search(_SENTENCE_END.split(before)[-1]))
-            if line.dm and not in_passing:
+            if line.dm and kind != NONE:  # (named in passing: read, and it moves nothing)
                 chain[:] = [e for e in chain if ranks[e] < rank]
                 chain.append(p.entity_id)
     return out
+
+
+def _move(chain: list[str], ranks: Mapping[str, int], entity_id: str, kind: str) -> None:
+    """A leaving or a heading-for, on one chain: "left X" only when X is open there."""
+    if kind == LEAVE and entity_id in chain:
+        del chain[chain.index(entity_id) :]
+    elif kind == HEADING:
+        rank = ranks[entity_id]
+        chain[:] = [e for e in chain if ranks[e] < rank]  # (between places now)
 
 
 def rejoined(groups: Iterable[Sequence[str]]) -> list[str]:
