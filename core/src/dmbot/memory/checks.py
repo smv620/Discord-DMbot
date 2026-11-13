@@ -174,9 +174,10 @@ class Nesting:
         pairs: Iterable[tuple[str, str]] = (),
         levels: Mapping[str, str] | None = None,
         setting: str | None = None,
-        open_places: Collection[str] = (),
+        open_places: Collection[str] | None = None,
     ) -> None:
-        self._open = frozenset(open_places)
+        # None: no session walked yet (no chain at all); empty: walked, and nothing open now
+        self._open = None if open_places is None else frozenset(open_places)
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
@@ -231,8 +232,8 @@ class Nesting:
         """What the two places are to someone in both (#4173 slices 1 and 5, Supervisor's rulings):
         - ONE: the same place, one inside the other, or two of different sizes with no link either
           way where the bigger one is open on where the story is (the bank and Waterdeep, while
-          the story is in Waterdeep: the bank is in it). With no chain walked yet, every pair of
-          different sizes with no link is ONE, as before slice 5.
+          the story is in Waterdeep: the bank is in it). With no session walked yet (no chain at
+          all), every pair of different sizes with no link is ONE, as before slice 5.
         - MOVE: different sizes, and the bigger one is elsewhere: not open on any chain, or the
           smaller one is known to be inside another place of the bigger one's size (a bakery in
           Neverwinter and the town of Waterdeep). Someone was in one, then the other.
@@ -243,7 +244,7 @@ class Nesting:
             return RIVALS
         if self._inside_another(a, b) or self._inside_another(b, a):
             return MOVE
-        if not self._open:
+        if self._open is None:
             return ONE
         ra = place_levels.RANK[self._levels[a]]
         rb = place_levels.RANK[self._levels[b]]
@@ -258,6 +259,11 @@ class Nesting:
             p != other and p not in around and self._levels.get(p) == level
             for p in self.above(place)
         )
+
+    def stated_inside(self, inner: str, outer: str) -> bool:
+        """Is `inner` inside `outer` by links someone stated (never by the setting's default):
+        what reopens a moved tie (#4173 slice 5)."""
+        return outer in self._stated(inner)
 
     def would_loop(self, inner: str, outer: str) -> bool:
         """Would putting `inner` in `outer` make a place part of itself?"""

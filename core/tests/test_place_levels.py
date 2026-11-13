@@ -170,6 +170,15 @@ class WhereTheStoryIs(unittest.TestCase):
     def test_with_no_chain_every_pair_of_sizes_is_one_place_as_before(self) -> None:
         self.assertEqual(Nesting((), SIZES).relation("bank", "waterdeep"), pl.ONE)
 
+    def test_walked_with_nothing_open_is_a_move(self) -> None:
+        # (the reviewer: a walk that left every chain empty is still a walk)
+        self.assertEqual(Nesting((), SIZES, open_places=()).relation("bank", "waterdeep"), pl.MOVE)
+
+    def test_only_stated_links_count_as_inside(self) -> None:
+        nest = Nesting([("room", "bakery"), ("bakery", "waterdeep")], SIZES, "waterdeep")
+        self.assertTrue(nest.stated_inside("room", "waterdeep"))
+        self.assertFalse(nest.stated_inside("bank", "waterdeep"))  # (only the setting's default)
+
     def test_a_move_is_never_the_too_many_flag(self) -> None:
         nest = Nesting([("bakery", "neverwinter")], SIZES)
         in_bakery = fact(1, "mira", "located_in", "bakery")
@@ -472,6 +481,97 @@ class TheStore(MemoryTest):
                           from_session_at=200)  # fmt: skip
         await self.relate(bakery, "located_in", other, status=CONFIRMED)
         self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+
+    async def moved_away(self, first: str, then: str) -> tuple[str, str]:
+        """Mira seen in `first` @100 then in `then` @200 while the story is in Neverwinter."""
+        mira = await self.add("Mira", status=CONFIRMED)
+        await self.open_on_the_chain(await self.sized("Neverwinter", "settlement"))
+        for at, place in ((100, first), (200, then)):
+            await self.relate(mira, "located_in", place, status=CONFIRMED, detail=SEEN,
+                              from_session_at=at)  # fmt: skip
+        return mira, await self.sized("The Copper Bank", "building")
+
+    async def test_the_town_then_the_bakery_reopens_the_town(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(town, bakery)
+        self.assertEqual((await self.ties(mira))[town], (200, whereabouts.MOVED))
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual(await self.ties(mira), {bakery: (None, None), town: (None, None)})
+
+    async def test_a_room_inside_the_bakery_is_reopened_too(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        room = await self.sized("The Back Room", "room")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.relate(room, "located_in", bakery, status=CONFIRMED)
+        mira, _ = await self.moved_away(room, town)
+        self.assertEqual((await self.ties(mira))[room], (200, whereabouts.MOVED))
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual((await self.ties(mira))[room], (None, None))
+
+    async def test_a_link_the_dm_keeps_later_reopens_and_one_undo_takes_it_back(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(bakery, town)
+        proposed = await self.relate(
+            bakery, "located_in", town, status="proposed", source="cleaner", confidence=0.7
+        )
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+        kept = await self.memory.update_relation(
+            GUILD_A, self.c, proposed.value[0].id, status=CONFIRMED, source=BY_DM
+        )
+        self.assertEqual((await self.ties(mira))[bakery], (None, None))
+        assert kept.batch is not None
+        await self.memory.undo(GUILD_A, self.c, kept.batch)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+
+    async def test_dmbots_guess_reopens_nothing_until_the_dm_says_its_right(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, _ = await self.moved_away(bakery, town)
+        guess = await self.relate(bakery, "located_in", town, status=CONFIRMED, assumed=True)
+        self.assertEqual((await self.ties(mira))[bakery], (200, whereabouts.MOVED))
+        await self.memory.confirm_assumed(GUILD_A, self.c, guess.value[0].id, source=BY_DM)
+        self.assertEqual((await self.ties(mira))[bakery], (None, None))
+
+    async def test_a_rival_place_since_keeps_it_ended(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        mira, bank = await self.moved_away(bakery, town)
+        await self.relate(mira, "located_in", bank, status=CONFIRMED, detail=SEEN,
+                          from_session_at=300)  # fmt: skip
+        await self.relate(bakery, "located_in", town, status=CONFIRMED)
+        self.assertEqual((await self.ties(mira))[bakery][1], whereabouts.MOVED)
+
+    async def test_the_database_keeps_moved_to_places_and_hand_overs_to_items(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.moved_away(bakery, town)
+        for reason, pred in (("sold", "located_in"), ("moved", "owns")):
+            with self.subTest(reason=reason):
+                with self.assertRaises(Exception) as caught:
+                    async with self.db.guild(GUILD_A) as conn:
+                        await conn.execute(
+                            "UPDATE memory_relations SET end_reason = %s, predicate = %s"
+                            " WHERE end_reason = 'moved'",
+                            (reason, pred),
+                        )
+                self.assertIn("check", str(caught.exception).lower())
+
+    async def test_a_backup_with_moved_on_an_open_tie_or_an_item_is_refused(self) -> None:
+        bakery = await self.sized("Hilda's Bakery", "building")
+        town = await self.sized("Waterdeep", "settlement")
+        await self.moved_away(bakery, town)
+        data = await self.campaigns.export(GUILD_A, self.c)
+        for change in ({"to_session_at": None}, {"predicate": "owns"}):
+            with self.subTest(change=change):
+                damaged = [
+                    {**r, **change} if r.get("end_reason") == whereabouts.MOVED else r
+                    for r in data["sections"]["memory"]
+                ]
+                broken = {**data, "sections": {**data["sections"], "memory": damaged}}
+                with self.assertRaises(CampaignError):
+                    await self.campaigns.import_backup(GUILD_B, broken, DM)
 
     async def test_a_backup_carries_a_moved_end(self) -> None:
         mira = await self.add("Mira", status=CONFIRMED)

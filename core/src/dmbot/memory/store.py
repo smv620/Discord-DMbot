@@ -53,6 +53,7 @@ from dmbot.memory import (
     merge_restore,
     notify,
     place_levels,
+    place_words,
     report_fixed,
     reputation_words,
     standing,
@@ -6200,8 +6201,7 @@ class MemoryStore:
                 w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,
                 session_started_at=mention["session_started_at"], trusted=True,
             )  # fmt: skip
-        if pred.key == NESTS and set(types.values()) == {"place"} and status == CONFIRMED:
-            await _reopen_moved(w, s)  # (#4173 slice 5: the smaller place is inside the bigger)
+        await _reopen_if_nested(w, new)  # (#4173 slice 5: the smaller place is in the bigger)
         if assumed:  # (never an alert or a question on its own: Supervisor's condition)
             return new, []
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
@@ -6222,6 +6222,7 @@ class MemoryStore:
             if not current["assumed"]:
                 return Written(_relation(current), None)
             row = await w.update(RELATIONS, relation_id, {"assumed": False})
+            await _reopen_if_nested(w, _relation(row))  # (now the DM's own: #4173 slice 5)
             return Written(_relation(row), w.batch)
 
     async def set_knows_how(
@@ -6405,6 +6406,8 @@ class MemoryStore:
                 and (changes.keys() & {"status", "to_session_at"})
             ):  # (it just became live: an item's other whereabouts settle, #3363)
                 made, _ = await _settle_whereabouts(w, made)
+            if changes.keys() & {"status", "to_session_at", "assumed"}:
+                await _reopen_if_nested(w, made)  # (kept or revealed: #4173 slice 5)
             return Written(made, w.batch)
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
@@ -8824,32 +8827,57 @@ async def _not_assumed(w: Changes, kind: str, statement_id: str) -> None:
         raise MemoryRuleError(ASSUMED_FIRST)
 
 
-async def _reopen_moved(w: Changes, place_id: str) -> int:
-    """A link that puts this place inside another reopens each mover's tie to it that ended as
-    `whereabouts.MOVED` while the same mover has a live tie to a place it is now inside (#4173
-    slice 5, Supervisor's condition: "in the bakery", then "in Waterdeep" read as a move, then
-    "the bakery is in Waterdeep": they never left). In the caller's change, so one Undo takes
-    both back; never a flag. Returns how many were reopened."""
+async def _reopen_moved(w: Changes) -> int:
+    """A link that puts one place inside another (said, kept or confirmed: never DMbot's guess)
+    reopens each mover's place tie that ended as `whereabouts.MOVED` once the two places are one
+    (#4173 slice 5, Supervisor's condition: "in the bakery", then "in Waterdeep" read as a move,
+    then "the bakery is in Waterdeep": they never left). Either way round (the town's tie ended by
+    the bakery's too), and for a place inside the smaller one (the bakery's back room). Only when
+    the mover's every live tie of the same kind ("lives in", "was last seen in") is now one place
+    with it: a rival or a move since keeps it ended. In the caller's change, so one Undo takes both
+    back; never a flag. Returns how many were reopened."""
     moved = await w.select(
         RELATIONS,
-        " AND object_id = %s AND predicate = %s AND end_reason = %s AND status = %s",
-        [place_id, NESTS, whereabouts.MOVED, CONFIRMED],
+        " AND predicate = %s AND end_reason = %s AND status = %s",
+        [NESTS, whereabouts.MOVED, CONFIRMED],
     )
     if not moved:
         return 0
-    around = (await states.place_nesting(w, await _load_ontology(w))).above(place_id)
+    nest = await states.place_nesting(w, await _load_ontology(w))
     reopened = 0
     for row in moved:
-        live = await w.select(
-            RELATIONS,
-            " AND subject_id = %s AND predicate = %s AND to_session_at IS NULL AND status = %s"
-            " AND object_id = ANY(%s)",
-            [row["subject_id"], NESTS, CONFIRMED, sorted(around)],
-        )
-        if live:
-            await w.update(RELATIONS, row["id"], whereabouts.reopened(str(row["detail"])))
+        mover, place = str(row["subject_id"]), str(row["object_id"])
+        kind = str((await _entity_row(w, mover))["type"])
+        word, _ = place_words.slot(str(row["detail"]), kind)
+        live = [
+            str(r["object_id"])
+            for r in await w.select(
+                RELATIONS,
+                " AND subject_id = %s AND predicate = %s AND to_session_at IS NULL"
+                " AND status = %s AND NOT assumed",
+                [mover, NESTS, CONFIRMED],
+            )
+            if place_words.slot(str(r["detail"]), kind) == (word, False)
+        ]
+        if live and all(
+            nest.stated_inside(place, other) or nest.stated_inside(other, place) for other in live
+        ):
+            await w.update(RELATIONS, str(row["id"]), whereabouts.reopened(str(row["detail"])))
             reopened += 1
     return reopened
+
+
+async def _reopen_if_nested(w: Changes, rel: Relation) -> None:
+    """`_reopen_moved` after a place-in-place link has just become the DM's live fact."""
+    if (
+        rel.predicate == NESTS
+        and rel.status == CONFIRMED
+        and rel.to_session_at is None
+        and not rel.assumed
+        and (await _entity_row(w, rel.subject_id))["type"] == "place"
+        and (await _entity_row(w, rel.object_id))["type"] == "place"
+    ):
+        await _reopen_moved(w)
 
 
 async def _has_parent(w: Changes, place_id: str, parent_id: str) -> bool:

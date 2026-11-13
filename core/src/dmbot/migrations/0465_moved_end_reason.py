@@ -14,14 +14,19 @@ from __future__ import annotations
 # needs opening.
 SQL = r"""
     DO $do$
-    DECLARE c TEXT;
+    DECLARE c TEXT; dropped INT := 0;
     BEGIN
         FOR c IN SELECT conname FROM pg_constraint
                  WHERE conrelid = 'memory_relations'::regclass AND contype = 'c'
                    AND pg_get_constraintdef(oid) LIKE '%end_reason%'
                    AND pg_get_constraintdef(oid) NOT LIKE '%to_session_at%' LOOP
             EXECUTE format('ALTER TABLE memory_relations DROP CONSTRAINT %I', c);
+            dropped := dropped + 1;
         END LOOP;
+        -- (exactly 0422's two: anything else means the table is not what this was written for)
+        IF dropped <> 2 THEN
+            RAISE EXCEPTION '0465: expected 2 end_reason checks, found %', dropped;
+        END IF;
     END
     $do$;
     ALTER TABLE memory_relations ADD CONSTRAINT memory_relations_end_reason_check
