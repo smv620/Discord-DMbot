@@ -82,6 +82,7 @@ from dmbot.ui import (
     languages_card,
     logic,
     place_size,
+    place_world,
     player_id,
     split_words,
     told_name,
@@ -809,6 +810,15 @@ async def show_card(
     form = place_size.form_line(entity.form, entity.form_read) if entity.type == "place" else ""
     if form and len(text) + len(form) <= CARD_MAX:
         text += form
+    if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
+        seen_names = {e.id: e.name for e in names.entities.values()}  # (this viewer's names)
+        held = await memory.map_facts_up(
+            campaign.guild_id, campaign.id, entity_id, place_world.viewer_for(secrets),
+            shown=None if secrets else set(seen_names),
+        )  # fmt: skip
+        world = place_world.card_lines(held, seen_names, dm=secrets)
+        if world and len(text) + len(world) <= CARD_MAX:
+            text += world
     # the campaign's setting (#4173 slice 2): a mark left on a removed place says nothing
     whole = place_size.setting_line(entity.setting and entity.status == CONFIRMED)
     if whole and len(text) + len(whole) <= CARD_MAX:
@@ -1127,6 +1137,12 @@ class NameCard(_Menu):
             self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if size:  # a place: how big it is (#4173), beside its standing button
             self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
+            for row in (3, 2, 1):  # its land, climate and ruler (#4256), first row with room
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
+                    )
+                    break
         self.is_setting = bool(setting)
         if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
             label = place_size.SETTING_OFF_BUTTON if setting else place_size.SETTING_ON_BUTTON
@@ -1260,6 +1276,10 @@ class NameCard(_Menu):
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
+
+    async def _place_world(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_world.show_world(interaction, self.campaign_id, self.entity_id)
 
     async def _languages(self, interaction: discord.Interaction) -> None:
         self.stop()
