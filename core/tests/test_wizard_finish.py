@@ -63,7 +63,18 @@ class FinishTest(DatabaseTest):
             ),
             get_guild=lambda gid: self.guild if gid == GUILD else None,
             create_refusal=AsyncMock(return_value=None),
+            # The three channels, made as /dmbot start makes them (#4303): recorded, not drawn.
+            _transcript_channel=AsyncMock(return_value=(1, None)),
+            _dm_bot_channel=AsyncMock(return_value=None),
         )
+
+        async def screen(guild: Any, campaign_id: str, store: Any, **_: Any) -> Any:
+            return SimpleNamespace(campaign=await store.get(GUILD, campaign_id), channel=object())
+
+        self.setup_screen = AsyncMock(side_effect=screen)
+        patcher = patch.object(wizard_finish, "setup_dm_screen", self.setup_screen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.worker: asyncio.Task[None] | None = None
 
     async def asyncTearDown(self) -> None:
@@ -192,6 +203,44 @@ class TheProgress(FinishTest):
             [{"pass_word": "", "pass_done": 0, "pass_total": 0, "found_names": 0,
               "found_links": 0}],
         )  # fmt: skip
+
+    async def test_the_run_makes_the_campaigns_channels_once(self) -> None:
+        await self.draft()
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.setup_screen.assert_awaited_once()
+        self.bot._transcript_channel.assert_awaited_once()
+        self.bot._dm_bot_channel.assert_awaited_once()
+
+    async def test_a_resumed_run_does_not_make_the_channels_again(self) -> None:
+        await self.draft()
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        [made] = await self.campaigns.list_campaigns(GUILD)
+        await self.campaigns.set_dm_screen(GUILD, made.id, 11)
+        await self.campaigns.set_transcript_channel(GUILD, made.id, 12)
+        await self.campaigns.set_dm_bot_channel(GUILD, made.id, 13)
+        self.setup_screen.reset_mock()
+        self.bot._transcript_channel.reset_mock()
+        self.bot._dm_bot_channel.reset_mock()
+        await self.sql("DELETE FROM wizard_finishes")
+        await self.draft()
+        await self.queue("b" * 32)
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.setup_screen.assert_not_awaited()
+        self.bot._transcript_channel.assert_not_awaited()
+        self.bot._dm_bot_channel.assert_not_awaited()
+
+    async def test_a_channel_that_cannot_be_made_leaves_the_campaign_made_and_says_so(self) -> None:
+        self.bot._transcript_channel.return_value = (None, "I can't make a channel here.")
+        await self.draft()
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        row = await self.run_row()
+        self.assertEqual((row["state"], row["error"]), ("done", "channels_failed"))
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 1)
 
     async def test_at_most_one_write_a_second_for_a_run(self) -> None:
         await self.draft(docs=(("lore", "l.txt", "Words."),))
