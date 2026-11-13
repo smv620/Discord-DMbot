@@ -371,11 +371,18 @@ class PictureStore:
                 return None
             # A picture that is gone is no map either (#4344: a poster who deletes their picture
             # takes its map with it, in the same step).
-            await conn.execute(
+            cur = await conn.execute(
                 "DELETE FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
-                " AND picture_id = %s",
+                " AND picture_id = %s RETURNING id",
                 (guild_id, campaign_id, picture_id),
             )
+            gone = [str(r["id"]) for r in await cur.fetchall()]
+            if gone:  # its change-log rows hold the uploader's id and its title: nothing is left
+                await conn.execute(
+                    "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                    " AND table_name = 'campaign_maps' AND row_id = ANY(%s)",
+                    (guild_id, campaign_id, gone),
+                )
             await conn.execute(
                 "UPDATE campaign_pictures SET deleted_at = %s, permanent = FALSE, description = ''"
                 " WHERE id = %s",

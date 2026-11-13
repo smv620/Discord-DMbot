@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from dmbot.db import Conn, Database
-from dmbot.memory.models import new_id
+from dmbot.memory._changes import MAP_FACTS, MAPS
+from dmbot.memory.models import Written, new_id
+from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -126,10 +128,15 @@ def _seen(viewer: Viewer) -> str:
 
 
 class MapStore:
-    """A campaign's maps."""
+    """A campaign's maps. Every write is one batch of the change log, so one DM action is one Undo
+    (design rule 8, #4346): they go through `MemoryStore.map_write`, take the picture store's lock
+    first, and set the picture's permanent flag in the same transaction."""
 
-    def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self, db: Database, memory: MemoryStore, clock: Callable[[], float] = time.time
+    ) -> None:
         self._db = db
+        self._memory = memory
         self._clock = clock
 
     async def add_map(
@@ -150,12 +157,12 @@ class MapStore:
         width: int | None = None,
         height: int | None = None,
         storage_mb: int,
-    ) -> Map:
+    ) -> Written[Map]:
         """Keep a kept picture as a map. Refused (`MapError`) unless the uploader said yes to "Is
         this a map you're allowed to use and save in this campaign?" (`right_to_use`). A DM's own
         upload carries the DM's yes to using it as well; a player's waits for a DM. The picture is
         made permanent in the same step (so the rolling removal never takes it), refused when
-        permanent pictures are full."""
+        permanent pictures are full. The result's batch is the Undo."""
         if not right_to_use:
             raise MapError(NOT_YET)
         if kind not in KINDS or came_from not in CAME_FROM or audience not in AUDIENCES:
@@ -167,115 +174,94 @@ class MapStore:
         if (width is not None and width <= 0) or (height is not None and height <= 0):
             raise MapError(BAD)
         now = int(self._clock())
-        async with self._db.guild(guild_id) as conn:
-            await _lock(conn, guild_id, campaign_id)
-            pic = await _picture(conn, guild_id, campaign_id, picture_id)
+        async with self._memory.map_write(guild_id, campaign_id) as w:
+            await _lock(w.conn, guild_id, campaign_id)  # (the picture store's lock, first)
+            pic = await _picture(w.conn, guild_id, campaign_id, picture_id)
             if pic is None:
                 raise MapError(NOT_KEPT)
             if covers is not None:  # (a place of this campaign, or the foreign key would refuse)
-                cur = await conn.execute(
+                cur = await w.conn.execute(
                     "SELECT 1 FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
                     " AND id = %s",
                     (guild_id, campaign_id, covers),
                 )
                 if await cur.fetchone() is None:
                     raise MapError(BAD)
-            cur = await conn.execute(
-                "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
-                " AND picture_id = %s",
-                (guild_id, campaign_id, picture_id),
-            )
-            if await cur.fetchone() is not None:
+            if await w.select(MAPS, " AND picture_id = %s", [picture_id]):
                 raise MapError(ALREADY)
             if not pic["permanent"]:
-                usage = await _usage(conn, guild_id, campaign_id, storage_mb)
+                usage = await _usage(w.conn, guild_id, campaign_id, storage_mb)
                 if _full(usage, int(pic["size_bytes"]) + int(pic["preview_bytes"])):
                     raise MapError(FULL)
-                await conn.execute(
+                await w.conn.execute(
                     "UPDATE campaign_pictures SET permanent = TRUE WHERE id = %s", (picture_id,)
                 )
-            cur = await conn.execute(
-                "INSERT INTO campaign_maps (guild_id, campaign_id, id, picture_id, title, covers,"
-                " kind, width, height, audience, came_from, import_tool, right_by, right_at,"
-                " use_ok, use_by, use_at, created_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                f" RETURNING {COLUMNS}",
-                (
-                    guild_id, campaign_id, new_id(), picture_id, title[:120], covers, kind,
-                    width, height, audience, came_from, import_tool, uploader_id, now,
-                    True if uploader_is_dm else None,
-                    uploader_id if uploader_is_dm else None,
-                    now if uploader_is_dm else None,
-                    now,
-                ),
+            row = await w.insert(
+                MAPS,
+                {
+                    "id": new_id(), "picture_id": picture_id, "title": title[:120],
+                    "covers": covers, "kind": kind, "width": width, "height": height,
+                    "scale_value": None, "scale_unit": None, "scale_from": None,
+                    "grid_kind": "none", "grid_cell_px": None, "grid_cell_distance": None,
+                    "north_angle": 0.0, "north_from": "assumed", "audience": audience,
+                    "came_from": came_from, "import_tool": import_tool, "right_by": uploader_id,
+                    "right_at": now, "use_ok": True if uploader_is_dm else None,
+                    "use_by": uploader_id if uploader_is_dm else None,
+                    "use_at": now if uploader_is_dm else None, "as_of": None, "replaces": None,
+                    "created_at": now,
+                },
             )  # fmt: skip
-            made = await cur.fetchone()
-            assert made is not None
-            return _map(made)
+            return Written(_map(row), w.batch)
 
     async def answer_use(
         self, guild_id: int, campaign_id: str, map_id: str, *, dm_id: int, yes: bool
-    ) -> Map:
+    ) -> Written[Map]:
         """A DM's yes or no to "A map from <player>: use it?". A no leaves the picture kept and
         unused; removing it is a separate tap. The caller has checked that `dm_id` is a DM of this
         campaign. Answering again changes the answer, and the later one stands."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "UPDATE campaign_maps SET use_ok = %s, use_by = %s, use_at = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                f" RETURNING {COLUMNS}",
-                (yes, dm_id, int(self._clock()), guild_id, campaign_id, map_id),
-            )
-            row = await cur.fetchone()
-            if row is None:
+        async with self._memory.map_write(guild_id, campaign_id) as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            if await w.get(MAPS, map_id) is None:
                 raise MapError(GONE)
-            return _map(row)
+            row = await w.update(
+                MAPS, map_id, {"use_ok": yes, "use_by": dm_id, "use_at": int(self._clock())}
+            )
+            return Written(_map(row), w.batch)
 
     async def set_audience(
         self, guild_id: int, campaign_id: str, map_id: str, audience: str
-    ) -> Map:
+    ) -> Written[Map]:
         """ "Show to the table" (or back to the DM only). The caller has checked that this is a DM,
         and has shown the warning "Players will see everything drawn on this map." first."""
         if audience not in AUDIENCES:
             raise MapError(BAD)
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                f"SELECT {COLUMNS} FROM campaign_maps"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
-                (guild_id, campaign_id, map_id),
-            )
-            row = await cur.fetchone()
-            if row is None:
+        async with self._memory.map_write(guild_id, campaign_id) as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            if await w.get(MAPS, map_id) is None:
                 raise MapError(GONE)
-            cur = await conn.execute(
-                "UPDATE campaign_maps SET audience = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                f" RETURNING {COLUMNS}",
-                (audience, guild_id, campaign_id, map_id),
-            )
-            changed = await cur.fetchone()
-            assert changed is not None
-            return _map(changed)
+            row = await w.update(MAPS, map_id, {"audience": audience})
+            return Written(_map(row), w.batch)
 
-    async def remove_map(self, guild_id: int, campaign_id: str, map_id: str) -> Map | None:
+    async def remove_map(self, guild_id: int, campaign_id: str, map_id: str) -> Written[Map | None]:
         """Take a picture's map status away (a DM can always; its poster can too). The picture
         stays a picture, no longer permanent (Supervisor's ruling on #4344: a pin the DM set before
-        the map existed is cleared too). None when there was no such map."""
-        async with self._db.guild(guild_id) as conn:
-            await _lock(conn, guild_id, campaign_id)
-            cur = await conn.execute(
-                "DELETE FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                f" RETURNING {COLUMNS}",
-                (guild_id, campaign_id, map_id),
-            )
-            row = await cur.fetchone()
+        the map existed is cleared too). Facts that point at the map are cleared first, through
+        the log, so one Undo puts them back with it. No such map: nothing, and no batch."""
+        async with self._memory.map_write(guild_id, campaign_id) as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            row = await w.get(MAPS, map_id)
             if row is None:
-                return None
-            await conn.execute(
+                return Written(None, None)
+            for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
+                await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
+            for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
+                await w.update(MAPS, str(other["id"]), {"replaces": None})
+            await w.delete(MAPS, map_id)
+            await w.conn.execute(
                 "UPDATE campaign_pictures SET permanent = FALSE WHERE id = %s",
                 (int(row["picture_id"]),),
             )
-            return _map(row)
+            return Written(_map(row), w.batch)
 
     async def maps(
         self,

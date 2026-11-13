@@ -22,6 +22,7 @@ ALLOWED = {
     "campaigns/tables.py": "only names the table, on the backup section's list",
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "migrations/0457_map_facts.py": "creates the table",
+    "maps/store.py": "`remove_map` clears a fact's `map_id` through the log before the map goes",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
     "migrations/0463_place_world_door.py": "a DM-only door: NULL for anyone else (#4287; #4311)",
