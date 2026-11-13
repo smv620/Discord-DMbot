@@ -305,6 +305,44 @@ class Journeys(Chains):
         self.assertEqual(done.journeys, 1)
         self.assertEqual(await self.legs(), [("Kelvenmoor", "Brindleford", "", later)])
 
+    async def town_row(self) -> list[str]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT entity_id FROM memory_story_chain WHERE guild_id = %s"
+                " AND campaign_id = %s AND chain = 'town'",
+                (GUILD, self.cid),
+            )
+            return [self.by_id[str(r["entity_id"])] for r in await cur.fetchall()]
+
+    async def on_the_road(self, started: int = START) -> None:
+        said = [Said(at(1), DM, "You reach Kelvenmoor.", 1),
+                Said(at(2), DM, "After three days on the road you are cold.", 2)]  # fmt: skip
+        moves = {1: (Move(1, ARRIVE, "Kelvenmoor"),), 2: (Move(2, TRAVEL, ""),)}
+
+        async def agreed() -> set[int]:
+            return set(self.agreeing)
+
+        await self.chains.read_session(
+            GUILD, self.cid, started, said, {DM}, "Session 1", agreed, moves
+        )
+
+    async def test_an_older_session_leaves_the_kept_town_alone(self) -> None:
+        await self.on_the_road()
+        old = await self.go((-86_400, DM, "You reach Brindleford.", "Brindleford"),
+                            started=START - 86_400)  # fmt: skip
+        self.assertTrue(old.skipped_older)
+        self.assertEqual(await self.town_row(), ["Kelvenmoor"])
+
+    async def test_a_kept_town_turned_down_meanwhile_starts_no_journey(self) -> None:
+        await self.on_the_road()
+        await self.memory.set_entity_status(
+            GUILD, self.cid, self.ids["Kelvenmoor"], "rejected", source=BY_DM
+        )
+        later = START + 86_400
+        done = await self.go((86_401, DM, "You reach Brindleford.", "Brindleford"), started=later)
+        self.assertEqual(done.journeys, 0)
+        self.assertEqual(await self.town_row(), ["Brindleford"])
+
     async def test_one_undo_takes_one_journey_back(self) -> None:
         await self.go(
             (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),

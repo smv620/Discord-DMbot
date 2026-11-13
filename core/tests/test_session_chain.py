@@ -276,6 +276,22 @@ class Journeys(unittest.TestCase):
         )  # fmt: skip
         self.assertEqual((got.legs, got.town), ([Leg("targos", "bryn", "")], "bryn"))
 
+    def test_a_kept_town_no_longer_a_town_starts_no_journey(self) -> None:
+        # (#4338: the town from the session before is checked again; "dale" is a region now)
+        got = walk(
+            [self.arrive("You reach Bryn Shander.", "Bryn Shander")], PLACES, {MAIN: []},
+            set(), last_town="dale",
+        )  # fmt: skip
+        self.assertEqual((got.legs, got.town), ([], "bryn"))
+
+    def test_the_partys_own_town_wins_over_a_kept_one(self) -> None:
+        # (#4338: the kept town is used only when the party's chain holds none)
+        got = walk(
+            [self.arrive("You reach Bryn Shander.", "Bryn Shander")], PLACES,
+            {MAIN: ["dale", "targos"]}, set(), last_town="bryn",
+        )  # fmt: skip
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "")])
+
     def test_a_players_words_and_a_building_make_no_journey(self) -> None:
         got = run(
             player("Let's go to Bryn Shander by road."),

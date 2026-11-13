@@ -13,6 +13,8 @@ question, kept by itself once both places are kept (`backstory_keep.keep_assumed
   only the places every group still shares (`session_chain.rejoined`).
 - **Order.** A session older than the chains' last one never moves them (an import of an old file
   after newer play): it is left out, counted in the log.
+- **The party's last town** (#4338) is one more row, 'town', so a session that starts on the road
+  writes its first arrival as a journey; it is never an open place.
 - **Ids only.** The lines are read in memory and never kept; the table holds entry ids, and the log
   gets counts.
 """
@@ -344,7 +346,7 @@ async def _save(
     rows: list[tuple[int, str, str, int, str | None, int]] = [
         (guild_id, campaign_id, MARK, 0, None, max(at, 1))
     ]
-    if town is not None:
+    if town is not None:  # (the same `at` as the mark: `_load` reads the newest as the last walk)
         rows.append((guild_id, campaign_id, TOWN, 0, town, max(at, 1)))
     for key, ids in chains.items():
         rows += [
