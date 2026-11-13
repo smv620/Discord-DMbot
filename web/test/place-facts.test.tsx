@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
@@ -99,6 +100,58 @@ describe("choosing, then one Save", () => {
     fireEvent.change(size, { target: { value: "region" } });
     fireEvent.change(size, { target: { value: "settlement" } }); // (back to what DMbot read)
     expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("a save that does not go through", () => {
+  it("a size that is still waiting or has gone stops the kind from being sent, and a second press waits for the first", async () => {
+    const api = mockApi("table");
+    render(<Names api={api} path={DM} />);
+    await screen.findByRole("list", { name: namesPage.listLabel });
+    fireEvent.change(screen.getByLabelText(namesPage.perPageLabel), { target: { value: "200" } });
+    await waitFor(() => expect(rowOf("Saltmarsh")).toBeTruthy());
+    const row = within(rowOf("Saltmarsh"));
+    fireEvent.click(row.getByRole("button", { name: "Saltmarsh" }));
+    const real = api.changeName!.bind(api);
+    let tried = 0;
+    api.changeName = async (ref, id, change) => {
+      if (change.action === "place-size") {
+        tried++;
+        throw new ApiError("still-waiting"); // (the bot has not answered)
+      }
+      return real(ref, id, change);
+    };
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "region" } });
+    fireEvent.change(row.getByLabelText(w.formAsk), { target: { value: "water" } });
+    await pressSave(row);
+    await waitFor(() => expect(tried).toBe(1));
+    await new Promise((go) => setTimeout(go, 50));
+    expect(api.calls.some((c) => c.includes('"place-form"'))).toBe(false); // the kind waits
+    // Both choices are still there to save again, and the controls are free again (nothing is stuck busy).
+    expect((row.getByLabelText(w.sizeLabel) as HTMLSelectElement).value).toBe("region");
+    expect((row.getByLabelText(w.formAsk) as HTMLSelectElement).value).toBe("water");
+    expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a kind alone sends no size", async () => {
+    const { api, row } = await openPlace("Saltmarsh");
+    fireEvent.change(await row.findByLabelText(w.formAsk), { target: { value: "route" } });
+    await pressSave(row);
+    expect(await row.findByText(w.notedForm("Saltmarsh", "route"))).toBeTruthy();
+    expect(api.calls.some((c) => c.includes('"place-size"'))).toBe(false);
+  });
+
+  it("shows that it is saving while it works", async () => {
+    const { api, row } = await openPlace("Saltmarsh");
+    const real = api.changeName!.bind(api);
+    api.changeName = async (ref, id, change) => {
+      await new Promise((go) => setTimeout(go, 60));
+      return real(ref, id, change);
+    };
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "district" } });
+    await pressSave(row);
+    expect(await row.findByText(w.working)).toBeTruthy();
+    expect(await row.findByText(w.noted("Saltmarsh", "district"))).toBeTruthy();
   });
 });
 

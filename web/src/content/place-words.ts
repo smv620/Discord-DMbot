@@ -45,6 +45,6 @@ export const placeWords = {
   settingLine: "Campaign setting: the whole story happens here. DMbot counts smaller places as inside it unless the DM says otherwise.",
   notedSetting: (name: string): string => `Noted: ${name} is the campaign's setting.`,
   notedNoSetting: "Noted: no campaign setting now.",
-  tooSmall: "Tap 📏 Size first and pick Region or bigger.",
+  tooSmall: "Tap 📏 Size first, pick Region or bigger and Save.",
   working: "Saving…",
 } as const;

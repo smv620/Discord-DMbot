@@ -26,12 +26,25 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
   const formNow = form ?? "land";
   const [pickSize, setPickSize] = useState(sizeNow);
   const [pickForm, setPickForm] = useState<string>(formNow);
-  // The choice follows the row when a read changes it (after a Save), but is not reset by the first paint: only a change of what is saved resets it.
+  // The choice follows the row when a read changes what is saved (after a Save), part by part so one part's save never loses the other's
+  // unsaved choice; the first paint does not reset it.
   const seen = useRef({ id: row.id, size: sizeNow, form: formNow });
-  if (seen.current.id !== row.id || seen.current.size !== sizeNow || seen.current.form !== formNow) {
+  const latest = useRef({ size: sizeNow, form: formNow });
+  latest.current = { size: sizeNow, form: formNow };
+  if (seen.current.id !== row.id) {
     seen.current = { id: row.id, size: sizeNow, form: formNow };
-    if (pickSize !== sizeNow) setPickSize(sizeNow);
-    if (pickForm !== formNow) setPickForm(formNow);
+    setPickSize(sizeNow);
+    setPickForm(formNow);
+    setNote(null);
+  } else {
+    if (seen.current.size !== sizeNow) {
+      seen.current.size = sizeNow;
+      setPickSize(sizeNow);
+    }
+    if (seen.current.form !== formNow) {
+      seen.current.form = formNow;
+      setPickForm(formNow);
+    }
   }
   const changed = pickSize !== sizeNow || pickForm !== formNow;
 
@@ -50,18 +63,25 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
     flight.current = true;
     setBusy(true);
     setNote(null);
-    let fine = true;
-    if (pickSize !== sizeNow) {
-      fine = isSize(pickSize)
-        ? await run({ action: "place-size", size: pickSize }, w.noted(row.name, pickSize))
-        : await run({ action: "place-size", size: null }, w.notedNone(row.name));
+    try {
+      let fine = true;
+      if (pickSize !== sizeNow) {
+        fine = isSize(pickSize)
+          ? await run({ action: "place-size", size: pickSize }, w.noted(row.name, pickSize))
+          : await run({ action: "place-size", size: null }, w.notedNone(row.name));
+        // The page's `act` also answers "nothing" for a change that may still be waiting or a name that has gone (it says so itself), so the
+        // kind goes only once the list has been read again and shows the size saved.
+        await new Promise((go) => setTimeout(go, 0));
+        if (latest.current.size !== pickSize) fine = false;
+      }
+      if (fine && pickForm !== formNow) {
+        const next: Form | null = (FORMS as readonly string[]).includes(pickForm) ? (pickForm as Form) : null;
+        await run({ action: "place-form", form: next }, w.notedForm(row.name, next));
+      }
+    } finally {
+      flight.current = false;
+      setBusy(false);
     }
-    if (fine && pickForm !== formNow) {
-      const next: Form | null = (FORMS as readonly string[]).includes(pickForm) ? (pickForm as Form) : null;
-      await run({ action: "place-form", form: next }, w.notedForm(row.name, next));
-    }
-    flight.current = false;
-    setBusy(false);
   }
 
   async function setting(on: boolean): Promise<void> {
@@ -69,9 +89,12 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
     flight.current = true;
     setBusy(true);
     setNote(null);
-    await run({ action: "place-setting", setting: on }, on ? w.notedSetting(row.name) : w.notedNoSetting);
-    flight.current = false;
-    setBusy(false);
+    try {
+      await run({ action: "place-setting", setting: on }, on ? w.notedSetting(row.name) : w.notedNoSetting);
+    } finally {
+      flight.current = false;
+      setBusy(false);
+    }
   }
 
   const canSetting = row.setting === true || (size !== null && BIG.includes(size));
@@ -117,7 +140,7 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
         <button
           type="button"
           class="button secondary"
-          disabled={busy}
+          disabled={busy || changed}
           onClick={() => void setting(row.setting !== true)}
         >
           {row.setting === true ? w.settingRemove : w.settingMake}
@@ -126,7 +149,7 @@ export default function PlaceFacts({ row, act }: { row: NameRow; act: (change: N
         <p class="small muted">{w.tooSmall}</p>
       )}
       <p role="status" aria-live="polite" class={note && !note.ok ? "warn small" : "small"}>
-        {note?.text ?? ""}
+        {busy ? w.working : (note?.text ?? "")}
       </p>
     </div>
   );
