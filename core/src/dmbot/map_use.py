@@ -15,5 +15,7 @@ from collections.abc import Collection
 
 def may_use_map(dm_user_ids: Collection[int], poster_id: int) -> bool:
     """Whether DMbot may read this map closely and, later, use it: today, only when the person
-    who posted it is one of the campaign's DMs."""
+    who posted it is one of the campaign's DMs. For a picture in chat, before any map row exists;
+    a kept map's answer is `dmbot.maps.store.may_use_map` (the DM's yes on its row), and 6b-2
+    makes that the only one (#4349)."""
     return poster_id in dm_user_ids
