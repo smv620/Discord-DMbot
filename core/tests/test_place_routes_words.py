@@ -59,9 +59,9 @@ class TheWebsiteWordsAreDiscords(unittest.TestCase):
 
 
 class EverySentenceReadsBackToItsKind(unittest.TestCase):
-    """The website saves a choice's sentence as the connection's words, and the add-link action reads
-    it back (`link_words.predicate_for`): each must give its own kind and word, or the website would
-    save something else than Discord's menu does."""
+    """The website saves a choice's sentence as the connection's words, and the add-link action
+    reads it back (`link_words.predicate_for`): each must give its own kind and word, or the
+    website would save something else than Discord's menu does."""
 
     def test_next_to(self) -> None:
         for label, detail in place_links.NEXT_CHOICES:
