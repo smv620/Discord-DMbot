@@ -10517,7 +10517,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return scene_move_step.Found()
         examples = None
         vectors: dict[tuple[int, int], list[float]] = {}
-        if self.voyage is not None and self.settings.meaning_search_on:
+        if (
+            self.settings.scene_filter_on  # (off by default: every DM line goes to the call)
+            and self.voyage is not None
+            and self.settings.meaning_search_on
+        ):
             model = self.settings.voyage_embed_model
             try:
                 examples = await scene_move_step.example_vectors(self.voyage, model)

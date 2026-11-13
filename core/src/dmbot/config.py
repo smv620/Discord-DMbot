@@ -126,6 +126,10 @@ class Settings:
     # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
     # 2026-11-10).
     private_scenes_on: bool = False
+    # Scene moves (#4173 slice 4): send only the DM lines whose stored numbers look like a move
+    # to the AI. Off (Supervisor's ruling, 2026-11-13): every DM line goes to the one call until
+    # dev1 has tuned the filter on the sample session (`devtools.scene_moves_tune`) to 95%.
+    scene_filter_on: bool = False
     # Names read from an upload's pictures (#4003): the words the picture reading gives go through
     # the lore reader too, each name checked against the document's own; one it can't resolve waits
     # in Names to check, its note saying so. Off until the picture reading (CloudDev-lead's half) is
@@ -479,6 +483,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    scene_filter_raw = (get("DMBOT_SCENE_FILTER") or "0").lower()
+    if scene_filter_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_SCENE_FILTER must be 1 (on) or 0 (off), got "' + scene_filter_raw + '".'
+        )
     private_raw = (get("DMBOT_PRIVATE_SCENES") or "0").lower()
     if private_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -700,6 +709,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
+        scene_filter_on=scene_filter_raw in ("1", "true", "on"),
         picture_names_on=picture_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
