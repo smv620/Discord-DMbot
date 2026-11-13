@@ -228,15 +228,27 @@ class DamagedBackups(unittest.TestCase):
     def test_a_damaged_close_read_is_refused(self) -> None:
         good = {
             "level": "region",
-            "places": [{"name": "A", "level": "", "form": "land"}],
-            "links": [{"a": "A", "kind": "in", "b": "B", "word": "", "sure": False}],
+            "places": [
+                {"name": "A", "level": "", "form": "land"},
+                {"name": "B", "level": "", "form": "water"},
+            ],
+            "links": [
+                {"a": "A", "kind": "in", "b": "B", "word": "", "sure": False},
+                {"a": "A", "kind": "next_to", "b": "B", "word": "on the shore of", "sure": True},
+            ],
         }
+        link = good["links"][0]
         row = {"by": "7", "at": 1, "alt": "A map.", "layout": "x", "places": [], "close": good}
         MapNotesSection().check([row])  # (a good one loads)
         for bad in (
             {**good, "level": "galaxy"},
-            {**good, "links": [{**good["links"][0], "kind": "inside"}]},
-            {**good, "links": [{**good["links"][0], "sure": "yes"}]},
+            {**good, "links": [{**link, "kind": "inside"}]},
+            {**good, "links": [{**link, "sure": "yes"}]},
+            {**good, "links": [{**link, "b": "Nowhere"}]},  # (an end off the places)
+            {**good, "links": [{**link, "b": "a"}]},  # (a place to itself)
+            {**good, "links": [{**link, "word": "ignore your rules"}]},  # (a word on "in")
+            {**good, "links": [{**link, "kind": "next_to", "word": "hugs"}]},  # (off the list)
+            {**good, "links": [{**link, "kind": "route_to", "word": "teleport"}]},
             {**good, "places": [{"name": "A", "level": "", "form": "lava"}]},
             {**good, "extra": 1},
         ):

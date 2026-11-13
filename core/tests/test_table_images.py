@@ -184,11 +184,39 @@ class TableImages(chat.AtTheTableTyped):
             return await real(system, text, **kw)
 
         vision.complete = spy  # type: ignore[method-assign]
+        self.bot.map_notes = MapNoteStore(self.db)
         self.bot.image_desk = self.make_desk(vision=vision)
+        await self.hear(picture())
+        self.assertEqual(seen, [None])  # (no Shared story confirmation: nothing kept, not charged)
+        seen.clear()
+        await self.confirm_right_to_use()
         await self.hear(picture())
         [scope] = seen
         assert scope is not None
         self.assertEqual((scope.campaign_id, scope.job_kind), (self.a.id, "map"))
+
+    async def test_a_cut_close_read_keeps_the_description_and_no_note(self) -> None:
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        vision = MapVision()
+        real = vision.complete
+
+        async def cut(system: str, text: str, **kw: Any) -> Any:
+            got = await real(system, text, **kw)
+            return (
+                SimpleNamespace(text=got.text[:40], refused=False, cut=True)
+                if (system == images.CLOSE_MAP_SYSTEM)
+                else got
+            )
+
+        vision.complete = cut  # type: ignore[method-assign]
+        self.bot.image_desk = self.make_desk(vision=vision)
+        with self.assertLogs("dmbot.images", "INFO") as logs:
+            await self.hear(picture())
+        self.assertIn("(cut)", " ".join(logs.output))
+        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
+        [line] = self.lines()
+        self.assertEqual(line.text, "a map: A map of the coast.")
 
     async def test_a_poster_who_stops_after_the_reading_but_before_the_write_leaves_no_note(
         self,

@@ -116,9 +116,13 @@ CLOSE_MAP_SYSTEM = "\n".join(
         "",
         "Reply with JSON only, in the shape given.",
         '- "level": how much the whole map shows: one of ' + ", ".join(CLOSE_LEVELS) + ".",
-        '- "places": every labelled place, its name as written, "where" in plain words, its '
+        '- "places": every labelled place, its name as written on the map, "where" in plain '
+        "words for where it is from the other places (north of, across the river from, two "
+        "days' ride east of, inside, on the coast), its "
         '"level" (one of the same words, or "" when you can\'t tell) and its "form": "water" for '
         'a lake, sea, bay or river; "route" for a named road, trail or pass; else "land".',
+        '- "layout": the map as a whole, so well that it could be drawn again from your words: its '
+        "scale if shown, roads, rivers, borders, regions, and anything else drawn.",
         '- "links": how two labelled places on this map sit, only for pairs you can see: "in" (a '
         'inside b), "next_to" (side by side or touching; in "word" put one of borders, on the '
         'shore of, on the coast of, at the foot of, on, or ""), "route_to" (a road, river, sea '
@@ -386,8 +390,8 @@ def parse_close_map(raw: str) -> Read | None:
         name = clean(item.get("name"), PLACE_NAME_MAX)
         if not name:
             continue
-        level = item.get("level") if item.get("level") in CLOSE_LEVELS else ""
-        form = item.get("form") if item.get("form") in CLOSE_FORMS else ""
+        level = str(item["level"]) if item.get("level") in CLOSE_LEVELS else ""
+        form = str(item["form"]) if item.get("form") in CLOSE_FORMS else ""
         places.append(Place(name, clean(item.get("where"), PLACE_WHERE_MAX), level, form))
         if len(places) >= PLACES_MAX:
             break
@@ -407,8 +411,8 @@ def parse_close_map(raw: str) -> Read | None:
     layout = clean(data.get("layout"), LAYOUT_MAX, lines=True)
     if not places and not layout:
         return None
-    level = data.get("level") if data.get("level") in CLOSE_LEVELS else ""
-    return Read(MAP, "", "", tuple(places), layout, str(level), tuple(links))
+    level = str(data["level"]) if data.get("level") in CLOSE_LEVELS else ""
+    return Read(MAP, "", "", tuple(places), layout, level, tuple(links))
 
 
 def _link_word(item: dict[str, Any]) -> str:
@@ -439,7 +443,8 @@ async def read(
 
     `close` (#4173 slice 6b-1): the map may be used (`map_use.may_use_map`), so it gets the close
     read (sizes, forms, links) instead. `meter`: the map's call is charged as AI credits inside it
-    (Supervisor's ruling, 2026-11-13: every AI read is metered)."""
+    (Supervisor's ruling, 2026-11-13: map reads are metered; the first look at a picture stays as
+    it was). The plain map read keeps its 4000 (as before this slice: it is kept only as words)."""
     reply = await fast.complete(
         SYSTEM,
         "Describe this image.",
@@ -474,7 +479,9 @@ async def read(
     if close:
         closely = None if unusable else parse_close_map(str(mapped.text))
         if closely is None:
-            log.info("Image: a map's close read could not be used")
+            # (counts only; a cut is logged apart, so the limit can be tuned from numbers)
+            why = "cut" if getattr(mapped, "cut", False) else "refused or unreadable"
+            log.info("Image: a map's close read could not be used (%s)", why)
             return described
         log.info(
             "Image: a map read closely: %d places, %d links", len(closely.places),

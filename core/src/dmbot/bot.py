@@ -5658,12 +5658,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         async def keep(n: int, image: Any, read: images.Read | None) -> None:
             await self._keep_picture(table, user_id, message_id, channel_id, image, read, still_ok)
 
+        # A map's careful read is charged as AI credits only when its note can be kept (the Shared
+        # story confirmation, asked again under the save lock below): a read thrown away costs
+        # nothing. It is read closely only when DMbot may also use it (the one check, `map_use`:
+        # today, a map the DM posted) (#4173 slice 6b-1).
+        kept = self.map_notes is not None and await self._maps_may_be_kept(gid, cid)
         reads = await desk.describe(
             gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None,
-            # a map is read closely only when DMbot may use it (the one check, `map_use`: today a
-            # map the DM posted), and its read is charged as AI credits (#4173 slice 6b-1)
-            close=map_use.may_use_map(campaign.dm_user_ids, user_id),
-            meter=lambda: credits.preparing(gid, cid, "map"),
+            close=kept and map_use.may_use_map(campaign.dm_user_ids, user_id),
+            meter=(lambda: credits.preparing(gid, cid, "map")) if kept else None,
         )  # fmt: skip
         if not still_ok():
             return

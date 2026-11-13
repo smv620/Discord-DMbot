@@ -16,4 +16,4 @@ from collections.abc import Collection
 def may_use_map(dm_user_ids: Collection[int], poster_id: int) -> bool:
     """Whether DMbot may read this map closely and, later, use it: today, only when the person
     who posted it is one of the campaign's DMs."""
-    return poster_id in set(dm_user_ids)
+    return poster_id in dm_user_ids

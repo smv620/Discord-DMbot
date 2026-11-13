@@ -305,10 +305,6 @@ class TheSizeLimit(unittest.TestCase):
         self.assertGreater(len(over), 5 * 1024 * 1024)  # one step more would not fit
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CloseRead(unittest.TestCase):
     """#4173 slice 6b-1: the close read's parser keeps only what is on its lists."""
 
@@ -352,3 +348,7 @@ class MayUse(unittest.TestCase):
 
         self.assertTrue(may_use_map((7, 9), 7))
         self.assertFalse(may_use_map((7,), 8))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -33,12 +33,15 @@ from dmbot.images import (
     LINK_KINDS,
     LINK_WORD_MAX,
     LINKS_MAX,
+    NEXT_TO,
     PLACE_NAME_MAX,
     PLACE_WHERE_MAX,
     PLACES_MAX,
+    ROUTE_TO,
     Place,
     Read,
 )
+from dmbot.memory import next_words, route_words
 
 log = logging.getLogger(__name__)
 
@@ -196,10 +199,23 @@ def _close(value: object) -> str:
             {"name": _text(p["name"], PLACE_NAME_MAX), "level": p["level"], "form": p["form"]}
         )
     kept_links = []
+    names = {p["name"].casefold() for p in kept_places}
     for k in links:
         if not isinstance(k, dict) or set(k) != {"a", "kind", "b", "word", "sure"}:
             raise CampaignError(DAMAGED)
         if k["kind"] not in LINK_KINDS or not isinstance(k["sure"], bool):
+            raise CampaignError(DAMAGED)
+        # the same lists the reader keeps to (a hand-edited file carries no free words into what
+        # 6b-2 will write): ends on the map's places, and a word only on its kind's list
+        ends = (k["a"], k["b"])
+        if not all(isinstance(e, str) and e.casefold() in names for e in ends):
+            raise CampaignError(DAMAGED)
+        if k["a"].casefold() == k["b"].casefold() or not isinstance(k["word"], str):
+            raise CampaignError(DAMAGED)
+        listed = {
+            NEXT_TO: next_words.word_of, ROUTE_TO: route_words.means_of,
+        }.get(k["kind"], lambda _w: "")  # fmt: skip
+        if k["word"] != listed(k["word"]):
             raise CampaignError(DAMAGED)
         kept_links.append(
             {
