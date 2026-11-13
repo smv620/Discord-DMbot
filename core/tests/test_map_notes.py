@@ -237,7 +237,7 @@ class DamagedBackups(unittest.TestCase):
                 {"a": "A", "kind": "next_to", "b": "B", "word": "on the shore of", "sure": True},
             ],
         }
-        link = good["links"][0]
+        link: dict[str, Any] = {"a": "A", "kind": "in", "b": "B", "word": "", "sure": False}
         row = {"by": "7", "at": 1, "alt": "A map.", "layout": "x", "places": [], "close": good}
         MapNotesSection().check([row])  # (a good one loads)
         for bad in (
