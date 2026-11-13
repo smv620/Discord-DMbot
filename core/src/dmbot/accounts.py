@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import time
 
+from psycopg import errors as pg_errors
+
 from dmbot.db import Database
 
 log = logging.getLogger(__name__)
@@ -78,20 +80,40 @@ async def record_install(
     """DMbot was added to this server through the website by this person (#435).
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
-    async with db.user(user_id, install_guild=guild_id, session=session) as conn:
-        # The write contract (schema.py, migration 0014): someone else's install is left
-        # alone, quietly (no row comes back).
-        cur = await conn.execute(
-            "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
-            " VALUES (%s, %s, %s, 'site')"
-            " ON CONFLICT (guild_id) DO UPDATE SET"
-            "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site', left_at = NULL"
-            " WHERE installs.installed_by_user_id IS NULL"
-            "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
-            " RETURNING guild_id",
-            (guild_id, user_id, now),
-        )
-        return "recorded" if await cur.fetchone() is not None else "already_linked"
+    # Someone else's install is left alone. Migration 0014 relied on Postgres applying the upsert's
+    # WHERE before the update policy (so it skipped quietly); Postgres 16.16 checks the policy
+    # first and raises instead. So the installer is read first, and a policy error is taken as
+    # "already linked" only when the row now shows another installer (two people installing at
+    # once); for a server the person may not touch the error stands (row-level security refuses).
+    try:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+            if row is not None and row["installed_by_user_id"] not in (None, user_id):
+                return "already_linked"
+            cur = await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, %s, %s, 'site')"
+                " ON CONFLICT (guild_id) DO UPDATE SET"
+                "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site',"
+                "   left_at = NULL"
+                " WHERE installs.installed_by_user_id IS NULL"
+                "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
+                " RETURNING guild_id",
+                (guild_id, user_id, now),
+            )
+            return "recorded" if await cur.fetchone() is not None else "already_linked"
+    except pg_errors.InsufficientPrivilege:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+        if row is not None and row["installed_by_user_id"] not in (None, user_id):
+            return "already_linked"
+        raise
 
 
 async def link_install(db: Database, user_id: int, guild_id: int, *, session: str) -> str:
