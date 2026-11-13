@@ -8,7 +8,8 @@
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
-  "line": "the line of the document's plain-text export that supports it (blank lines count)"
+  "line": "the line of the document's plain-text export that supports it (blank lines count)",
+  "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -1966,6 +1967,9 @@
  "deferred": [
   "Glyph travels with the party (travels_with, #3176)",
   "who a marching order puts ahead of whom is not a tie"
+ ],
+ "map_facts": [
+  {"place": "Icewind Dale", "layer": "climate", "value": "arctic", "line": 4, "note": "the North held in a frozen vice, no sun, no warmth; also the treacherous tundra (line 36). Not one of slice 2's set phrases, so its reader misses it: scored as missed until a reader says it"}
  ],
  "must_not_find": [
   "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",
