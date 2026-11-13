@@ -745,11 +745,11 @@ class WhenKept(NamesTest):
         sent = it.followup.send.await_args
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn("Connection 1 of 3", text)
-        self.assertIn("Keep all keeps the 2 from", text)
-        self.assertIn("The other 1 waiting you decide one by one: 1 from another file.", text)
+        self.assertIn("Keep all 2 keeps just the 2 from", text)
+        self.assertIn("The other one you check on its own: 1 from another file.", text)
         # (right under the counter, so "of 3" and "Keep all 2" are read together, #4320)
-        self.assertLess(text.index("Connection 1 of 3"), text.index("Keep all keeps"))
-        self.assertLess(text.index("Keep all keeps"), text.index("From your text"))
+        self.assertLess(text.index("Connection 1 of 3"), text.index("Keep all 2 keeps"))
+        self.assertLess(text.index("Keep all 2 keeps"), text.index("From your text"))
 
     async def test_the_card_says_how_many_are_from_other_files_and_how_many_dmbot_guessed(
         self,
@@ -779,7 +779,7 @@ class WhenKept(NamesTest):
         sent = it.followup.send.await_args
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn(
-            "The other 3 waiting you decide one by one: 2 from other files and 1 guessed by DMbot.",
+            "The other 3 you check one at a time: 2 from other files and 1 DMbot guessed.",
             text,
         )
 
