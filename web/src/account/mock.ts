@@ -2675,6 +2675,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
     },
+    async placeWorldTable(ref, placeId) {
+      calls.push(`placeWorldTable:${ref}:${placeId}`);
+      const named = memory.find((n) => n.id === placeId);
+      if (!named || named.kind !== "place") throw new ApiError("not-found");
+      // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+    },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
       await reachable();

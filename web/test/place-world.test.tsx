@@ -167,3 +167,54 @@ describe("what the story put in its own words, other groups, and a save that doe
     expect((row.getByRole("button", { name: w.save }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
+
+describe("what the table may be told (#4311), for a reader who is not a DM", () => {
+  const MANAGER = "/account/names/100.cmp1.names-manager";
+  async function asReader(setUp?: (api: ReturnType<typeof mockApi>) => Promise<void>) {
+    const api = mockApi("table");
+    const named = (await api.allNames!("100.cmp1", { q: "Saltmarsh", kind: "", sort: "name", page: 1, size: 20 })).names.find((n) => n.name === "Saltmarsh");
+    await setUp?.(api);
+    render(<Names api={api} path={MANAGER} />);
+    await screen.findByRole("list", { name: namesPage.listLabel });
+    fireEvent.change(screen.getByLabelText(namesPage.perPageLabel), { target: { value: "200" } });
+    await waitFor(() => expect(rowOf("Saltmarsh")).toBeTruthy());
+    return { api, row: within(rowOf("Saltmarsh")), id: named!.id };
+  }
+
+  it("shows only on request, in Discord's lines, with nothing about who read it", async () => {
+    const { api, row, id } = await asReader();
+    await api.changeName!("100.cmp1", id, { action: "map-terrain", value: "mountain", how: "" });
+    await api.changeName!("100.cmp1", id, { action: "map-climate", value: "cold", how: "dry" });
+    await api.changeName!("100.cmp1", id, { action: "map-control", group: "a".repeat(32), how: "rules" });
+    await api.changeName!("100.cmp1", id, { action: "map-show", shown: true });
+    expect(api.calls.some((c) => c.startsWith("placeWorldTable:"))).toBe(false); // (nothing is fetched until it is pressed)
+    fireEvent.click(await row.findByRole("button", { name: w.table.show }));
+    expect(await row.findByText(w.landLine("mountains", false))).toBeTruthy();
+    expect(row.getByText(w.climateLine("cold", "dry"))).toBeTruthy();
+    expect(row.getByText(w.rulerLine("Ruled by", "Ten-Towns"))).toBeTruthy();
+    expect(row.queryByText(/DMbot read this/)).toBeNull();
+  });
+
+  it("says so when the table knows nothing yet, and nothing the DM has not shown appears", async () => {
+    const { api, row, id } = await asReader();
+    await api.changeName!("100.cmp1", id, { action: "map-terrain", value: "forest", how: "" }); // (set, never shown)
+    fireEvent.click(await row.findByRole("button", { name: w.table.show }));
+    expect(await row.findByText(w.table.none)).toBeTruthy();
+    expect(row.queryByText(/forest/)).toBeNull();
+  });
+
+  it("a place the reader does not know says 'nothing', the same as one with nothing set", async () => {
+    const { api, row } = await asReader();
+    api.placeWorldTable = async () => {
+      throw new ApiError("not-found");
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.table.show }));
+    expect(await row.findByText(w.table.none)).toBeTruthy();
+  });
+
+  it("a DM gets the editor, not the reader's button, and nothing shows while the switch is off", async () => {
+    live.on = false;
+    const { row } = await asReader();
+    expect(row.queryByRole("button", { name: w.table.show })).toBeNull();
+  });
+});
