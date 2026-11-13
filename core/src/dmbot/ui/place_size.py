@@ -13,6 +13,7 @@ import discord
 
 from dmbot.memory import place_levels
 from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.ui import place_links
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
 from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secrets
 
@@ -81,7 +82,9 @@ def ask_text(name: str, level: str | None, read: bool = False) -> str:
         "around it.\n"
         '🧭 **Second menu: is it land, water or a road?** Then a town "on the shore of" it '
         "means a lake.\n"
-        "Players who can see this place see both."
+        "Players who can see this place see both.\n"
+        "↔️ **Next to** or 🛣️ **Travel to**: say which places touch, and how you get from one to "
+        "the other."
     )
 
 
@@ -102,7 +105,7 @@ async def show_sizes(interaction: discord.Interaction, campaign_id: str, entity_
     await _replace(
         interaction,
         ask_text(entity.name, entity.place_level, entity.place_level_read),
-        SizeMenu(campaign_id, entity_id, entity.place_level, entity.form),
+        SizeMenu(campaign_id, entity_id, entity.place_level, entity.form, entity.name),
     )
 
 
@@ -137,17 +140,44 @@ def form_options(form: str | None) -> list[discord.SelectOption]:
 
 class SizeMenu(_Menu):
     def __init__(
-        self, campaign_id: str, entity_id: str, level: str | None, form: str | None = None
+        self,
+        campaign_id: str,
+        entity_id: str,
+        level: str | None,
+        form: str | None = None,
+        name: str = "",
     ) -> None:
         super().__init__()
-        self.campaign_id, self.entity_id = campaign_id, entity_id
+        self.campaign_id, self.entity_id, self.name = campaign_id, entity_id, name
         self.pick = _Select(self._picked, placeholder=HOLDER, options=options(level))
         self.add_item(self.pick)
         self.form_pick = _Select(
             self._form_picked, placeholder=FORM_HOLDER, options=form_options(form), row=1
         )
         self.add_item(self.form_pick)
+        # the DM's own links to the places beside it and the ways to others (#4173 slice 6d)
+        self.add_item(_Button(self._next_to, label=place_links.NEXT_TO_BUTTON, row=2))
+        self.add_item(_Button(self._travel_to, label=place_links.TRAVEL_BUTTON, row=2))
         self.add_item(_Button(self._back, label="↩ Back", row=2))
+
+    async def _next_to(self, interaction: discord.Interaction) -> None:
+        await self._find(interaction, place_links.NEXT_TO)
+
+    async def _travel_to(self, interaction: discord.Interaction) -> None:
+        await self._find(interaction, place_links.TRAVEL_TO)
+
+    async def _find(self, interaction: discord.Interaction, how: str) -> None:
+        """The usual name search, asking "Targos is next to…" (a form must be the first answer, so
+        nothing is read before it; who may save is checked again when it is saved)."""
+        from dmbot.ui.name_card import PickForm
+
+        self.stop()
+        await interaction.response.send_modal(
+            PickForm(
+                self.campaign_id, self.entity_id, how,
+                place_links.asked(self.name or "This place", how),
+            )
+        )  # fmt: skip
 
     async def _form_picked(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card

@@ -26,7 +26,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import hand_over, kin, link_edits, name_edits, tags
+from dmbot.memory import hand_over, kin, link_edits, name_edits, next_words, route_words, tags
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -81,6 +81,7 @@ from dmbot.ui import (
     all_names,
     languages_card,
     logic,
+    place_links,
     place_size,
     place_world,
     player_id,
@@ -2996,6 +2997,8 @@ def _asked(name: str, how: str) -> str:
     """The question being answered: "Belleros is the same as…", "Ulfgar is a member of…"."""
     if how == SAME:
         return f"{name} is the same as…"
+    if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):  # (#4173 slice 6d)
+        return place_links.asked(name, how)
     predicate = how.removesuffix(BACK)
     words = CONNECTION_BACK.get(predicate) if how.endswith(BACK) else None
     return f"{name} {words or connection_words(predicate)}…"
@@ -3155,6 +3158,23 @@ async def choose_other(
         )
         return
     view.stop()
+    if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):
+        # two places only, then how they sit or the way between them (#4173 slice 6d)
+        found = await _current(interaction, campaign_id, entity_id)
+        other = await _current(interaction, campaign_id, other_id) if found else None
+        memory = _memory(interaction)
+        if found is None or other is None or memory is None:
+            return
+        row = await memory.entity(found[0].guild_id, found[0].id, other_id)
+        if row is None or row.type != "place":
+            await _tell(interaction, place_links.NOT_A_PLACE.format(name=_md(other[1])))
+            return
+        await _replace(
+            interaction,
+            place_links.ask_words(found[1], other[1]),
+            place_links.PlaceWords(campaign_id, entity_id, other_id, how, (found[1], other[1])),
+        )
+        return
     if how.removesuffix(BACK) == KIN:  # "is family of": ask the role first, save after (#3102)
         found = await _current(interaction, campaign_id, entity_id)
         other = await _current(interaction, campaign_id, other_id) if found else None
@@ -3414,7 +3434,15 @@ async def connect(
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
     # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
-    detail = (kin.role_of(detail) or "") if predicate == KIN else ""
+    # Two places' word or way (#4173 slice 6d, `place_links`) keeps its own words, as stored.
+    if predicate == KIN:
+        detail = kin.role_of(detail) or ""
+    elif predicate == place_links.NEXT_TO:
+        detail = next_words.word_of(detail)
+    elif predicate == place_links.TRAVEL_TO:
+        detail = route_words.means_of(detail)
+    else:
+        detail = ""
     try:
         written = await memory.add_relation(
             campaign.guild_id,
@@ -3437,7 +3465,7 @@ async def connect(
     relation, flags = written.value
     words = (
         link_words(predicate, detail, kin.directional(detail))
-        if predicate == KIN
+        if predicate in (KIN, place_links.NEXT_TO, place_links.TRAVEL_TO)
         else (connection_words(predicate))
     )
     said = f"**{_md(subject[1])}** {words} **{_md(obj[1])}**"
