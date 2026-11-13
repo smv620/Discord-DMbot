@@ -31,6 +31,7 @@ EVERY_ACTION = (
     "place-size",  # how big a place is (#4173)
     "place-setting",  # the campaign's setting (#4173 slice 2)
     "place-form",  # land, water or a road (#4173 slice 6a)
+    "map-terrain", "map-climate", "map-control", "map-show",  # a place's land, climate, ruler
 )  # fmt: skip
 
 
