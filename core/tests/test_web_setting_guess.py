@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from tests.test_recap_web import BOB
 from tests.test_web_api import THURSDAY
 from tests.test_web_name_actions import Acting
@@ -38,8 +40,8 @@ class ARead(Acting):
                 (self.one.id, self.keep),
             )
 
-    async def row(self, who: object = None) -> dict[str, object]:
-        got = await self.page(who)  # type: ignore[arg-type]
+    async def row(self, who: Any = None) -> dict[str, Any]:
+        got = await self.page(who)
         return dict(next(n for n in got["names"] if n["id"] == self.keep))
 
     async def test_a_read_value_is_the_dms_alone(self) -> None:
