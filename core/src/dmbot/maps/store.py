@@ -113,11 +113,13 @@ def _map(r: Any) -> Map:
 
 
 def _seen(viewer: Viewer) -> str:
-    """The audience clause for a viewer (section 8.1)."""
+    """The clause for a viewer (section 8.1). A DM sees every map; whoever may read the transcripts
+    sees the `table` ones that DMbot may use, so a map a DM said no to, or one still waiting for a
+    DM, is not listed to the players."""
     if viewer.dm:
         return ""
     if viewer.table:
-        return " AND audience = 'table'"
+        return " AND audience = 'table' AND use_ok IS TRUE"
     return " AND FALSE"
 
 
@@ -160,12 +162,22 @@ class MapStore:
             raise MapError(BAD)  # only a map posted in the table's chat starts shown to the table
         if (came_from == "import") != bool(import_tool):
             raise MapError(BAD)
+        if (width is not None and width <= 0) or (height is not None and height <= 0):
+            raise MapError(BAD)
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:
             await _lock(conn, guild_id, campaign_id)
             pic = await _picture(conn, guild_id, campaign_id, picture_id)
             if pic is None:
                 raise MapError(NOT_KEPT)
+            if covers is not None:  # (a place of this campaign, or the foreign key would refuse)
+                cur = await conn.execute(
+                    "SELECT 1 FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = %s",
+                    (guild_id, campaign_id, covers),
+                )
+                if await cur.fetchone() is None:
+                    raise MapError(BAD)
             cur = await conn.execute(
                 "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
                 " AND picture_id = %s",
@@ -233,8 +245,6 @@ class MapStore:
             row = await cur.fetchone()
             if row is None:
                 raise MapError(GONE)
-            if audience == TABLE and row["came_from"] != "discord":
-                raise MapError(BAD)  # (the constraint says it too; this is the words)
             cur = await conn.execute(
                 "UPDATE campaign_maps SET audience = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
@@ -247,7 +257,8 @@ class MapStore:
 
     async def remove_map(self, guild_id: int, campaign_id: str, map_id: str) -> Map | None:
         """Take a picture's map status away (a DM can always; its poster can too). The picture
-        stays a picture, no longer permanent. None when there was no such map."""
+        stays a picture, no longer permanent (Supervisor's ruling on #4344: a pin the DM set before
+        the map existed is cleared too). None when there was no such map."""
         async with self._db.guild(guild_id) as conn:
             await _lock(conn, guild_id, campaign_id)
             cur = await conn.execute(

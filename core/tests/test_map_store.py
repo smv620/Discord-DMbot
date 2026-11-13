@@ -102,6 +102,7 @@ class Maps(DatabaseTest):
         chat = await self.add(await self.picture(self.one.id, 1), dm=False, came_from="discord",
                               audience="table")  # fmt: skip
         private = await self.add(await self.picture(self.one.id, 2), dm=True)
+        await self.maps.answer_use(GUILD_A, self.one.id, chat, dm_id=DM, yes=True)
         seen = {m.id for m in await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW)}
         self.assertEqual(seen, {chat})
         self.assertEqual(
@@ -112,15 +113,42 @@ class Maps(DatabaseTest):
         with self.assertRaises(MapError):  # a website map is never born shown to the table
             await self.add(await self.picture(self.one.id, 3), dm=True, audience="table")
 
-    async def test_show_to_the_table_is_for_a_map_from_the_chat_only(self) -> None:
-        chat = await self.add(await self.picture(self.one.id, 1), dm=True, came_from="discord")
-        shown = await self.maps.set_audience(GUILD_A, self.one.id, chat, "table")
+    async def test_a_dm_may_show_any_map_to_the_table_but_none_is_born_shown(self) -> None:
+        web = await self.add(await self.picture(self.one.id, 1), dm=True)
+        shown = await self.maps.set_audience(GUILD_A, self.one.id, web, "table")
         self.assertEqual(shown.audience, "table")
-        web = await self.add(await self.picture(self.one.id, 2), dm=True)
-        with self.assertRaises(MapError):
-            await self.maps.set_audience(GUILD_A, self.one.id, web, "table")
+        self.assertEqual(
+            [m.id for m in await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW)], [web]
+        )
+        back = await self.maps.set_audience(GUILD_A, self.one.id, web, "dm")
+        self.assertEqual(back.audience, "dm")
         with self.assertRaises(MapError):
             await self.maps.set_audience(GUILD_A, self.one.id, web, "everyone")
+
+    async def test_the_table_sees_only_the_maps_dmbot_may_use(self) -> None:
+        waiting = await self.add(await self.picture(self.one.id, 1), dm=False, came_from="discord",
+                                 audience="table")  # fmt: skip
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW), [])
+        await self.maps.answer_use(GUILD_A, self.one.id, waiting, dm_id=DM, yes=True)
+        self.assertEqual([m.id for m in await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW)],
+                         [waiting])  # fmt: skip
+        await self.maps.answer_use(GUILD_A, self.one.id, waiting, dm_id=DM, yes=False)
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW), [])
+
+    async def test_a_maps_picture_cannot_be_unmarked_while_it_is_a_map(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        await self.add(pic, dm=True)
+        said = await self.pictures.set_permanent(GUILD_A, self.one.id, pic, False, 10)
+        self.assertIn("Remove the map first", said or "")
+        kept = await self.pictures.get(GUILD_A, self.one.id, pic)
+        assert kept is not None
+        self.assertTrue(kept.permanent)
+
+    async def test_a_bad_size_or_a_place_that_is_not_here_is_refused_in_words(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        for more in ({"width": 0}, {"height": -5}, {"covers": "f" * 32}):
+            with self.assertRaises(MapError, msg=str(more)):
+                await self.add(pic, dm=True, **more)
 
     async def test_the_picture_is_permanent_while_it_is_a_map_and_not_after(self) -> None:
         pic = await self.picture(self.one.id, 1)

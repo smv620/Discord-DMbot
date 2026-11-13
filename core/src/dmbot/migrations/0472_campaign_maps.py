@@ -14,8 +14,9 @@ from dmbot.migrations._shared import _isolate
 # no) with who said it and when. A DM's own upload fills both at once. One function in
 # `maps/store.py` (`may_use_map`) answers "may DMbot use this map?"; every reader calls it.
 #
-# `audience` is 'dm' or 'table' (section 8.1) and 'table' only for a map that came from the table's
-# chat (`came_from = 'discord'`): "Show to the table" is a later, explicit change of the DM's.
+# `audience` is 'dm' or 'table' (section 8.1). Only a map from the table's chat (`came_from =
+# 'discord'`) STARTS as 'table' (the store checks that on add); "Show to the table" is the DM's
+# explicit change of any map, so there is no constraint tying the two.
 # `scale`, `grid` and `north` carry where each came from (read, dm, import, or assumed), the
 # measuring comes in slice 4. The vocabularies are fixed lists in code with `other` (rule 6).
 #
@@ -93,9 +94,7 @@ SQL = (
         CONSTRAINT campaign_maps_grid CHECK (
             (grid_kind = 'none') = (grid_cell_px IS NULL AND grid_cell_distance IS NULL)),
         -- an import names its tool; nothing else does
-        CONSTRAINT campaign_maps_import CHECK ((came_from = 'import') = (import_tool <> '')),
-        -- only a map posted in the table's chat starts shown to the table (section 8.1)
-        CONSTRAINT campaign_maps_table CHECK (audience = 'dm' OR came_from = 'discord')
+        CONSTRAINT campaign_maps_import CHECK ((came_from = 'import') = (import_tool <> ''))
     );
     CREATE INDEX campaign_maps_campaign ON campaign_maps (guild_id, campaign_id, created_at);
     CREATE INDEX campaign_maps_by_right ON campaign_maps (guild_id, right_by);
