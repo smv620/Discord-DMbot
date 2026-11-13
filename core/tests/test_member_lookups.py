@@ -18,7 +18,7 @@ from dmbot.web import member_lookup, sessions, wizard
 from dmbot.web.discord import DiscordUser
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import ALICE, THURSDAY
 
 ERIC = 444444444444440001
 FAR = 555555555555550002
@@ -297,3 +297,111 @@ class TheBot(Lookups):
     async def test_a_valid_id_is_read_back_by_its_clean_form(self) -> None:
         self.assertEqual(member_lookup.clean_id(f" {ERIC} "), ERIC)
         self.assertEqual(member_lookup.clean_id(ERIC), ERIC)
+
+
+class OverHttp(Lookups):
+    """The two routes, through the app (#4225, point 5): the status and body each answers. The
+    doors and the worker are tested above; this is the HTTP layer only."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+        from tests.test_web_api import FakeDiscord, settings
+
+        self.app = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+        self.base = f"/me/member-lookup/{self.g}"
+
+    async def client(self, user: Any = None) -> Any:
+        import httpx
+
+        token = await sessions.sign_in(self.web, user or ALICE, [THURSDAY], now=NOW, days=30)
+        c = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        c.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        self.addAsyncCleanup(c.aclose)
+        return c
+
+    async def test_a_question_is_queued_and_polled(self) -> None:
+        alice = await self.client()
+        posted = await alice.post(self.base, json={"id": str(ERIC)})
+        self.assertEqual(posted.status_code, 202)
+        lid = posted.json()["id"]
+        self.assertEqual(len(lid), 32)
+        got = await alice.get(f"{self.base}/{lid}")
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(
+            got.json(), {"state": "waiting", "outcome": "", "name": "", "agreed": None}
+        )
+
+    async def test_the_answer_shows_the_name_once_the_bot_found_the_member(self) -> None:
+        alice = await self.client()
+        lid = (await alice.post(self.base, json={"id": "444444444444440001"})).json()["id"]
+        self.members[444444444444440001] = person("Eric", "eric_92")
+        await member_lookups.run(self.bot, self.g)
+        got = (await alice.get(f"{self.base}/{lid}")).json()
+        self.assertEqual(
+            (got["state"], got["outcome"], got["name"], got["agreed"]),
+            ("done", "found", "Eric (eric_92)", False),
+        )
+
+    async def test_a_bad_id_is_a_422_with_its_word(self) -> None:
+        alice = await self.client()
+        for body in ({"id": "abc"}, {"id": "123"}, {}):
+            with self.subTest(body=body):
+                response = await alice.post(self.base, json=body)
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.json(), {"error": "bad_id"})
+
+    async def test_the_twenty_first_question_in_a_minute_is_a_429(self) -> None:
+        alice = await self.client()
+        for n in range(20):
+            response = await alice.post(self.base, json={"id": str(ERIC + n)})
+            self.assertEqual(response.status_code, 202)
+        response = await alice.post(self.base, json={"id": str(ERIC + 99)})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json(), {"error": "too_soon"})
+
+    async def test_nobody_else_can_read_a_question(self) -> None:
+        alice = await self.client()
+        bob = await self.client(DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email))
+        lid = (await alice.post(self.base, json={"id": str(ERIC)})).json()["id"]
+        own = await alice.get(f"{self.base}/{lid}")  # the same question reads for its asker
+        self.assertEqual(own.json()["state"], "waiting")
+        response = await bob.get(f"{self.base}/{lid}")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"error": "not_found"})
+        unknown = await alice.get(f"{self.base}/{'0' * 32}")
+        self.assertEqual(unknown.status_code, 404)
+
+    async def test_a_member_who_is_no_dm_gets_a_404(self) -> None:
+        alice = await self.client()
+        self.assertEqual((await alice.post(self.base, json={"id": str(ERIC)})).status_code, 202)
+        carl = await self.client(DiscordUser(id=3003, name="Carl", email="carl@example.com"))
+        response = await carl.post(self.base, json={"id": str(ERIC)})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"error": "not_found"})
+
+    async def test_a_server_not_in_the_session_is_a_404(self) -> None:
+        alice = await self.client()
+        response = await alice.post("/me/member-lookup/999", json={"id": str(ERIC)})
+        self.assertEqual(response.status_code, 404)
+
+    async def test_it_needs_a_signed_in_session(self) -> None:
+        import httpx
+
+        c = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        self.addAsyncCleanup(c.aclose)
+        response = await c.post(self.base, json={"id": str(ERIC)})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json(), {"error": "signed_out"})
