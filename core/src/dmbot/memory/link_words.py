@@ -170,6 +170,16 @@ def predicate_for(words: str) -> tuple[str, str]:
     parsed = kin.parse(clean)
     if parsed is not None and not parsed[1]:
         return KIN, parsed[0]
+    # Two places' own words read back as their kind and word (#4173 slice 6d; the website's
+    # Next to… and Travel to… send the card's words): "is on the shore of", "is connected by road
+    # to", never the catch-all labelled with them
+    # (not plain "is on": too short to be sure it means two places)
+    for word in (next_words.BORDERS, next_words.SHORE, next_words.COAST, next_words.FOOT):
+        if clean.casefold() == next_words.forward(word).casefold():
+            return "next_to", word
+    for means in route_words.MEANS:
+        if clean.casefold() == route_words.forward(means).casefold():
+            return route_words.ROUTE_TO, means
     if SYNONYMS.get("_".join(clean.casefold().split())) == DISGUISED_AS:
         return DISGUISED_AS, ""  # "is posing as" and the like (#3091): never the public catch-all
     # "knows (wary)": the words `link_words` writes for a feeling read back as that feeling, not as

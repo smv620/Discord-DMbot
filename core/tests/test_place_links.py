@@ -37,6 +37,18 @@ class TheWords(unittest.TestCase):
         self.assertEqual((ways["By road"], ways["Not sure"]), ("road", pl.NOT_SAID))
 
 
+class TheWebsitesWords(unittest.TestCase):
+    def test_the_cards_place_words_read_back_as_their_kind(self) -> None:
+        from dmbot.memory.link_words import predicate_for
+
+        self.assertEqual(predicate_for("is on the shore of"), ("next_to", "on the shore of"))
+        self.assertEqual(predicate_for("borders"), ("next_to", "borders"))
+        self.assertEqual(predicate_for("is connected by road to"), ("route_to", "road"))
+        self.assertEqual(predicate_for("is linked by a portal to"), ("route_to", "portal"))
+        self.assertEqual(predicate_for("is on"), ("associated_with", "is on"))  # (too short)
+        self.assertEqual(predicate_for("serves"), ("associated_with", "serves"))
+
+
 class TheFlow(NamesTest):
     async def place(self, name: str) -> Any:
         made = await self.memory.add_entity(
