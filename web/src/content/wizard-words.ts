@@ -2,6 +2,8 @@
 // Plain words, one short page for each step. The PLAN's own sentences (Skip, the defaults) are used as written. Nothing here ever
 // holds a document's words or a character sheet's: the pages show names the DM typed, file names, and counts.
 
+import { minimumAge } from "./legal";
+
 export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" | "rules" | "house" | "homebrew" | "data" | "finish";
 
 /** The steps in order; the number is the step the draft keeps. */
@@ -18,8 +20,6 @@ export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
   { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
   { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
-
-import { minimumAge } from "./legal";
 
 // The consent button's label exactly as the bot has it (core/src/dmbot/consent_words.py), as the Help page quotes it.
 const consentButton = `I'm ${minimumAge} or older, record me`;
