@@ -128,7 +128,21 @@ async def place_nesting(w: Scope, onto: Ontology, *, players: bool = False) -> N
         w.ids,
     )
     row = await cur.fetchone()
-    return Nesting(pairs, levels, str(row["id"]) if row else None)
+    # and the places open on where the story is (#4173 slice 5): a bigger place someone is said
+    # to be in, not open on any chain, is a move away from a smaller one. Working state only, so
+    # never for what a player is told.
+    # (None until a session has been walked: the 'mark' row says one has, even if every chain
+    # ended empty)
+    open_places: set[str] | None = None
+    if not players:
+        cur = await w.conn.execute(
+            "SELECT entity_id FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s",
+            w.ids,
+        )
+        chain_rows = await cur.fetchall()
+        if chain_rows:
+            open_places = {str(r["entity_id"]) for r in chain_rows if r["entity_id"] is not None}
+    return Nesting(pairs, levels, str(row["id"]) if row else None, open_places)
 
 
 async def load_extras(w: Scope, onto: Ontology, facts: Sequence[Relation]) -> Extras:

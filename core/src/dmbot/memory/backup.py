@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, evidence, map_facts, notify, place_levels, sheets
+from dmbot.memory import beliefs, evidence, map_facts, notify, place_levels, sheets, whereabouts
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -174,7 +174,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     ),
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
-    "end_reason": END_REASONS,
+    "end_reason": (*END_REASONS, whereabouts.MOVED),  # (a move, #4173 slice 5)
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
     "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
@@ -496,12 +496,19 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         # so a hand-edited file says "damaged" here instead of failing mid-restore
         if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
             raise CampaignError(DAMAGED)
-        # and why a tie ended is on an ended owns or carries only (#4115), as the database says
+        # and why a tie ended is on an ended owns or carries only (#4115), or a move on an ended
+        # located_in (#4173 slice 5), as the database says
         if (
             table is RELATIONS
             and raw.get("end_reason") is not None
             and (
-                raw.get("predicate") not in ("owns", "carries") or raw.get("to_session_at") is None
+                raw.get("predicate")
+                not in (
+                    ("located_in",)
+                    if raw["end_reason"] == whereabouts.MOVED
+                    else ("owns", "carries")
+                )
+                or raw.get("to_session_at") is None
             )
         ):
             raise CampaignError(DAMAGED)
