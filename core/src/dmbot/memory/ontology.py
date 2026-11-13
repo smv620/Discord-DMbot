@@ -678,6 +678,35 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("beside", "borders", "adjacent_to", "next_door_to", "on_the_shore_of"),
     ),
     PredicateTerm(
+        "route_to",
+        "is connected to",
+        "Two places reachable from each other by a stated way: by road, by river, by sea or a "
+        "water trade route, by air (an airship), through a permanent portal, or through the wild "
+        "(a path across country). The way is kept in its details. Both places are named with the "
+        "way between them; a way word alone ('she flew over the camp') is not a route. Never two "
+        "places beside each other (that is 'is next to') or one inside another ('is in').",
+        ("place",),
+        ("place",),
+        symmetric=True,
+        covers=(
+            "a road between two towns",
+            "a river or sea route between two ports",
+            "an airship line between two cities",
+            "a permanent portal between two places",
+            "a path through the wild the party took or means to take",
+        ),
+        not_this=(
+            ("two places side by side (a town on a lake's shore)", "next_to"),
+            ("one place inside another (a tavern in a town)", "located_in"),
+        ),
+        examples=(
+            "A road runs from Targos to Bryn Shander.",
+            "A portal links Waterdeep and Luskan.",
+        ),
+        inverse_label="is connected to",
+        synonyms=("connected_by_way", "reachable_from"),  # (never one that names a means)
+    ),
+    PredicateTerm(
         "contains",
         "contains",
         "Has something inside it: a note in a book, a gem in a chest.",

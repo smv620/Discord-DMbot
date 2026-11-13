@@ -56,6 +56,7 @@ from dmbot.memory import (
     place_words,
     report_fixed,
     reputation_words,
+    route_words,
     standing,
     states,
     told,
@@ -486,6 +487,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
         r.get("end_reason"), r.get("both_ways"), bool(r.get("assumed")),
+        str(r.get("route_state") or ""),
     )  # fmt: skip
 
 
@@ -515,6 +517,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "end_reason": rel.end_reason,
         "both_ways": rel.both_ways,
         "assumed": rel.assumed,
+        "route_state": rel.route_state,
     }
 
 
@@ -6019,6 +6022,7 @@ class MemoryStore:
         by_hand: bool = False,
         knows_how: str = "",
         assumed: bool = False,
+        route_state: str = "",
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -6036,7 +6040,7 @@ class MemoryStore:
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided, keep_flags=keep_flags,
-                by_hand=by_hand, knows_how=knows_how, assumed=assumed,
+                by_hand=by_hand, knows_how=knows_how, assumed=assumed, route_state=route_state,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -6077,6 +6081,7 @@ class MemoryStore:
         knows_how: str = "",
         both_ways: bool | None = None,
         assumed: bool = False,
+        route_state: str = "",
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -6090,8 +6095,10 @@ class MemoryStore:
         direction for a new row (None: its kind's default), which also decides its stored order.
         `assumed` (#4173 slice 3): a place's parent DMbot assumed from where the story was, kept
         held back, never flagged and never written over a stated parent; a stated parent written
-        here replaces the place's assumed one (see `_replace_assumed`)."""
+        here replaces the place's assumed one (see `_replace_assumed`). `route_state` (#4173 slice
+        6d): on a `route_to` only, known (""), travelled or planned (`route_words`)."""
         source = made_by or w.source
+        _check_choice(route_state, route_words.STATES, "route state")
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
@@ -6122,6 +6129,10 @@ class MemoryStore:
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
         }
+        if pred.key == route_words.ROUTE_TO:
+            detail = route_words.canonical(detail)  # ("by road" and "highway" are one road)
+        elif route_state:
+            raise ValueError("Only a route has a state")
         if assumed:
             if pred.key != NESTS or set(types.values()) != {"place"}:
                 raise ValueError("Only a place's parent place is ever assumed")
@@ -6140,7 +6151,7 @@ class MemoryStore:
             and pred.key == "kin_of"
             and kin.role_of(detail)
         )
-        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways)
+        s, o = ordered(pred, subject_id, object_id, detail, directional, both_ways, route_state)
         # A disguise is hidden by nature (#3091): a NEW one is made secret however it is made, and
         # the DM reveals it with the connection's own switch. One that already exists keeps the
         # DM's choice (the upgrade below reads the caller's `secret`).
@@ -6151,7 +6162,7 @@ class MemoryStore:
             pred.version, unrevealed, directional, (decided or None),
             # (between two people only: a character "knows" a place or a secret, never "met" it)
             knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
-            both_ways=both_ways, assumed=assumed,
+            both_ways=both_ways, assumed=assumed, route_state=route_state,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -9281,6 +9292,7 @@ async def _move_relations(
             subject, obj = ordered(
                 pred, subject, obj, str(row["detail"]), bool(row["directional"]),
                 row.get("both_ways"),  # (the DM's direction stays as it was, #4154)
+                str(row.get("route_state") or ""),  # (and a journey's, #4173 slice 6d)
             )  # fmt: skip
         # (a join moves a connection AND makes it secret in this one update: a second update of
         # the same row would make the Undo refuse, and the unnamed end still keeps the flag sync

@@ -803,6 +803,9 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
+      {!canEdit && PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorldTable && (
+        <LazyPanel load={() => import("./PlaceWorldLines")} what="the place's land, climate and ruler" props={{ api, refId, row }} />
+      )}
       {canEdit && open && row.unnamed && (
         <NameThem id={panel} row={row} api={api} refId={refId} act={(change, ok) => act(row, change, ok)} onDone={onNamed} onSignedOut={onSignedOut} />
       )}
