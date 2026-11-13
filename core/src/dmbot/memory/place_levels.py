@@ -22,6 +22,11 @@ SETTING_LEVELS = ("plane", "world", "region")
 # Who said how big a place is: DMbot read it from the words, or the DM set it (the DM wins).
 READ, BY_DM = "read", "dm"
 FROM = (READ, BY_DM)
+# A place's form (#4173 slice 6a): water (a lake, bay, sea or river) or a route (a named road,
+# trade route or pass); None is an area, every other place. Water and route places stand outside
+# the size order above, so being "on the Eastway" is never a rival of being in a town.
+WATER, ROUTE = "water", "route"
+FORMS = (WATER, ROUTE)
 
 # What the DM's menu calls each level (plain words; "settlement" is a town or city to a DM).
 LABELS = {
@@ -151,6 +156,37 @@ def read_level(name: str, *texts: str) -> str | None:
         if level is not None:
             return level
     return None
+
+
+# The words in a place's own name that say its form (#4173 slice 6a), matched whole, in any case.
+# Kept short on purpose, as the levels are: "road" stays a street (a town has roads), and "sound",
+# "pass" or "way" are as often part of another name. A missing form is an area, the safe side; the
+# DM changes it in one tap.
+_FORM_WORDS: dict[str, tuple[str, ...]] = {
+    # ("mere" is left out: the Mere of Dead Men is a marsh)
+    WATER: ("lake", "lac", "maer", "loch", "sea", "ocean", "bay", "gulf", "river",
+            "strait", "fjord"),
+    ROUTE: ("highway", "trail", "trade way", "trade route", "trade road"),
+}  # fmt: skip
+_FORM_BY_WORD = {w: form for form, words in _FORM_WORDS.items() for w in words}
+_FORM_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(w) for w in sorted(_FORM_BY_WORD, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def read_form(name: str) -> str | None:
+    """The form a place's own name says: "Maer Dualdon" and "Lac Dinneshere" are water, "the
+    Northern Trail" a route, and "the Black Road" a street still; None is an area. Only the part
+    before the first "of" counts, as for a level ("Bay of Chult" is water, "Lord of the Lake" says
+    nothing), and the first word found wins. A name that also says a size says no form ("Lake
+    Town" is a town). Nothing is read from the words around the name: a town "by the lake" is no
+    lake."""
+    if level_from_name(name) is not None:
+        return None
+    head = _OF.split(name, maxsplit=1)[0]
+    found = _FORM_PATTERN.search(head)
+    return _FORM_BY_WORD[" ".join(found.group(0).split()).casefold()] if found else None
 
 
 def bigger(a: str, b: str) -> bool:

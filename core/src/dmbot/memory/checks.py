@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_levels, place_words
+from dmbot.memory import kin, next_words, place_levels, place_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -113,6 +113,8 @@ def ordered(
     ("Wit sees Cerric as a rival") keeps its order, and one the DM made two-way is sorted."""
     if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
+    if p.key == "next_to" and next_words.one_way(detail):
+        return subject_id, object_id  # "Targos is on the shore of Maer Dualdon" keeps its order
     if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
@@ -202,6 +204,20 @@ class Nesting:
         if sizes and min(sizes) > top:  # smaller than the setting, and nothing as big says other
             return seen | {self._setting} | self._stated(self._setting)
         return seen
+
+    @property
+    def levels(self) -> Mapping[str, str]:
+        """How big each place is that has a size."""
+        return self._levels
+
+    def outer(self, place: str) -> set[str]:
+        """The places this one is directly inside: the stated ones, or, for a smaller place with
+        none stated, the campaign's setting (as `above` counts it). One step up the tree, for
+        reading a place's land, climate or ruler up it (#4256)."""
+        stated = set(self._in.get(place, ()))
+        if stated or self._setting is None or place == self._setting:
+            return stated
+        return {self._setting} if self._setting in self.above(place) else set()
 
     def related(self, a: str, b: str) -> bool:
         """Can someone be in both at once? When one is inside the other (being in both is being in

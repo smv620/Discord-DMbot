@@ -14,6 +14,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot.memory import map_fact_store
 from dmbot.memory._changes import (
     ENTITIES,
     FLAGS,
@@ -115,10 +116,12 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         w.ids,
     )
     levels = {str(r["id"]): str(r["place_level"]) for r in await cur.fetchall()}
-    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it
+    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it,
+    # but only once the DM has kept it; DMbot's guess from the adventure places nothing silently
+    # (Supervisor's condition 3 on slice 2b)
     cur = await w.conn.execute(
         "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND setting"
-        " AND status = 'confirmed'",
+        " AND setting_from = 'dm' AND status = 'confirmed'",
         w.ids,
     )
     row = await cur.fetchone()
@@ -251,7 +254,7 @@ async def settle_kind(
     flagged = await w.select(
         ENTITIES,
         " AND (unique_item IS NOT NULL OR audience_limited OR party OR place_level IS NOT NULL"
-        " OR setting)"
+        " OR setting OR form IS NOT NULL)"
         " AND id = ANY(%s)",
         [ids],
     )
@@ -267,8 +270,12 @@ async def settle_kind(
         if r.get("place_level") is not None and not onto.is_a(type_key, "place"):
             undo["place_level"] = None  # only a place has a size (#4173)
             undo["place_level_from"] = None
+        if r.get("form") is not None and not onto.is_a(type_key, "place"):
+            undo["form"] = None  # only a place has a form (#4173 slice 6a)
+            undo["form_from"] = None
         if r.get("setting") and not onto.is_a(type_key, "place"):
             undo["setting"] = False  # only a place is the campaign's setting (#4173)
+            undo["setting_from"] = None
         if undo:
             clears[r["id"]] = undo
     if clears:
@@ -278,6 +285,11 @@ async def settle_kind(
     if not onto.is_a(type_key, "character"):  # only a character knows languages (#4229)
         for row in await w.select(STORY_LANGUAGES, " AND entity_id = ANY(%s)", [ids]):
             await w.delete(STORY_LANGUAGES, row["id"])  # (logged: Undo gives them back)
+    # only a place has land, a climate or a ruler, and only a group rules one (#4256)
+
+    await map_fact_store.drop_on_kind_change(
+        w, list(ids), onto.is_a(type_key, "place"), onto.is_a(type_key, "faction")
+    )
 
 
 async def move_states(

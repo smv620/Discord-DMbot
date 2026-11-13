@@ -318,6 +318,16 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Psi crystal |  | from a petrified mind flayer skull; gives telepathy |
 | Heart of chardalyn |  | hidden under the bucket lift |
 
+## A place's land, climate and ruler
+
+Scored per layer: found, wrong (another value), missed, and extra (a row this list doesn't hold, a false note) (#4256).
+
+| Place | Layer | Value | Line | Why |
+|---|---|---|---|---|
+| Icewind Dale | climate | arctic | 4 | "the North has been held in a frozen vice", and "the treacherous tundra" (line 36). Slice 2's set phrases don't cover this wording, so its reader misses it. |
+
+No land type or ruler is stated in the document's words, so any other row is extra.
+
 ## Must not find
 
 - a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)

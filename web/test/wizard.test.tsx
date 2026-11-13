@@ -430,6 +430,20 @@ describe("the wizard", () => {
     expect(screen.getByRole("link", { name: w.finish.open }).getAttribute("href")).toBe(`/account/campaigns/${G}.cmp-new`);
   });
 
+  it("while the lore is read the finish page shows the pass, how far through it, and what it has found, as counts only (#4213)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockWizard();
+    render(<Wizard api={api} guild={`${G}.counts`} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.start }));
+    fireEvent.click(await screen.findByRole("button", { name: w.skip }));
+    fireEvent.input(await screen.findByLabelText(w.skipName), { target: { value: "X" } });
+    fireEvent.click(screen.getByRole("button", { name: w.skipYes }));
+    for (let i = 0; i < 30 && !screen.queryByText(/Found so far/); i++) await vi.advanceTimersByTimeAsync(2100);
+    const line = screen.getByText(/Found so far/);
+    expect(line.textContent).toBe(`${w.finish.passes["finding_names"]} · ${w.finish.passPart(2, 5)}. ${w.finish.foundSoFar(12, 1)}`);
+    expect(w.finish.foundSoFar(1, 1)).toBe("Found so far: 1 name, 1 connection");
+  });
+
   it("a finish that fails says what happened and offers another try", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockWizard();
@@ -538,6 +552,22 @@ describe("the wizard", () => {
     fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
     expect((await screen.findByRole("alert")).textContent).toBe(w.docs.linkBad);
     expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+  });
+
+  it("a link longer than the server keeps is refused at the step, and homebrew has its own dndbeyond.com box instead (#4206)", async () => {
+    flags.links = true;
+    flags.house = true;
+    const api = await start();
+    for (let to = 2; to <= 4; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.docs.rights));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.docs.add }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.input(screen.getByLabelText(w.docs.linkLabel), { target: { value: `https://example.com/${"a".repeat(2000)}` } });
+    fireEvent.click(screen.getByRole("button", { name: w.docs.addLink }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.docs.linkTooLong);
+    expect(api.calls.some((c) => c.startsWith("docAdd:"))).toBe(false);
+    for (let to = 5; to <= 8; to++) await next(to);
+    expect(screen.queryByLabelText(w.docs.linkLabel)).toBeNull(); // (step 8: the dndbeyond.com box only)
+    expect(screen.getByLabelText(w.docs.homebrewLinkLabel)).toBeTruthy();
   });
 
   it("one failed look at the finish is tried again, and the wait goes on", async () => {

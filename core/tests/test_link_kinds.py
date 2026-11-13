@@ -41,6 +41,7 @@ EXPECTED = {
     "founded": GROUP,
     "captive_of": OTHER,
     "contains": WORK,
+    "next_to": WORK,
     "travels_with": OTHER,  # (a companion; shown like any other tie, #3176)
     "disguised_as": OTHER,  # (secret by nature; drawn like any other connection, #3091)
 }

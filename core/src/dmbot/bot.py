@@ -57,6 +57,8 @@ from dmbot import (
     member_lookups,
     member_names,
     owner_presence,
+    person_key,
+    person_key_backfill,
     plan_rules,
     retention,
     script_make,
@@ -1906,6 +1908,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._meter_loop(), "hours-meter"),
             self._watched(self._idle_loop(), "idle-stop"),  # #2034
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
+            self._watched(self._person_key_loop(), "person-keys"),  # #4145
             *(
                 [self._watched(questions_discord.run_loop(self, self.question_round), "questions")]
                 if self.question_round is not None
@@ -13608,6 +13611,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.warning("Graph checks failed for a server: %s", type(exc).__name__)
             await asyncio.sleep(60)
 
+    async def _person_key_loop(self) -> None:
+        """A minute after start and then every 6 hours: give the trial and email rows written before
+        the secret was set their keyed hash (#4145). Does nothing while no secret is configured;
+        each pass is idempotent and resumes where the last stopped."""
+        await asyncio.sleep(60)
+        while True:
+            try:
+                await person_key_backfill.run_logged(self.campaigns.db)
+            except Exception as exc:
+                log.warning("The person key job failed (%s)", type(exc).__name__)
+            await asyncio.sleep(6 * 3600)
+
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
         few minutes first so a restart loop can't send anything twice in a hurry (each message
@@ -15235,6 +15250,8 @@ async def fill_parties(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    if not person_key.configure(settings.person_key):
+        log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     dm_links.configure_site(settings.site_url)  # the website button of every private message
     alerter = alerts.Alerter(settings.mail)

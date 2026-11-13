@@ -82,6 +82,7 @@ from dmbot.ui import (
     languages_card,
     logic,
     place_size,
+    place_world,
     player_id,
     split_words,
     told_name,
@@ -240,7 +241,10 @@ NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "
 # Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
 # is full. A companion travels with a player character or the party (#3176): the session readers
 # and the DM's own button propose it, not this menu.
-NOT_IN_MENU = frozenset({"travels_with"})
+# Not in the generic menu: a companion's is proposed by the readers, and so are two places beside
+# each other (#4173 slice 6a), which the DM confirms like any suggestion; a place card's own control
+# for them follows (Discord's menu holds 25, and this one is full).
+NOT_IN_MENU = frozenset({"travels_with", "next_to"})
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
@@ -802,8 +806,23 @@ async def show_card(
     )
     if size and len(text) + len(size) <= CARD_MAX:  # how big a place is (#4173): not a secret
         text += size
+    # water or a road (#4173 slice 6a): not a secret either, like the size
+    form = place_size.form_line(entity.form, entity.form_read) if entity.type == "place" else ""
+    if form and len(text) + len(form) <= CARD_MAX:
+        text += form
+    if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
+        seen_names = {e.id: e.name for e in names.entities.values()}  # (this viewer's names)
+        held = await memory.map_facts_up(
+            campaign.guild_id, campaign.id, entity_id, place_world.viewer_for(secrets),
+            shown=None if secrets else set(seen_names),
+        )  # fmt: skip
+        world = place_world.card_lines(held, seen_names, dm=secrets)
+        if world and len(text) + len(world) <= CARD_MAX:
+            text += world
     # the campaign's setting (#4173 slice 2): a mark left on a removed place says nothing
-    whole = place_size.setting_line(entity.setting and entity.status == CONFIRMED)
+    whole = place_size.setting_line(
+        entity.setting and entity.status == CONFIRMED, entity.setting_guessed, dm=secrets
+    )
     if whole and len(text) + len(whole) <= CARD_MAX:
         text += whole
     if secrets and entity.players_text:  # the DM sees what the players are told (#2967)
@@ -898,6 +917,7 @@ async def show_card(
             and (entity.setting or entity.place_level in SETTING_LEVELS)
             else None
         ),
+        setting_guessed=entity.setting_guessed,
         languages=(
             entity.type == "character"
             and not has_sheet
@@ -1041,6 +1061,7 @@ class NameCard(_Menu):
         companion: bool = False,
         size: bool = False,
         setting: bool | None = None,
+        setting_guessed: bool = False,
         languages: bool = False,
         thread: bool = False,
         promise: bool = False,
@@ -1120,13 +1141,33 @@ class NameCard(_Menu):
             self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
         if size:  # a place: how big it is (#4173), beside its standing button
             self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
+            for row in (3, 2, 1):  # its land, climate and ruler (#4256), first row with room
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
+                    )
+                    break
         self.is_setting = bool(setting)
         if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
-            label = place_size.SETTING_OFF_BUTTON if setting else place_size.SETTING_ON_BUTTON
-            for row in (3, 2, 1):
-                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
-                    self.add_item(_Button(self._flip_setting, label=label, style=grey, row=row))
-                    break
+            # (DMbot's guess from the adventure gets ✅ / ✖ in its place: #4173 slice 2b)
+            presses = (
+                [
+                    (self._keep_setting, place_size.KEEP_SETTING_BUTTON),
+                    (self._not_setting, place_size.NOT_SETTING_BUTTON),
+                ]
+                if setting and setting_guessed
+                else [
+                    (
+                        self._flip_setting,
+                        place_size.SETTING_OFF_BUTTON if setting else place_size.SETTING_ON_BUTTON,
+                    )
+                ]
+            )
+            for press, label in presses:
+                for row in (3, 2, 1):
+                    if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                        self.add_item(_Button(press, label=label, style=grey, row=row))
+                        break
         if languages:  # a character with no sheet: the languages the story gives it (#4229)
             for row in (3, 2):  # (the first row with room, as the players' line below)
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
@@ -1244,6 +1285,14 @@ class NameCard(_Menu):
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
 
+    async def _keep_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.answer_guess(interaction, self.campaign_id, self.entity_id, keep=True)
+
+    async def _not_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.answer_guess(interaction, self.campaign_id, self.entity_id, keep=False)
+
     async def _flip_setting(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_size.flip_setting(
@@ -1253,6 +1302,10 @@ class NameCard(_Menu):
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
+
+    async def _place_world(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_world.show_world(interaction, self.campaign_id, self.entity_id)
 
     async def _languages(self, interaction: discord.Interaction) -> None:
         self.stop()

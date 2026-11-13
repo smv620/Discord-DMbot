@@ -138,6 +138,7 @@ export const wizardWords = {
     addDrive: "Choose from Google Drive",
     linkLabel: "A link",
     linkBad: "A link must start with https://.",
+    linkTooLong: "That link is too long for DMbot to keep. Use a shorter one.",
     remove: "Remove",
     none: "Nothing added.",
     // Step 8's homebrew links (#4211): only pages published on dndbeyond.com can be read.
@@ -257,16 +258,29 @@ export const wizardWords = {
       house_failed: "Your campaign is ready, but DMbot couldn't add your house rules. Add them again from the campaign's House rules page.",
       homebrew_unreadable: "Your campaign is ready, but DMbot couldn't read your homebrew. Add it again from the campaign's Homebrew page.",
       homebrew_link_failed: "Your campaign is ready, but DMbot couldn't read a homebrew link. Add it again from the campaign's Homebrew page.",
+      doc_link_failed: "Your campaign is ready, but DMbot couldn't read a link you added. Add it again from the campaign's pages.",
       homebrew_failed: "Your campaign is ready, but DMbot couldn't add your homebrew. Add it again from the campaign's Homebrew page.",
       docs_left: "Your campaign is ready. Add your house rules and homebrew on the campaign's House rules and Homebrew pages.",
       bad_answers: "Some of your answers couldn't be used. Go back, check them, and try again.",
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
+    // The lore reader's pass and what it has found so far (#4213): a stage word, a count and two numbers, never a word of a document.
+    passes: {
+      first_read: "Reading the lore",
+      reading: "Reading the lore",
+      finding_names: "Finding names",
+      finding_links: "Finding how they connect",
+      sorting: "Working out what the players know",
+    } as Record<string, string>,
+    passPart: (done: number, total: number): string => `part ${done} of ${total}`,
+    foundSoFar: (names: number, links: number): string =>
+      `Found so far: ${names} ${names === 1 ? "name" : "names"}, ${links} ${links === 1 ? "connection" : "connections"}`,
     // What the run could not use, one line for each kind, when the campaign was made anyway (counts only: never a name or a link).
     notes: {
       house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
       homebrew_unreadable: (n: number): string => `${n} ${n === 1 ? "homebrew file" : "homebrew files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+      doc_link_failed: (n: number): string => `${n} ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the campaign's pages.`,
       homebrew_link_failed: (n: number): string => `${n} homebrew ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
     } as Record<string, (n: number) => string>,
     // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.
