@@ -5,6 +5,7 @@ lists, split groups and Rejoin. Pure. Invented and published place names only.""
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.session_chain import MAIN, Leg, Line, rejoined, walk
@@ -198,33 +199,82 @@ class AfterTheReview(unittest.TestCase):
 
 
 class Journeys(unittest.TestCase):
-    """#4173 slice 6d part 3 (Supervisor's ruling, 2026-11-13): the party's own chain moving from
-    one town to another is a journey, with the way the DM's words say, or none; never a split
-    group's."""
+    """#4173 slice 6d part 3 (Supervisor's ruling, 2026-11-13, and the reviewer's cases): the
+    party's own chain brought by the DM from one town to another (the AI's explicit "arrive") is a
+    journey, with the one way the DM's words on the journey say, or none; never a split group's,
+    never a town named in passing."""
+
+    def arrive(self, text: str, town: str, chain: str | None = MAIN) -> Line:
+        return dm(text, chain, [Move(1, ARRIVE, town)])
 
     def test_a_move_between_towns_is_a_journey_by_the_way_said(self) -> None:
         got = run(
-            dm("You take the road and reach Bryn Shander."), chains={MAIN: ["dale", "targos"]}
+            self.arrive("You take the road and reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
         )
         self.assertEqual(got.legs, [Leg("targos", "bryn", "road")])
 
     def test_no_way_word_is_a_journey_with_no_way(self) -> None:
-        got = run(dm("You reach Bryn Shander."), chains={MAIN: ["dale", "targos"]})
+        got = run(
+            self.arrive("You reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
         self.assertEqual(got.legs, [Leg("targos", "bryn", "")])  # (never a guessed "wild")
 
     def test_the_town_is_remembered_across_travel(self) -> None:
         got = run(
             dm("Three days on the river.", moves=[Move(1, TRAVEL, "")]),
-            dm("You reach Bryn Shander."),
+            self.arrive("You reach Bryn Shander.", "Bryn Shander"),
             chains={MAIN: ["dale", "targos"]},
         )
         self.assertEqual(got.legs, [Leg("targos", "bryn", "river")])
 
-    def test_a_split_groups_move_writes_nothing(self) -> None:
+    def test_a_town_named_in_passing_is_no_journey(self) -> None:
         got = run(
-            dm("Group one reaches Bryn Shander.", chain="g1"), chains={MAIN: ["dale", "targos"]}
+            dm("A letter from Bryn Shander arrives."),
+            dm("You reach Termalaine, a day north of Bryn Shander."),
+            chains={MAIN: ["dale", "targos"]},
         )
         self.assertEqual(got.legs, [])
+
+    def test_talk_in_town_says_nothing_of_the_way(self) -> None:
+        got = run(
+            dm("A ship is in the harbour."),
+            dm("The druid uses wild shape."),
+            dm("You leave Targos behind.", moves=[Move(1, LEAVE, "Targos")]),
+            self.arrive("You reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "")])
+
+    def test_two_ways_in_one_journey_is_no_one_way(self) -> None:
+        got = run(
+            self.arrive("You leave the road and board a ship to Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "")])
+
+    def test_there_and_back_is_two_journeys(self) -> None:
+        got = run(
+            self.arrive("You reach Bryn Shander by road.", "Bryn Shander"),
+            self.arrive("You ride back to Targos by road.", "Targos"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "road"), Leg("bryn", "targos", "road")])
+
+    def test_a_split_groups_move_writes_nothing(self) -> None:
+        got = run(
+            self.arrive("Group one reaches Bryn Shander.", "Bryn Shander", chain="g1"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs, [])
+
+    def test_the_last_town_carries_over_a_rejoin(self) -> None:
+        got = walk(
+            [self.arrive("You reach Bryn Shander.", "Bryn Shander")], PLACES, {MAIN: ["dale"]},
+            set(), last_town="targos",
+        )  # fmt: skip
+        self.assertEqual((got.legs, got.town), ([Leg("targos", "bryn", "")], "bryn"))
 
     def test_a_players_words_and_a_building_make_no_journey(self) -> None:
         got = run(
@@ -234,15 +284,29 @@ class Journeys(unittest.TestCase):
         )
         self.assertEqual(got.legs, [])
 
-    def test_being_on_a_named_road_closes_the_town(self) -> None:
-        road = Place("east", "", ("the Eastway",))
-        got = walk(
-            [dm("You set out along the Eastway.")], PLACES, {MAIN: ["dale", "targos", "inn"]},
-            set(), routes=[road],
-        )  # fmt: skip
+
+class NamedRoads(unittest.TestCase):
+    ROAD = Place("road", "", ("the Bryn Shander Road",))
+
+    def go(self, *lines: Line) -> Any:
+        return walk(
+            list(lines), PLACES, {MAIN: ["dale", "targos", "inn"]}, set(), routes=[self.ROAD]
+        )
+
+    def test_being_put_on_a_named_road_closes_the_town(self) -> None:
+        got = self.go(
+            dm(
+                "You set out on the Bryn Shander Road.",
+                moves=[Move(1, ARRIVE, "the Bryn Shander Road")],
+            )
+        )
         self.assertEqual(got.chains[MAIN], ["dale"])
-        passing = walk(
-            [dm("The Eastway runs north of here.", moves=[Move(1, NONE, "the Eastway")])],
-            PLACES, {MAIN: ["dale", "targos"]}, set(), routes=[road],
-        )  # fmt: skip
-        self.assertEqual(passing.chains[MAIN], ["dale", "targos"])  # (named in passing)
+        self.assertEqual(got.legs, [])  # (a road named for a town is no arrival there)
+
+    def test_a_road_named_left_or_without_a_move_closes_nothing(self) -> None:
+        for line in (
+            dm("The Bryn Shander Road runs north of here."),
+            dm("You leave the Bryn Shander Road.", moves=[Move(1, LEAVE, "the Bryn Shander Road")]),
+        ):
+            with self.subTest(text=line.text):
+                self.assertEqual(self.go(line).chains[MAIN], ["dale", "targos", "inn"])

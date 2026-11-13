@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 from dmbot.db import Database
 from dmbot.memory import route_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
-from dmbot.memory.models import CONFIRMED, DM
+from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
 from dmbot.memory.scene_moves import Move
 from dmbot.memory.session_chain import MAIN, Leg, Line, rejoined, walk
 from dmbot.memory.story_chain import Place
@@ -56,6 +56,7 @@ class Result:
     skipped_older: bool = False  # an older session than the chains': left out
     journeys: int = 0  # the party's journeys written (#4173 slice 6d part 3)
     journeys_unkept: int = 0  # journeys left out: an end the DM hasn't kept yet
+    journeys_refused: int = 0  # journeys the store refused (a place changed meanwhile)
 
 
 class _Clock:
@@ -208,36 +209,50 @@ class StoryChains:
                     campaign_id,
                     [NewLink(a, "located_in", b, "", upload=label, assumed=True) for a, b in pairs],
                 )
+            if last == session_started_at:
+                legs = []  # (the same session walked again: its journeys are written already)
             ends = {e for leg in legs for e in (leg.start, leg.end)}
             kept = await _kept(conn, guild_id, campaign_id, ends)
-        written, unkept = await self._journeys(
+        # (consent again before anything is written from the DM's lines: a DM who stopped
+        # meanwhile takes the journeys with them)
+        speakers = {s.user_id for s in said if s.user_id in dm_ids}
+        if legs and not speakers <= set(await agreed()):
+            legs = []
+        written, unkept, refused = await self._journeys(
             guild_id, campaign_id, session_started_at, legs, kept
         )
-        return Result(added, journeys=written, journeys_unkept=unkept)
+        return Result(added, journeys=written, journeys_unkept=unkept, journeys_refused=refused)
 
     async def _journeys(
         self, guild_id: int, campaign_id: str, at: int, legs: Sequence[Leg], kept: set[str]
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """The party's journeys (Supervisor's ruling on part 3, 2026-11-13): written straight away
         as the DM's own travelled routes, never queued, since only the DM's narration moves the
         party's chain; each its own change, so one Undo takes it back. Only between two places the
         DM has kept (one still proposed is left out and counted). After the chain's lock, so the
         memory store's own write never waits on it. A journey said twice in one session is one
-        (`checks.duplicate_of`: one per pair, means and session)."""
+        (`checks.duplicate_of`: one per pair, means and session). Written as the DM's (source
+        "dm", as slice 3's assumed parents are): the ruling counts the DM's narration as the DM's
+        word, so the change log names the DM. One the store refuses (a place rejected meanwhile)
+        is counted and the rest go on."""
         if self._memory is None:
-            return 0, 0
-        written = unkept = 0
+            return 0, 0, 0
+        written = unkept = refused = 0
         for leg in legs:
             if not {leg.start, leg.end} <= kept:
                 unkept += 1
                 continue
-            await self._memory.add_relation(
-                guild_id, campaign_id, leg.start, route_words.ROUTE_TO, leg.end, source=DM,
-                confidence=1.0, status=CONFIRMED, detail=leg.means,
-                route_state=route_words.TRAVELLED, from_session_at=at,
-            )  # fmt: skip
+            try:
+                await self._memory.add_relation(
+                    guild_id, campaign_id, leg.start, route_words.ROUTE_TO, leg.end, source=DM,
+                    confidence=1.0, status=CONFIRMED, detail=leg.means,
+                    route_state=route_words.TRAVELLED, from_session_at=at,
+                )  # fmt: skip
+            except MemoryRuleError:
+                refused += 1
+                continue
             written += 1
-        return written, unkept
+        return written, unkept, refused
 
 
 def _walk_all(
@@ -256,12 +271,13 @@ def _walk_all(
     given = set(stated)
     pairs: list[tuple[str, str]] = []
     legs: list[Leg] = []
+    town: str | None = None  # (the party's last town, carried over a Rejoin)
     batch: list[Line] = []
     left_in = max((int(k[1:].split("g")[0]) for k in chains if k != MAIN), default=None)
     for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in, moves):
         if ended is not None:  # (Rejoin: walk what came before, then join the groups)
-            walked = walk(batch, found, chains, given, routes)
-            chains, batch = walked.chains, []
+            walked = walk(batch, found, chains, given, routes, town)
+            chains, batch, town = walked.chains, [], walked.town
             pairs += walked.pairs
             legs += walked.legs
             given |= {p for p, _ in walked.pairs}
@@ -277,7 +293,7 @@ def _walk_all(
                 chains[MAIN] = rejoined([*groups.values(), *idle])
         if line is not None:
             batch.append(line)
-    walked = walk(batch, found, chains, given, routes)
+    walked = walk(batch, found, chains, given, routes, town)
     return walked.chains, pairs + walked.pairs, legs + walked.legs
 
 
@@ -350,14 +366,15 @@ async def _places(conn: Any, guild_id: int, campaign_id: str) -> list[Place]:
 
 async def _routes(conn: Any, guild_id: int, campaign_id: str) -> list[Place]:
     """The campaign's named route places ("the Eastway"), each with its spellings: being on one
-    closes the town level (#4173 slice 6d). Proposed ones too, as `_places` reads them."""
+    closes the town level (#4173 slice 6d). Kept ones only: a road the DM hasn't kept moves
+    nothing."""
     cur = await conn.execute(
         "SELECT e.id, e.name, COALESCE(array_agg(a.text)"
         " FILTER (WHERE a.text IS NOT NULL), '{}') AS others FROM memory_entities e"
         " LEFT JOIN memory_aliases a ON (a.guild_id, a.campaign_id, a.entity_id)"
         " = (e.guild_id, e.campaign_id, e.id) AND a.status <> 'rejected'"
         " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.type = 'place'"
-        " AND e.status IN ('confirmed', 'proposed') AND e.form = 'route' GROUP BY e.id, e.name",
+        " AND e.status = 'confirmed' AND e.form = 'route' GROUP BY e.id, e.name",
         (guild_id, campaign_id),
     )
     return [

@@ -10496,12 +10496,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # fmt: skip
                 log.info(
                     "Where the story is: %d new guesses of where a place is%s; %d journeys (%d left"
-                    " out: a place not kept yet); scene moves: %d DM"
+                    " out: a place not kept yet; %d refused); scene moves: %d DM"
                     " lines, %d asked (%d without numbers), %d calls, %d+%d tokens, %d moves,"
                     " %d unreadable, %d stopped early",
                     done.guessed,
                     " (an older session: left out)" if done.skipped_older else "",
-                    done.journeys, done.journeys_unkept,
+                    done.journeys, done.journeys_unkept, done.journeys_refused,
                     found.dm_lines, found.asked, found.fallback, found.calls,
                     found.input_tokens, found.output_tokens,
                     sum(len(m) for m in found.moves.values()), found.unreadable,
