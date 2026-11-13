@@ -204,3 +204,32 @@ class Stored(MemoryTest):
         legs = [r for r in await self.routes() if r.route_state == rw.TRAVELLED]
         self.assertEqual(sorted(r.from_session_at or 0 for r in legs), [100, 200])
         self.assertEqual({r.subject_id for r in legs}, {targos})
+
+
+class StateWords(unittest.TestCase):
+    """Part 2 (Supervisor's condition): a journey or a plan never reads as a road."""
+
+    def test_a_journey_and_a_plan_read_from_where_the_party_set_out(self) -> None:
+        self.assertEqual(
+            rw.state_forward(rw.ROAD, rw.TRAVELLED), "is where the party set out by road for"
+        )
+        self.assertEqual(
+            rw.state_backward(rw.ROAD, rw.TRAVELLED), "is where the party arrived by road from"
+        )
+        self.assertEqual(
+            rw.state_forward(rw.PORTAL, rw.PLANNED),
+            "is where the party plans to set out through a portal for",
+        )
+        self.assertEqual(rw.state_forward("", rw.TRAVELLED), "is where the party set out for")
+        self.assertEqual(rw.state_forward(rw.ROAD, rw.KNOWN), "is connected by road to")
+
+    def test_a_journey_reads_one_way_on_every_card(self) -> None:
+        self.assertFalse(link_words.reads_both_ways("route_to", rw.ROAD, route_state=rw.TRAVELLED))
+        self.assertEqual(
+            link_words.link_words("route_to", rw.ROAD, route_state=rw.PLANNED),
+            "is where the party plans to set out by road for",
+        )
+        self.assertEqual(
+            link_words.back_words("route_to", rw.ROAD, route_state=rw.TRAVELLED),
+            "is where the party arrived by road from",
+        )
