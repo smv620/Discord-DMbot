@@ -480,6 +480,46 @@ class ThePrivacy(Smart):
         self.assertFalse(any(r["open"] for r in rows))
 
 
+class TheDirection(Smart):
+    """The text follows the DM's own direction for a connection (#4164, after #4154)."""
+
+    async def text_of(self, entity: str) -> str:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_entity_parts(%s, %s, %s) AS p", (self.g, self.one.id, entity)
+            )
+            row = await cur.fetchone()
+        return compose(row["p"]) if row and row["p"] else ""
+
+    async def mark(self, a: str, b: str, both_ways: bool) -> str:
+        """Set the mark on the one connection between a and b; returns the name it reads from
+        (its subject: a two-way kind is stored with its names in id order)."""
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_relations SET both_ways = %s WHERE (subject_id, object_id) IN"
+                " ((%s, %s), (%s, %s)) RETURNING subject_id",
+                (both_ways, a, b, b, a),
+            )
+            (row,) = await cur.fetchall()
+        return str(row["subject_id"])
+
+    async def test_a_rivalry_the_dm_made_one_way_reads_only_from_its_first_name(self) -> None:
+        await self.link("rival_of", self.mira, self.auril)
+        self.assertIn("Mira Voss", await self.text_of(self.auril))  # (two-way by its kind)
+        self.assertIn("Auril", await self.text_of(self.mira))
+        first = await self.mark(self.mira, self.auril, False)
+        second = self.auril if first == self.mira else self.mira
+        names = {self.mira: "Mira Voss", self.auril: "Auril"}
+        self.assertIn(names[second], await self.text_of(first))
+        self.assertNotIn(names[first], await self.text_of(second))
+
+    async def test_a_one_way_kind_the_dm_made_two_way_reads_from_both(self) -> None:
+        await self.link("serves", self.mira, self.auril)
+        self.assertNotIn("Mira Voss", await self.text_of(self.auril))  # (one way by its kind)
+        await self.mark(self.mira, self.auril, True)
+        self.assertIn("Mira Voss", await self.text_of(self.auril))
+
+
 class TheWaits(Smart):
     async def test_a_voyage_call_that_never_answers_is_unreachable_after_the_limit(self) -> None:
         class Hung(FakeVoyage):
