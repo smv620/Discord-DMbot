@@ -20,12 +20,15 @@ left in the draft.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+import discord
 
 from dmbot import wizard_homebrew, wizard_house
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
@@ -413,6 +416,11 @@ async def _make_channels(bot: Any, guild: Any, guild_id: int, campaign_id: str) 
         ):
             return ""
         screen = await setup_dm_screen(guild, campaign_id, bot.campaigns)
+        if screen.warning:  # who else can see the new screen: said in the screen, as /dmbot does
+            with contextlib.suppress(discord.HTTPException):
+                await screen.channel.send(
+                    screen.warning, allowed_mentions=discord.AllowedMentions.none()
+                )
         _, transcript_problem = await bot._transcript_channel(
             guild, screen.campaign, screen.channel
         )
