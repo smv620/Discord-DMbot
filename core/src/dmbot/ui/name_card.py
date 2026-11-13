@@ -845,15 +845,21 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
+    # How big a place is (#4173) and whether it is water or a road (slice 6a): not secrets once the
+    # DM has said them. One DMbot only read is the DM's to check, so a player never sees it, nor the
+    # hint to a button only the DM has (#4286, as #4256 does for land, climate and ruler).
     size = (
         place_size.size_line(entity.place_level, entity.place_level_read)
-        if entity.type == "place"
+        if entity.type == "place" and (secrets or not entity.place_level_read)
         else ""
     )
-    if size and len(text) + len(size) <= CARD_MAX:  # how big a place is (#4173): not a secret
+    if size and len(text) + len(size) <= CARD_MAX:
         text += size
-    # water or a road (#4173 slice 6a): not a secret either, like the size
-    form = place_size.form_line(entity.form, entity.form_read) if entity.type == "place" else ""
+    form = (
+        place_size.form_line(entity.form, entity.form_read)
+        if entity.type == "place" and (secrets or not entity.form_read)
+        else ""
+    )
     if form and len(text) + len(form) <= CARD_MAX:
         text += form
     if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
