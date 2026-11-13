@@ -157,3 +157,22 @@ def state_backward(detail: str, state: str, *, one_way: bool = False) -> str:
     if state not in _STATE_BACK:
         return backward(detail, one_way=one_way)
     return " ".join(_STATE_BACK[state].format(by=_by(detail)).split())
+
+
+def summary_phrase(detail: str, state: str, *, outward: bool) -> str:
+    """A route in a place's summary, said of the neighbour about the place (`node_summary`):
+    "connected by road"; a journey "where the party went by road" (the place was where it set out)
+    or "where the party came from by road"; a plan "where the party plans to go by road" or "where
+    the party plans to set out from by road". Never a journey or a plan read as a road."""
+    by = _by(detail)
+    if state == TRAVELLED:
+        text = f"where the party went {by}" if outward else f"where the party came from {by}"
+    elif state == PLANNED:
+        text = (
+            f"where the party plans to go {by}"
+            if outward
+            else f"where the party plans to set out from {by}"
+        )
+    else:
+        text = f"connected {by}"
+    return " ".join(text.split())
