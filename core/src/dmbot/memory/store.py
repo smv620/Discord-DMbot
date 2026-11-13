@@ -6200,6 +6200,8 @@ class MemoryStore:
                 w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,
                 session_started_at=mention["session_started_at"], trusted=True,
             )  # fmt: skip
+        if pred.key == NESTS and set(types.values()) == {"place"} and status == CONFIRMED:
+            await _reopen_moved(w, s)  # (#4173 slice 5: the smaller place is inside the bigger)
         if assumed:  # (never an alert or a question on its own: Supervisor's condition)
             return new, []
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
@@ -8791,17 +8793,18 @@ async def _settle_whereabouts(
         if end not in kinds:
             kinds[end] = (await _entity_row(w, end))["type"]
     others = await _relations_touching(w, rel.subject_id, rel.object_id)
-    related = None
+    relation = None
     if (
         rel.predicate == whereabouts.LOCATED
         and kinds[rel.subject_id] != "item"
         and whereabouts._moves(kinds[rel.subject_id])
     ):
-        # a place inside another is one place (the inn and its town): the mover rule asks
-        related = (await states.place_nesting(w, await _load_ontology(w))).related
+        # a place inside another is one place (the inn and its town), a bigger place elsewhere is
+        # a move (#4173 slice 5): the mover rule asks
+        relation = (await states.place_nesting(w, await _load_ontology(w))).relation
     settled = whereabouts.settle(
         rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now,
-        related=related,
+        relation=relation,
     )  # fmt: skip
     if settled.new_changes:
         rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
@@ -8819,6 +8822,34 @@ async def _not_assumed(w: Changes, kind: str, statement_id: str) -> None:
     row = await w.get(RELATIONS, statement_id)
     if row is not None and row["assumed"]:
         raise MemoryRuleError(ASSUMED_FIRST)
+
+
+async def _reopen_moved(w: Changes, place_id: str) -> int:
+    """A link that puts this place inside another reopens each mover's tie to it that ended as
+    `whereabouts.MOVED` while the same mover has a live tie to a place it is now inside (#4173
+    slice 5, Supervisor's condition: "in the bakery", then "in Waterdeep" read as a move, then
+    "the bakery is in Waterdeep": they never left). In the caller's change, so one Undo takes
+    both back; never a flag. Returns how many were reopened."""
+    moved = await w.select(
+        RELATIONS,
+        " AND object_id = %s AND predicate = %s AND end_reason = %s AND status = %s",
+        [place_id, NESTS, whereabouts.MOVED, CONFIRMED],
+    )
+    if not moved:
+        return 0
+    around = (await states.place_nesting(w, await _load_ontology(w))).above(place_id)
+    reopened = 0
+    for row in moved:
+        live = await w.select(
+            RELATIONS,
+            " AND subject_id = %s AND predicate = %s AND to_session_at IS NULL AND status = %s"
+            " AND object_id = ANY(%s)",
+            [row["subject_id"], NESTS, CONFIRMED, sorted(around)],
+        )
+        if live:
+            await w.update(RELATIONS, row["id"], whereabouts.reopened(str(row["detail"])))
+            reopened += 1
+    return reopened
 
 
 async def _has_parent(w: Changes, place_id: str, parent_id: str) -> bool:

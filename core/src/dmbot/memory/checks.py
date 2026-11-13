@@ -35,7 +35,7 @@ campaign's items, so a same-named item elsewhere raises nothing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -43,6 +43,7 @@ from dmbot.memory import kin, next_words, place_levels, place_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
+from dmbot.memory.place_levels import MOVE, ONE, RIVALS
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
 TOO_MANY, CONTRADICTION = "too_many", "contradiction"
@@ -164,15 +165,18 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
 
 class Nesting:
     """Which places are inside which, from the live `located_in` facts between places, how big
-    each place is, and the campaign's setting (#4173). Pure: built from (place, the place it is in)
-    pairs, a level per place and the setting's id."""
+    each place is, the campaign's setting (#4173) and the places open on where the story is
+    (slice 5: `memory_story_chain`, every chain). Pure: built from (place, the place it is in)
+    pairs, a level per place, the setting's id and the open places."""
 
     def __init__(
         self,
         pairs: Iterable[tuple[str, str]] = (),
         levels: Mapping[str, str] | None = None,
         setting: str | None = None,
+        open_places: Collection[str] = (),
     ) -> None:
+        self._open = frozenset(open_places)
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
@@ -220,17 +224,31 @@ class Nesting:
         return {self._setting} if self._setting in self.above(place) else set()
 
     def related(self, a: str, b: str) -> bool:
-        """Can someone be in both at once? When one is inside the other (being in both is being in
-        the smaller one), and when the two are of different sizes (#4173): a bank and the town it
-        may stand in are never rivals, even before anyone says it is in that town. Two places of the
-        same size, or of sizes nobody knows, are rivals unless one is inside the other."""
+        """Is being in both being in one place? (`relation` is ONE.)"""
+        return self.relation(a, b) == ONE
+
+    def relation(self, a: str, b: str) -> str:
+        """What the two places are to someone in both (#4173 slices 1 and 5, Supervisor's rulings):
+        - ONE: the same place, one inside the other, or two of different sizes with no link either
+          way where the bigger one is open on where the story is (the bank and Waterdeep, while
+          the story is in Waterdeep: the bank is in it). With no chain walked yet, every pair of
+          different sizes with no link is ONE, as before slice 5.
+        - MOVE: different sizes, and the bigger one is elsewhere: not open on any chain, or the
+          smaller one is known to be inside another place of the bigger one's size (a bakery in
+          Neverwinter and the town of Waterdeep). Someone was in one, then the other.
+        - RIVALS: the same size, or a size nobody knows: in both at once is the DM's question."""
         if a == b or b in self.above(a) or a in self.above(b):
-            return True
+            return ONE
         if not place_levels.different(self._levels.get(a), self._levels.get(b)):
-            return False
-        # A place already known to be inside another place of the other one's size is elsewhere:
-        # a bakery in Neverwinter and the town of Waterdeep are rivals, whatever their sizes.
-        return not (self._inside_another(a, b) or self._inside_another(b, a))
+            return RIVALS
+        if self._inside_another(a, b) or self._inside_another(b, a):
+            return MOVE
+        if not self._open:
+            return ONE
+        ra = place_levels.RANK[self._levels[a]]
+        rb = place_levels.RANK[self._levels[b]]
+        bigger = a if ra < rb else b
+        return ONE if bigger in self._open else MOVE
 
     def _inside_another(self, place: str, other: str) -> bool:
         """Is `place` inside a place, not `other`, of `other`'s size?"""
@@ -330,7 +348,10 @@ def check_relation(
                 )
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.
-                others = [r for r in others if not nesting.related(r.object_id, new.object_id)]
+                # (a move from one to the other is no conflict either: #4173 slice 5)
+                others = [
+                    r for r in others if nesting.relation(r.object_id, new.object_id) == RIVALS
+                ]
             if len(others) >= p.max_per_subject:
                 problems += [Problem(TOO_MANY, r.id) for r in others]
     if p.max_per_object is not None and object_unique:

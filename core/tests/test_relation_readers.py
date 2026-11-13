@@ -114,6 +114,7 @@ STORE = {
     "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
     "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
     "_not_assumed": DM_ONLY + ": refuses learning an assumed connection (#4173 slice 3)",
+    "_reopen_moved": "writes: a link putting a place inside another reopens a moved tie (slice 5)",
     "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
     "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
     "decline_setting": DM_ONLY + ": a made place for a declined setting guess goes only if nothing "
