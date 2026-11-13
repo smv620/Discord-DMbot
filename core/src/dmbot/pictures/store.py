@@ -361,6 +361,13 @@ class PictureStore:
             row = await cur.fetchone()
             if row is None:
                 return None
+            # A picture that is gone is no map either (#4344: a poster who deletes their picture
+            # takes its map with it, in the same step).
+            await conn.execute(
+                "DELETE FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                " AND picture_id = %s",
+                (guild_id, campaign_id, picture_id),
+            )
             await conn.execute(
                 "UPDATE campaign_pictures SET deleted_at = %s, permanent = FALSE, description = ''"
                 " WHERE id = %s",

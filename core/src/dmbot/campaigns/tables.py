@@ -266,6 +266,8 @@ NOT_IN_BACKUP: dict[str, str] = {
 OWED_TO_BACKUP: tuple[str, ...] = (
     # kept pictures: the rows and the files go into a backup in the bot step of #3274
     "campaign_pictures",
+    # a map is a kept picture with its two yeses (#4344): it goes into a backup with its picture
+    "campaign_maps",
 )
 
 
