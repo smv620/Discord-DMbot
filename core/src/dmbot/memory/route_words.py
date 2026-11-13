@@ -43,12 +43,12 @@ _MEANS: dict[str, Means] = {
 }
 # The words a reader or the DM may give for each (as `next_words` takes several for one)
 _SAID: dict[str, str] = {
-    "road": ROAD, "by road": ROAD, "highway": ROAD, "trail": ROAD, "cart track": ROAD,
+    "road": ROAD, "by road": ROAD, "highway": ROAD, "cart track": ROAD,
     "causeway": ROAD,
     "river": RIVER, "by river": RIVER, "upriver": RIVER, "downriver": RIVER, "by boat": RIVER,
     "sea": SEA, "by sea": SEA, "ship": SEA, "by ship": SEA, "sea route": SEA,
     "water trade route": SEA, "sea trade route": SEA, "ferry": SEA, "lake crossing": SEA,
-    "air": AIR, "by air": AIR, "airship": AIR, "by airship": AIR, "flying": AIR,
+    "air": AIR, "by air": AIR, "airship": AIR, "by airship": AIR,
     "griffon route": AIR,
     "portal": PORTAL, "permanent portal": PORTAL, "magic gate": PORTAL,
     "teleportation circle": PORTAL,
@@ -114,7 +114,16 @@ def said_in(text: str, means: str) -> bool:
     """Does the text itself name this means, in any of its words ("a highway runs" names a road)?
     A route's means must be stated (Supervisor's condition): the AI's choice alone is not enough."""
     words = f" {' '.join(re.findall(r'[\w-]+', text.casefold()))} "
-    return any(f" {said} " in words for said, kept in _SAID.items() if kept == means)
+    return any(
+        f" {said} " in words
+        for said, kept in _SAID.items()
+        if kept == means and said not in _NOT_ALONE
+    )
+
+
+# A means' own word that says nothing alone in a story's words ("wild shape", "a wild boar"): it
+# names the stored means, but a stated way needs a longer phrase ("through the wild")
+_NOT_ALONE = frozenset({WILD})
 
 
 # A journey or a plan reads one way only, from where the party set out (`checks.ordered` keeps that

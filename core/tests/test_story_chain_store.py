@@ -11,6 +11,7 @@ from typing import Any
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as BY_DM
+from dmbot.memory.scene_moves import ARRIVE, Move
 from dmbot.memory.session_chain import MAIN
 from dmbot.memory.story_chain_store import Said, StoryChains, chain_key
 from tests.test_memory_names import DM, GUILD, NamesTest
@@ -186,3 +187,103 @@ class Chains(NamesTest):
         self.assertEqual(await self.stored(), {})  # (no chain, but the mark is kept)
         done = await self.read((1, DM, "You reach Icewind Dale."), started=START)
         self.assertTrue(done.skipped_older)
+
+
+class Journeys(Chains):
+    """#4173 slice 6d part 3: the party's journey is written as the DM's own travelled route, only
+    between kept places, once for a session walked twice, and each one Undoes on its own."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.chains = StoryChains(self.db, self.links, self.memory)
+
+    async def go(self, *lines: tuple[int, int, str, str], started: int = START) -> Any:
+        """Each line with the town the AI says the DM brings the party to ("" for none)."""
+        said = [Said(at(t), who, text, n) for n, (t, who, text, _) in enumerate(lines, 1)]
+        moves = {n: (Move(n, ARRIVE, town),) for n, (_, _, _, town) in enumerate(lines, 1) if town}
+
+        async def agreed() -> set[int]:
+            return set(self.agreeing)
+
+        return await self.chains.read_session(
+            GUILD, self.cid, started, said, {DM}, "Session 1", agreed, moves
+        )
+
+    async def legs(self) -> list[tuple[str, str, str, int | None]]:
+        return sorted(
+            (self.by_id[r.subject_id], self.by_id[r.object_id], r.detail, r.from_session_at)
+            for r in await self.memory.relations(GUILD, self.cid)
+            if r.predicate == "route_to" and r.route_state == "travelled"
+        )
+
+    async def test_a_journey_is_written_with_its_way_and_session(self) -> None:
+        done = await self.go(
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "You take the road east and reach Brindleford.", "Brindleford"),
+            (3, DM, "Back at Brindleford.", ""),
+        )
+        self.assertEqual((done.journeys, done.journeys_unkept), (1, 0))
+        self.assertEqual(await self.legs(), [("Kelvenmoor", "Brindleford", "road", START)])
+        rels = [
+            r for r in await self.memory.relations(GUILD, self.cid) if r.predicate == "route_to"
+        ]
+        self.assertEqual((rels[0].status, rels[0].source), (CONFIRMED, "dm"))
+
+    async def test_no_journey_to_a_place_not_kept(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.cid, name="Easthaven", type="place", status="proposed", source="extractor"
+        )
+        await self.memory.set_place_level(
+            GUILD, self.cid, made.value.id, "settlement", source=BY_DM
+        )
+        done = await self.go(
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "You reach Easthaven.", "Easthaven"),
+        )
+        self.assertEqual((done.journeys, done.journeys_unkept), (0, 1))
+        self.assertEqual(await self.legs(), [])
+
+    async def test_the_same_session_walked_again_writes_no_more(self) -> None:
+        lines = (
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "You reach Brindleford.", "Brindleford"),
+        )
+        await self.go(*lines)
+        again = await self.go(*lines)  # (an import retried: the chain now ends in Brindleford)
+        self.assertEqual(again.journeys, 0)
+        self.assertEqual(len(await self.legs()), 1)
+
+    async def test_a_dm_who_stopped_takes_the_journeys_with_them(self) -> None:
+        calls = 0
+
+        async def agreed() -> set[int]:
+            nonlocal calls
+            calls += 1
+            return set(self.agreeing) if calls < 2 else self.agreeing - {DM}
+
+        said = [
+            Said(at(1), DM, "You reach Kelvenmoor.", 1),
+            Said(at(2), DM, "You reach Brindleford.", 2),
+        ]
+        moves = {1: (Move(1, ARRIVE, "Kelvenmoor"),), 2: (Move(2, ARRIVE, "Brindleford"),)}
+        done = await self.chains.read_session(
+            GUILD, self.cid, START, said, {DM}, "Session 1", agreed, moves
+        )
+        self.assertEqual(done.journeys, 0)
+        self.assertEqual(await self.legs(), [])
+
+    async def test_one_undo_takes_one_journey_back(self) -> None:
+        await self.go(
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "You reach Brindleford.", "Brindleford"),
+        )
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE guild_id = %s"
+                " AND campaign_id = %s",
+                (GUILD, self.cid),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        await self.memory.undo(GUILD, self.cid, int(row["b"]), source=BY_DM)
+        self.assertEqual(await self.legs(), [])
