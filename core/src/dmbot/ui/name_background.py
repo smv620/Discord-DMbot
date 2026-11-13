@@ -40,6 +40,7 @@ from dmbot.memory import (
     picture_read,
     place_levels,
     pronouns,
+    story_chain,
     traits_read,
     who_ask,
     who_resolve,
@@ -52,6 +53,7 @@ from dmbot.memory.backstory_links import (
     DONE,
     FULL,
     UPLOAD_MAX,
+    BackstoryLinks,
     NewLink,
     NewWhich,
     Waiting,
@@ -1004,6 +1006,7 @@ async def _read_background(
         until=started + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
         # (a connection the text wrote through a place's new spelling meets that place: #3037)
         known_spellings=_with_place_spellings(read.known_spellings, place_spellings, place_names),
+        text=upload.text,  # (the chain of where the story is, in this one upload: #4173 slice 3)
         secret_spellings=secret_keys,
         world_links=world_links,
         world_all=choice == lore_knowledge.WORLD,
@@ -2337,6 +2340,7 @@ async def queue_links(
     owner_of: Callable[[str], str] | None = None,
     made_unnamed: list[str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
+    text: str = "",
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -2359,7 +2363,8 @@ async def queue_links(
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
     person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
     store = getattr(bot, "backstory_links", None)
-    if store is None or not (any(answers) or unsettled or unnamed):
+    # (an upload with places and no connections still has a chain of where the story is: #4173)
+    if store is None or not (any(answers) or unsettled or unnamed or text):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     ends: dict[str, str] = {}
@@ -2394,11 +2399,14 @@ async def queue_links(
         ids = {e.entity_id for e in lookup.by_key.get(name_key(name), ()) if not e.person}
         return next(iter(ids)) if len(ids) == 1 else None
 
-    have = {
-        (r.subject_id, r.predicate, r.object_id)
+    live = [
+        r
         for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
         if r.to_session_at is None  # (an ended one can be offered again: the DM may change back)
-    }
+    ]
+    # (DMbot's assumed place is not known yet: a text that states it asks, #4173 slice 3)
+    have = {(r.subject_id, r.predicate, r.object_id) for r in live if not r.assumed}
+    assumed_have = {(r.subject_id, r.predicate, r.object_id) for r in live if r.assumed}
     symmetric = await symmetric_kinds(memory, campaign)
     # the feeling each held "knows" carries, by direction (#3175)
     knows_feeling = {
@@ -2599,6 +2607,12 @@ async def queue_links(
                 continue
             held.add(row_key)
             rows.append(r)
+    if text and store is not None:  # (one document's own words: the chain never spans two files)
+        rows.extend(
+            await _assumed_rows(
+                memory, store, campaign, found, entry, rows, have | assumed_have, text, upload
+            )
+        )
     if not rows:
         return 0
     # A connection already waiting from an earlier reading is not new: it is counted as such (and
@@ -2609,10 +2623,70 @@ async def queue_links(
     }
     fresh = [r for r in rows if (r.subject_id, r.predicate, r.object_id) not in waiting_now]
     if dropped is not None:
-        dropped["already_waiting"] += len(rows) - len(fresh)
+        dropped["already_waiting"] += len([r for r in rows if not r.assumed]) - len(
+            [r for r in fresh if not r.assumed]
+        )
     if keys is not None:
-        keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
-    return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
+        keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh if not r.assumed)
+    # (DMbot's assumed places are queued too, but never counted as connections to ask about:
+    # nobody is asked about them, #4173 slice 3)
+    asked = [r for r in fresh if not r.assumed]
+    guessed = [r for r in fresh if r.assumed]
+    added = int(await store.add(campaign.guild_id, campaign.id, asked)) if asked else 0
+    if guessed:  # (after the stated ones, so a stated one always has its key first)
+        await store.add(campaign.guild_id, campaign.id, guessed)
+    return added
+
+
+async def _assumed_rows(
+    memory: MemoryStore,
+    store: BackstoryLinks,
+    campaign: Campaign,
+    found: Sequence[bg.Found],
+    entry: Callable[[str], str | None],
+    rows: Sequence[NewLink],
+    have: Collection[tuple[str, str, str]],
+    text: str,
+    upload: str,
+) -> list[NewLink]:
+    """Each place's parent DMbot assumes from where the story was in this upload (#4173 slice 3,
+    `story_chain`), as waiting links with the mark: never a question, kept by themselves once both
+    places are (`backstory_keep.keep_assumed`). A place with a parent already, said in this read,
+    kept in the campaign (an assumed one included) or waiting, gets none. Only a place whose size
+    is known and that is an area (not water or a route) takes part."""
+    guild, cid = campaign.guild_id, campaign.id
+    entries = {e.id: e for e in await memory.entities(guild, cid)}
+
+    def is_place(entity_id: str) -> bool:
+        e = entries.get(entity_id)
+        return e is not None and e.type == "place"
+
+    stated = {
+        s for s, how, o in [*have, *((r.subject_id, r.predicate, r.object_id) for r in rows)]
+        if how == "located_in" and is_place(s) and is_place(o)
+    }  # fmt: skip
+    stated |= {  # (one guess per place: one waiting from another upload counts too)
+        w.subject_id
+        for waiting in (False, True)
+        for w in await store.waiting(guild, cid, assumed=waiting)
+        if w.predicate == "located_in" and is_place(w.subject_id) and is_place(w.object_id)
+    }
+    chained: dict[str, story_chain.Place] = {}
+    for f in found:
+        entity_id = entry(f.name) if f.kind == "place" else None
+        e = entries.get(entity_id) if entity_id else None
+        if e is None or e.type != "place" or e.place_level is None:
+            continue
+        if e.form is not None:
+            continue  # (water and routes are outside the size order, slice 6a)
+        spellings = (f.name, *f.also)
+        if entity_id in chained:  # (two listed spellings of one place: one place)
+            spellings = (*chained[entity_id].spellings, *spellings)
+        chained[e.id] = story_chain.Place(e.id, e.place_level, spellings)
+    return [
+        NewLink(place, "located_in", parent, "", upload=upload, assumed=True)
+        for place, parent in story_chain.assumed_parents(text, list(chained.values()), stated)
+    ]
 
 
 async def _unnamed_rows(

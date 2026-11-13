@@ -17,6 +17,7 @@ import type {
   KindOffer,
   MatchRow,
   MetItem,
+  PlaceWorld,
   PrivateScene,
   NamesPage,
   PlaceSpelling,
@@ -226,6 +227,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
     },
     // "Private scenes" (#4102): the list, and "Not private", which the door does itself (no queue: it is one flag on one row).
+    placeWorld: async (ref, placeId) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/names/${encodeURIComponent(placeId)}/world`)) as PlaceWorld,
     privateScenes: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes`)) as { items: PrivateScene[] }).items,
     notPrivateScene: async (ref, id) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes/${encodeURIComponent(id)}/not-private`, {})) as { first: string; second: string },

@@ -208,6 +208,7 @@ NOT_STAMPED: dict[str, str] = {
             "transcript_respells",  # positions kept so one Undo can put a spelling fix back
             "session_usage",
             "graph_review_pending",
+            "memory_story_chain",  # where the story is: the reader's working state (#4173 4)
         ),
         _PLUMBING,
     ),

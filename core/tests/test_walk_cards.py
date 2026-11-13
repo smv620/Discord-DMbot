@@ -14,7 +14,9 @@ import discord
 from dmbot.dm_questions import KINDS
 from dmbot.memory.deed_proposals import GONE
 from dmbot.memory.models import MemoryRuleError
-from dmbot.ui import deed_card, kind_offer, walk_cards
+from dmbot.memory.reveal_proposals import GONE as GONE_REVEAL
+from dmbot.memory.reveal_proposals import STATEMENT_GONE
+from dmbot.ui import deed_card, kind_offer, reveal_card, walk_cards
 from dmbot.walk import Walk
 
 CID = "a" * 32
@@ -299,3 +301,68 @@ class TheDeedsPart(unittest.IsolatedAsyncioTestCase):
                 cast(Any, object()), GUILD, CID, Walk(CID, GUILD, 1, ())
             )
         self.assertEqual(told, [deed_card.NOT_AVAILABLE])
+
+
+class TheRevealsPart(unittest.IsolatedAsyncioTestCase):
+    def bot(self, **calls: Any) -> tuple[Any, Any]:
+        proposals = SimpleNamespace(
+            keep=calls.get("keep") or AsyncMock(return_value=5),
+            dismiss=calls.get("dismiss") or AsyncMock(),
+            waiting=AsyncMock(return_value=[]),
+            describe=AsyncMock(),
+        )
+        bot = SimpleNamespace(
+            memory=object(), consent=SimpleNamespace(consenting=AsyncMock(return_value={1}))
+        )
+        return bot, proposals
+
+    def patched(self, proposals: Any) -> Any:
+        return patch("dmbot.ui.reveal_card.RevealProposals", return_value=proposals)
+
+    async def test_keep_offers_an_undo_and_nothing_to_change_has_its_words(self) -> None:
+        bot, proposals = self.bot()
+        with self.patched(proposals):
+            keep, not_this = reveal_card.walk_kind(bot, GUILD, CID).choices()
+            kept = await keep.do(reveal_card.WalkItem(SimpleNamespace(id="p1")))  # type: ignore[arg-type]
+            declined = await not_this.do(reveal_card.WalkItem(SimpleNamespace(id="p1")))  # type: ignore[arg-type]
+            proposals.keep.return_value = None
+            same = await keep.do(reveal_card.WalkItem(SimpleNamespace(id="p1")))  # type: ignore[arg-type]
+        proposals.keep.assert_any_await(GUILD, CID, "p1", opted_in={1}, source="dm")
+        self.assertEqual(reveal_card.ask_for(GUILD, CID, 3).count, 3)
+        self.assertEqual(kept.text, "✅ Kept.")
+        assert kept.undo is not None
+        self.assertEqual(cast(Any, kept.undo).item.custom_id, f"dmbot:rvundo:{GUILD}:{CID}:5")
+        self.assertEqual((declined.text, declined.undo), ("Okay, not this one.", None))
+        self.assertIn("already knew it for sure", same.text)
+
+    async def test_gone_proposals_use_the_cards_words_and_other_errors_go_up(self) -> None:
+        for said, words in (
+            (GONE_REVEAL, reveal_card.ALREADY_ANSWERED),
+            (STATEMENT_GONE, reveal_card.STATEMENT_GONE_WORDS),
+        ):
+            bot, proposals = self.bot(keep=AsyncMock(side_effect=MemoryRuleError(said)))
+            with self.patched(proposals):
+                keep = reveal_card.walk_kind(bot, GUILD, CID).choices()[0]
+                answer = await keep.do(reveal_card.WalkItem(SimpleNamespace(id="p")))  # type: ignore[arg-type]
+            self.assertEqual(answer.text, words)
+        bot, proposals = self.bot(keep=AsyncMock(side_effect=MemoryRuleError("full")))
+        with self.patched(proposals):
+            keep = reveal_card.walk_kind(bot, GUILD, CID).choices()[0]
+            with self.assertRaises(MemoryRuleError):
+                await keep.do(reveal_card.WalkItem(SimpleNamespace(id="p")))  # type: ignore[arg-type]
+
+    async def test_only_the_first_waiting_one_is_described_and_a_gone_one_is_turned_down(
+        self,
+    ) -> None:
+        bot, proposals = self.bot()
+        first, second, third = (SimpleNamespace(id=n) for n in ("p1", "p2", "p3"))
+        proposals.waiting.return_value = [first, second, third]
+        shown = SimpleNamespace(who="Tran")
+        proposals.describe = AsyncMock(side_effect=[None, shown])
+        with self.patched(proposals):
+            items = await reveal_card.waiting_reveals(bot, GUILD, CID)
+        self.assertEqual([i.proposal.id for i in items], ["p2", "p3"])
+        self.assertIs(items[0].shown, shown)
+        self.assertIsNone(items[1].shown)
+        proposals.dismiss.assert_awaited_once()  # (p1 had nothing left to learn)
+        self.assertEqual(proposals.describe.await_count, 2)
