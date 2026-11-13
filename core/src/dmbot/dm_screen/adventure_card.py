@@ -40,7 +40,7 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
-from dmbot.memory.models import BACKGROUND_SOURCE
+from dmbot.memory.models import BACKGROUND_SOURCE, Entity
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
     MAX_PDF_BYTES,
@@ -655,15 +655,18 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
         log.info(
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
-        await guess_setting(interaction, fresh, attachment.filename, text)
+        guessed = await guess_setting(interaction, fresh, attachment.filename, text)
         card, view = await _card(interaction, fresh)
         kept = "Kept." + (f"\n{note}" if note else "")
+        if guessed is not None:  # (the DM is told here, in the reply they asked for: #4299 review)
+            kept += f"\n{guess_line(guessed.name)}"
+            add_guess_buttons(view, fresh.id, guessed.id)
         await reply(f"{kept}\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
 
 
 async def guess_setting(
     interaction: discord.Interaction, campaign: Campaign, file_name: str, text: str
-) -> bool:
+) -> Entity | None:
     """Where the story is set, worked out from the adventure just kept (#4173 slice 2b): its
     file's name, then its opening words, against `setting_worlds`' names. Written as DMbot's guess
     for the DM to keep or refuse on the place's card, never over a setting the DM has, never
@@ -673,20 +676,51 @@ async def guess_setting(
     world = setting_worlds.world_for(file_name, text)
     memory = getattr(interaction.client, "memory", None)
     if world is None or memory is None:
-        return False
+        return None
     try:
         written = await memory.guess_setting(
             campaign.guild_id, campaign.id, world.place, source=BACKGROUND_SOURCE
         )
     except Exception as exc:  # (the type only: a database error can quote a row)
         log.warning("A setting couldn't be guessed (%s)", type(exc).__name__)
-        return False
+        return None
     log.info("Setting from the adventure: %s", "guessed" if written.value else "kept as it was")
     if written.value is not None:  # (the DM's cards and search see the new place at once)
         from dmbot.ui.names import changed
 
         changed(interaction, campaign)
-    return written.value is not None
+    return written.value
+
+
+def guess_line(world: str) -> str:
+    """The line the adventure form's own reply gets when DMbot guessed the setting."""
+    shown = discord.utils.escape_markdown(world)
+    return (
+        f"🌍 DMbot guessed this campaign is set in **{shown}**. Open its card to keep it or say no."
+    )
+
+
+def add_guess_buttons(view: discord.ui.View, campaign_id: str, entity_id: str) -> bool:
+    """The card's ✅ Keep as the setting and ✖ Not the setting, with the card's own handlers, on
+    the first row with room for both (the form's Remove buttons fill rows 0 to 3 for twenty files).
+    False when no row has room: the line still says where to find them."""
+    from dmbot.ui import place_size
+    from dmbot.ui.dmbot_commands import _Button
+
+    for row in range(5):
+        if sum(1 for c in view.children if getattr(c, "row", None) == row) > 3:
+            continue
+
+        async def keep(interaction: discord.Interaction) -> None:
+            await place_size.answer_guess(interaction, campaign_id, entity_id, keep=True)
+
+        async def no(interaction: discord.Interaction) -> None:
+            await place_size.answer_guess(interaction, campaign_id, entity_id, keep=False)
+
+        view.add_item(_Button(keep, label=place_size.KEEP_SETTING_BUTTON, row=row))
+        view.add_item(_Button(no, label=place_size.NOT_SETTING_BUTTON, row=row))
+        return True
+    return False
 
 
 class RemoveButton(

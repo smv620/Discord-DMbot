@@ -7,19 +7,26 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import discord
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
+from dmbot.dm_screen import adventure_card
 from dmbot.memory import setting_worlds as sw
 from dmbot.memory.lookup import LookupCache
-from dmbot.memory.models import CONFIRMED, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as BY_DM
+from dmbot.memory.search import find
 from dmbot.memory.store import MemoryStore
 from dmbot.schema import MIGRATIONS
 from dmbot.ui import name_card, place_size
 from tests.pg import REQUIRE_DB, TEST_URL
+from tests.test_house_sync import SyncTest
 from tests.test_memory_names import DM as NAMES_DM
 from tests.test_memory_names import GUILD as NAMES_GUILD
 from tests.test_memory_names import MANAGER, NamesTest
@@ -278,6 +285,129 @@ class AfterTheReview(MemoryTest):
         made = await self.memory.guess_setting(GUILD_A, self.c, "the Flanaess", source="background")
         assert made.value is not None
         self.assertEqual(made.value.id, own)
+
+
+class TheNo(MemoryTest):
+    """Supervisor's review of #4299, point 1: a place DMbot made for its guess goes with a no."""
+
+    async def test_a_no_takes_the_made_place_out_of_every_list(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        await self.memory.decline_setting(GUILD_A, self.c, made.value.id, source=BY_DM)
+        self.assertEqual(await self.memory.entities(GUILD_A, self.c), [])  # (the DM's lists)
+        lookup = await LookupCache(self.memory).get(GUILD_A, self.c)
+        self.assertEqual(find(lookup, "Faerûn", secrets=True), [])  # (search)
+        gone = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert gone is not None
+        self.assertEqual((gone.status, gone.setting_from), (REJECTED, "declined"))
+        again = await self.memory.guess_setting(GUILD_A, self.c, "Khorvaire", source="background")
+        self.assertIsNone(again.value)  # (a later upload makes no new guess)
+
+    async def test_undo_of_the_no_brings_the_made_place_back_as_a_guess(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        no = await self.memory.decline_setting(GUILD_A, self.c, made.value.id, source=BY_DM)
+        assert no.batch is not None
+        await self.memory.undo(GUILD_A, self.c, no.batch)
+        back = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert back is not None
+        self.assertEqual((back.status, back.setting_guessed), (CONFIRMED, True))
+
+    async def test_a_no_leaves_a_found_place_alone_but_the_setting(self) -> None:
+        faerun = await self.add("Faerûn", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, faerun, "world", source=BY_DM)
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None and made.value.id == faerun
+        before = await self.memory.entity(GUILD_A, self.c, faerun)
+        await self.memory.decline_setting(GUILD_A, self.c, faerun, source=BY_DM)
+        after = await self.memory.entity(GUILD_A, self.c, faerun)
+        assert before is not None and after is not None
+        self.assertEqual((after.setting, after.setting_from), (False, "declined"))
+        same = ("status", "hidden_from_players", "place_level", "name", "source")
+        self.assertEqual([getattr(after, f) for f in same], [getattr(before, f) for f in same])
+
+    async def test_a_made_place_something_points_at_is_kept(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        town = await self.add("Targos", type="place", status=CONFIRMED)
+        await self.relate(town, "located_in", made.value.id)
+        await self.memory.decline_setting(GUILD_A, self.c, made.value.id, source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
+
+
+class TheFormsReply(unittest.TestCase):
+    """Point 2: the adventure form's own "Kept." reply tells the DM about the guess."""
+
+    def test_the_line_names_the_world(self) -> None:
+        self.assertEqual(
+            adventure_card.guess_line("Faerûn"),
+            "🌍 DMbot guessed this campaign is set in **Faerûn**. "
+            "Open its card to keep it or say no.",
+        )
+
+    def test_the_two_buttons_go_on_a_row_with_room(self) -> None:
+        view = discord.ui.View()
+        for row in range(4):  # (twenty Remove buttons fill rows 0 to 3)
+            for _ in range(5):
+                view.add_item(discord.ui.Button(label="Remove", row=row))
+        view.add_item(discord.ui.Button(label="Add", row=4))
+        self.assertTrue(adventure_card.add_guess_buttons(view, "c", "e"))
+        labels = [c.label for c in view.children if getattr(c, "row", None) == 4]
+        self.assertEqual(
+            labels, ["Add", place_size.KEEP_SETTING_BUTTON, place_size.NOT_SETTING_BUTTON]
+        )
+
+    def test_no_room_adds_nothing(self) -> None:
+        view = discord.ui.View()
+        for row in range(5):
+            for _ in range(4):
+                view.add_item(discord.ui.Button(label="x", row=row))
+        self.assertFalse(adventure_card.add_guess_buttons(view, "c", "e"))
+        self.assertEqual(len(view.children), 20)
+
+
+class TheUploadsReply(SyncTest):
+    """Point 2 through the form itself: the line is there only when a guess was written."""
+
+    async def kept_reply(self, guessed: Any) -> tuple[str, discord.ui.View]:
+        store = SimpleNamespace(add=AsyncMock())
+        dm_campaign: Any = SimpleNamespace(guild_id=5, id="c" * 32, dm_user_ids=[7001])
+        it = self.interaction()
+        it.client = SimpleNamespace(
+            adventure=store, campaigns=SimpleNamespace(get=AsyncMock(return_value=dm_campaign))
+        )
+        it.guild = SimpleNamespace(id=5)
+        it.user = SimpleNamespace(id=7001)
+        form = adventure_card.AdventureForm(dm_campaign)
+        raw = b"A small keep on a hill."
+        attachment = SimpleNamespace(
+            filename="The Keep.txt", size=len(raw), read=AsyncMock(return_value=raw)
+        )
+        upload = form.file.component
+        with (
+            patch.object(type(upload), "values", new=[attachment], create=True),
+            patch.object(
+                adventure_card, "_card", AsyncMock(return_value=("CARD", discord.ui.View()))
+            ),
+            patch.object(adventure_card, "guess_setting", AsyncMock(return_value=guessed)),
+        ):
+            await form.on_submit(it)
+        call = it.followup.send.await_args
+        return str(call.args[0]), call.kwargs["view"]
+
+    async def test_a_written_guess_adds_the_line_and_the_buttons(self) -> None:
+        said, view = await self.kept_reply(SimpleNamespace(id="e" * 32, name="Faerûn"))
+        self.assertIn(adventure_card.guess_line("Faerûn"), said)
+        labels = [getattr(c, "label", None) for c in view.children]
+        self.assertIn(place_size.KEEP_SETTING_BUTTON, labels)
+        self.assertIn(place_size.NOT_SETTING_BUTTON, labels)
+
+    async def test_no_guess_no_line(self) -> None:
+        said, view = await self.kept_reply(None)
+        self.assertEqual(said, "Kept.\n\nCARD")
+        self.assertEqual(view.children, [])
 
 
 class TheListAgain(unittest.TestCase):

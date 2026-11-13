@@ -1305,9 +1305,20 @@ class MemoryStore:
             row = await _entity_row(w, entity_id)
             if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
                 raise MemoryRuleError(NOT_FOUND)
-            row = await w.update(
-                ENTITIES, entity_id, {"setting": False, "setting_from": "declined"}
-            )
+            change: dict[str, Any] = {"setting": False, "setting_from": "declined"}
+            # A place DMbot made for the guess goes with it (Supervisor's review of #4299): the bot
+            # never keeps a place the DM didn't ask for. Rejected, so it leaves every list, with
+            # its declined mark kept, so the "never again" check still finds it; Undo brings it
+            # back as a guess. Only while it is still hidden and nothing else points at it.
+            if row.get("source") == SETTING_GUESS_SOURCE and row.get("hidden_from_players"):
+                tied = await w.select(
+                    RELATIONS,
+                    " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+                    [entity_id, entity_id],
+                )
+                if not tied:
+                    change["status"] = REJECTED
+            row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)
 
     async def set_place_level(
