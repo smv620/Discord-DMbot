@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
 from dmbot import images
@@ -121,11 +122,15 @@ class ImageDesk:
         links: Sequence[str],
         still_ok: StillOk = lambda: True,
         on_image: OnImage | None = None,
+        *,
+        close: bool = False,
+        meter: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> list[Read | None]:
         """What was made of each link (at most `MAX_PER_MESSAGE`), in order; None where it was not
         described. `still_ok` is asked before each download and each AI call; once it says no the
         rest of the message is dropped (a shorter list: those pictures get no line at all, since
-        the poster no longer agrees). Never raises for one image's trouble."""
+        the poster no longer agrees). Never raises for one image's trouble. `close` and `meter`:
+        a map's close read and its AI credits (`images.read`, #4173 slice 6b-1)."""
         out: list[Read | None] = []
         if self.counter is None:
             return out
@@ -149,7 +154,7 @@ class ImageDesk:
                 image = await self._fetch(link)
                 if not still_ok():
                     raise Stopped
-                read = await images.read(image, fast, careful)
+                read = await images.read(image, fast, careful, close=close, meter=meter)
                 out.append(read)
                 if on_image is not None and still_ok():
                     # Keeping a picture (#3274) must never cost the picture its line: its own
