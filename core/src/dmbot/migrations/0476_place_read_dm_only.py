@@ -11,8 +11,8 @@ from __future__ import annotations
 # names door (`dmbot_web_all_names`) still sent `placeLevel`, `placeLevelFrom`, `form` and
 # `formFrom` to everyone who can see the name, so a player's browser held a read value, marked
 # 'read': a sign of what the DM's notes said, though the page never showed it. Each is now sent to
-# a player only once the DM has said it (`*_from = 'dm'`), and to the DM always, as `playersText`
-# is. The door is read back from the database as it is and each anchor (0437's and 0459's lines)
+# a player only once the DM has said it (`*_from = 'dm'`), and to the DM always, as a guessed
+# `setting` is (0459). The door is read back from the database as it is and each anchor (0437's and 0459's lines)
 # must be found exactly once, so a drift stops the migration (0459's way). No row changes.
 _READ_LEVEL = "is_dm OR p.place_level_from = 'dm'"
 _READ_FORM = "is_dm OR p.form_from = 'dm'"

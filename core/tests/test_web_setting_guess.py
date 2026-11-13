@@ -1,6 +1,7 @@
 """The website's All names door and DMbot's guess at the setting (#4173 slice 2b; the reviewer on
 #4173): someone who isn't a DM of the campaign gets `setting` false for a guess, and the DM gets
-`settingFrom` to mark it. Invented names."""
+`settingFrom` to mark it. A place's size or kind DMbot only read is the DM's alone too (#4356).
+Invented names."""
 
 from __future__ import annotations
 
@@ -51,11 +52,12 @@ class ARead(Acting):
         self.assertEqual([dm_row[f] for f in fields], ["settlement", "read", "water", "read"])
         bob = await self.signed(BOB, THURSDAY)
         player_row = await self.row(bob)
-        self.assertEqual([player_row.get(f) for f in fields], [None, None, None, None])
+        self.assertEqual([player_row[f] for f in fields], [None, None, None, None])  # (sent, null)
 
     async def test_once_the_dm_says_it_everyone_gets_it(self) -> None:
         await self.read_by_dmbot()
         await self.memory.set_place_form(self.g, self.one.id, self.keep, "water", source="dm")
         player_row = await self.row(await self.signed(BOB, THURSDAY))
         self.assertEqual((player_row["form"], player_row["formFrom"]), ("water", "dm"))
-        self.assertIsNone(player_row.get("placeLevel"))  # (the size is still only DMbot's read)
+        # (the size is still only DMbot's read)
+        self.assertEqual((player_row["placeLevel"], player_row["placeLevelFrom"]), (None, None))
