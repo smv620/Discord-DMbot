@@ -248,7 +248,7 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
           misses.current += 1;
           if (misses.current >= 5) {
             const now = Math.floor(Date.now() / 1000);
-            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", notes: old?.notes ?? "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
+            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", notes: old?.notes ?? "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", dmBotChannel: old?.dmBotChannel ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
           } else setTick((n) => n + 1);
         },
       );
@@ -283,7 +283,21 @@ function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
             {t.notes[word]?.(n)}
           </p>
         ))}
-        <a class="button" href={run.campaignRef ? campaignHref(run.campaignRef) : "/account/campaigns"}>{t.open}</a>
+        <div class="row">
+          <a class="button" href={run.campaignRef ? campaignHref(run.campaignRef) : "/account/campaigns"}>{t.open}</a>
+          {run.dmBotChannel && (
+            <a class="button secondary" href={`https://discord.com/channels/${guild}/${run.dmBotChannel}`} target="_blank" rel="noopener noreferrer">
+              {t.openDiscord}
+            </a>
+          )}
+        </div>
+        {!run.dmBotChannel && <p role="status">{t.noChannels}</p>}
+        <h3>{t.nextHeading}</h3>
+        <ol>
+          {t.next.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
       </section>
     );
   }

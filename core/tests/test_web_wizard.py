@@ -316,6 +316,24 @@ class TheFinish(Wizard):
         )
         self.assertIsNone(await self.call(wizard.finish_state, who=self.bob))  # not Bob's
 
+    async def test_the_state_sends_the_campaigns_dm_bot_channel_to_the_dm_who_made_it(self) -> None:
+        await self.draft()
+        await self.call(wizard.finish)
+        self.assertIsNone((await self.call(wizard.finish_state))["dmBotChannel"])  # (none made yet)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET dm_bot_channel_id = 123456789012 WHERE guild_id = %s"
+                " AND id = %s",
+                (self.g, self.one.id),
+            )
+            await conn.execute(
+                "UPDATE wizard_finishes SET made_campaign = %s WHERE guild_id = %s",
+                (self.one.id, self.g),
+            )
+        state = await self.call(wizard.finish_state)
+        self.assertEqual((state["campaign"], state["dmBotChannel"]), (self.one.id, "123456789012"))
+        self.assertIsNone(await self.call(wizard.finish_state, who=self.bob))  # never Bob's
+
     async def test_the_state_carries_the_runs_notes_and_the_row_refuses_anything_but_counts(
         self,
     ) -> None:
