@@ -189,6 +189,11 @@ def read_form(name: str) -> str | None:
     return _FORM_BY_WORD[" ".join(found.group(0).split()).casefold()] if found else None
 
 
+# What two places are to someone who is in both (#4173 slice 5, `checks.Nesting.relation`): one
+# place, a move from one to the other, or rivals (being in both at once is a question for the DM).
+ONE, MOVE, RIVALS = "one", "move", "rivals"
+
+
 def bigger(a: str, b: str) -> bool:
     """Is level `a` larger than level `b`? (For the "where the story is" chain, slices 3 and 4.)"""
     return RANK[a] < RANK[b]
