@@ -10488,16 +10488,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 lines = await self.transcripts.lines(gid, sid)
                 said = readable_lines(lines, recap, set(await consenting()))
                 found = await self._scene_moves(gid, cid, sid, said, dm_ids, consenting)
-                done = await StoryChains(self.memory._db, self.backstory_links).read_session(
+                done = await StoryChains(
+                    self.memory._db, self.backstory_links, self.memory
+                ).read_session(
                     gid, cid, session.started_at, said, dm_ids, f"Session {session.number}",
                     consenting, scene_move_step.moves_of(found),
                 )  # fmt: skip
                 log.info(
-                    "Where the story is: %d new guesses of where a place is%s; scene moves: %d DM"
+                    "Where the story is: %d new guesses of where a place is%s; %d journeys (%d left"
+                    " out: a place not kept yet; %d refused); scene moves: %d DM"
                     " lines, %d asked (%d without numbers), %d calls, %d+%d tokens, %d moves,"
                     " %d unreadable, %d stopped early",
                     done.guessed,
                     " (an older session: left out)" if done.skipped_older else "",
+                    done.journeys, done.journeys_unkept, done.journeys_refused,
                     found.dm_lines, found.asked, found.fallback, found.calls,
                     found.input_tokens, found.output_tokens,
                     sum(len(m) for m in found.moves.values()), found.unreadable,
