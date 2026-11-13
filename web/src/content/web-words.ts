@@ -260,6 +260,11 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
+  // A place's parent DMbot assumed from where the story was (#4304): the same words as Discord's card.
+  assumedMark: "(assumed)",
+  rightButton: "✅ That's right",
+  rightLabel: (n: number): string => `That's right: connection ${n}`,
+  rightDone: (place: string, parent: string): string => `📍 Noted: ${place} is in ${parent}.`,
   // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
   whoKnowsHeading: "Who knows this?",
   whoOnlyDm: "🤫 Only the DM",
