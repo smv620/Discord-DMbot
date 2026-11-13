@@ -639,3 +639,45 @@ class UnnamedPeople(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceFacts(unittest.TestCase):
+    """A place's land, climate and ruler, scored per layer (#4256)."""
+
+    def test_found_wrong_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Dale", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Vault", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Council", "kind": "group", "aliases": [], "note": ""},
+            ],
+            "pairs": [],
+            "map_facts": [
+                {"place": "Dale", "layer": "climate", "value": "arctic"},
+                {"place": "Vault", "layer": "terrain", "value": "underdark"},
+                {"place": "Dale", "layer": "control", "value": "Council"},
+            ],
+        }
+
+        def fact(
+            i: str, place: str, layer: str, value: str = "", group: str | None = None
+        ) -> dict[str, Any]:
+            return {
+                "table": "map_fact", "id": i, "entity_id": place, "layer": layer, "value": value,
+                "faction_id": group, "status": "read", "to_session_at": None,
+            }  # fmt: skip
+
+        rows = [
+            fact("f1", "d", "climate", "arctic"),  # found
+            fact("f2", "v", "terrain", "mountain"),  # wrong
+            fact("f3", "d", "terrain", "hill"),  # extra: the key says nothing of Dale's land
+        ]
+        data = backup(
+            [("d", "Dale", "place"), ("v", "Vault", "place"), ("c", "Council", "faction")], rows
+        )
+        report = gkc.check(data, key)
+        self.assertEqual(report.map_facts["climate"]["found"], 1)
+        self.assertEqual(report.map_facts["terrain"]["wrong"], 1)
+        self.assertEqual(report.map_facts["terrain"]["extra"], 1)
+        self.assertEqual(report.map_facts["control"]["missed"], 1)
+        self.assertIn("Place climate: found 1, wrong 0, missed 0, extra 0", gkc.render(report))
