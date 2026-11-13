@@ -27,7 +27,12 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.images import (
     ALT_MAX,
+    CLOSE_FORMS,
+    CLOSE_LEVELS,
     LAYOUT_MAX,
+    LINK_KINDS,
+    LINK_WORD_MAX,
+    LINKS_MAX,
     PLACE_NAME_MAX,
     PLACE_WHERE_MAX,
     PLACES_MAX,
@@ -53,6 +58,26 @@ class MapNote:
     alt: str
     layout: str
     places: tuple[Place, ...]
+    close: dict[str, Any] | None = None  # the close read (#4173 slice 6b-1), or None
+
+
+def close_of(read: Read) -> dict[str, Any] | None:
+    """A read's close read as it is kept (`close_read`), or None when it had none: the map's
+    level, each place's size and form, and its links. The same shape `MapNotesSection` checks."""
+    if not (read.level or read.links or any(p.level or p.form for p in read.places)):
+        return None
+    return {
+        "level": read.level,
+        "places": [
+            {"name": p.name.strip()[:PLACE_NAME_MAX], "level": p.level, "form": p.form}
+            for p in read.places[:PLACES_MAX]
+            if p.name.strip()
+        ],
+        "links": [
+            {"a": k.a, "kind": k.kind, "b": k.b, "word": k.word, "sure": k.sure}
+            for k in read.links[:LINKS_MAX]
+        ],
+    }
 
 
 class MapNoteStore:
@@ -86,7 +111,8 @@ class MapNoteStore:
             )
             await conn.execute(
                 "INSERT INTO map_notes (guild_id, campaign_id, user_id, message_id, made_at, alt,"
-                " layout, places) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+                " layout, places, close_read) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb,"
+                " %s::jsonb)",
                 (
                     guild_id,
                     campaign_id,
@@ -96,6 +122,7 @@ class MapNoteStore:
                     alt[:ALT_MAX],
                     read.layout[:LAYOUT_MAX],
                     json.dumps(places),
+                    None if (close := close_of(read)) is None else json.dumps(close),
                 ),
             )
             await conn.execute(
@@ -121,7 +148,7 @@ class MapNoteStore:
         """This campaign's notes, newest first."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, user_id, made_at, alt, layout, places FROM map_notes"
+                "SELECT id, user_id, made_at, alt, layout, places, close_read FROM map_notes"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY id DESC",
                 (guild_id, campaign_id),
             )
@@ -134,6 +161,7 @@ class MapNoteStore:
                 str(r["alt"]),
                 str(r["layout"]),
                 tuple(Place(str(p["name"]), str(p["where"])) for p in r["places"]),
+                r["close_read"],
             )
             for r in rows
         ]
@@ -146,6 +174,41 @@ class _Checked:
     alt: str
     layout: str
     places: str  # already JSON
+    close: str | None = None  # the close read, already JSON (#4173 slice 6b-1)
+
+
+def _close(value: object) -> str:
+    """A backup's close read, checked as the store writes it, as JSON (`close_of`'s shape)."""
+    if not isinstance(value, dict) or set(value) != {"level", "places", "links"}:
+        raise CampaignError(DAMAGED)
+    level, places, links = value["level"], value["places"], value["links"]
+    if level not in ("", *CLOSE_LEVELS) or not isinstance(places, list):
+        raise CampaignError(DAMAGED)
+    if not isinstance(links, list) or len(places) > PLACES_MAX or len(links) > LINKS_MAX:
+        raise CampaignError(DAMAGED)
+    kept_places = []
+    for p in places:
+        if not isinstance(p, dict) or set(p) != {"name", "level", "form"}:
+            raise CampaignError(DAMAGED)
+        if p["level"] not in ("", *CLOSE_LEVELS) or p["form"] not in ("", *CLOSE_FORMS):
+            raise CampaignError(DAMAGED)
+        kept_places.append(
+            {"name": _text(p["name"], PLACE_NAME_MAX), "level": p["level"], "form": p["form"]}
+        )
+    kept_links = []
+    for k in links:
+        if not isinstance(k, dict) or set(k) != {"a", "kind", "b", "word", "sure"}:
+            raise CampaignError(DAMAGED)
+        if k["kind"] not in LINK_KINDS or not isinstance(k["sure"], bool):
+            raise CampaignError(DAMAGED)
+        kept_links.append(
+            {
+                "a": _text(k["a"], PLACE_NAME_MAX), "kind": k["kind"],
+                "b": _text(k["b"], PLACE_NAME_MAX),
+                "word": _text(k["word"], LINK_WORD_MAX, empty_ok=True), "sure": k["sure"],
+            }
+        )  # fmt: skip
+    return json.dumps({"level": level, "places": kept_places, "links": kept_links})
 
 
 def _text(value: object, limit: int, *, empty_ok: bool = False) -> str:
@@ -161,7 +224,7 @@ class MapNotesSection:
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT user_id, made_at, alt, layout, places FROM map_notes"
+            "SELECT user_id, made_at, alt, layout, places, close_read FROM map_notes"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY id",
             (guild_id, campaign_id),
         )
@@ -172,6 +235,8 @@ class MapNotesSection:
                 "alt": r["alt"],
                 "layout": r["layout"],
                 "places": r["places"],
+                # (only when there is one, so a file of notes with none reads as before)
+                **({"close": r["close_read"]} if r["close_read"] is not None else {}),
             }
             for r in await cur.fetchall()
         ]
@@ -181,7 +246,8 @@ class MapNotesSection:
             raise CampaignError(DAMAGED)
         out: list[_Checked] = []
         for row in rows:
-            if not isinstance(row, dict) or set(row) != {"by", "at", "alt", "layout", "places"}:
+            keys = {"by", "at", "alt", "layout", "places"}
+            if not isinstance(row, dict) or set(row) - {"close"} != keys:
                 raise CampaignError(DAMAGED)
             by, at, places = row["by"], row["at"], row["places"]
             if (
@@ -214,6 +280,7 @@ class MapNotesSection:
                     _text(row["alt"], ALT_MAX),
                     layout,
                     json.dumps(kept),
+                    _close(row["close"]) if "close" in row else None,
                 )
             )
         return out
@@ -229,8 +296,8 @@ class MapNotesSection:
         for r in checked:
             await conn.execute(
                 "INSERT INTO map_notes (guild_id, campaign_id, user_id, made_at, alt, layout,"
-                " places) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
-                (guild_id, campaign_id, r.user_id, r.made_at, r.alt, r.layout, r.places),
+                " places, close_read) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)",
+                (guild_id, campaign_id, r.user_id, r.made_at, r.alt, r.layout, r.places, r.close),
             )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:

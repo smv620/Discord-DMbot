@@ -54,6 +54,7 @@ from dmbot import (
     install,
     lore_upload,
     mail,
+    map_use,
     member_lookups,
     member_names,
     owner_presence,
@@ -5658,8 +5659,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self._keep_picture(table, user_id, message_id, channel_id, image, read, still_ok)
 
         reads = await desk.describe(
-            gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None
-        )
+            gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None,
+            # a map is read closely only when DMbot may use it (the one check, `map_use`: today a
+            # map the DM posted), and its read is charged as AI credits (#4173 slice 6b-1)
+            close=map_use.may_use_map(campaign.dm_user_ids, user_id),
+            meter=lambda: credits.preparing(gid, cid, "map"),
+        )  # fmt: skip
         if not still_ok():
             return
         maps = [r for r in reads if r is not None and r.kind == images.MAP]
