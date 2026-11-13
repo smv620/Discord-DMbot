@@ -33,6 +33,9 @@ WORKED_OUT_SOURCE = "worked_out"
 WHO_SOURCE = "who"
 # A person's first name added as their short name by rule (#3880, `short_names.py`): proposed only.
 SHORT_NAME_SOURCE = "short_name"
+# The place DMbot made for its guess at the campaign's setting (#4173 slice 2b): hidden until the
+# DM keeps it, and the only place ✅ Keep shows to the players (never one someone else hid).
+SETTING_GUESS_SOURCE = "setting_guess"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
@@ -40,6 +43,7 @@ SOURCES = (
     WORKED_OUT_SOURCE,
     WHO_SOURCE,
     SHORT_NAME_SOURCE,
+    SETTING_GUESS_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -377,11 +381,19 @@ class Entity:
     # The campaign's setting (#4173 slice 2a): the one place the whole story is in (Faerûn). A new,
     # smaller place sits inside it unless something says otherwise.
     setting: bool = False
+    # Who made it the setting (#4173 slice 2b): "read" (DMbot's guess from the adventure, until the
+    # DM keeps it), "dm", or "declined" (the DM said it isn't, so DMbot never guesses again).
+    setting_from: str | None = None
     # A place's form (#4173 slice 6a): None for an area (the default), "water" (a lake, bay, sea or
     # river) or "route" (a named road, trade route or pass). Water and route places stand outside
     # the size order. `form_from` says who said it, as for the size.
     form: str | None = None
     form_from: str | None = None
+
+    @property
+    def setting_guessed(self) -> bool:
+        """Is this the setting only as DMbot's guess from the adventure, not yet kept?"""
+        return self.setting and self.setting_from == "read"
 
     @property
     def form_read(self) -> bool:
