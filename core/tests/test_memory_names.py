@@ -2899,6 +2899,26 @@ class Review(NamesTest):
         self.assertEqual(saw_done, [True])
         it.edit_original_response.assert_awaited()
 
+    async def test_pick_kind_same_and_back_answer_discord_first(self) -> None:
+        # Reading the campaign can take over 3 seconds: each of these answers Discord first.
+        # "Same as" needs a known name to offer, as in test_same_as_folds_it_into_a_known_name.
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        for press in ("_pick_kind", "_same", "_back"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            saw_done: list[bool] = []
+            real = view._current
+
+            async def probe(interaction: Any, real: Any = real, saw: list[bool] = saw_done) -> Any:
+                saw.append(interaction.response.is_done())  # at the first store read
+                return await real(interaction)
+
+            with patch.object(view, "_current", probe):
+                await getattr(view, press)(it)
+            self.assertEqual(saw_done, [True], press)
+            it.edit_original_response.assert_awaited()
+
     async def test_yes_no_and_later_answer_discord_before_they_save(self) -> None:
         for press in ("_yes", "_no", "_later"):
             await self.suggest(f"Name{press[1:]}")
