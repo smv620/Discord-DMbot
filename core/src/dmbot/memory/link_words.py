@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from dmbot.memory import kin, next_words, place_words, reputation_words
+from dmbot.memory import kin, next_words, place_words, reputation_words, route_words
 from dmbot.memory.ontology import CORE_PREDICATES, DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 
 CONNECTION_WORDS = {
@@ -29,6 +29,7 @@ CONNECTION_WORDS = {
     "contains": "contains",
     "disguised_as": "is disguised as",
     "next_to": next_words.PLAIN,  # (its word, when it has one, reads instead: `next_words`)
+    "route_to": route_words.OTHER_FORWARD,  # (its means reads instead: `route_words`, #4173 6d)
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
@@ -49,6 +50,7 @@ CONNECTION_BACK = {
     "disguised_as": "is impersonated by",
     # (a one-way "on the shore of", read from the lake's card: still true and plain, #4173 6a)
     "next_to": next_words.PLAIN,
+    "route_to": route_words.OTHER_FORWARD,  # (a one-way route read from where it leads)
 }
 # How two people know each other (#3881), on a `knows`: the words for "met", "aware" and "" (the
 # story doesn't say). Shown only where the caller passes the row's `knows_how`.
@@ -63,7 +65,7 @@ CARD_BACK = {**CONNECTION_BACK, "member_of": "members include"}
 # The old friend and enemy connections are the same thing as a `knows` with a feeling: how a name
 # feels about another is the DM's Reputation, so a non-DM reads plain "knows" (#3611, #3610).
 OLD_FEELINGS = frozenset({"ally_of", "enemy_of"})
-BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of", "next_to"})
+BOTH_WAYS = frozenset({"ally_of", "enemy_of", "rival_of", "kin_of", "next_to", "route_to"})
 # How a two-way connection reads with both names first ("Cerric and Wit are rivals", #4154): the
 # one table Discord and the website take it from. A kind not here, made two-way by the DM, reads
 # "are connected (“<its one-way words>”)" (`pair_words`), never "A and B: is sworn to".
@@ -75,6 +77,7 @@ PAIR_WORDS = {
     "knows": "know each other",
     "travels_with": "travel together",
     "next_to": next_words.PLAIN_PAIR,
+    "route_to": route_words.OTHER_PAIR,
     FALLBACK_PREDICATE: "are connected",
 }
 # A kind that reads both ways by default, made one-way by the DM (#4154), read from its second
@@ -136,6 +139,8 @@ def pair_words(predicate: str, detail: str = "", knows_how: str | None = None) -
         return KNOWS_PAIR_WORDS.get(knows_how, PAIR_WORDS["knows"])
     if predicate == "next_to":
         return next_words.pair(detail)
+    if predicate == "route_to":
+        return route_words.pair(detail)
     if predicate == FALLBACK_PREDICATE and detail:
         return f"{PAIR_WORDS[FALLBACK_PREDICATE]} ({quoted(detail)})"
     if predicate in PAIR_WORDS:
@@ -209,6 +214,8 @@ def link_words(
         return place_words.forward(detail, subject_kind)
     if predicate == "next_to":
         return next_words.forward(detail)
+    if predicate == "route_to":
+        return route_words.forward(detail)
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
     # "knows" with the feeling a reader gave it (#3175): "knows (hostile)", the old friend and enemy
@@ -268,6 +275,8 @@ def back_words(
     niece". None for one that reads the same either way, or has no fixed reading back.
     `knows_how` (#3881): two people who met read "has met" from either side. `both_ways` (#4154):
     a two-way kind the DM made one-way reads `ONE_WAY_BACK` ("is seen as a rival by")."""
+    if predicate == "route_to":  # (its means both ways, or "is reached by road from": #4173 6d)
+        return route_words.backward(detail, one_way=both_ways is False)
     if (
         both_ways is False
         and predicate in ONE_WAY_BACK

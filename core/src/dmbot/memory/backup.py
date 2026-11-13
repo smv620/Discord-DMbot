@@ -21,7 +21,16 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, evidence, map_facts, notify, place_levels, sheets, whereabouts
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    map_facts,
+    notify,
+    place_levels,
+    route_words,
+    sheets,
+    whereabouts,
+)
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -174,6 +183,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     ),
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
+    "route_state": route_words.STATES,  # (a route's state, #4173 slice 6d)
     "end_reason": (*END_REASONS, whereabouts.MOVED),  # (a move, #4173 slice 5)
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
@@ -496,6 +506,9 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         # so a hand-edited file says "damaged" here instead of failing mid-restore
         if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
             raise CampaignError(DAMAGED)
+        # and a route's state is on a route only (#4173 slice 6d), as the database says
+        if table is RELATIONS and raw.get("route_state") and raw.get("predicate") != "route_to":
+            raise CampaignError(DAMAGED)
         # and why a tie ended is on an ended owns or carries only (#4115), or a move on an ended
         # located_in (#4173 slice 5), as the database says
         if (
@@ -735,6 +748,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "end_reason": None,  # from before #4115: why a tie ended was not kept
                 "both_ways": None,  # from before #4154: every direction was its kind's default
                 "assumed": False,  # from before #4173 slice 3: every connection was stated
+                "route_state": "",  # from before #4173 slice 6d: no route had a state
                 **raw,
                 "definition_version": version,
             }

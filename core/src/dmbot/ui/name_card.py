@@ -244,7 +244,7 @@ NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "
 # Not in the generic menu: a companion's is proposed by the readers, and so are two places beside
 # each other (#4173 slice 6a), which the DM confirms like any suggestion; a place card's own control
 # for them follows (Discord's menu holds 25, and this one is full).
-NOT_IN_MENU = frozenset({"travels_with", "next_to"})
+NOT_IN_MENU = frozenset({"travels_with", "next_to", "route_to"})  # (route_to: 6d part 3)
 
 
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
