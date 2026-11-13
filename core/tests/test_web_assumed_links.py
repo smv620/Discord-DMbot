@@ -86,14 +86,15 @@ class Assumed(link_actions.Editing):
         self.assertNotIn("assumed", (await self.dm_links())[guess])  # (the mark is gone)
         # one change, so the page's Undo puts the mark back
         done = await self.poll(answer)
-        (batch,) = done["batches"]
+        batch = done["batch"]
+        self.assertIsInstance(batch, int)
         await self.memory.undo(self.g, self.one.id, batch, source=DM_SOURCE)
         self.assertTrue((await self.dm_links())[guess]["assumed"])
 
     async def test_a_second_press_and_a_player_press_change_nothing(self) -> None:
         guess = await self.assumed_link()
         self.assertEqual(
-            await self.refused_edit(self.player, link=guess, action="right"), "forbidden"
+            await self.refused_edit(self.player, link=guess, action="right"), "not_allowed"
         )
         self.assertEqual(await self.apply_all(), [])  # (nothing was queued)
         await self.edit(guess, action="right")
