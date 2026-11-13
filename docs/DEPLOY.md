@@ -191,7 +191,14 @@ in a volume, so restarts are fast.
 | Add or change a key | `scripts/set-key` |
 | Change any other setting (an address, a model, a limit) | `scripts/set-variables` |
 | Set the admin page's password (#772) | `scripts/set-admin-password` |
+| Free the disk after a deploy (#4075; dev1 only, as every Docker command here) | `docker image prune -a --filter "until=240h" -f` (images older than about the last five deploys) and `docker builder prune -f`; never `docker volume prune` (the database lives in a volume) |
 | Put the admin API online (#836) | see "Put the admin API online" below |
+
+**Watch the disk.** Old test images and build cache fill it quietly: on 2026-11-10 the Docker disk hit
+100% and Postgres panicked on its checkpoint writes (#4075). DMbot now checks its data volume and temp
+directory every ten minutes and warns at 85% and tells the owner at 95% (`DMBOT_DISK_WARN_PCT`,
+`DMBOT_DISK_ALERT_PCT`), but it sees only the filesystem its own data volume and temp directory are on (usually the same Docker disk as the database's volume, but not another mount, the host's root disk or inodes): run
+`df -h` after a deploy, and remove test images after each one.
 
 Updates never change your `.env`. When one brings a new `.env.example`, run
 `scripts/update-env`. It rebuilds `.env` in the new layout, keeps every value you had, and
@@ -569,6 +576,23 @@ docker compose exec -T postgres pg_dump -U postgres -Fc dmbot > dmbot-$(date +%F
 Restore into a fresh install with
 `docker compose exec -T postgres pg_restore -U postgres -d dmbot --clean < dmbot-DATE.dump`.
 The Whisper model is kept in its own volume and downloads again if lost, so it needs no backup.
+
+### The person key (`DMBOT_PERSON_KEY`)
+
+After someone deletes their account, DMbot keeps a scrambled code made from their Discord ID that
+cannot be turned back into the ID (#4145). It lets DMbot see that the same person has come back, so
+they get no second free trial and nobody is emailed after asking not to be. The code is made with
+`DMBOT_PERSON_KEY`.
+
+1. Make a long random string: `openssl rand -hex 32`.
+2. Run `scripts/set-key DMBOT_PERSON_KEY` and paste it when asked.
+3. Copy it into your password manager. dev1 sets it on the server before the code that uses it is
+   deployed.
+
+**Never change it, and never lose it.** The codes only match under the same key: with a new or lost
+key, everyone whose account was deleted looks new, and may be given a second trial or emailed after
+asking not to be. There is no job to re-make the codes yet, so a change would need one built first.
+Back the key up with the rest of `.env` (it is not in the database dumps).
 
 ## Security checklist
 

@@ -21,7 +21,7 @@ import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.memory.claims import (
@@ -48,16 +48,31 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
+from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
+from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
+from dmbot.memory.met_store import speakers_of
+from dmbot.memory.models import name_key
 from dmbot.memory.ontology import Tally
 from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
+from dmbot.memory.reveal_proposals import RevealProposals
+from dmbot.memory.reveal_reading import (
+    REVEAL_SYSTEM,
+    RevealProposal,
+    parse_reveals,
+    reveal_reason,
+)
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
+
+if TYPE_CHECKING:
+    from dmbot.memory.met_store import MetStore
 
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "extractor-3"  # bump when SYSTEM changes (it is recorded with every claim)
 DEED_PROMPT_VERSION = "deeds-2"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
+REVEAL_PROMPT_VERSION = "reveals-1"  # bump when reveal_reading.REVEAL_SYSTEM changes (stored)
 MAX_TOKENS = 3000  # per batch: a minute of talk gives a few dozen claims. Haiku 5.5 writes about
 # three times what Haiku 4.5 did (9 of the story answers were cut off at 1500, #2152)
 BATCH_LINES = 10  # about 30 to 60 seconds of talk, as in the golden set (docs/costs.md)
@@ -197,6 +212,16 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     ]
 
 
+def heard_texts(
+    lines: Sequence[Line], agreed: Collection[int | None], recap_lines: Collection[int] = ()
+) -> list[str]:
+    """What the reader may look at for a short name (#3880): the lines `readable` keeps, from
+    people who still agree, without last time's recap read aloud. The same lines the batches send,
+    so nothing someone said after they stopped recording reaches memory this way either."""
+    left_out = set(recap_lines)
+    return [s.text for s in readable(lines) if s.user_id in agreed and s.number not in left_out]
+
+
 def recap_numbers(split: Mapping[str, Any] | None) -> frozenset[int]:
     """The line numbers a stored split (`recaps.split.Split.to_json()`) labels as last time's recap
     (#3298), or none: no split, one that cannot be read, or one whose recap the comparison could
@@ -282,11 +307,35 @@ class Report:
     # The words: never logged (so never in a repr either). Held for the DM's press; whoever stores
     # them must keep only those whose speakers are all recorded *then* (PR 2b).
     deed_proposals: list[DeedProposal] = field(default_factory=list, repr=False)
+    reveals: int = 0  # who learned what, found by the fourth question (#2996)
+    reveals_refused: int = 0  # answers or items the reveal rules turned down
+    reveals_check_refused: int = 0  # a check that did not succeed, isn't listed or has no DM line
+    reveals_failed: int = 0  # reveal calls that failed (nothing else is affected)
+    reveals_cut: int = 0  # reveal answers that stopped at the length limit
+    reveals_stored: int = 0  # proposals kept for the DM to answer
+    reveals_skipped: int = 0  # batches the pre-check found could hold no reveal: not asked
+    # Why the pre-check let each asked batch through (check, discovery, telling): counts only, so
+    # a dropped reveal on dev1's run can be traced to the word family to fix
+    reveals_asked_by: Counter[str] = field(default_factory=Counter)
+    # Why the others were not stored (unplaced, known, teller_ignorant, repeated, ...): counts only
+    reveals_dropped: Counter[str] = field(default_factory=Counter)
+    reveal_proposals: list[RevealProposal] = field(default_factory=list, repr=False)  # (words)
     cut: int = 0  # claims answers that stopped at the length limit (the whole items were kept)
     readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
     recap_lines: int = 0  # lines left out because they retell earlier sessions (#3298): a count
+    # Unnamed beings met in play (#3172 slice 5, DMBOT_MET_UNNAMED): counts only
+    met: int = 0  # items read (before the same words were joined and the cap)
+    met_refused: int = 0  # items the rules turned down (a player's line among them: `met_not_dm`)
+    met_not_dm: int = 0  # said only by a player, or not in the DM's words
+    met_past_cap: int = 0  # past the cap of a session, never made
+    met_gone: int = 0  # cited someone whose lines went before the write (#4091), never made
+    met_cut: int = 0  # claims answers cut short with the switch on: their "met" items are lost
+    met_made: int = 0  # quiet entries made
+    met_again: int = 0  # already kept for this session
+    met_named: int = 0  # the words are a name the campaign has
+    met_proposals: list[Met] = field(default_factory=list, repr=False)  # (words: never logged)
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -316,6 +365,29 @@ class Report:
                 or self.deeds_repeated
                 or self.deeds_failed
                 or self.deeds_cut
+                else ""
+            )
+            + (
+                f", reveals: {self.reveals} found, {self.reveals_refused} refused,"
+                f" {self.reveals_check_refused} check(s) refused, {self.reveals_failed} failed,"
+                f" {self.reveals_cut} cut short, {self.reveals_stored} kept,"
+                f" {self.reveals_skipped} batch(es) skipped"
+                + "".join(f", asked for {k} {n}" for k, n in sorted(self.reveals_asked_by.items()))
+                + "".join(f", {n} {k}" for k, n in sorted(self.reveals_dropped.items()) if n)
+                if self.reveals
+                or self.reveals_refused
+                or self.reveals_check_refused
+                or self.reveals_failed
+                or self.reveals_cut
+                or self.reveals_skipped
+                else ""
+            )
+            + (
+                f", met: {self.met} found, {self.met_refused} refused ({self.met_not_dm} not the"
+                f" DM's), {self.met_past_cap} past the cap, {self.met_made} kept,"
+                f" {self.met_again} again, {self.met_named} named, {self.met_gone} speaker gone,"
+                f" {self.met_cut} cut short"
+                if self.met or self.met_refused or self.met_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -387,6 +459,80 @@ async def _ask_deeds(
     return True
 
 
+async def _note(
+    progress: Callable[[int, int], Awaitable[None]] | None, done: int, total: int
+) -> None:
+    """Tell the progress card (part `done` of `total`); a failing one never stops the read."""
+    if progress is None:
+        return
+    try:
+        await progress(done, total)
+    except Exception as exc:
+        log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
+
+
+async def _ask_reveals(
+    client: Client,
+    report: Report,
+    batch: Sequence[Said],
+    dm_ids: Collection[int],
+    consenting: Consenting,
+    count_call: Callable[[], Awaitable[None]] | None,
+    precheck: bool = False,
+) -> bool:
+    """The fourth question of one batch (#2996): who learned what. With `precheck`, a batch that
+    could hold no reveal (`reveal_reason`) is not asked at all and is counted as skipped. As
+    `_ask_deeds`: who is recorded is asked again first, the call is counted, never fatal; False
+    when the run must stop (out of money). Repeats across batches are held back by statement when
+    the proposals are stored (the words alone can't tell a dropped reveal from a kept one), so
+    only an answer's own repeats are dropped here."""
+    agreed = await consenting()
+    heard = [s for s in batch if s.user_id in agreed]
+    if not heard:
+        return True
+    if precheck:
+        why = reveal_reason([(s.text, s.user_id in dm_ids) for s in heard])
+        if not why:
+            # (the pre-check exists to save calls: a skip must never use the session's limit)
+            report.reveals_skipped += 1
+            return True
+        report.reveals_asked_by[why] += 1
+    rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in heard]
+    dm_lines = {str(s.number) for s in heard if s.user_id in dm_ids}
+    report.calls += 1
+    if count_call is not None:
+        try:
+            await count_call()
+        except Exception as exc:
+            log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
+    try:
+        answer = await asyncio.wait_for(
+            client.complete(REVEAL_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+            CALL_TIMEOUT_S,
+        )
+    except AIOutOfFunds:
+        report.failed += 1
+        report.stopped = "out of funds"
+        return False
+    except Exception as exc:  # never fatal, and everything above stands
+        log.warning("Story extractor: a reveal call failed (%s)", type(exc).__name__)
+        report.reveals_failed += 1
+        return True
+    got = parse_reveals(answer.text, [r[0] for r in rows], dm_lines=dm_lines, cut=answer.cut)
+    # Asked again after the answer: a reveal citing someone who stopped meanwhile is dropped.
+    still = await consenting()
+    speaker = {str(s.number): s.user_id for s in heard}
+    kept = tuple(v for v in got.reveals if all(speaker.get(n) in still for n in v.lines))
+    report.reveals += len(kept)
+    report.reveals_refused += got.refused + (len(got.reveals) - len(kept))
+    report.reveals_check_refused += got.check_refused
+    report.reveals_dropped["reveal_repeated"] += got.repeated
+    if answer.cut:
+        report.reveals_cut += 1
+    report.reveal_proposals.extend(kept)
+    return True
+
+
 async def run(
     client: Client,
     claims: ClaimStore,
@@ -408,10 +554,16 @@ async def run(
     readings: bool = False,
     deeds: bool = False,
     deed_store: DeedProposals | None = None,
+    reveals: bool = False,
+    reveal_store: RevealProposals | None = None,
+    reveals_precheck: bool = False,
     family_only: bool = False,
     imported: bool = False,
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     recap_lines: Collection[int] = (),
+    met: bool = False,
+    met_store: MetStore | None = None,
+    session_id: str | None = None,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -437,6 +589,12 @@ async def run(
     call. What comes back is only *proposed* (`Report.deed_proposals`, held for the DM's press);
     nothing is recorded here, and one deed for a (doer, viewer) pair holds across the batches.
 
+    `reveals` (#2996, part 2 slice 1): a fourth question, who learned what (`reveal_reading.py`),
+    asked last, after the deeds, with only the calls the limit leaves. The proposals are placed on
+    stored statements and kept for the DM by `reveal_store` (`reveal_proposals.py`); nothing is
+    recorded here. `reveals_precheck` (DMBOT_STORY_REVEALS_PRECHECK): only batches that could
+    hold a reveal are asked (Supervisor's ruling on #2996, kept only if kept reveals don't drop).
+
     `imported`: the session was loaded from a file, so its readings carry no moment for the game
     clock's log to be read at (#3091).
 
@@ -444,26 +602,40 @@ async def run(
     split, `recap_numbers`). They are left out of what is sent, so a retelling read aloud at the
     start of a session gives no claim and no name as this session's events; they are only counted.
 
-    `progress`: awaited with (batch n, of m) before each batch is sent (an import's progress card,
+    `progress`: awaited with (part n, of m) before each call is sent (an import's progress card,
     #3307); a failing one is logged by type and never stops the read.
 
     `family_only` (#2960; owner, 2026-10-29: families first, allies and enemies not yet): only a
     claim that says a family role ("is the niece of") is kept, whatever else the AI returned; the
-    rest are counted as `not family` and never stored. No readings are asked in this mode."""
+    rest are counted as `not family` and never stored. No readings are asked in this mode.
+
+    `met` (#3172 slice 5, DMBOT_MET_UNNAMED): the claims call is also asked who and what the party
+    met that is never named (`met_reading.MET_ADDENDUM`), in the same call, so it costs no call.
+    Only the DM's own lines count; the session's items are joined by their words, capped, and kept
+    by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
+    claims. Never in `family_only`."""
     report = Report()
     readings = readings and not family_only
     deeds = deeds and not family_only
+    reveals = reveals and not family_only
+    met = met and not family_only
+    system = SYSTEM + MET_ADDENDUM if met else SYSTEM
+    prompt_version = PROMPT_VERSION + MET_SUFFIX if met else PROMPT_VERSION
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
     collected: list[Extracted] = []
     believed: list[Extracted] = []
     everyone: dict[str, int | None] = {}  # every line sent, to who said it
+    when: dict[str, int] = {}  # with `met`: a line's number to when it began (its lasting key)
     heard: dict[str, str] = {}  # every line sent, as said: where a naming cue is looked for
     answered_by = ""  # the model that answered last (it can change on a fallback)
     left_out = set(recap_lines)
     candidates = [s for s in readable(lines) if s.started_ms > after_ms]
     report.recap_lines = sum(1 for s in candidates if s.number in left_out)
     work = batches([s for s in candidates if s.number not in left_out])
+    # Every wait shows how far along it is (CLAUDE.md): the deed and reveal questions are parts of
+    # the same read, at most one more call per batch each, so they count in the same "n of m".
+    parts = len(work) * (1 + int(deeds) + int(reveals))
     report.through_ms = after_ms
     reached = after_ms  # how far the batches in a row, all answered, go
     broken = False  # a batch failed: later ones are read, but a restart must come back to it
@@ -489,7 +661,7 @@ async def run(
         report.calls += 1
         if progress is not None:
             try:
-                await progress(index + 1, len(work))
+                await progress(index + 1, parts)
             except Exception as exc:
                 log.warning("Story extractor: the progress note failed (%s)", type(exc).__name__)
         if count_call is not None:
@@ -501,7 +673,7 @@ async def run(
                 log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
         try:
             reply = await asyncio.wait_for(
-                client.complete(SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
+                client.complete(system, transcript_of(rows), max_tokens=MAX_TOKENS), CALL_TIMEOUT_S
             )
         except AIOutOfFunds:
             report.failed += 1
@@ -527,6 +699,18 @@ async def run(
             report.dropped["not family"] += len(found) - len(family)
             found = family
         collected.extend(found)
+        if met:
+            got = parse_met(
+                reply.text,
+                {number: text for number, _who, text in rows},
+                dm_lines={number for number, who, _text in rows if who == "DM"},
+            )
+            report.met += len(got.met)
+            report.met_refused += got.refused
+            report.met_not_dm += got.not_dm
+            report.met_proposals.extend(got.met)
+            report.met_cut += int(reply.cut)  # (never "none met": counted as cut short)
+            when.update((str(s.number), s.started_ms) for s in batch)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -590,10 +774,13 @@ async def run(
     # The deed question comes last, after every batch's claims and readings: the readings are the
     # older feature and keep the calls the limit leaves, so deeds only ever use what is left over
     # (Supervisor, #3585). Only batches that were read for claims are asked.
+    done_deeds = 0
     if deeds:
         for batch in answered:
             if report.calls >= max_calls or time.monotonic() - started > max_seconds:
                 break
+            await _note(progress, len(work) + done_deeds + 1, parts)
+            done_deeds += 1
             if not await _ask_deeds(
                 client, report, batch, dm_ids, consenting, count_call, deed_pairs
             ):
@@ -620,6 +807,38 @@ async def run(
             report.deeds_stored += saved.stored
             report.deeds_repeated += saved.repeated
             report.deeds_refused += saved.not_recorded
+    # Who learned what comes after the deeds, for the same reason: the older features keep the
+    # calls the limit leaves (Supervisor's ruling on #2996: readings, then deeds, then reveals).
+    if reveals:
+        for at, batch in enumerate(answered):
+            if report.calls >= max_calls or time.monotonic() - started > max_seconds:
+                break
+            await _note(progress, len(work) * (1 + int(deeds)) + at + 1, parts)
+            if not await _ask_reveals(
+                client, report, batch, dm_ids, consenting, count_call, reveals_precheck
+            ):
+                break
+    if reveals and reveal_store is not None and report.reveal_proposals:
+        agreed = await consenting()  # (asked again, after the last answer)
+        try:
+            saved_reveals = await reveal_store.store(
+                guild_id,
+                campaign_id,
+                [
+                    (v, tuple(u for n in v.lines if (u := everyone.get(n)) is not None))
+                    for v in report.reveal_proposals
+                ],
+                opted_in=agreed,
+                session_started_at=session_started_at,
+                prompt_version=REVEAL_PROMPT_VERSION,
+                model=answered_by or model(),
+            )
+        except Exception as exc:  # only the type
+            log.warning("Story extractor: storing the reveals failed (%s)", type(exc).__name__)
+            report.failed += 1
+        else:
+            report.reveals_stored += saved_reveals.stored
+            report.reveals_dropped.update(saved_reveals.counts or {})
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
@@ -633,7 +852,7 @@ async def run(
                 everyone,
                 said=heard,
                 opted_in=agreed,
-                prompt_version=PROMPT_VERSION,
+                prompt_version=prompt_version,
                 model=answered_by or model(),
                 session_started_at=session_started_at,
                 malformed=0,
@@ -689,5 +908,58 @@ async def run(
             report.deferred += stored.deferred
             for reason, n in stored.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
+    if met and met_store is not None and session_id is not None and report.met_proposals:
+        await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone, when,
+                        consenting, session_started_at, skip)  # fmt: skip
     report.through_ms = reached
     return report
+
+
+async def _keep_met(
+    report: Report,
+    met_store: MetStore,
+    guild_id: int,
+    campaign_id: str,
+    session_id: str,
+    everyone: Mapping[str, int | None],
+    when: Mapping[str, int],
+    consenting: Consenting,
+    session_started_at: int | None,
+    skip: Collection[str],
+) -> None:
+    """Keep the session's unnamed beings (#3172 slice 5): an item whose lines include someone who
+    stopped being recorded is dropped (asked again here, after the last answer), then the same
+    words are joined, this read's cap applied, and the rest kept (the store holds the cap across
+    every read of the session). Each line is kept by when it began, which a deletion of other
+    lines never shifts. Never fatal: the claims stand."""
+    try:
+        still = await consenting()
+        heard = [
+            m
+            for m in report.met_proposals
+            if all(everyone.get(n) in still for n in m.lines) and name_key(m.what) not in skip
+        ]
+        report.met_refused += len(report.met_proposals) - len(heard)
+        items, report.met_past_cap = gathered(heard)
+        if not items:
+            return
+        added = await met_store.add(
+            guild_id,
+            campaign_id,
+            session_id,
+            [
+                (m.what, m.count, [when[n] for n in m.lines if n in when],
+                 speakers_of(m.lines, everyone))
+                for m in items
+            ],
+            session_started_at=session_started_at,
+        )  # fmt: skip
+    except Exception as exc:  # only the type: the row holds the words
+        log.warning("Story extractor: keeping the unnamed beings failed (%s)", type(exc).__name__)
+        report.failed += 1
+        return
+    report.met_made += added.made
+    report.met_again += added.again
+    report.met_named += added.named
+    report.met_past_cap += added.past_cap
+    report.met_gone += added.gone

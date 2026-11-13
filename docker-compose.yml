@@ -82,6 +82,7 @@ services:
       DEEPGRAM_API_KEY: ""
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
+      DMBOT_PERSON_KEY: ""          # core and the website API hold it, ears never does (#4145)
       PAYMENT_WEBHOOK_SECRET: ""
       DMBOT_WEB_DB_PASSWORD: ""
       CLOUDFLARE_TUNNEL_TOKEN: ""   # only the tunnel container holds it (#836)
@@ -110,6 +111,7 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      DMBOT_PERSON_KEY: ${DMBOT_PERSON_KEY:-}   # keys the hash kept after an account is deleted (#4145)
       WEB_SITE_URL: ${WEB_SITE_URL:-}
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
@@ -128,6 +130,15 @@ services:
       # The bot's switch for "🎤 Say it" (#2316), so the route can say it is off. The model's
       # folder (SAID_AS_MODEL) stays with the bot.
       SAID_AS_VOICE: ${SAID_AS_VOICE:-0}
+      # The bot's switch for scripts (#3244), so the route can say "Make the script" is off (#3899).
+      DMBOT_THEATRE_ON: ${DMBOT_THEATRE_ON:-0}
+      # The website search bar's short answer (#3856): off unless DMBOT_SITE_ASK=1 and both
+      # Cloudflare settings are set. The token is a secret, read here and nowhere else.
+      DMBOT_SITE_ASK: ${DMBOT_SITE_ASK:-0}
+      DMBOT_SITE_ASK_DAILY: ${DMBOT_SITE_ASK_DAILY:-1500}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CLOUDFLARE_AI_TOKEN: ${CLOUDFLARE_AI_TOKEN:-}
+      DMBOT_DOCS_DIR: /app/knowledge
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
@@ -236,6 +247,20 @@ services:
     volumes:
       - recap-audio:/recap-audio:ro
       - bot-status:/status:ro
+      # DMbot's public words, and only those (#3856): the site's pages, the Help page and What's
+      # new. The list is fixed in code (core/src/dmbot/site_ask/sources.py, with a test) and
+      # these mounts are exactly it. Never the plan, CLAUDE.md or the logs.
+      - ./web/src/pages/index.astro:/app/knowledge/web/src/pages/index.astro:ro
+      - ./web/src/pages/how-it-works.astro:/app/knowledge/web/src/pages/how-it-works.astro:ro
+      - ./web/src/pages/players.astro:/app/knowledge/web/src/pages/players.astro:ro
+      - ./web/src/pages/install.astro:/app/knowledge/web/src/pages/install.astro:ro
+      - ./web/src/pages/credits.astro:/app/knowledge/web/src/pages/credits.astro:ro
+      - ./web/src/pages/legal/privacy.astro:/app/knowledge/web/src/pages/legal/privacy.astro:ro
+      - ./web/src/pages/legal/terms.astro:/app/knowledge/web/src/pages/legal/terms.astro:ro
+      - ./web/src/pages/legal/refunds.astro:/app/knowledge/web/src/pages/legal/refunds.astro:ro
+      - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
+      - ./web/src/content/pricing.ts:/app/knowledge/web/src/content/pricing.ts:ro
+      - ./web/src/content/whats-new:/app/knowledge/web/src/content/whats-new:ro
     expose:
       - "${WEB_API_PORT:-8080}"
     healthcheck:

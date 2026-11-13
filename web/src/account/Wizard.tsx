@@ -1,0 +1,407 @@
+/** @jsxImportSource preact */
+// The start-up wizard's shell (#3956; docs/PLAN.md, "The campaign start-up wizard"): ten steps, one page each, with Back, Next and
+// Skip on every page. Each step saves to the draft, so a reload or a later visit picks up where the person was. Skip asks only for
+// the name and takes the defaults. The last page makes the campaign (the bot does the work in stages) and shows the shared wait panel.
+import { useEffect, useRef, useState } from "preact/hooks";
+
+import { WIZARD_STEPS, wizardWords as w } from "../content/wizard-words";
+import { WIZARD_HOUSE_FILES_LIVE } from "../content/wizard-switch";
+import { campaignHref } from "./campaignLinks";
+import { ConfirmStep, DataStep, DocsStep, LaterStep, PlayersStep, RulesStep, WhereStep, type StepProps } from "./WizardSteps";
+import { keepDataChoice, readDataChoice, WizardError, type DataChoice, type WizardAnswers, type WizardApi, type WizardDraft, type WizardFinish } from "./wizard-api";
+import { problemWords } from "./wizard-problems";
+import WorkProgress from "./WorkProgress";
+
+// The finish words a second try can help with; the others need something else first (a plan, a key, the pages named in the line).
+const RETRY_AFTER = ["failed", "lost", "party_failed", "lore_failed", ""];
+const STALLED_AFTER = 120; // seconds without a move before the wait says it has stalled
+const POLL_MS = 1500; // the bot's state is looked at every 1 to 2 seconds while the page is in view
+const HIDDEN_POLL_MS = 10_000; // and far less often while the tab is hidden (#4213)
+
+/** Where the campaign's page is, from the ref the finish run gives (`<server>.<campaign>`). */
+
+export default function Wizard({ api, guild }: { api: WizardApi; guild: string }) {
+  const [pasted, setPasted] = useState(""); // the pasted campaign-page text, in memory only (#4204)
+  const [draft, setDraft] = useState<WizardDraft | null | "loading">("loading");
+  const [problem, setProblem] = useState("");
+  const [skipping, setSkipping] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<"yes" | "no" | null>(null); // step 9's pick this visit; else what this tab kept, else what the draft says (#4212)
+  const live = useRef(true);
+  const seq = useRef(0); // the newest save: an older answer arriving late is ignored, so the page never jumps back
+  const latest = useRef<WizardDraft | null>(null);
+  const lastStep = useRef(0);
+  useEffect(() => () => void (live.current = false), []);
+  if (draft !== "loading" && draft !== null) latest.current = draft;
+
+  // Move focus to the new page's heading when the step changes, so a screen reader hears where it is.
+  const stepNow = draft !== "loading" && draft !== null ? draft.step : 0;
+  useEffect(() => {
+    if (stepNow && lastStep.current && stepNow !== lastStep.current) document.querySelector<HTMLElement>("section h2")?.focus();
+    lastStep.current = stepNow;
+  }, [stepNow]);
+
+  useEffect(() => {
+    api.get(guild).then(
+      (got) => live.current && setDraft(got),
+      (error) => live.current && setProblem(problemWords(error)),
+    );
+  }, [api, guild]);
+
+  if (problem && draft === "loading") return <p role="alert">{problem}</p>;
+  if (draft === "loading") return <p class="muted" role="status">{w.loading}</p>;
+
+  async function start() {
+    setProblem("");
+    try {
+      setDraft(await api.start(guild, ""));
+    } catch (error) {
+      setProblem(problemWords(error));
+    }
+  }
+  if (draft === null) {
+    return (
+      <section>
+        <p>{w.startLead}</p>
+        <button type="button" class="button" onClick={() => void start()}>
+          {w.start}
+        </button>
+        {problem && <p role="alert">{problem}</p>}
+      </section>
+    );
+  }
+
+  async function discard() {
+    try {
+      await api.discard(guild);
+      if (live.current) (setDiscarding(false), setDraft(null));
+    } catch {
+      if (live.current) (setDiscarding(false), setProblem(w.failed));
+    }
+  }
+
+  const current: WizardDraft = draft;
+  const step = Math.min(Math.max(current.step, 1), WIZARD_STEPS.length);
+  const id = WIZARD_STEPS[step - 1]!;
+
+  /** One save at a time in effect: the newest answer wins, and the buttons wait while one is out. */
+  async function save(to: number | null, patch: Partial<WizardAnswers> | ((latest: WizardAnswers) => Partial<WizardAnswers>)) {
+    const mine = ++seq.current;
+    setBusy(true);
+    setProblem("");
+    try {
+      const base = latest.current;
+      const body = typeof patch === "function" ? patch(base ? base.answers : current.answers) : patch;
+      const next = await api.set(guild, to ?? base?.step ?? step, body);
+      if (live.current && mine === seq.current) setDraft(next);
+    } catch (error) {
+      if (live.current && mine === seq.current) setProblem(problemWords(error));
+    } finally {
+      if (live.current && mine === seq.current) setBusy(false);
+    }
+  }
+  const go = (to: number) => save(to, {});
+  const dataChoice: DataChoice = picked ?? readDataChoice(guild, current.answers.dataUse);
+  const props: StepProps = {
+    api,
+    guild,
+    draft: current,
+    onPatch: (patch) => save(null, patch),
+    onDraft: (next) => setDraft(next),
+    dataChoice,
+    onDataChoice: (choice) => {
+      setPicked(choice);
+      keepDataChoice(guild, choice);
+      void save(null, { dataUse: choice === "yes" });
+    },
+    pasted,
+    onPasted: setPasted,
+  };
+
+  return (
+    <div>
+      <p class="small" role="status">
+        {w.step(step, WIZARD_STEPS.length)}
+      </p>
+      {id === "where" && <WhereStep {...props} />}
+      {id === "confirm" && <ConfirmStep {...props} />}
+      {id === "players" && <PlayersStep {...props} />}
+      {id === "lore" && <DocsStep {...props} slot="lore" heading={w.lore.heading} lead={w.lore.lead} />}
+      {id === "secrets" && <DocsStep {...props} slot="secrets" heading={w.secrets.heading} lead={w.secrets.lead} />}
+      {id === "rules" && <RulesStep {...props} />}
+      {id === "house" &&
+        (WIZARD_HOUSE_FILES_LIVE ? <DocsStep {...props} slot="house" heading={w.house.heading} lead={w.house.lead} /> : <LaterStep heading={w.house.heading} later={w.house.later} />)}
+      {id === "homebrew" &&
+        (WIZARD_HOUSE_FILES_LIVE ? <DocsStep {...props} slot="homebrew" heading={w.homebrew.heading} lead={w.homebrew.lead} /> : <LaterStep heading={w.homebrew.heading} later={w.homebrew.later} />)}
+      {id === "data" && <DataStep {...props} />}
+      {id === "finish" && <FinishStep {...props} />}
+      {problem && <p role="alert">{problem}</p>}
+
+      {!skipping && !discarding && (
+        <div class="row">
+          <button type="button" class="button secondary" disabled={busy || step === 1} onClick={() => void go(step - 1)}>
+            {w.back}
+          </button>
+          {step < WIZARD_STEPS.length && (
+            <button type="button" class="button" disabled={busy || (id === "data" && dataChoice === "none")} onClick={() => void go(step + 1)}>
+              {w.next}
+            </button>
+          )}
+          {step < WIZARD_STEPS.length && (
+            <button type="button" class="button secondary" disabled={busy} onClick={() => setSkipping(true)}>
+              {w.skip}
+            </button>
+          )}
+          <button type="button" class="link" disabled={busy} onClick={() => setDiscarding(true)}>
+            {w.discard}
+          </button>
+        </div>
+      )}
+
+      {skipping && <SkipPanel {...props} step={step} onCancel={() => setSkipping(false)} onMade={(next) => (setDraft(next), setSkipping(false))} />}
+      {discarding && (
+        <div role="alertdialog" aria-label={w.discardAsk}>
+          <p>{w.discardAsk}</p>
+          <div class="row">
+            <button type="button" class="button" onClick={() => void discard()}>
+              {w.discardYes}
+            </button>
+            <button type="button" class="button secondary" onClick={() => setDiscarding(false)}>
+              {w.discardNo}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Skip, with PLAN's words: it asks only for the name, then the defaults apply and the campaign is made. */
+function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { step: number; onCancel(): void; onMade(next: WizardDraft): void }) {
+  const [name, setName] = useState(draft.answers.name);
+  const [problem, setProblem] = useState("");
+  const [working, setWorking] = useState(false);
+  async function skipAndMake() {
+    if (working) return;
+    setWorking(true);
+    setProblem("");
+    try {
+      const next = await api.set(guild, 10, { name: name.trim() });
+      await api.skip(guild, step);
+      await api.finish(guild);
+      onMade(next);
+    } catch (error) {
+      setWorking(false);
+      setProblem(error instanceof WizardError && (error.kind === "rights_needed" || error.kind === "needs_rights") ? w.skipRights : problemWords(error));
+    }
+  }
+  return (
+    <div role="alertdialog" aria-label={w.skipAsk}>
+      <p>{w.skipSays}</p>
+      <label>
+        {w.skipName}
+        <input type="text" maxLength={100} value={name} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+      </label>
+      <div class="row">
+        <button type="button" class="button" disabled={working || !name.trim()} onClick={() => void skipAndMake()}>
+          {w.skipYes}
+        </button>
+        <button type="button" class="button secondary" onClick={onCancel}>
+          {w.skipNo}
+        </button>
+      </div>
+      {problem && <p role="alert">{problem}</p>}
+    </div>
+  );
+}
+
+/** The last page: a summary, the press, and the wait while the bot makes the campaign in stages. */
+function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
+  const t = w.finish;
+  const [run, setRun] = useState<WizardFinish | null>(null);
+  const [problem, setProblem] = useState("");
+  const [started, setStarted] = useState(false);
+  const live = useRef(true);
+  useEffect(() => () => void (live.current = false), []);
+
+  // Follow a finish that is already going (a reload, or Skip pressed on another page).
+  useEffect(() => {
+    void api.finishState(guild).then((got) => got && live.current && (setRun(got), setStarted(true)), () => undefined);
+  }, [api, guild]);
+
+  // Poll until it is done or failed. One failed look is tried again; five in a row say the wait has stopped.
+  const misses = useRef(0);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!started || (run && (run.state === "done" || run.state === "failed"))) return;
+    const timer = setTimeout(() => {
+      api.finishState(guild).then(
+        (got) => {
+          if (!live.current) return;
+          misses.current = 0;
+          setRun(got);
+          setTick((n) => n + 1);
+        },
+        () => {
+          if (!live.current) return;
+          misses.current += 1;
+          if (misses.current >= 5) {
+            const now = Math.floor(Date.now() / 1000);
+            setRun((old) => ({ state: "failed", stage: old?.stage ?? "", part: old?.part ?? 0, ofParts: old?.ofParts ?? 0, error: "lost", notes: old?.notes ?? "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0, campaignRef: old?.campaignRef ?? "", dmBotChannel: old?.dmBotChannel ?? "", createdAt: old?.createdAt ?? now, movedAt: old?.movedAt ?? now, serverNow: now }));
+          } else setTick((n) => n + 1);
+        },
+      );
+    }, typeof document !== "undefined" && document.hidden ? HIDDEN_POLL_MS : POLL_MS);
+    return () => clearTimeout(timer);
+  }, [api, guild, started, run, tick]);
+
+  const [pressing, setPressing] = useState(false);
+  async function press() {
+    if (pressing) return;
+    setPressing(true);
+    setProblem("");
+    misses.current = 0;
+    try {
+      await api.finish(guild);
+      setRun(null); // (a retry starts from a fresh look, not the old failed row)
+      setStarted(true);
+      setTick((n) => n + 1);
+    } catch (error) {
+      setProblem(problemWords(error));
+    } finally {
+      if (live.current) setPressing(false);
+    }
+  }
+
+  if (run && run.state === "done") {
+    return (
+      <section>
+        <h2>{t.done}</h2>
+        {notesOf(run.notes).map(([word, n]) => (
+          <p key={word} class="small" role="status">
+            {t.notes[word]?.(n)}
+          </p>
+        ))}
+        <div class="row">
+          <a class="button" href={run.campaignRef ? campaignHref(run.campaignRef) : "/account/campaigns"}>{t.open}</a>
+          {run.dmBotChannel && (
+            <a class="button secondary" href={`https://discord.com/channels/${guild}/${run.dmBotChannel}`} target="_blank" rel="noopener noreferrer">
+              {t.openDiscord}
+            </a>
+          )}
+        </div>
+        {!run.dmBotChannel && <p role="status">{t.noChannels}</p>}
+        <h3>{t.nextHeading}</h3>
+        <ol>
+          {t.next.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ol>
+      </section>
+    );
+  }
+  if (started) {
+    const failed = run?.state === "failed";
+    const stalled = run ? run.serverNow - run.movedAt > STALLED_AFTER : false;
+    return (
+      <section>
+        <h2>{t.heading}</h2>
+        {run && (
+          <WorkProgress
+            stage={failed ? t.errors[run.error] ?? t.errors["failed"]! : t.stages[run.stage] ?? t.stages["campaign"]!}
+            done={run.ofParts > 0 ? run.part : null}
+            total={run.ofParts > 0 ? run.ofParts : null}
+            serverNow={run.serverNow}
+            progressUnknown
+            state={failed ? "failed" : stalled ? "stalled" : "running"}
+            frozen={failed}
+            reason={failed ? t.errors[run.error] ?? t.errors["failed"]! : null}
+          />
+        )}
+        {!run && <p class="muted" role="status">{w.loading}</p>}
+        {run && !failed && <FinishClock run={run} />}
+        {run && !failed && t.passes[run.pass] !== undefined && (
+          <p class="small" role="status">
+            {t.passes[run.pass]}
+            {run.passTotal > 0 ? ` · ${t.passPart(Math.min(run.passDone, run.passTotal), run.passTotal)}` : ""}
+            {run.foundNames + run.foundLinks > 0 ? `. ${t.foundSoFar(run.foundNames, run.foundLinks)}` : ""}
+          </p>
+        )}
+        {!failed && (
+          <>
+            <p class="small">{t.told}</p>
+            <p class="small">{t.toldClosed}</p>
+          </>
+        )}
+        {failed && run && run.campaignRef && <a class="button secondary" href={campaignHref(run.campaignRef)}>{t.open}</a>}
+        {failed && run && RETRY_AFTER.includes(run.error) && (
+          <button type="button" class="button" disabled={pressing} onClick={() => void press()}>
+            {t.retry}
+          </button>
+        )}
+        {problem && <p role="alert">{problem}</p>}
+      </section>
+    );
+  }
+  const a = draft.answers;
+  return (
+    <section>
+      <h2>{t.heading}</h2>
+      <p>{t.lead}</p>
+      <ul>
+        <li>
+          {t.summaryName}: {a.name || "—"}
+        </li>
+        <li>
+          {t.summaryRules}: {a.target === "2024" ? w.rules.current : w.rules.legacy}
+        </li>
+        <li>{t.summaryFiles(draft.documents.length)}</li>
+        <li>{t.summaryData(dataChoice)}</li>
+        {a.skipped.length > 0 && <li>{t.summarySkipped}</li>}
+      </ul>
+      <button type="button" class="button" disabled={pressing || !a.name.trim()} onClick={() => void press()}>
+        {t.button}
+      </button>
+      {problem && <p role="alert">{problem}</p>}
+    </section>
+  );
+}
+
+/** The finish row's notes ("house_unreadable:2 homebrew_link_failed:1") as [word, count] pairs, only the words this page has a line for. */
+function notesOf(notes: string): [string, number][] {
+  return notes
+    .split(" ")
+    .map((pair) => pair.split(":"))
+    .filter((p): p is [string, string] => p.length === 2 && w.finish.notes[p[0]!] !== undefined)
+    .map(([word, n]) => [word, Number(n)]);
+}
+
+/** The motion of the wait (#4213): a clock redrawn every half second from the server's own times, "Last progress N s ago" on the same
+ * clock, and a bar that moves while the bot works. Only times and counts, never a word of a document. A person who asked for less
+ * motion gets still words instead of the moving bar. The bot's own writes are far rarer than this: the motion is the clock and the bar. */
+function FinishClock({ run }: { run: WizardFinish }) {
+  const t = w.finish;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(timer);
+  }, []);
+  // The server's clock, kept as its gap from this browser's when the answer arrived, so a wrong computer clock shows no wrong age.
+  const gap = useRef(0);
+  const seen = useRef<number | null>(null);
+  if (seen.current !== run.serverNow) {
+    seen.current = run.serverNow;
+    gap.current = run.serverNow * 1000 - Date.now();
+  }
+  const server = (now + gap.current) / 1000;
+  const calm = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <div class="stack">
+      {calm ? <p class="small">{t.working}</p> : <progress aria-label={t.working} />}
+      <p class="small muted">
+        {t.runningFor(Math.max(0, Math.floor(server - run.createdAt)))} · {t.lastProgress(Math.max(0, Math.floor(server - run.movedAt)))}
+      </p>
+    </div>
+  );
+}

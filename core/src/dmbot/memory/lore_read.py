@@ -71,7 +71,8 @@ SPLIT_DEPTH = 3  # a slice whose answer is cut off is halved this many times
 
 NAMES, RELATIONSHIPS, NOT_INCLUDED = "NAMES", "RELATIONSHIPS", "NOT INCLUDED"
 UNNAMED = "UNNAMED"  # people the text describes but never names (#2959)
-SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED)
+TRAITS = "TRAITS"  # a character's lineage and class, as the text states them (#2959 item 3)
+SECTIONS = (NAMES, RELATIONSHIPS, NOT_INCLUDED, UNNAMED, TRAITS)
 
 # Whether this read asks for each name's `about:` line (#2967 slice a): only when the DM said the
 # players know all of the upload, the one case the line is stored (Supervisor's ruling on #3832),
@@ -198,6 +199,22 @@ NAMES
 UNNAMED
 - Tavin | knows (neutral) | barmaid with red hair | quote: "a barmaid with red hair warned Tavin about the smugglers"
 - Three Flags Sailing | works in | barmaid with red hair | quote: "At the Three Flags Sailing, a barmaid with red hair warned Tavin"
+
+Example 9. Input (a character's lineage and class; a god they serve is a relationship, not a class):
+<document>
+Mira Vell is a half-elf paladin who serves Torm.
+</document>
+Output:
+NAMES
+- Mira Vell | person | quote: "Mira Vell is a half-elf paladin"
+- Torm | god | quote: "who serves Torm"
+
+RELATIONSHIPS
+- Mira Vell — serves — Torm | quote: "Mira Vell is a half-elf paladin who serves Torm"
+
+TRAITS
+- Mira Vell | lineage | half-elf | quote: "Mira Vell is a half-elf paladin"
+- Mira Vell | class | paladin | quote: "Mira Vell is a half-elf paladin"
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
@@ -296,6 +313,13 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "is disguised as (a second character posing as another), "
         "travels with (a companion that goes along with a player character: a familiar, a "
         "hired guide; the second name is the player character, never 'the party'), "
+        "is next to (two places beside each other, never one inside the other: a town on a "
+        "lake's shore, lands that share a border, a village at the foot of a mountain, a town on "
+        "a named road; say which: borders, on the shore of, on the coast of, at the foot of or "
+        "on), "
+        "is connected to (a stated way between two places the same sentence names: a road, a "
+        "river, a sea or trade route, an airship, a portal, a path through the wild; a way word "
+        "alone, with one place or none, is not one), "
         "is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES (or one of that name's other or secret names, as the "
@@ -305,6 +329,16 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
+        "- A relationship the text plainly implies but never says outright (two people named as "
+        "the same captain's crew know each other) may be listed too, with ' | inferred: <why, "
+        "from the text, a few words>' after its quote. Only a "
+        "relationship of the kinds below, never an event, a motive or a plan, and never family "
+        "(DMbot works family out itself). When in doubt, leave it out.\n"
+        "- An item that changed hands (sold, given, traded, stolen, taken, lost to someone) is one "
+        "line for the one who has it now (owns after a sale, a gift or a trade; carries after a "
+        "theft or a loss), with ' | from: <who had it before> (sold, gave, traded, stolen or "
+        "lost)' after its quote, the quote holding that name too. Only when the text says it "
+        "moved from one named holder to another.\n"
         "- UNNAMED PEOPLE: a person the text describes but never names anywhere, who has to do "
         "with a NAMED person, group or place (family, work, a meeting, a deal, anything the text "
         "says they did together), goes under a fourth heading, UNNAMED, one line each, once for "
@@ -326,8 +360,18 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "and RELATIONSHIPS instead and not here. Never a crowd, 'the party', a kind of creature "
         "in general or anyone already listed. Leave the heading out when there is no such "
         "person.\n"
-        "- Keep the headings (UNNAMED only when it has lines), and write nothing else.\n\n"
-        + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
+        "- TRAITS: a character's lineage (dwarf, elf, half-elf, human, tiefling…), class "
+        "(cleric, paladin, wizard…) or language that the text states outright goes under a fifth "
+        "heading, TRAITS, one line each: the character's full name as listed under NAMES | "
+        "lineage, class or language | the text's own word or words for it | quote. 'A half-elf "
+        "paladin' is two lines. "
+        "A god they serve is not a class (that is a relationship). A language the text says they "
+        "speak or know (Elvish, Thieves' Cant, a tongue the story names) is a line too, with "
+        "'language' as its kind: 'speaks Elvish and Sylvan' is one line, its words 'Elvish and "
+        "Sylvan'. Never a guess from a name, a look, a lineage or a homeland. Leave the heading "
+        "out when the text states none.\n"
+        "- Keep the headings (UNNAMED and TRAITS only when they have lines), and write nothing "
+        "else.\n\n" + (EXAMPLES if _ASK_ABOUT.get() else _ABOUT_PART.sub("", EXAMPLES))
     )
 
 
@@ -389,7 +433,10 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         + "). Leave out 'said:'. An "
         "earlier name of a character stays in also or secret: it is never an entry of its own.\n"
         "For each RELATIONSHIPS line give a and b (the two names as in the line), quote (its "
-        f"'quote:') and how, which reads 'a <how> b': exactly one of {words}{theirs}. They mean: "
+        "'quote:'), inferred (its 'inferred:', else empty), from (the name in its 'from:', else "
+        "empty), change (the word in brackets after that name: sold, gave, traded, stolen or "
+        "lost, else empty) and how, which reads 'a <how> b': "
+        f"exactly one of {words}{theirs}. They mean: "
         "family = a is family of b; member = a is a member of b (or belongs to a group); "
         'in = a is in the place b (a place or event inside a place: leave "words" empty); for '
         'a character, creature or group it is tied to the place b: put in "words" '
@@ -415,7 +462,14 @@ def shape_instructions(own: Mapping[str, str] | None = None) -> str:
         "captive = a is held captive by b; contains = a contains b (a note in a book, a gem in "
         "a chest); disguised as = a is disguised as b (a second character posing as b, never the "
         "same person under another name); travels with = a travels with b (a companion that goes "
-        "along with b, a player character: a familiar, a guide); worships = a worships b. A "
+        "along with b, a player character: a familiar, a guide); worships = a worships b; "
+        "next to = a is next to b (two places beside each other, never one inside the other: "
+        'that is in; in "words" put exactly one of borders, on the shore of, on the coast of, at '
+        "the foot of or on (a town on a named road or river), as the text says it, else leave "
+        '"words" empty); '
+        "route to = a is connected to b (a stated way between two places the line names both "
+        'of; in "words" put exactly one of road, river, sea, air, portal or wild (a path through '
+        'the wild), or the line\'s own words for any other way, else leave "words" empty). A '
         "family line that names a role uses that role's word; use 'family' only when the line "
         "names none. "
         f"When none of them fits the line's words, use \"{bg.OTHER}\" and put the line's own "
@@ -437,7 +491,7 @@ def shape_request(names: list[str], links: list[str]) -> str:
 
 
 _HEADING = re.compile(
-    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?)[*:\s]*$", re.I
+    r"^[#*\s]*(NAMES|RELATIONSHIPS|NOT INCLUDED|UNNAMED(?:\s+PEOPLE)?|TRAITS)[*:\s]*$", re.I
 )
 
 
@@ -449,6 +503,7 @@ class PlainList:
     links: list[str] = field(default_factory=list)
     left_out: list[str] = field(default_factory=list)
     unnamed: list[str] = field(default_factory=list)  # people described but never named (#2959)
+    traits: list[str] = field(default_factory=list)  # lineage and class lines (#2959 item 3)
     last: str | None = None  # the section the last line went into (a continuation starts there)
 
     def add(self, section: str, line: str) -> None:
@@ -457,6 +512,7 @@ class PlainList:
             RELATIONSHIPS: self.links,
             NOT_INCLUDED: self.left_out,
             UNNAMED: self.unnamed,
+            TRAITS: self.traits,
         }[section].append(line)
 
 
@@ -506,14 +562,34 @@ def dedupe_unnamed(items: list[str]) -> list[str]:
     return out
 
 
-def dedupe(items: list[str]) -> list[str]:
+def dedupe_traits(items: list[str]) -> list[str]:
+    """One line for each (name, kind, words): a continuation that repeats a line adds nothing."""
     seen: set[str] = set()
     out: list[str] = []
     for line in items:
-        key = _entry_key(line)
-        if key and key not in seen:
+        key = "|".join(name_key(part) for part in line.lstrip("- ").split("|")[:3])
+        if key not in seen:
             seen.add(key)
             out.append(line)
+    return out
+
+
+_INFERRED_MARK = re.compile(r"\|\s*inferred:", re.I)
+
+
+def dedupe(items: list[str]) -> list[str]:
+    """One line for each entry, the first said; a stated line beats an inferred twin (#2959)."""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for line in items:
+        key = _entry_key(line)
+        if not key:
+            continue
+        if key not in seen:
+            seen[key] = len(out)
+            out.append(line)
+        elif _INFERRED_MARK.search(out[seen[key]]) and not _INFERRED_MARK.search(line):
+            out[seen[key]] = line
     return out
 
 
@@ -524,6 +600,7 @@ def plain_text(found: PlainList) -> str:
         + f"\n\n{RELATIONSHIPS}\n"
         + "\n".join(found.links)
         + (f"\n\n{UNNAMED}\n" + "\n".join(found.unnamed) if found.unnamed else "")
+        + (f"\n\n{TRAITS}\n" + "\n".join(found.traits) if found.traits else "")
     ).strip()
 
 
@@ -549,6 +626,10 @@ class Stats:
     lonely: int = 0  # names pass 1 gave no relationship line (#2757)
     paragraphs_asked: int = 0  # paragraphs the second look asked about (#2854)
     second_calls: int = 0  # the second look's calls that came back
+    room_retries: int = 0  # pass 1 asked again with twice the room (its first answer was cut)
+    # Why the second look did not run, for the log: "" (it ran, or found no gaps), "short",
+    # "cut", "continued" or "time" (#3545)
+    second_skipped: str = ""
     pass1_links: int = 0  # relationship lines pass 1 gave on its own (before the second look)
     # Paragraphs with 0 / 1 / 2 / 3 or more relationship lines of their names, before and after the
     # second look ("12/5/3/9"): counts only (#2854).
@@ -579,6 +660,9 @@ class LoreRead:
     secret_spellings: frozenset[str] = frozenset()
     # People the text describes but never names (#2959), checked and ready for the store.
     unnamed: list[UnnamedLink] = field(default_factory=list)
+    # The TRAITS lines as pass 1 gave them (#2959 item 3): checked by `traits_read` with the
+    # campaign's rules, which this pure reader does not hold.
+    trait_lines: list[str] = field(default_factory=list)
 
 
 async def _call(
@@ -620,6 +704,7 @@ async def read_list(
     try:
         if reply.cut and room < cap:  # the room was a guess: once more with twice as much
             stats.read_cut += 1
+            stats.room_retries += 1
             room = min(room * 2, cap)
             if time.monotonic() - started < PASS1_BUDGET_S:
                 if tick is not None:
@@ -651,12 +736,23 @@ async def read_list(
     stats.pass1_links = len(found.links)
     stats.left_out = len(found.left_out)
     cut = bool(reply.cut)
-    if (
-        not cut
-        and len(text) >= SECOND_LOOK_MIN_CHARS
-        and stats.read_calls <= 1  # (a text that needed retries or continuations has spent enough)
-        and time.monotonic() - started < PASS1_BUDGET_S
-    ):
+    # The second look runs after the one retry with more room too (Supervisor, #3545): that retry
+    # happens whenever the first answer runs a little long, which differs from run to run on the
+    # same text, and skipping the paragraph re-asks then was a quiet "nothing found" for them.
+    # Only a list that needed continuation rounds (a text too long for one answer) has spent
+    # enough. The reason it was skipped is logged.
+    stats.second_skipped = (
+        "cut"
+        if cut
+        else "short"
+        if len(text) < SECOND_LOOK_MIN_CHARS
+        else "continued"
+        if stats.continued
+        else "time"
+        if time.monotonic() - started >= PASS1_BUDGET_S
+        else ""
+    )
+    if not stats.second_skipped:
         await _second_look(
             ai, text, own, gate, stats, found, look, PASS1_BUDGET_S - (time.monotonic() - started)
         )
@@ -1034,6 +1130,7 @@ STEP_WORDS = {
     "reading": "Reading it.",
     "looking": "Reading it.",
     "shaping": "Finding names.",
+    "pictures": "Finding names in its pictures.",
     "who": "Finding how they connect.",
     "sorting": "Finding how they connect.",
 }
@@ -1244,13 +1341,15 @@ async def _read_lore(
         # of people with no name would be a new issue, holding the rest for the DM.
         log.info("Lore read: %d unnamed line(s) past the per-read limit, not made", past)
     log.info(
-        "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
-        "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
-        "paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines %s before, "
+        "Lore read: pass 1 %d call(s), %d cut, %d room retry, %d continued, %d name line(s), %d "
+        "relationship line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second "
+        "look%s at %d paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines "
+        "%s before, "
         "%s after; pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s); %d unnamed "
         "line(s) listed, %d kept%s",
-        stats.read_calls, stats.read_cut, stats.continued, stats.names_listed,
+        stats.read_calls, stats.read_cut, stats.room_retries, stats.continued, stats.names_listed,
         stats.links_listed, stats.pass1_links, stats.left_out, stats.lonely,
+        f" (skipped: {stats.second_skipped})" if stats.second_skipped else "",
         stats.paragraphs_asked, stats.second_calls, stats.extra_links,
         stats.paragraph_lines_before or "-", stats.paragraph_lines_after or "-",
         stats.shape_calls, stats.shape_cut, stats.names_kept, stats.links_kept,
@@ -1259,4 +1358,4 @@ async def _read_lore(
     )  # fmt: skip
     # "the Ash Wolves, Tavin and Mira": a list a group of this read leads is its members (#3383)
     links = [*links, *bg.group_connections([names], known_keys)]
-    return LoreRead(names, links, cut, stats, known, secrets, unnamed)
+    return LoreRead(names, links, cut, stats, known, secrets, unnamed, dedupe_traits(listed.traits))

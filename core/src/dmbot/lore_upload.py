@@ -56,6 +56,7 @@ _STAGES = {
     "reading": q.READING,
     "looking": q.READING,
     "shaping": q.FINDING_NAMES,
+    "pictures": q.FINDING_NAMES,  # (the words in its pictures, #4003: names too)
     "who": q.FINDING_LINKS,
     "sorting": q.FINDING_LINKS,
 }
@@ -229,7 +230,9 @@ async def _read(
         await bot.campaigns.record_confirmation(
             guild_id, campaign.id, claim.rights_by, OWN_WRITING, fingerprint(text)
         )
-        upload = Upload(text, LABELS.get(claim.source, "your lore"), document=True)
+        upload = Upload(
+            text, LABELS.get(claim.source, "your lore"), document=True, source_id=claim.id
+        )
         # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:

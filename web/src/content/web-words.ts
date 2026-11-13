@@ -98,6 +98,10 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
+  // The hint for the point-and-tap map, shown only to people who can edit (#4155). The button's label names the
+  // connection in full, so a screen reader does not read the button as just "Mira Voss serves Garrick".
+  tapConnection: "Tap a connection to open it.",
+  openConnection: (text: string): string => `Open this connection: ${text}`,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
@@ -162,6 +166,8 @@ export const webPage = {
   save: "Save",
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
+  // The line for an item two people handed over (#4122): the steps come from the API in Discord's words.
+  historyHead: "How it changed hands:",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
   // One connection as a sentence, read subject, then what it does, then object (#2666).
   lineText: (from: string, words: string, to: string, after = ""): string => (after ? `${from} ${words} ${to} ${after}` : `${from} ${words} ${to}`),

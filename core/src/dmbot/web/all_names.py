@@ -12,10 +12,12 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import map_facts, place_levels
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
@@ -74,6 +76,41 @@ def kinds_from(counts: dict[str, int]) -> list[dict[str, Any]]:
     )
 
 
+# An upload choice: `l` and 16 hex of md5(its key) (0420), or `u` and the website upload's own
+# 32-hex id, which is what the upload notice knows (#3879); the second is turned into the first
+# before the door is asked.
+SOURCE_ID = re.compile(r"^(l[0-9a-f]{16}|u[0-9a-f]{32})$")
+
+
+def _choice_id(given: str) -> str:
+    return (
+        "l" + hashlib.md5(given[1:].encode(), usedforsecurity=False).hexdigest()[:16]
+        if given[0] == "u"
+        else given
+    )
+
+
+SOURCES_MAX = 40  # most uploads ticked at once
+
+
+async def list_sources(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """`{sources: [{id, kind, label}]}`: the uploads the campaign's names were read from, newest
+    first, for the Names page's "found in" filter (#3675). A DM of the campaign only: an upload's
+    label can name a private backstory, so anyone else gets "not found"."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_sources(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return {"sources": list(got["sources"])}
+
+
 async def read_page(
     db: Database,
     session: Session,
@@ -86,6 +123,7 @@ async def read_page(
     size: int = PAGE_SIZE,
     only: str | None = None,
     unnamed: bool = False,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -103,6 +141,19 @@ async def read_page(
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        if sources:
+            if only is not None:
+                raise RecapError("bad_page")  # (two ways to pick the same names: one would be lost)
+            # Only the names found in the chosen uploads (#3675): a DM's choice, so the door gives
+            # nothing to anyone else. An empty result is "", which matches no name, never all.
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_source_ids(%s, %s, %s) AS r",
+                (guild_id, campaign_id, [_choice_id(s) for s in sources]),
+            )
+            found_ids = await cur.fetchone()
+            if found_ids is None or found_ids["r"] is None:
+                raise RecapError("not_found")
+            only = ",".join(str(i) for i in found_ids["r"])
         # "Not named yet" (#2803) is in the list, the counts and the totals only when the page asks
         # for it, so a DM's numbers are right whatever the page's switch says; the door still lets
         # only a DM of the campaign see them. Local to this transaction, like the guild.
@@ -231,6 +282,13 @@ ACTIONS = (
     "told-remove",  # ... or take that telling back: {alias, character}
     "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
     "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
+    "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
+    "place-setting",  # the campaign's setting (#4173 slice 2): {setting: true | false}
+    "place-form",  # land, water or a road (#4173 slice 6a): {form}, water or route; null is land
+    "map-terrain",  # a place's land (#4287): {value, how}; null value is "Not sure"
+    "map-climate",  # its climate (#4287): {value, how}
+    "map-control",  # who rules it (#4287): {group, how}; null group is "Not sure"
+    "map-show",  # whether players who can see it see its land, climate and ruler: {shown}
 )
 
 KIND_WORD = re.compile(
@@ -362,6 +420,45 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("bad_name")
         if len(text) > PLAYERS_TEXT_MAX:
             raise RecapError("too_long")
+    elif action == "place-setting":  # make it the setting, or stop it being one (the flag)
+        if not isinstance(body.get("setting"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["setting"])
+    elif action == "place-size":  # one size word, or null for "Not sure" (the door checks too)
+        size = body.get("size")
+        if size is not None and size not in place_levels.LEVELS:
+            raise RecapError("bad_name")
+        text = size or ""
+    elif action == "place-form":  # one form word, or null for land (the door checks too)
+        form = body.get("form")
+        if form is not None and form not in place_levels.FORMS:
+            raise RecapError("bad_name")
+        text = form or ""
+    elif action in ("map-terrain", "map-climate", "map-control"):  # (#4287) a value and its shade
+        layer = action[4:]
+        how = body.get("how") or ""
+        if not isinstance(how, str) or (how and how not in map_facts.HOWS[layer]):
+            raise RecapError("bad_name")
+        if layer == "control":
+            group = body.get("group")
+            if group is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(group, str) or not ID_PATTERN.match(group) or not how:
+                raise RecapError("bad_name")
+            text = f"{group} {how}" if group else ""
+        else:
+            value = body.get("value")
+            if value is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(value, str) or value not in map_facts.VALUES[layer]:
+                raise RecapError("bad_name")
+            text = f"{value} {how}".strip() if value else ""
+    elif action == "map-show":  # 🙈 / 👁️ (#4287)
+        if not isinstance(body.get("shown"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["shown"])
     elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
         target = str(body.get("alias") or "")
         if not ID_PATTERN.match(target):

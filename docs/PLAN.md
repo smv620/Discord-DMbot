@@ -386,6 +386,71 @@ commands are only visible to the person who used them.
 - **New campaign:** asks for the name, the **target ruleset**, and the **fallback ruleset**
   (defaults: 2024 rules, then 2014 legacy), and which **optional rules** to include
   (default: included where they don't conflict with the target ruleset).
+- **The campaign start-up wizard (owner, 2026-11-09).** An optional step-by-step wizard sets up a new
+  campaign; **[Skip]** on every step goes straight to typing the campaign's name, takes the defaults, and
+  says so: "DMbot will use the defaults. You can upload your lore and story later from DMbot's menus."
+  It lives on the **website** (uploads, many choices and a back button need a page), and Discord's
+  **＋ New campaign** offers it first ("Set up step by step on the website") beside the short Discord
+  form, which stays. The steps:
+  1. **Where the campaign is:** a D&D Beyond campaign link, a file upload, or a Google Drive file or
+     folder (Google's own file picker, `drive.file`). **D&D Beyond limit:** a campaign's page, its
+     characters and notes are behind the DM's own sign-in (checked 2026-11-09: the join link sends
+     anyone else to "Sign In"), and DMbot never holds a D&D Beyond password or cookie, so DMbot keeps
+     the link as the campaign's **Join on D&D Beyond** invite (#1119) and asks for what it can read:
+     each player character's **public sheet link** (read as today, #1119 part A) and, optionally, the
+     campaign page's text pasted in. Reading the campaign itself waits for the browser extension in
+     the DM's own session (part C).
+  2. **Confirm** the campaign's name and the player characters found (full name, the party's name).
+  3. **Who plays each character** (optional): a character with no player yet is still a player
+     character, its player "pending", answered later from Questions for you or the Names page.
+  4. **Lore everyone knows** (the campaign's backdrop) and 5. **secrets** not yet revealed: uploads or
+     links, **checked only** (it can be opened and read as text, with a count of pages and words), not
+     read for names yet.
+  6. **Rules:** D&D 5e current (2024) or D&D 5e legacy (2014) as the target, the other as fallback,
+     and the supplements, any of: Xanathar's Guide to Everything (2017), Guildmasters' Guide to Ravnica
+     (2018), Mythic Odysseys of Theros (2020), Tasha's Cauldron of Everything (2020), Fizban's Treasury
+     of Dragons (2021), Mordenkainen Presents: Monsters of the Multiverse (2022), Bigby Presents: Glory
+     of the Giants (2023). Choosing a book only tells the rules advisor which books the table uses; no
+     book's text is stored (the IP rule). The DM may upload their own ruleset, after confirming the
+     right to use it (the existing shared-content confirmation, recorded with who and when).
+  7. **House rules** and 8. **homebrew** (items, spells, monsters, lineages, classes...): files, links,
+     or a document of many links, through the existing homebrew import.
+  9. **Data for improving DMbot:** the DM's own choice for the campaign (#933's raw-transcript use);
+     every player still says yes to being recorded themselves, as always.
+  10. **Finish:** the campaign is made, the lore everyone knows is read, then the secrets (as spoilers),
+      and DMbot adds what it is sure of and goes on to the names to check by itself (#3878), with the
+      usual progress, notice and Undo. Nothing more to press.
+  **The first release (Supervisor, 2026-11-10, #3953):** the campaign, rules and books, the characters
+  and who plays them, lore, secrets and the data choice, with Skip. The pages don't offer what isn't
+  built yet: steps 7 and 8 point to the campaign's House rules and Homebrew pages after Finish; step 6
+  has no ruleset upload; step 1 has no Google Drive choice and no sheet links. Those follow, in that
+  order of need (sheet links, house rules and homebrew, the DM's ruleset, Drive), after dev1's live run.
+  **The party is the first entry of every campaign:** a group "the party" made with the campaign, its
+  player characters members of it, so the story graph starts from it. It is never a knower (STORY_MEMORY
+  9b): what the player characters know stays their own rows.
+  **A player may play several player characters at once** (owner, 2026-11-10): nothing limits a player
+  to one character at the table. Every confirmed player character is a member of the party, whoever
+  plays it (or "pending"), and stays one until the DM says it has left (it died, retired or left the
+  party: the DM removes it, and a removal sticks). DMbot never retires a character because the same
+  player has another, newer one. This replaces the "newest character of each player" rule (#3363,
+  Supervisor 2026-11-05). Where DMbot needs "the characters of the people who took part", it takes all
+  the characters each of them plays, never one guessed per player (#3998).
+- **Pictures in uploaded documents (owner, 2026-11-10):** a PDF's tables, stat blocks, handouts and maps
+  that are pictures (no text layer) can be read by the AI from the page image, after the same
+  right-to-use confirmation as the text, with the cost shown first. The names it reads are **checked
+  against the whole document's text, before and after the picture** (an adventure often shows the map
+  or table first and explains it later):
+  1. **A name that matches the text** was read correctly: it is treated like the names from the text,
+     and the DM is not asked about the picture.
+  2. **A name that differs only by a simple misreading** (a spelling slip, an abbreviation, a cut-off
+     name) that the surrounding text plainly resolves is **corrected by DMbot** to the text's name, as
+     sure (counted in the upload's notice, with Undo, as everything DMbot adds by itself).
+  3. **A name that lines up with nothing in the text** is flagged to the DM as a name to check, with a
+     link to **the original picture** (the table, stat block, map or handout as it was on the page).
+  The page images are the DM's shared material: kept only in that campaign, shown only to its DMs
+  (players never), and deleted with the upload or the campaign. Never a guess: when DMbot can't tell
+  which text name a picture's name is, it is case 3. Pages that are pictures are first counted and
+  told to the DM (#4000).
 - **One DM screen per campaign:** a channel such as `#dmb-dm-screen-rime-of-the-frostmaiden`,
   which the bot creates (see "Channel structure"). Who else can see it depends on the campaign's **DM-screen visibility**
   (see "DM-screen visibility" below; default **opt-in peek**). If a suitable channel
@@ -412,6 +477,12 @@ Discord file (10 MB). Restore still reads older plain `.dmbot.json` files, and r
 a file that would unpack past 25 MB. DMbot never hands out a copy it couldn't restore:
 a campaign over either limit gets "too big to download as one file. Nothing was lost"
 instead (a split or streamed backup can come later if campaigns grow that big).
+**Backup format 6 and transcripts files 2** (Supervisor, 2026-11-10, #4060): a Discord id in the story
+memory and in the transcripts files is a decimal string, because a browser or `jq` reads a number above
+2^53 with its last digits changed; and the build stamp (`made_by_commit`, `made_by`) is written once for
+a session (or the whole memory section) and on a row only when it differs. An older file's numbers and
+per-row stamps restore as before; an older DMbot refuses the newer file. The website's API also writes
+any integer above 2^53 - 1 as a string.
 
 **Rules sources.** Baseline is the SRD 5.2 (CC-BY-4.0, attribution required). Owned
 sourcebook text is never bulk-copied to the server; only short, relevant excerpts are
@@ -1356,6 +1427,61 @@ sidebar, the clock, cards and the after-session notes for the DM.
   open (❓ Check names, 🧑 Check who is who, 🗣️ Check what was said), so a missed post is never lost.
 - Built in #1666 (CloudDev); Help follows (WebDev).
 
+**Which channel gets what (owner, 2026-11-09, #3874).** The **DM screen** is for the game while it is being played:
+anything that needs or asks for the DM's attention in the flow of play, such as conditions at the table, game-mechanics
+notices, rules alerts, answers to questions, the sidebar and the clock. The DM should only have to watch the DM screen
+during play. **Everything else goes to the DM Bot channel** (`dmb-dm-bot-<short name>`): campaign setup, pre-game items,
+post-game items, and anything that needs the DM's attention eventually but not now. That includes names, connections and
+claims to check, upload results, after-session reviews and notes, and recap readiness. Because the DM Bot channel is public
+(above), what DMbot posts there is **counts only** ("66 names to check: 30 NPCs, 24 places", "60 connections"), with no
+names, quotes or story words. Every button checks the presser is a DM of the campaign, and the cards that show the words open
+privately. Each upload or session gets **one live message** that DMbot edits as items are answered, ending as "✅ All
+answered" with its buttons removed, never a new message for each batch. **Private messages to the DM jump to the right
+message:** a question's "Open in Discord" and its review buttons open that live message in the DM Bot channel (or, for a
+live-play item, the DM screen). With no DM Bot channel, or no permission to post there, DMbot falls back to the private
+card as before.
+**Uploads and imports apply what DMbot is sure of (owner, 2026-11-09, #3878).** After about ten deploys of accepting every
+suggestion as it was, the owner's rule: when DMbot reads **background lore** or **imports earlier sessions**, it **adds what it
+found by itself** and only asks about what it is unsure of. "Sure" means what the **Add all** buttons would add today: new
+names, other names and spellings, and connections found in the text (family roles and feelings included), each through the
+store's own DM calls, so every rule is checked again (`devtools/accept_all` is the pattern). Still **asked**, never guessed:
+"Which one?", same-person questions, a name that needs to know who plays it, anything with no suggestion, and anything a rule
+refuses. What was added follows the usual rules: secret only when uploaded with spoilers, nothing revealed to players because
+it was added, and nothing anyone confirmed is overwritten. Afterwards the DM gets one notice, in the DM Bot channel (counts
+only) and privately: "Added 62 names and 48 connections from <label>", the few questions left with their buttons, a link to
+the website's **Names** page and one to the **Story Graph**, and **Undo this upload**. That undoes the whole batch, from the
+notice or the website, for 7 days. A campaign setting, **Ask me before adding** (off by default), brings back today's
+one-by-one review for DMs who want it. Live sessions are unchanged: what DMbot hears at the table is still offered first.
+
+**What "sure" means for an import, and who it reads (Supervisor, 2026-11-09, #3897, #3602, #3918).** An import's
+sure step adds its scans' names and, **since #3897, the connections the DM's own lines state**: a claim that is stated
+(not worked out), labelled as the DM's, **every cited line spoken by one of the campaign's DMs** (checked in code, never
+the AI's label alone), still waiting with both its names answered, and from this import's sessions. It goes through the
+claims review's own yes, in the notice's batch, so Undo covers it. Players' claims, plans, worked-out readings, lore's
+worked-out family ties and secret choices stay questions. Before the sure step, an import runs the same steps as a live
+session, each behind its own switch with its own stage on the import's progress card: the story read, the scenes, then
+"who is this?". Every step of an import reads **the people the import recorded** (`recorded_in`: those who agree, plus
+the speakers the uploader confirmed, minus anyone with a "no" on record), asked again after each AI call, never only
+the live agreed list; a live session still reads only those who agree now.
+
+**Who can see a campaign's channels (owner, 2026-11-09, #3891).** A per-campaign setting in ⚙️ Settings, **"Who can see
+this campaign's channels"**: **Everyone in the server**, or **Only this campaign's people** (the default, for new and existing
+campaigns). It covers the campaign's DM Bot and transcript channels; the DM screen keeps its own visibility rules. The
+campaign's people are its DMs, the members who play its player characters, the members recorded at its sessions, and anyone a
+DM adds by hand. DMbot keeps the channels' member permissions in step, the way it already does for the DM screen. Someone who
+can't see a channel gets no unread marks or notifications from it. Transcripts on the website follow the same setting. This
+replaces "anyone in the Discord server" for transcripts (2026-10-05) and "everyone in the server can see" the DM Bot channel
+(2026-10-17) with the campaign's choice. Backups are unchanged: anyone in the server may still download a paid campaign's
+backup, so a campaign survives its DM.
+
+**A script for every session (owner, 2026-11-09, #3901).** With `DMBOT_THEATRE_ON` on and story memory in the plan, every
+session, live or imported, gets its script (the theatrical transcript, #3244) by itself. The after-session "make a script?"
+question goes away, and the DM sees one line, "📜 Script made", with a link to it. The recap waits for the script for at most
+10 minutes, then goes on without it and says so. The recap's "did we miss anything important" check and its fact check read the
+script as well as the beat sheet and the cleaned transcript, behind `DMBOT_RECAP_READS_SCRIPT`, scored before and after like
+any recap change. Same rules as the script today: consenting speakers only, what the party knows, DM-only, counted in the
+session's AI spend.
+
 **The DM Bot channel: four buttons** (owner, 2026-10-29: "Discord is very simple, very clean, super easy to
 navigate. Right now it's a mess."; #2986, website #2985). Discord keeps only what needs Discord to be there:
 channels, voice and recording, what DMbot posts or shows in Discord, and a person's own consent. Everything
@@ -1719,6 +1845,8 @@ plus the list of fixes between them.
 - **Downloads use the transcript format** `[0:42:10] (Mia) {Cerric}: …` with time
   since the session started (owner decision, 2026-10-07, replacing the readable labels
   `0:42:10 Cerric (Mia): …`), and a header line explaining it.
+  A player with several characters gets all of them in the braces, oldest first, joined with
+  ` / ` (`{Mara / Bryn}`; Supervisor, 2026-11-10, #4004), because DMbot never guesses which spoke.
 - Transcripts never contain DM-screen content. The Cleaner never **adds** a secret
   identity to a line; the "as heard" version contains only what was actually said.
 
@@ -2554,7 +2682,9 @@ names panel nor the speech-to-text hints can be a fixed list.
     document is treated as untrusted data: quoted, with the AI told to ignore
     instructions in it, and its answer read by the same strict parser; secret names are
     asked for only for the campaign's DMs. Without a key, documents are refused with a
-    pointer to the template, and a list adds what fits. Up to 10 MB, 500 PDF pages and
+    pointer to the template, and a list adds what fits. Up to 10 MB (a PDF up to 100 MB in
+    Discord and 50 MB on the website, since an illustrated one is mostly pictures DMbot skips;
+    Supervisor, 2026-11-10, #4001), 500 PDF pages and
     about 100 pages of text, in pieces of 40,000 characters read side by side (at most 3
     AI requests at once across all servers, 10 minutes per document). Each server reads
     one document at a time and up to 20 a day (the operator pays until bring-your-own
@@ -3861,6 +3991,22 @@ messages use the same ones.
 | Pro | 217 ("about 50 hours a week"); needs the bigger server | 20 | coming soon |
 | Extra hours | +10 this month | — | $4.99 |
 
+**AI credits (owner, 2026-11-10; the amounts per plan to follow).** Besides hours of table time, each
+plan gets a monthly allowance of **AI credits** for processing a campaign's material: **10 credits =
+$0.01 of DMbot's AI cost (1,000 credits = $1)**. Before a job that costs more than a few credits, the
+DM sees the estimate **and how many credits are left this month** ("About 340 credits. You have 4,200
+left this month."). Decided by Supervisor, for the owner to push back on: **hours pay for playing,
+credits for preparing.** Everything that runs for a live session (listening, transcription, cleaning,
+the DM sidebar and table questions, alerts, that session's recap and script) stays in hours, so play
+never stops for credits. Credits pay for what the DM chooses to add: lore, secret and adventure
+uploads, imports of past sessions, reading pictures in documents, the careful AI's decisions, a script
+made by press for an imported session, and other bulk reads. Credits don't roll over, like hours.
+Free access and grants have their level's allowance (no limit on the free list). Open, for the owner:
+the allowance of each plan and of Try It, whether extra credits can be bought and at what price, and
+what happens at zero (the job waits until next month or until more are bought; it never half-runs).
+The ElevenLabs "credits" in settings are the voice company's own units, not these; the words for
+DMs say "AI credits" only for DMbot's.
+
 *The hours rules, replayed offline (2026-10-11, #437):* `python -m dmbot.devtools.replay --session
 FOLDER --plan PLAN --hours-used N [--grace] [--session-minutes N] [--hours-only]` puts a made-up owner
 on a plan with some hours used, in a throwaway schema (never the live one) with enforcement on, and
@@ -4278,6 +4424,27 @@ say it in plain words. *Not done:* the warnings are private messages to the DMs,
 DM screen as #1059 asked: the retention job has no Discord channel to post to, and a private
 message reaches the same people and keeps DM-screen content out of any shared place.
 
+*What else deleting an account clears (Supervisor's ruling, 2026-11-11, #4141; the pattern of
+migrations 0425 credits, 0430 hours, 0431 here, and 0432 planned for authorship):* a table that holds a person's Discord ID has
+one rule, and a new table with such a column is put on it when it is added. The forget functions
+(`dmbot_forget_credits`, `dmbot_forget_hours`, `dmbot_forget_person`, ...) are called from
+`accounts.delete_person`, run with their owner's rights, and open their policies only while they
+run (`dmbot.owner_sync`, its own value for each), so no ordinary query sees another server's rows
+through them. `dmbot_forget_person` has a test that every table it names exists with its policies.
+
+| Rule | What it covers | What happens |
+|---|---|---|
+| 1. The person's own requests and records | the website's action queues (name, setting, rule, report, restore, line, recap-style, house-file, picture, script, trait, upload-undo and hand-over answers, lore uploads, backups, recap requests, peeks, character-sheet and name answers; 0440, #4148), a move-account code (`move_codes`; its asks go by their own cascade), `member_directory` (the bot may add the name again if the person is still seen in the server), `npc_notes`, `question_notices`, `rule_set_editors`; the credits and hours totals have their own functions (0425, 0430) | **Deleted.** |
+| 1b. The campaign's own record of a confirmation | `shared_confirmations` (who confirmed the right to use a text, and when: the IP rule) | **Kept, ID set to 0** ("someone who has left"). |
+| 2. Protects the person | `improvement_opt_outs` | **Kept.** Deleting it would quietly turn their data back on if their Discord account were ever seen again. |
+| 2b. Anti-abuse and legal records, ids and times only | `try_it_used`, `trial_extensions`, `email_unsubscribed` (the unsubscribe list), `payment_events` (`sent_emails` is deleted by its own forget function, 0071) | **Kept** so a person who signs up again gets no second free trial and no repeated email (0064, 0065). A one-way keyed hash instead of the ID is a follow-up if the owner wants the ID gone from them too. |
+| 3. The campaign's record of what was said or decided | authorship (`created_by`, `dm_user_id`, `requested_by`, `imported_by`, `added_by`) of house rules, rule sets, homebrew, adventure text, recap style and must-haves, recap jobs and holds, speaker removals | **Record kept, ID set to 0** (built, 0432, for house rules, rule sets, versions, follows, editors' `added_by`, homebrew, adventure text, recap style and must-haves, recap jobs and holds, speaker removals, imports, upload rights, and the decider of a suggestion or name question). Shared rulesets keep the set, published by nobody. Other authorship columns are listed as `UNREVIEWED` in `tests/test_account_forget_catalog.py` until each is checked for a key that would collide at 0 (#4141). |
+| 4. Speakers and consent in a campaign's transcripts | transcripts, `memory_heard`, theatre lines, `transcript_respells` (the Undo log of a respelling), the said-as tables, import consent and plays, `channel_people`, transcript suggestions and waiting name questions | **No change until the owner decides.** Erasing a person from transcripts has its own path (`transcript_erasures`). |
+| 5. Campaign ownership | `owner_campaigns` | Cleared by `dmbot_orphan_owned_campaigns` (a test checks a deleted account holds no slots). |
+
+`account_moves` (the record of a move to a new Discord account) is not yet decided and is listed as UNREVIEWED. A test (`tests/test_account_forget_catalog.py`) fails when a table gets a column that holds a person's Discord ID and no rule above covers it. Deleting a `lore_uploads` row also drops that upload's notice and Undo for the other DMs of the campaign, because the row is the one place they come from; the confirmation of the right to use the text stays in `shared_confirmations`.
+
+
 **D&D Beyond character sheets (plan, 2026-10-08; phase 7 part A can start now).**
 Each player links their own sheet, privately: the consent message gains a "Link my
 character" button that opens a form for the link, and the DM's "Add a player's
@@ -4621,6 +4788,25 @@ marked).** A DM manages every campaign from the website as fully as from Discord
    then a written table of every Discord campaign action with its website status (the parity list,
    #2554), then each missing group in that order of use. A new Discord campaign action ships with its
    website way, or with a held line on the parity list saying when.
+**Search the website** (owner, 2026-11-08, #3855, #3856). A search bar in the site's header answers in two lines.
+Line 1 appears at once: the getdmbot.com page that best matches the query ("a summary of episodes" gives the recaps page).
+It comes from an index built with the site, with a hand-kept list of the words people use for each page; it runs in the
+browser, costs nothing and sends nothing. Line 2 shows "[... thinking ...]" while DMbot writes a short answer about DMbot or
+its website, from DMbot's public, user-facing words only (site pages, help, What's new, the user-facing parts of this plan;
+a fixed allow-list built in at deploy time, never internal files, issues or anyone's data). It never invents: what the
+words don't cover gets "I don't know" and a link. Anyone may ask. **Cost limits** (owner, 2026-11-08): 100 questions an
+hour and 200 a day per visitor, and 300 an hour for the whole site. Over a limit, line 2 says "Too many requests to process,
+try again in about an hour." (after the daily limit: "Too many requests to process, try again tomorrow."); line 1 still
+works. A visitor is a keyed hash of their address, its key changed daily, kept only as counts for 24 hours and never logged.
+Answers are cached for a day (a cached answer doesn't count against the site's limit), and logs hold counts only.
+**The answer engine is free** (owner, 2026-11-08: "a free tier api call"; Supervisor, #3856): Cloudflare Workers AI's free
+daily allowance (10,000 Neurons, reset 00:00 UTC), a small model (Llama 3.2 3B, about 6 Neurons a question), called from
+core's `/site/ask` with a Cloudflare API token kept on the server like the other keys. Cloudflare doesn't train on or keep
+what is asked. Google's free tier was ruled out because it trains on questions and people may read them. The free allowance
+is the real daily ceiling: core stops at 1,500 answers a day (headroom under the allowance), and then line 2 says the daily
+words above. It never moves to a paid service on its own; paying past the allowance (about $0.50 a day at 300 an hour) is the
+owner's call. Website-only on purpose (it searches the site).
+
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
@@ -5436,7 +5622,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   ask for the audio again once every 10 minutes (#1418). **A posted recap's narration can be made
   again** (Supervisor, 2026-10-21, #2183) when its text changed after the narration was made (a
   spelling fix, #2177), or when an earlier remake failed: the recap page gets the new narration,
-  and the message already in Discord keeps the old one, which the page says. The 15,000-credit cap
+  and the message already in Discord keeps the old one, which the page says. The 20,000-credit cap
   is per making, so a remake starts its own count; the monthly meter still counts a recap's audio
   once, in the recap's own month. A recap posted while the audio the DM asked for is still queued
   gets that audio afterwards, for its page. Recaps left in that state before this change (when they
@@ -6127,3 +6313,37 @@ for no speakers, funds or stopped recording does not. The failing check's fixed 
     DM a note, never a block. Nothing enters the story memory without the DM's confirmation.
   - **Right to use:** confirmed once per campaign and recorded. It stays in that campaign and its backup.
   - **Replacing:** an earlier recap is kept as a version, never overwritten.
+
+## Decisions of 2026-11-12 (Supervisor, recorded with the owner's words)
+
+- **Wizard step 9 is an active choice** (owner, #4212): neither "help improve DMbot" option is
+  pre-selected, and the wizard can't finish until the DM picks one.
+- **A DM's remembered players: the third exception to isolation** (owner, #4226; built in #4250,
+  #4252, #4262). A DM's own list of the players they have played with (`dm_players`: two Discord
+  ids, the name last seen, when, and how many campaigns; no campaign, character, story or server id)
+  is kept on the DM's account across campaigns and servers. Only that DM sees it, and a picker
+  marks "played with you before" only for members of the server being asked about. The player sees
+  which DMs remember them and can remove themselves; either person's account deletion removes the
+  rows; deleting a campaign and "Stop recording me" do not. The privacy page says so from the deploy
+  that starts the list; `TERMS_VERSION` is unchanged (owner).
+- **Languages, cultures and biases** (owner's five answers and Supervisor's ruling, #4229):
+  languages known come from the character sheet, with a story-only list beside the sheets for a
+  character with none (`memory_story_languages`), never in the graph; a lore language for a
+  character the campaign already had is a question for the DM, or for a player character with a
+  sheet one private line; SRD languages are never suggested as names (#4227). Cultures and lineages
+  are a per-campaign catalogue outside the graph; cultural influence, political control and
+  population sit in MapBot's layer; biases toward places and lineages live in `memory_attitudes`.
+- **MapBot** (owner; `docs/design/mapbot_layers.md`, revision 2, binding): maps are kept as maps
+  after their uploader's right-to-use yes (a player's map also needs a DM's yes before DMbot uses
+  it); positions live per map, never on a place; distances, directions and travel times are worked
+  out from one map at a time and shown as "about"; the DM's word wins, and a stated distance more
+  than 20% off a map, or a direction 45° or more off, is flagged privately to the DM; travel time is
+  suggested, never flagged. Build order: #4173 6a, MapBot slice 2, #4173 2b to 5, then 6d with
+  slice 1 (Supervisor, #4255).
+- **How DMbot gets the DM's attention** (owner): anything DMbot says to the DM unasked is a
+  private message, with at most one button; a review with several steps is a link from it to the
+  DM Bot channel or the website. The DM screen is a mostly static, virtual DM screen with quick
+  access to what matters at the table, never a place for general alerts. Whether live in-session
+  advice (rules alerts, heads-ups) stays on the DM screen is open with the owner.
+- **The Expert session** (owner; CLAUDE.md): an on-demand architect who writes binding design
+  basis documents in `docs/design/`.

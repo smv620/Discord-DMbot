@@ -163,6 +163,10 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l120 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | 18 | born in the Temple of the Seldarine (the more exact place; l019 says the city) |
 | l121 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | 18 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (l011 says works_for) |
 | l122 | Brewner | knows (wary) | Belleros Stormgrace | stated | no | yes | 67 | the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner) |
+| l123 | Okthandom Korran | associate | Icewind Dale | stated | no | yes | 30 | 'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b) |
+| l124 | Belleros Stormgrace | leads | Aurora's Wind | stated | no | yes | 93 | 'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b) |
+| l125 | Okthandom Korran | enemy_of | Fizzlebomb | stated | no | yes | 93 | pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b) |
+| l126 | Cerric Vanya'elen | enemy_of | Fizzlebomb | stated | no | yes | 93 | 'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b) |
 
 ## Events
 
@@ -238,7 +242,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Boy |  | sled dog Belleros befriended |
 | The ghost |  | Unnamed possessed ghost that emerged when Trex fell |
 | Penolopi |  | pet plant the party burned |
-| The wind spirit |  | Unnamed ancient spirit that guides and guards Okthandom |
+| The wind spirit | ancient wind spirit, wind spirit, ancient spirit | Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name. |
 | Yeti |  | evaded on the road |
 | Ice troll |  | ate the first ship's captain |
 | Mind flayer |  | petrified skull in the mine |
@@ -313,6 +317,16 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | Chardalyn spear |  | found in the mine |
 | Psi crystal |  | from a petrified mind flayer skull; gives telepathy |
 | Heart of chardalyn |  | hidden under the bucket lift |
+
+## A place's land, climate and ruler
+
+Scored per layer: found, wrong (another value), missed, and extra (a row this list doesn't hold, a false note) (#4256).
+
+| Place | Layer | Value | Line | Why |
+|---|---|---|---|---|
+| Icewind Dale | climate | arctic | 4 | "the North has been held in a frozen vice", and "the treacherous tundra" (line 36). Slice 2's set phrases don't cover this wording, so its reader misses it. |
+
+No land type or ruler is stated in the document's words, so any other row is extra.
 
 ## Must not find
 

@@ -8,7 +8,8 @@ a hidden villain would be a spoiler). Nothing here asks the DM.
 Where a rank comes from, strongest first:
 - the FLOOR, worked out from what the code can count and never stored (so it cannot drift): a
   player character is 5; a player character's companion at least 3; an entry heard in two or more
-  separate sessions at least 2; and the connection table (`CONNECTION_FLOORS`: the more entries it
+  separate sessions at least 2; one spoken of in a kept private scene at least 2 (#4110); and the
+  connection table (`CONNECTION_FLOORS`: the more entries it
   is joined to, the higher its lowest rank), the highest of them and never their sum;
 - PlotBot's reading of the story, one assessment at a time in `memory_importance` (append-only,
   like the rest of the graph); the newest is current, and the rank is never read below the floor.
@@ -28,6 +29,8 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 
 from dmbot.db import Conn, Database
+from dmbot.memory.models import name_key
+from dmbot.memory.private_scene_store import entries as private_entries
 
 BACKGROUND, MINOR, RECURRING, SIGNIFICANT, MAJOR, PLAYER = range(6)
 LEVEL_NAMES = ("Background", "Minor", "Recurring", "Significant", "Major", "Player character")
@@ -40,7 +43,13 @@ SOURCE_PLOTBOT, SOURCE_RULE = "plotbot", "rule"
 READING, DM_CORRECTED, REVEALED, DEMOTED, RULE = (
     "reading", "dm_corrected", "revealed", "demoted", "rule",
 )  # fmt: skip
-REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE)
+# A being met in play that the story never named, once the DM names or joins it from the list of
+# them (#3172 slice 5, #4045): it enters at rank 0 with this reason.
+MET_IN_PLAY = "met_in_play"
+# A rank PlotBot raised for a private scene between two player characters (#2996 rule 5). The CHECK
+# accepts it, but it is never written since #4110: that floor is worked out on read.
+PRIVATE_SCENE = "private_scene"
+REASONS = (READING, DM_CORRECTED, REVEALED, DEMOTED, RULE, MET_IN_PLAY, PRIVATE_SCENE)
 ROLE_REASONS = (READING, DM_CORRECTED, REVEALED, RULE)  # why a role was recorded (none is demoted)
 # An old backup's `basis` code, as migration 0388 mapped the rows already stored.
 OLD_BASIS = frozenset({
@@ -78,15 +87,22 @@ def connection_floor(pairs: int) -> int:
 
 
 def floor(
-    is_player_character: bool, sessions_heard: int, pairs: int = 0, companion: bool = False
+    is_player_character: bool,
+    sessions_heard: int,
+    pairs: int = 0,
+    companion: bool = False,
+    private_scene: bool = False,
 ) -> int:
     """The lowest rank an entry can have, from facts the code counts: a player character is 5, a
     player character's companion at least Significant, one heard in two separate sessions at
-    least Recurring, and the connection table. The highest of them, never their sum. Pure."""
+    least Recurring, one spoken of in a kept private scene between two player characters at least
+    Recurring (#2996 rule 5, #4110: the owner's "always matters, always"), and the connection
+    table. The highest of them, never their sum. Pure."""
     if is_player_character:
         return PLAYER
     return max(
         RECURRING if sessions_heard >= SESSIONS_FOR_RECURRING else BACKGROUND,
+        RECURRING if private_scene else BACKGROUND,
         COMPANION_FLOOR if companion else BACKGROUND,
         connection_floor(pairs),
     )
@@ -209,15 +225,18 @@ def ranks_from(
     heard: Mapping[str, set[int]],
     links: Mapping[str, int],
     companions: Collection[str],
+    private: Collection[str] = (),
 ) -> dict[str, int]:
     """The current rank of every live entry from the counted facts (entry id -> 0 to 5). `group`:
     the newest assessment of each live entry's merged group as (seq, rank); `heard`: the session
-    times each entry was heard in. A merged name's sessions join the survivor's. Pure, so the
+    times each entry was heard in; `private`: the entries said in a kept private scene. A merged
+    name's sessions and scenes join the survivor's. Pure, so the
     website's door (which hands over only these inputs) and the bot's reader cannot disagree."""
     sessions: dict[str, set[int]] = {}
     for entity_id, at in ended.items():
         if at is not None:
             sessions.setdefault(at, set()).update(heard.get(entity_id, ()))
+    in_scene = {ended[e] for e in private if ended.get(e) is not None}
     out: dict[str, int] = {}
     for entity_id, row in entities.items():
         if row["status"] == "merged":
@@ -229,6 +248,7 @@ def ranks_from(
                 len(sessions.get(entity_id, ())),
                 links.get(entity_id, 0),
                 entity_id in companions,
+                entity_id in in_scene,
             ),
             latest[1] if latest else None,
         )
@@ -334,15 +354,74 @@ class ImportanceStore:
         group is the current one (by `seq`, so a correction after a merge still lowers the
         rank)."""
         async with self._db.guild(guild_id) as conn:
-            entities, ended, group = await self._state(conn, guild_id, campaign_id)
+            ranked, _ended = await self._ranks_in(conn, guild_id, campaign_id)
+        return ranked
+
+    async def _ranks_in(
+        self, conn: Conn, guild_id: int, campaign_id: str
+    ) -> tuple[dict[str, int], dict[str, str | None]]:
+        entities, ended, group = await self._state(conn, guild_id, campaign_id)
+        cur = await conn.execute(
+            "SELECT entity_id, array_agg(DISTINCT session_started_at) AS sessions"
+            " FROM memory_heard WHERE guild_id = %s AND campaign_id = %s GROUP BY entity_id",
+            (guild_id, campaign_id),
+        )
+        heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
+        links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
+        private = await private_entries(conn, guild_id, campaign_id)
+        return ranks_from(entities, ended, group, heard, links, companions, private), ended
+
+    async def by_name(self, guild_id: int, campaign_id: str) -> dict[str, int]:
+        """name key -> rank, for the name and every confirmed other name of each confirmed entry,
+        so a recap can rank the names a beat lists (slice 4). Confirmed only, as the connection
+        score reads names (`importance.by_name`), so a misheard name the DM never confirmed picks
+        no beat. An other name of a merged entry counts for the one it ended up in. One snapshot,
+        so a merge between the reads cannot pair a name with the wrong rank."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            ranked, ended = await self._ranks_in(conn, guild_id, campaign_id)
+            if not ranked:
+                return {}
             cur = await conn.execute(
-                "SELECT entity_id, array_agg(DISTINCT session_started_at) AS sessions"
-                " FROM memory_heard WHERE guild_id = %s AND campaign_id = %s GROUP BY entity_id",
-                (guild_id, campaign_id),
+                "SELECT id AS entry, name AS text FROM memory_entities WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'confirmed'"
+                " UNION ALL SELECT entity_id AS entry, text FROM memory_aliases WHERE guild_id = %s"
+                " AND campaign_id = %s AND status = 'confirmed'",
+                (guild_id, campaign_id, guild_id, campaign_id),
             )
-            heard = {str(r["entity_id"]): set(r["sessions"]) for r in await cur.fetchall()}
-            links, companions = await self._links(conn, guild_id, campaign_id, entities, ended)
-        return ranks_from(entities, ended, group, heard, links, companions)
+            rows = await cur.fetchall()
+        return names_ranked(
+            ((ended.get(str(r["entry"])) or str(r["entry"]), str(r["text"])) for r in rows),
+            ranked,
+        )
+
+
+def names_ranked(names: Iterable[tuple[str, str]], ranks: Mapping[str, int]) -> dict[str, int]:
+    """name key -> rank from (entry id, name) pairs and the entries' ranks; a name of an entry
+    with no rank is left out, and a name two entries share takes the higher. Pure."""
+    out: dict[str, int] = {}
+    for entry, text in names:
+        rank = ranks.get(entry)
+        key = name_key(text)
+        if rank is None or not key:
+            continue
+        out[key] = max(out.get(key, BACKGROUND), rank)
+    return out
+
+
+def beat_rank(who: Iterable[str], ranks: Mapping[str, int]) -> tuple[int, ...]:
+    """How much a beat's names matter, for sorting beats (slice 4): the ranks of its names,
+    highest first, so a beat with a Major entry outranks one whose best is Significant, and between
+    two whose best is equal the one with more that matter wins. Player characters are left out:
+    they are in nearly every beat, so they would make every beat equal. Background names (0) are
+    left out too: every known name is at least Background, so counting them would let a beat with
+    more names outrank the connection score, which breaks ties (Supervisor's ruling). A name with no
+    rank adds nothing. Empty with no table."""
+    if not ranks:
+        return ()
+    found = (ranks.get(name_key(w)) for w in dict.fromkeys(who))
+    return tuple(
+        sorted((r for r in found if r is not None and BACKGROUND < r < PLAYER), reverse=True)
+    )
 
 
 def counts(ranks: Mapping[str, int]) -> list[int]:

@@ -17,6 +17,7 @@ from typing import Any
 
 from dmbot.memory import place_words
 from dmbot.memory.models import CONFIRMED, Relation
+from dmbot.memory.place_levels import MOVE, ONE, RIVALS
 
 CARRIES, LOCATED = "carries", "located_in"
 WAS_KEPT = "was kept in"
@@ -89,6 +90,10 @@ def _moves(kind: str) -> bool:
 
 
 _PAST_WORD = {place_words.LIVES: "lived in", place_words.WORKS: "worked in"}
+_PRESENT_WORD = {"lived in": "lives in", "worked in": "works in"}  # (`reopened`: back again)
+# Why a mover's place ended when they moved to a bigger place elsewhere (#4173 slice 5): kept, so a
+# later link that puts the smaller place inside the bigger one reopens it (Supervisor's condition)
+MOVED = "moved"
 
 
 def _settle_mover(
@@ -99,6 +104,7 @@ def _settle_mover(
     by_hand: bool,
     now: int,
     related: Callable[[str, str], bool] | None = None,
+    relation: Callable[[str, str], str] | None = None,
 ) -> Settled:
     """A new present place of one kind ("lives in", "works in", "was last seen in") ends the older
     present place of the SAME kind (never another kind), by when it happened, not when it was
@@ -123,16 +129,25 @@ def _settle_mover(
             continue
         if place_words.slot(r.detail, kind) != (word, False):
             continue  # another kind of place tie, or one that is past already
-        if related is not None and related(r.object_id, new.object_id):
+        if relation is not None:
+            how = relation(r.object_id, new.object_id)
+        elif related is not None:
+            how = ONE if related(r.object_id, new.object_id) else RIVALS
+        else:
+            how = RIVALS
+        if how == ONE:
             continue  # the inn and the town it is in: one place, not two
+        reason = MOVED if how == MOVE else None
         if by_hand:
             if _can_touch(new, r):
                 ends[r.id] = _ended(
-                    r, max(new.from_session_at or now, r.from_session_at or 0), word
+                    r, max(new.from_session_at or now, r.from_session_at or 0), word, reason
                 )
         elif _dated_after(new, r):
             if _can_touch(new, r):
-                ends[r.id] = _ended(r, new.from_session_at or now, word)
+                ends[r.id] = _ended(r, new.from_session_at or now, word, reason)
+        elif how == MOVE and not _dated_after(r, new):
+            continue  # (a move with no order is no conflict: both stay, nothing is flagged)
         elif _dated_after(r, new) and (not _hidden(r) or _hidden(new)):
             # The older fact was read late: it is history, and the newer place stands. (A hidden
             # newer place never turns a visible one into history: that would say the party moved.)
@@ -140,6 +155,8 @@ def _settle_mover(
             changes: dict[str, Any] = {"to_session_at": r.from_session_at}
             if word in _PAST_WORD:
                 changes["detail"] = _PAST_WORD[word]
+            if reason is not None:
+                changes["end_reason"] = reason
             if new_changes is None or changes["to_session_at"] < new_changes["to_session_at"]:
                 new_changes = changes
     return Settled(ends, new_changes or {})
@@ -155,12 +172,23 @@ def _dated_after(a: Relation, b: Relation) -> bool:
     )
 
 
-def _ended(old: Relation, at: int, word: str) -> dict[str, Any]:
-    """The change that makes an old place history: its end (never before it began) and, where the
-    way has a past wording, that ("lived in")."""
+def _ended(old: Relation, at: int, word: str, reason: str | None = None) -> dict[str, Any]:
+    """The change that makes an old place history: its end (never before it began), where the way
+    has a past wording, that ("lived in"), and why, when they moved (`MOVED`)."""
     changes: dict[str, Any] = {"to_session_at": max(at, old.from_session_at or 0)}
     if word in _PAST_WORD:
         changes["detail"] = _PAST_WORD[word]
+    if reason is not None:
+        changes["end_reason"] = reason
+    return changes
+
+
+def reopened(detail: str) -> dict[str, Any]:
+    """The change that reopens a place a mover left by `MOVED` (#4173 slice 5): no end, no reason,
+    and the present wording back ("lives in")."""
+    changes: dict[str, Any] = {"to_session_at": None, "end_reason": None}
+    if detail in _PRESENT_WORD:
+        changes["detail"] = _PRESENT_WORD[detail]
     return changes
 
 
@@ -173,6 +201,7 @@ def settle(
     by_hand: bool = False,
     now: int = 0,
     related: Callable[[str, str], bool] | None = None,
+    relation: Callable[[str, str], str] | None = None,
 ) -> Settled:
     """What a new, confirmed fact does to the live facts already known about its item.
     `by_hand`: the DM added it themselves, so it counts as the newest of all (`now` dates it).
@@ -186,7 +215,10 @@ def settle(
         and not _moves(object_kind)
         and (object_kind != "item")
     ):
-        return _settle_mover(new, subject_kind, others, by_hand=by_hand, now=now, related=related)
+        return _settle_mover(
+            new, subject_kind, others, by_hand=by_hand, now=now, related=related,
+            relation=relation,
+        )  # fmt: skip
     if new.predicate == CARRIES and object_kind == "item":
         ends: dict[str, dict[str, Any]] = {}
         for r in others:

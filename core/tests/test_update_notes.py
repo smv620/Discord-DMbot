@@ -21,7 +21,7 @@ CAMPAIGN = "c" * 32
 
 
 def campaign() -> Any:
-    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[7])
+    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[7], dm_accounts=[7])
 
 
 def pack_update_of(n: int) -> PackUpdate:

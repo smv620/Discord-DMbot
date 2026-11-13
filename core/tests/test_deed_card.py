@@ -29,7 +29,11 @@ def bot(*, on: bool = True, plan: bool = True, count: int = 2) -> Any:
         memory=object(),
         consent=SimpleNamespace(consenting=AsyncMock(return_value={DM, 9})),
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({DM})))
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+                )
+            )
         ),
         plan_allows=AsyncMock(return_value=plan),
         ask_dm=AsyncMock(),

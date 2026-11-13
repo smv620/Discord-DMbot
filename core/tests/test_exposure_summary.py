@@ -220,9 +220,11 @@ class Showing(Base):
 def campaign(**kw: Any) -> Any:
     base: dict[str, Any] = {
         "guild_id": GUILD_A, "id": CID, "name": "Frost", "dm_user_ids": frozenset({DM_ID}),
-        "dm_screen_visibility": "private",
+        "dm_screen_visibility": "private", "dm_bot_channel_id": None,
     }  # fmt: skip
-    return SimpleNamespace(**{**base, **kw})
+    data = {**base, **kw}
+    data.setdefault("dm_accounts", data["dm_user_ids"])
+    return SimpleNamespace(**data)
 
 
 class StepBase(Base):
@@ -317,6 +319,22 @@ class TheStep(StepBase):
         bot.sidebar_send_dm = AsyncMock(return_value="sent")
         await DMBot.send_exposure_summary(bot, table)
         self.assertEqual(table.new_names, [])  # every DM was reached: told once
+
+    async def test_the_dm_bot_channel_gets_numbers_only_and_never_a_name(self) -> None:
+        # (#3874) the details stay with the DM; the campaign's people read the DM Bot channel
+        await self.waiting_secret()
+        bot = self.bot(campaign(id=self.c, dm_bot_channel_id=88))
+        table = self.table()
+        table.new_names = ["Bryn Shander"]
+        table.claims_waiting = 2
+        await DMBot.send_exposure_summary(bot, table)
+        pointed = [c for c in bot.post.await_args_list if c.args[0] == 88]
+        self.assertEqual(len(pointed), 1)
+        text = pointed[0].args[1]
+        self.assertIn("1 secret said at the table", text)
+        self.assertIn("1 new name", text)
+        self.assertIn("2 things to check", text)
+        self.assertNotIn("Bryn", text)
 
     async def test_the_count_of_things_to_check_rides_on_the_screen_message(self) -> None:
         await self.waiting_secret()

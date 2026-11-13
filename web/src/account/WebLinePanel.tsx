@@ -7,10 +7,13 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
 import { feelingOf } from "../content/knows-feeling-words";
+import { KNOWS_HOW_LIVE } from "../content/knows-how-switch";
+import { knowsHowOf, knowsHowWords } from "../content/knows-how-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import { webPage as words } from "../content/web-words";
 import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget } from "./api";
 import LazyPanel from "./LazyPanel";
+import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
 
 /** All the connections between two names, and (for a DM) the controls to change them. */
@@ -96,7 +99,7 @@ export default function LinePanel({
 
 /** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
  * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
-function WhoKnows({
+export function WhoKnows({
   api,
   refId,
   link,
@@ -228,6 +231,7 @@ function WhoKnows({
           {words.whoEveryone}
         </button>
       </div>
+      <SavingWait active={busy} />
       {already && <p role="status">{already}</p>}
       {problem && <p role="status">{problem}</p>}
       {picking && (
@@ -296,6 +300,8 @@ function LinkRow({
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   const sourceWords = words.sourceLine(link.source);
   const feeling = KNOWS_FEELING_LIVE ? feelingOf(link.words) : null;
+  // How the two know each other (#3882): on any `knows` connection, whatever its feeling.
+  const how = KNOWS_HOW_LIVE ? knowsHowOf(link.words) : null;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       <p>
@@ -333,6 +339,8 @@ function LinkRow({
           )}
         </div>
       )}
+      {/* The reveal of a connection can take up to a minute: the wait goes below its row (#3803). */}
+      {canEdit && link.revealed === false && <SavingWait active={revealing.has(`link:${link.id}`)} />}
       {canEdit && (
         <div class="stack">
           {feeling !== null ? (
@@ -344,6 +352,7 @@ function LinkRow({
               <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
             </label>
           )}
+          {how !== null && <LazyPanel load={() => import("./LinkKnowsHow")} what={knowsHowWords.loading} props={{ n, id: link.id, how, act }} />}
           <div class="row">
             {feeling === null && (
               <button

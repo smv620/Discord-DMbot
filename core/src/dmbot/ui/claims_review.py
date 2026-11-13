@@ -26,16 +26,77 @@ from dmbot.memory.claims import (
     condition_of,
 )
 from dmbot.memory.models import DM, HOW_DM, MemoryRuleError, TooLateToUndo, name_key
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
 from dmbot.ui.names import _campaign_for, _md, _memory
+from dmbot.walk import Walk
 
 NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
+FINISHED = "✅ What was said: checked."  # (the line a "Check everything" walk leaves, #4192)
 ODD_PAIR = "DMbot noticed something odd about it"
 REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters
 )
 YES, NO, HIDE = "✅", "❌", "🤫"
+# A held-back connection the table stated, now shown to the players (#3963 c): said every time.
+SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
+# Kept hidden beside a connection the story already hides between the same two (#3975, #3979).
+HELD_NOW = (
+    "🙈 Kept hidden from your players, so it can't give away another hidden connection between "
+    "these two names. To show it: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "then 👁️ Everyone at the table."
+)
+
+# Said while the game clock had the party split (#2996 rule 1, slice 2a): the group that was there
+# knows it; when DMbot can't tell which group, nobody does yet (never a guess).
+SPLIT_GROUP = "👁️ Only the characters who were there know this: the party was split."
+SPLIT_UNKNOWN = (
+    "🙈 Kept hidden from your players: the party was split, and DMbot can't tell which group "
+    "heard it. To choose who knows: open either name, ✏️ Edit a connection…, 👁️ Who knows this?, "
+    "pick who was there, then 👥 Only some characters."
+)
+
+
+def split_line(group: int, unknown: int) -> str:
+    """The "All true" summary's line for what was said while the party was split (#2996)."""
+    parts = []
+    if group:
+        parts.append(
+            f"👁️ {group} of them {'was' if group == 1 else 'were'} said while the party was split: "
+            "only the characters who were there know "
+            f"{'it' if group == 1 else 'them'}."
+        )
+    if unknown:
+        parts.append(
+            f"🙈 {unknown} of them {'is' if unknown == 1 else 'are'} kept hidden from your "
+            "players: the party was split, and DMbot can't tell which group heard "
+            f"{'it' if unknown == 1 else 'them'}. To choose who knows: open either name, "
+            "✏️ Edit a connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some "
+            "characters."
+        )
+    return "\n".join(parts)
+
+
+def shown_line(n: int) -> str:
+    """The "All true" summary's line for the held-back connections it showed (#3963 c)."""
+    return (
+        f"👁️ {n} of them {'was' if n == 1 else 'were'} said at the table, so your players can see "
+        f"{'it' if n == 1 else 'them'} now."
+    )
+
+
+def held_line(n: int) -> str:
+    """The "All true" summary's line for the connections kept hidden beside a hidden one (#3979)."""
+    one = n == 1
+    return (
+        f"🙈 {n} of them {'is' if one else 'are'} kept hidden from your players, so "
+        f"{'it' if one else 'they'} can't give away another hidden connection between the same "
+        f"two names. To show {'it' if one else 'them'}: open either name, ✏️ Edit a connection…, "
+        f"👁️ Who knows this?, then 👁️ Everyone at the table."
+    )
+
+
 ALL_TRUE, ALL_SECRET = (
     f"{YES} All true",
     f"{HIDE} All secret",
@@ -168,7 +229,9 @@ def claims_review_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
-async def start_claims_review(interaction: discord.Interaction, campaign_id: str) -> None:
+async def start_claims_review(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> None:
     memory = _memory(interaction)
     if memory is None:
         await _tell(
@@ -180,9 +243,12 @@ async def start_claims_review(interaction: discord.Interaction, campaign_id: str
     campaign = await _campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
         return
-    view = ClaimsReview(campaign.id, campaign.guild_id)
+    view = ClaimsReview(campaign.id, campaign.guild_id, walk=walk)
     text = await view.current_text(interaction)
     if text is None:
+        if walk is not None:  # (answered meanwhile: on to the next part)
+            await next_part(interaction, walk)
+            return
         await _tell(interaction, NOTHING_WAITING)
         return
     await _send(interaction, text, view)
@@ -192,9 +258,11 @@ class ClaimsReview(_Menu):
     """A page of questions, each with ✅ and ❌ under its number. Answering one leaves the rest
     where they are; the next page comes when the whole page is answered."""
 
-    def __init__(self, campaign_id: str, guild_id: int) -> None:
+    def __init__(self, campaign_id: str, guild_id: int, *, walk: Walk | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): a progress line and Stop for now
+        self.first_total = 0  # how many waited when this review began, for "4 of 11"
         # From the campaign, not the press: a question in the DM's private chat has no server
         # around it (#3210).
         self.guild_id = guild_id
@@ -215,6 +283,7 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.first_total = self.first_total or self.total
         self.undoable = {}
         if not self.page:
             self.clear_items()
@@ -296,7 +365,11 @@ class ClaimsReview(_Menu):
                         row=4,
                     )
                 )
-        return page_text(self.page, self.total, self.answered)
+        add_stop(self, self.walk, row=0)  # (row 0 has at most three buttons; row 4 can be full)
+        done = min(self.first_total - self.total + len(self.answered) + 1, self.first_total)
+        return progress(self.walk, done, self.first_total) + page_text(
+            self.page, self.total, self.answered
+        )
 
     def _undo(self, claim_id: str) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
@@ -372,6 +445,12 @@ class ClaimsReview(_Menu):
                     if secret
                     else f"{YES} Remembered: {saying}."
                 )
+                if result.shown:
+                    done += f"\n{SHOWN_NOW}"
+                if result.held:
+                    done += f"\n{HELD_NOW}"
+                if result.split:
+                    done += f"\n{SPLIT_GROUP if result.scene else SPLIT_UNKNOWN}"
                 await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
                     why = FLAG_WHY.get(result.flags[0].kind) or ODD_PAIR
@@ -391,7 +470,10 @@ class ClaimsReview(_Menu):
             fresh = await self.current_text(interaction)
             if fresh is None:
                 self.stop()
-                await _replace(interaction, f"{done}{note}\n\n{NOTHING_WAITING}", None)
+                final = FINISHED if self.walk is not None else NOTHING_WAITING
+                await _replace(interaction, f"{done}{note}\n\n{final}", None)
+                if self.walk is not None:
+                    await next_part(interaction, self.walk)
                 return
             await _replace(interaction, f"{done}{note}\n\n{fresh}", self)
             return
@@ -450,7 +532,7 @@ async def _answer_page(
 ) -> None:
     """The writing and the page that follows, for `_decide_all_on` (which holds the view's lock)."""
     claims = ClaimStore(memory)
-    kept = flagged = failed = 0
+    kept = flagged = failed = shown = held = split_group = split_unknown = 0
     made: list[tuple[str, int]] = []  # (claim, batch) of what this press remembered
     refused: dict[str, int] = {}
     for claim in targets:
@@ -480,6 +562,10 @@ async def _answer_page(
             else f"{YES} Remembered: {saying}."
         )
         kept += 1
+        shown += result.shown
+        held += result.held
+        split_group += result.split and result.scene > 0
+        split_unknown += result.split and result.scene == 0
         await _watch_story(interaction, campaign, result.claim.fact_id)
         flagged += bool(result.flags)
     if made:  # a press that kept nothing leaves the earlier Undo alone
@@ -490,6 +576,12 @@ async def _answer_page(
         else f"{YES} Saved {kept} as true."
     )
     lines = [saved]
+    if shown:
+        lines.append(shown_line(shown))
+    if held:
+        lines.append(held_line(held))
+    if split_group or split_unknown:
+        lines.append(split_line(split_group, split_unknown))
     for message, count in refused.items():
         lines.append(f"{count} not saved: {message}")
     if failed:
@@ -507,10 +599,16 @@ async def _answer_page(
             if view.last_bulk:  # nothing left to check, but the press can still be taken back
                 view.clear_items()
                 view._bulk_buttons()
-                await _replace(interaction, f"{summary}\n\n{NOTHING_WAITING}", view)
+                final = FINISHED if view.walk is not None else NOTHING_WAITING
+                await _replace(interaction, f"{summary}\n\n{final}", view)
+                if view.walk is not None:  # (this card keeps its Undo; the walk goes on below it)
+                    await next_part(interaction, view.walk)
                 return
             view.stop()
-            await _replace(interaction, f"{summary}\n\n{NOTHING_WAITING}", None)
+            final = FINISHED if view.walk is not None else NOTHING_WAITING
+            await _replace(interaction, f"{summary}\n\n{final}", None)
+            if view.walk is not None:
+                await next_part(interaction, view.walk)
             return
         await _replace(interaction, f"{summary}\n\n{fresh}", view)
         return

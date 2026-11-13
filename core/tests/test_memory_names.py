@@ -76,6 +76,10 @@ class NamesTest(DatabaseTest):
             memory=self.memory,
         )
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
+        # The tests built on this one are of the Add all flow and the cards. A lore upload adds what
+        # DMbot is sure of by itself unless the campaign asks first (#3878), so the campaign asks
+        # first here; the tests of the default say so (`ask_before_adding` off).
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
 
     async def forget_old_undo(self) -> None:
         """Jump past the days Undo works for, then run the after-session cleanup (#164)."""
@@ -558,7 +562,12 @@ class NameCards(NamesTest):
         with patch.object(name_card, "_spoken_recaps", AsyncMock(return_value=False)):
             await form.on_submit(it)  # a DM, but spoken recaps lapsed since the press
         self.assertIn("Spoken recaps aren't on", it.response.sent[0][0])
-        gone = SimpleNamespace(dm_user_ids=frozenset({999}), guild_id=GUILD, id=self.campaign.id)
+        gone = SimpleNamespace(
+            dm_user_ids=frozenset({999}),
+            dm_accounts=frozenset({999}),
+            guild_id=GUILD,
+            id=self.campaign.id,
+        )
         it = self.it()
         with (
             patch.object(name_card, "_current", AsyncMock(return_value=(gone, "Belleros"))),
@@ -2869,6 +2878,55 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
         self.assertEqual({a.status for a in aliases}, {CONFIRMED})
 
+    async def test_a_kind_pick_answers_discord_before_it_saves(self) -> None:
+        # The owner's "DMbot didn't respond in time": saving can take over 3 seconds, so every
+        # answer on the card must answer Discord first, then edit the same message.
+        await self.suggest("Hrothgar")
+        view, _ = await self.review()
+        await view._yes(self.it())
+        view.kind = SimpleNamespace(values=["npc"])  # type: ignore[assignment]
+        it = self.it()
+        saw_done: list[bool] = []
+        real = self.memory.confirm_entity
+
+        async def slow_confirm(*args: Any, **kw: Any) -> Any:
+            saw_done.append(it.response.is_done())
+            await asyncio.sleep(0.05)
+            return await real(*args, **kw)
+
+        with patch.object(self.memory, "confirm_entity", side_effect=slow_confirm):
+            await view._kind_picked(it)
+        self.assertEqual(saw_done, [True])
+        it.edit_original_response.assert_awaited()
+
+    async def test_pick_kind_same_and_back_answer_discord_first(self) -> None:
+        # Reading the campaign can take over 3 seconds: each of these answers Discord first.
+        # "Same as" needs a known name to offer, as in test_same_as_folds_it_into_a_known_name.
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        for press in ("_pick_kind", "_same", "_back"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            saw_done: list[bool] = []
+            real = view._current
+
+            async def probe(interaction: Any, real: Any = real, saw: list[bool] = saw_done) -> Any:
+                saw.append(interaction.response.is_done())  # at the first store read
+                return await real(interaction)
+
+            with patch.object(view, "_current", probe):
+                await getattr(view, press)(it)
+            self.assertEqual(saw_done, [True], press)
+            it.edit_original_response.assert_awaited()
+
+    async def test_yes_no_and_later_answer_discord_before_they_save(self) -> None:
+        for press in ("_yes", "_no", "_later"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            await getattr(view, press)(it)
+            self.assertTrue(it.response.is_done(), press)
+
     async def test_same_as_folds_it_into_a_known_name(self) -> None:
         belleros = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
         await self.suggest("Bellaros")
@@ -3090,8 +3148,9 @@ class Review(NamesTest):
         bot: Any = SimpleNamespace(
             memory=self.memory,
             consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+            transcripts=None,  # (no stored session: no session start to record, #4043)
         )
-        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled", "_session_start"):
             setattr(bot, name, getattr(DMBot, name).__get__(bot))
         table = SimpleNamespace(
             spelling=SpellingWatcher(),
@@ -3101,6 +3160,7 @@ class Review(NamesTest):
             hint_parts=None,
             guild_id=GUILD,
             campaign_id=self.campaign.id,
+            transcript_session_id=None,
         )
         for who, line in (
             (1, "ask Brenoch"),
@@ -3155,7 +3215,7 @@ class Review(NamesTest):
                 "🚫 Not a name",
                 "⏳ Later",
                 "✏️ Change the words",
-                "📜 Where was it said?",
+                # (no "Where was it said?": nothing is kept for a name added by hand, #4227)
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
@@ -3543,7 +3603,9 @@ class AfterSession(NamesTest):
         await self.bot.post_new_names(table)
         self.assertEqual(table.new_names, [])  # told once
         text = posted.await_args.args[1]  # type: ignore[union-attr]
-        self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
+        # (#3874) no DM could be reached privately here, so the fallback post is counts only
+        self.assertIn("1 new name to check** from your last session", text)
+        self.assertNotIn("Bryn Shander", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
 
     async def test_new_names_question_goes_to_the_dms_private_chat(self) -> None:

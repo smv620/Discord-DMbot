@@ -234,7 +234,13 @@ class ConsentStore:
         yes again, so any one on record is a current one; and a confirmation restored from a
         backup made in another server never outweighs it.) It is for readers of a campaign's
         stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
-        never lets a voice be recorded, and never counts in another campaign or server."""
+        never lets a voice be recorded, and never counts in another campaign or server.
+        A stop whose revoke has not been saved yet (`_held_back`) is subtracted from the
+        confirmed people too, so a failed revoke never leaves them readable. An off-the-record
+        pause (`consenting`) does not apply to the confirmed people: it is about the live table,
+        and an imported session was recorded elsewhere, not now (so a paused person who is also
+        confirmed is in the result, though `consenting` leaves them out)."""
+        stops_before = {u: n for (g, u), n in self._stops.items() if g == guild_id}
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
@@ -244,7 +250,15 @@ class ConsentStore:
                 (guild_id, campaign_id),
             )
             confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())
-        return await self.consenting(guild_id) | confirmed
+        everyone = (await self.consenting(guild_id) | confirmed) - self._held_back.get(
+            guild_id, set()
+        )
+        # A stop that came, and was saved, while the read above ran is in neither the held-back
+        # list nor that read: the count of stops tells.
+        stopped = {
+            u for (g, u), n in self._stops.items() if g == guild_id and n != stops_before.get(u, 0)
+        }
+        return everyone - stopped
 
     async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
@@ -467,3 +481,32 @@ async def _select(conn: Conn, guild_id: int, outside: str | None) -> frozenset[i
         (guild_id, TERMS_VERSION, outside, outside),
     )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())
+
+
+async def still_recorded(
+    conn: Conn, guild_id: int, campaign_id: str, user_ids: Iterable[int]
+) -> frozenset[int]:
+    """Which of `user_ids` may still be cited, read inside the caller's own transaction (#4153):
+    an after-session writer reads who agreed before it starts, so a "Stop recording me" between
+    that read and its write would otherwise be missed. Per server, as the live check is: someone
+    with Discord counts while they have a consent row under the current wording, or (for one
+    campaign's imported sessions, as `recorded_in` says) an import confirmation not taken back
+    and no "no" on record. A speaker without Discord (a negative number) is never in `consent`,
+    so a missing row never reads as a stop for them: they are kept, and a DM's removal of one
+    deletes their lines instead (#4091). It only ever removes people: a caller keeps what it already
+    allowed and drops whoever this leaves out."""
+    ids = sorted(set(user_ids))
+    kept = {u for u in ids if u < 0}
+    asked = [u for u in ids if u > 0]
+    if asked:
+        cur = await conn.execute(
+            "SELECT u FROM unnest(%s::bigint[]) AS u WHERE EXISTS (SELECT 1 FROM consent c"
+            "   WHERE c.guild_id = %s AND c.user_id = u AND c.terms_version = %s)"
+            " OR (EXISTS (SELECT 1 FROM import_consents i WHERE i.guild_id = %s"
+            "   AND i.campaign_id = %s AND i.user_id = u AND i.removed_at IS NULL)"
+            "  AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+            "   WHERE r.guild_id = %s AND r.user_id = u))",
+            (asked, guild_id, TERMS_VERSION, guild_id, campaign_id, guild_id),
+        )
+        kept |= {int(r["u"]) for r in await cur.fetchall()}
+    return frozenset(kept)

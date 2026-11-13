@@ -85,6 +85,12 @@ ENTITIES = Table(
         "unnamed_role",
         "unnamed_what",
         "players_text",
+        "place_level",
+        "place_level_from",
+        "setting",
+        "setting_from",
+        "form",
+        "form_from",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -100,6 +106,12 @@ ENTITIES = Table(
         "unnamed_role": None,
         "unnamed_what": None,
         "players_text": None,  # the players' line (#2967): none until the DM writes one
+        "place_level": None,  # how big a place is: nobody knows until said (#4173)
+        "place_level_from": None,  # ... and who said it: DMbot read it, or the DM
+        "setting": False,  # the campaign's setting (#4173): one place at most
+        "setting_from": None,  # ... and who said it (#4173 slice 2b)
+        "form": None,  # an area, until said to be water or a route (#4173 slice 6a)
+        "form_from": None,  # ... and who said it
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -131,6 +143,21 @@ RULE_LINKS = Table(
     "id",
     ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
 )
+# The languages a character knows from the story (#4229), beside the sheets: never in the graph.
+STORY_LANGUAGES = Table(
+    "memory_story_languages",
+    "id",
+    ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
+)
+# A place's land, climate and who rules it (#4256, MapBot layers slice 2), beside the graph: a
+# layer row never says one place is in, next to or reachable from another (design §13.2).
+MAP_FACTS = Table(
+    "memory_map_facts",
+    "id",
+    ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
+     "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
+     "also_text", "table_knows", "created_at"),
+)  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -157,10 +184,16 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id"),
+     "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
-    # older row's role has no direction (#2457)
-    defaults={"unrevealed": False, "directional": False, "decided": None, "via_alias_id": None},
+    # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
+    # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
+    # assumed: stated, the only kind before #4173 slice 3. route_state: known (#4173 slice 6d)
+    defaults={
+        "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
+        "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
+        "route_state": "",
+    },
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -262,6 +295,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STORY_LANGUAGES, MAP_FACTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -305,6 +339,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_story_languages", "entity_id", False),  # (#4229)
+        ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
+        ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),
@@ -467,6 +504,13 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             raise MemoryRuleError(NOT_FOUND)
+        if (
+            table is RELATIONS
+            and "to_session_at" in changes
+            and changes["to_session_at"] is None
+            and before.get("end_reason") is not None
+        ):  # (a tie reopened is current again: why it once ended no longer holds, #4115)
+            changes = {"end_reason": None, **changes}
         changes = {k: v for k, v in changes.items() if before[k] != v}
         if not changes:
             return before
@@ -865,6 +909,11 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "directional": False,
         "decided": None,
         "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
+        "knows_how": "",  # how two people know each other was not kept before #3881
+        "end_reason": None,  # why a tie ended was not kept before #4115
+        "both_ways": None,  # no DM set a direction before #4154: the kind's default
+        "assumed": False,  # nothing was assumed before #4173 slice 3
+        "route_state": "",  # no route had a state before #4173 slice 6d
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -880,6 +929,11 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unnamed_role": None,
         "unnamed_what": None,
         "players_text": None,  # no line before #2967
+        "place_level": None,  # no place had a size before #4173
+        "place_level_from": None,
+        "setting": False,
+        "form": None,  # every place was an area before #4173 slice 6a
+        "form_from": None,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
@@ -910,6 +964,9 @@ def _filled(table: Table, snapshot: Any) -> Any:
         snapshot = {k: v for k, v in snapshot.items() if k != "made_by_commit"}
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and "setting_from" not in snapshot:
+        # (#4173 slice 2b: a setting from before `setting_from` was the DM's own, as 0459 set it)
+        snapshot = {**snapshot, "setting_from": "dm" if snapshot.get("setting") else None}
     if table.name == "memory_entities" and snapshot.get("role") == "god":
         # a god is an NPC now (#2562), with the word kept in its description
         return {
@@ -1108,24 +1165,38 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     another takes its words to E). Rows written in one statement are logged in key
     order, not in the order such a chain needs, so a row that trips a unique rule waits
     for the others and is tried again (#342 review). A row with nothing left to wait
-    for has really been blocked since: CHANGED_SINCE."""
-    for change in run:
+    for has really been blocked since: CHANGED_SINCE.
+
+    The same row may be changed twice in one batch (a kind change, then the size or form only a
+    place has cleared from it, #4173): the newest change is checked against the row as it is now,
+    and each older one against the "before" of the change after it, which is what the row will
+    hold once that one is undone."""
+    expected: dict[tuple[str, str], dict[str, Any] | None] = {}
+    for change in run:  # (newest first)
         table = BY_NAME[change["table_name"]]
-        current = await changes.get(table, change["row_id"])
+        key = (table.name, str(change["row_id"]))
+        current = expected[key] if key in expected else await changes.get(table, change["row_id"])
         if not _unchanged_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
+        expected[key] = _filled(table, change["before"])
     if len(run) == 1:
         await _undo_row(changes, run[0])
         return
     pending = list(run)
     while pending:
         waiting = []
+        held: set[tuple[str, str]] = set()  # rows whose newer change waits: their older ones too
         for change in pending:
+            key = (change["table_name"], str(change["row_id"]))
+            if key in held:  # (a row's changes are undone newest first, never out of order)
+                waiting.append(change)
+                continue
             try:
                 async with changes.conn.transaction():  # a savepoint
                     await _undo_row(changes, change)
             except errors.UniqueViolation:
                 waiting.append(change)
+                held.add(key)
         if len(waiting) == len(pending):
             raise MemoryRuleError(CHANGED_SINCE)
         pending = waiting

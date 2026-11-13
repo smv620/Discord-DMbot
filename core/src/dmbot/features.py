@@ -88,8 +88,9 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        # (`role_match`: new story roles matched by meaning, #3172; a part of meaning search)
-        ("meaning_search", "voyage_key", "role_match"),
+        # (`role_match`: new story roles matched by meaning, #3172; `scene_filter_on`: scene
+        # moves sent to the AI only for lines that look like one, #4173 slice 4; both parts of it)
+        ("meaning_search", "voyage_key", "role_match", "scene_filter_on"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
     ),
     Feature(
@@ -161,6 +162,11 @@ FEATURES: tuple[Feature, ...] = (
             "story_readings_on",
             "story_scenes_on",
             "story_deeds_on",
+            "story_reveals_on",
+            "story_reveals_precheck",
+            "met_unnamed_on",
+            "private_scenes_on",
+            "picture_names_on",
             "story_who_on",
             "story_who_apply_on",
             "story_family_only",
@@ -172,6 +178,14 @@ FEATURES: tuple[Feature, ...] = (
             "story_extractor_max_calls",
             "story_extractor_max_calls_day",
         ),
+    ),
+    Feature(
+        "wizard link",
+        "Set up a campaign step by step",
+        "＋ New campaign offers the step-by-step setup on the website first; "
+        "the short form stays one press away.",
+        lambda s: s.wizard_link_on,
+        ("wizard_link_on",),
     ),
     Feature(
         "live heads-up",
@@ -252,6 +266,22 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the calibration run on #2790
     ),
     Feature(
+        "npc guesses",
+        "Which NPCs and groups know what your lore says",
+        "",
+        lambda s: s.story_npc_guess_on,
+        ("story_npc_guess_on",),
+        for_dms=False,  # not live yet: on only after the smart-guess measure (#2959)
+    ),
+    Feature(
+        "recap by rank",
+        "Recaps pick the scenes with the characters that matter most",
+        "",
+        lambda s: s.recap_by_rank_on,
+        ("recap_by_rank_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
@@ -268,6 +298,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
     "ears_port": "where the voice service is",
+    "person_key": "a secret, always needed once account records use it (#4145)",
     "dev_guild_id": "the test server's commands, not a feature",
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",
@@ -285,6 +316,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
     "free_guilds": "the owner's own test server: never listed",
+    "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",
+    "disk_alert_pct": "a percentage: where the disk check tells the owner (#4075)",
     "elevenlabs_speech_model": "which voice model, a choice",
     "voyage_embed_model": "which meaning-search model, a choice",
     "voyage_rerank_model": "which meaning-search ranking model, a choice",

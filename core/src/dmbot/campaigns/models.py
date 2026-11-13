@@ -7,7 +7,8 @@ Error messages in `CampaignError` are shown to DMs, so they use plain words (CLA
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Literal
 
 # Rulesets a DM can pick, with the plain label shown in pickers.
@@ -131,6 +132,10 @@ class CampaignError(ValueError):
     """A problem the DM can fix. The message is safe to show them as-is."""
 
 
+# "Not given": compared by identity, never by value, so a real empty set is told apart from it.
+_UNSET: frozenset[int] = frozenset({-1})
+
+
 @dataclass(frozen=True, slots=True)
 class Campaign:
     id: str
@@ -188,6 +193,12 @@ class Campaign:
     recaps_text: bool = True
     recaps_audio: bool = True
     recaps_email: bool = True
+    # "Ask me before adding" (#3878): a lore upload offers its names for a yes instead of adding
+    # what DMbot is sure of by itself. Off by default.
+    ask_before_adding: bool = False
+    # Who sees the DM Bot and transcript channels: "people" (the campaign's own) or "everyone"
+    # (#3891; dm_screen/channel_people.py).
+    channels_visibility: str = "people"
     # The Shared story switch (#1692): "off", "watch" or "guide". Nothing reads it yet.
     story_mode: str = DEFAULT_STORY_MODE
     # The initiative style the DM last set, kept for the next session (#1784): see fight_style.
@@ -203,6 +214,43 @@ class Campaign:
     owner_left_at: int | None = None
     # When DMbot first saw the owner was not in the server (#1214); None while they are here.
     owner_missing_since: int | None = None
+    # Accounts and Discord IDs (#2533). One DMbot account can hold several Discord accounts, and
+    # `dm_user_ids` and `owner_user_id` hold the account's number. For "is this Discord user a DM"
+    # use `is_dm` / `is_owner` (or `in dm_user_ids`, which holds every Discord ID that can act as a
+    # DM account and is for membership only). For anything that sends, lists, counts or loops per
+    # DM, use `dm_accounts`: one number per DM, so a person with two Discord accounts is one DM,
+    # is messaged once and counts once. A message goes to the account's number (its first Discord
+    # ID) until the account can choose another. `owner_ids` is the owner's Discord IDs, for
+    # membership only. Left empty they follow `dm_user_ids` and `owner_user_id`, which is exact for
+    # every campaign whose people have one Discord account.
+    dm_accounts: frozenset[int] = _UNSET
+    owner_ids: frozenset[int] = _UNSET
+    # Which DM account each Discord ID in `dm_user_ids` acts as (an ID with no entry is its own).
+    login_accounts: Mapping[int, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Only a campaign built by hand leaves them out. One the store loaded always passes both,
+        # and an empty one then means "nobody can act" (an owner whose only Discord ID was taken
+        # off its account), which must not fall back to the account number.
+        if self.dm_accounts is _UNSET:
+            object.__setattr__(self, "dm_accounts", self.dm_user_ids)
+        if self.owner_ids is _UNSET:
+            owner = self.owner_user_id
+            object.__setattr__(
+                self, "owner_ids", frozenset() if owner is None else frozenset({owner})
+            )
+
+    def is_dm(self, user_id: int) -> bool:
+        """This Discord user is a DM of the campaign, through any Discord account of a DM."""
+        return user_id in self.dm_user_ids
+
+    def dm_account_of(self, user_id: int) -> int:
+        """The DM account this Discord user acts as, or their own ID if they are not a DM."""
+        return self.login_accounts.get(user_id, user_id)
+
+    def is_owner(self, user_id: int) -> bool:
+        """This Discord user is the campaign's owner, through any Discord account of the owner."""
+        return user_id in self.owner_ids
 
     @property
     def table_chat_id(self) -> int | None:
@@ -242,6 +290,19 @@ def check_rulesets(target: str, fallback: str) -> None:
         raise CampaignError(
             "'If missing' can't be the same rules as 'Main rules'. Pick the other one, or skip it."
         )
+
+
+# Who sees a campaign's DM Bot and transcript channels (#3891); the plans are in
+# dm_screen/channel_people.py.
+CHANNELS_EVERYONE = "everyone"
+CHANNELS_PEOPLE = "people"
+CHANNELS_CHOICES = (CHANNELS_EVERYONE, CHANNELS_PEOPLE)
+DEFAULT_CHANNELS = CHANNELS_PEOPLE  # new campaigns, and existing ones at the deploy
+
+
+def clean_channels(value: object) -> str:
+    """A stored channels choice, or the default for anything else."""
+    return value if isinstance(value, str) and value in CHANNELS_CHOICES else DEFAULT_CHANNELS
 
 
 def check_dm_screen_visibility(value: str) -> None:

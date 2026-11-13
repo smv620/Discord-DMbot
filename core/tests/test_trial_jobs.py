@@ -183,6 +183,28 @@ class Jobs(DatabaseTest):
             self.assertEqual((await cur.fetchone() or {})["n"], 2)  # two emails, not four records
         del mailer
 
+    async def test_the_door_stores_the_key_and_refuses_a_malformed_one(self) -> None:
+        # The keyed hash beside the Discord ID (#4145): a bad key is refused, a good one stored.
+        key = "ab" * 32
+
+        async def extend(who_key: str | None) -> bool:
+            async with self.db.unscoped() as conn:
+                cur = await conn.execute(
+                    "SELECT dmbot_extend_trial(%s, %s, %s, %s) AS ok",
+                    (USER, END + 3 * DAY_S, 30, who_key),
+                )
+                row = await cur.fetchone()
+            return bool(row and row["ok"])
+
+        self.assertFalse(await extend("not-a-key"))
+        self.assertFalse(await extend("AB" * 32))  # (capitals are not the shape)
+        self.assertTrue(await extend(key))
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT person_key FROM trial_extensions WHERE user_id = %s", (USER,)
+            )
+            self.assertEqual([r["person_key"] for r in await cur.fetchall()], [key])
+
     async def test_the_door_checks_the_rules_itself(self) -> None:
         async def extend(uid: int, now: int, days: int = 30) -> bool:
             async with self.db.unscoped() as conn:

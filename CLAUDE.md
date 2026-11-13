@@ -243,6 +243,26 @@ dev1 as a note on the issue.
   CloudDev-lead keeps the rest of `core/`. Before working in a file the other owns, each checks
   the other's open PRs there and agrees the order on the issue.
 
+- **Expert** (owner, 2026-11-12; label `session: Expert`): an **on-demand architect and design
+  consultant** on the most capable (and most expensive) model. It **guides the designs** and is
+  consulted for **major design changes**: architecture-level decisions where a wrong choice means
+  rework (the MapBot map layers, graph and data modelling, ML pipelines). **Never** for debugging,
+  reviews, management or smaller issues: those stay with the leads and Supervisor. **It has no
+  schedule and is woken only by Supervisor's message**; no other session messages it.
+  - **Design notes:** it answers a question with one note on the issue Supervisor names
+    ("Expert design note: …"); Supervisor rules on it as for any design note.
+  - **Design basis documents:** it writes the guidance the developers then follow, as Markdown in
+    **`docs/design/`** (one file per topic, for example `docs/design/mapbot_layers.md`): the problem,
+    the decision and its reasons, the alternatives rejected, the rules developers must keep, the
+    slice order, and the open questions. It opens them as **docs-only PRs** that change nothing but
+    `docs/design/`. Supervisor reads each until it is clearly understood (asking the Expert on the PR
+    when not), records the ruling, and approves; it merges on Supervisor's approval, RepoManager's
+    compliance check and green CI, like Supervisor's own docs-only PRs. Once merged, a design basis
+    is binding: a design note or PR that departs from it says so and needs Supervisor's ruling, and
+    a major change goes back to the Expert to revise the document first.
+  - It writes no application code, reviews or merges nothing and manages nobody. Supervisor still
+    oversees the project and decides when the Expert is worth its cost.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
@@ -291,11 +311,16 @@ dev1 as a note on the issue.
   table. A later deploy waits until the earlier one has been checked.
   **The sample run is part of every deploy's tests** (owner, 2026-11-06): once a deploy is checked,
   dev1 makes a fresh "test of the frostmaiden (sample)" campaign. Into it dev1 uploads the small
-  sample lore, accepts every DMbot suggestion without the DM pressing anything in Discord
-  (`devtools/accept_all`, #3544), and scores it against the lore key. Then dev1 imports the sample
-  session, accepts every suggestion again, scores it against the master key (lore key + session key),
-  and builds the recap with no audio. The counts go on #3545 for GraphEngineer, with a line in
-  `docs/testing-history.log`. The steps are in `core/tests/fixtures/story_graph/README.md`.
+  sample lore and lets DMbot decide without the DM pressing anything in Discord (`devtools/sample_run`;
+  owner, 2026-11-09, #3900): first what DMbot is sure of is added, as an upload adds it, and scored
+  against the lore key (`lore-sure`). Then the careful AI decides each item still waiting, at most 60 a
+  run, with its cost shown before `--yes`. Each yes or no goes through the DM's own store calls, is
+  checked against the key, and is scored again (`lore`). Then dev1 imports the sample session, does the
+  same against the master key (lore key + session key) (`both-sure`, then `both`), and builds the recap
+  with no audio. The counts go on #3545 for GraphEngineer, with the AI's agreement with the key per kind,
+  and a line in `docs/testing-history.log`. The decision record stays on the server, never on GitHub.
+  `--accept-all` (#3544, accept every suggestion) remains for comparison; scores from before #3900 are a
+  different series. The steps are in `core/tests/fixtures/story_graph/README.md`.
   **dev1's checks gate the next deploy; the owner's checks can wait** (owner, 2026-11-06, to clear
   the deploy backlog). Supervisor marks each deploy-handover check as **dev1** (logs, counts, the
   sample run) or **owner** (looked at in Discord or on the site, or at the table). The next deploy
@@ -516,10 +541,12 @@ terminal output or Discord screenshots copied to it.
   (owner, 2026-11-01, #3212): the table's voice channel's own text chat, or the one text channel
   the DM picked; DMbot makes no `dmb-chat` channel. **Every question DMbot asks** someone goes to
   that person's private chat with DMbot, marked as from DMbot (owner, 2026-11-01, #3210).
-- **Transcripts are shared; the DM screen is not pushed to players.** Anyone in the
-  Discord server may view and download a campaign's session transcripts (decided
-  2026-10-05). Only people who agreed are ever recorded, and the consent request tells
-  them the whole server can read the transcript. DM-screen content (rules alerts,
+- **Transcripts are shared; the DM screen is not pushed to players.** A campaign's people
+  (its DMs, its players and those recorded at its table) may view and download its session
+  transcripts, or everyone in the Discord server when the campaign's "Who can see this
+  campaign's channels" setting says so (owner, 2026-11-09, #3891; it was everyone in the
+  server from 2026-10-05). Only people who agreed are ever recorded, and the consent request
+  tells them who can read the transcript. DM-screen content (rules alerts,
   house-rule prompts, NPC and plot notes) never goes into transcripts, and the bot never
   sends it to players. Players see the DM screen only if the campaign's DM-screen
   visibility allows it: **private** (DM only), **opt-in peek** (the default: hidden, with a
@@ -564,6 +591,13 @@ terminal output or Discord screenshots copied to it.
     DMbot keeps one copy per address, and campaigns point to it. A pack may carry these pointers; a
     following campaign must approve each site first. Every entry records its source. See
     docs/PLAN.md, "Homebrew (part 2)".
+  - **Maps and pictures** (owner, 2026-11-12; `docs/design/mapbot_layers.md`, section 3): when a
+    map is found, in Discord or on the website, its uploader is asked once whether they may use it
+    and let DMbot keep it in this campaign. DMbot does no review of its own and goes by the answer;
+    who said yes and when is recorded on the map. No keeps nothing but the transcript line. A
+    player's yes stores the map, but DMbot reads it into the graph, positions or answers only after a
+    DM's yes. A map stays in that one campaign, a DM can remove it, and it goes with the campaign or
+    with its poster's own deletion. The terms page says the same (#4275).
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).

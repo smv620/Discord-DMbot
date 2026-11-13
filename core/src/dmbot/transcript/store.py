@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.memory import evidence, forget_readings
+from dmbot.memory import evidence, forget_readings, met_store, private_scene_store
+from dmbot.session_locks import lock_sessions_of
 from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
@@ -1170,12 +1171,7 @@ class TranscriptStore:
         async with self._db.guild(guild_id) as conn:
             # The campaign's sessions that hold this speaker are locked first, so a save adding
             # lines at the same moment can't make the recount below come out one batch short.
-            await conn.execute(
-                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " AND id IN (SELECT session_id FROM transcript_lines"
-                "   WHERE guild_id = %s AND user_id = %s) ORDER BY id FOR UPDATE",
-                (*scope, guild_id, speaker),
-            )
+            await lock_sessions_of(conn, guild_id, speaker, campaign_id)
             await conn.execute(
                 "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
                 " VALUES (%s, %s, %s, extract(epoch FROM now())::BIGINT)"
@@ -1310,6 +1306,9 @@ class TranscriptStore:
             )
             await theatre_store.forget_session(conn, guild_id, session_id)
             await rel_store.forget_session(conn, guild_id, session_id)
+            await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
+            # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
+            await private_scene_store.forget_session(conn, guild_id, session_id)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1466,6 +1465,10 @@ async def _forget_memory_traces(
         " AND (%s::text IS NULL OR campaign_id = %s)",
         (guild_id, user_id, campaign_id, campaign_id),
     )
+    # the beings met in play that cite their lines (#3172 slice 5): words from those lines
+    await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the private scenes they spoke in (#2996 rule 5)
+    await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
 
 
 async def _drop_log_rows(

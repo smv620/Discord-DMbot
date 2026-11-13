@@ -118,6 +118,7 @@ class TheDMsListTest(unittest.TestCase):
             plot_check_on=True,
             said_as_voice=True,
             said_as_model="/models/phonemes",
+            wizard_link_on=True,
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)
@@ -137,7 +138,11 @@ class TheDMsListTest(unittest.TestCase):
 
 class TheButtonTest(unittest.IsolatedAsyncioTestCase):
     def press(self, user: int, *, campaign: bool = True) -> Any:
-        found = SimpleNamespace(dm_user_ids=frozenset({DM})) if campaign else None
+        found = (
+            SimpleNamespace(dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}))
+            if campaign
+            else None
+        )
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=found)),
             settings=settings(recaps_on=True),

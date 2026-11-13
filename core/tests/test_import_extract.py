@@ -128,7 +128,9 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
         _import_left_told={},
         _extract_import=extract,
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_screen_channel_id=9))
+            get=AsyncMock(
+                return_value=SimpleNamespace(dm_screen_channel_id=9, dm_bot_channel_id=None)
+            )
         ),
         post=AsyncMock(),
         sent=sent,
@@ -136,6 +138,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
     )
     me._extract_imports_left = partial(BOT._extract_imports_left, me)
     me._tell_imports_left = partial(BOT._tell_imports_left, me)
+    me._upkeep_channel = partial(BOT._upkeep_channel, me)
     return me
 
 
@@ -180,6 +183,14 @@ class TheSweep(WithImports):
         self.assertEqual(me.post.await_count, 2)
         self.assertEqual(me._import_left_told, {})
 
+    async def test_the_word_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
+        me = bot_for(self.store, [])
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_screen_channel_id=9, dm_bot_channel_id=12)
+        )
+        await me._tell_imports_left(GUILD, self.store, {self.campaign.id: 2})
+        self.assertEqual(me.post.await_args.args[0], 12)  # (#3874: not the DM screen)
+
     async def test_nothing_is_said_while_a_scan_is_still_waiting(self) -> None:
         await self.imported(1)  # (cleaned, not scanned)
         me = bot_for(self.store, [])
@@ -193,14 +204,20 @@ class TheImportRead(WithImports):
             import_job=SimpleNamespace(store=self.store),
             campaigns=SimpleNamespace(
                 get=AsyncMock(
-                    return_value=SimpleNamespace(dm_user_ids=frozenset({5}), dm_screen_channel_id=9)
+                    return_value=SimpleNamespace(
+                        dm_user_ids=frozenset({5}),
+                        dm_accounts=frozenset({5}),
+                        dm_screen_channel_id=9,
+                    )
                 )
             ),
             transcripts=self.transcripts,
             _extract_session=AsyncMock(return_value=outcome),
             _read_importance=AsyncMock(),  # (the importance reading after a finished read, #3172)
+            consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({5, -3}))),
         )
         me._mark_import_read = partial(BOT._mark_import_read, me)
+        me._import_scenes_and_who = AsyncMock()  # (then its scenes and who step, #3602)
         return me
 
     async def test_the_scans_claim_is_renewed_before_each_call_and_a_finished_read_is_marked(
@@ -220,6 +237,16 @@ class TheImportRead(WithImports):
         me._read_importance.assert_awaited_once()  # (then its importance, on the same claim)
         self.assertTrue(await me._read_importance.await_args.kwargs["renew"]())
 
+    async def test_the_read_and_its_importance_use_who_the_import_recorded(self) -> None:
+        # (Supervisor on #3918: the uploader's confirmed speakers in, anyone with a "no" out)
+        sid = await self.imported(1)
+        ready: Any = SimpleNamespace(campaign_id=self.campaign.id, session_id=sid)
+        me = self.fake("done")
+        await BOT._extract_import(me, GUILD, ready)
+        for step in (me._extract_session, me._read_importance):
+            self.assertEqual(await step.await_args.kwargs["consenting"](), frozenset({5, -3}))
+        me.consent.recorded_in.assert_awaited_with(GUILD, self.campaign.id)
+
     async def test_the_import_card_is_told_each_batch_then_read_or_waiting(self) -> None:
         for outcome, final in (("done", "read"), ("limit", "waiting")):
             sid = await self.imported(1 if outcome == "done" else 2)
@@ -235,6 +262,8 @@ class TheImportRead(WithImports):
             await BOT._extract_import(me, GUILD, ready)
             state, part, parts, _, _ = await story_of(self.db, sid)
             self.assertEqual((state, part, parts), (final, 2, 3))
+            # (only a finished read goes on to its scenes and who step, #3602)
+            self.assertEqual(me._import_scenes_and_who.await_count, int(outcome == "done"))
 
     async def test_a_session_stopped_by_the_limit_is_not_marked_read(self) -> None:
         sid = await self.imported(1)

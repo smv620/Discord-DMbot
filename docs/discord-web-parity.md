@@ -37,8 +37,14 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Share a recap; remake a recap | recap page | built, switched off | `RECAP_SHARE_LIVE`, `RECAP_REMAKE_LIVE` |
 | Fix a name's words in a recap; the narrator's way to say a name (type it, suggest it, say it) | recap page | built, switched off | `RECAP_NAMES_LIVE`, `RECAP_FIX_LIVE`, `RECAP_VOICE_LIVE` (🎤 waits for the bot, #3828; server `SAID_AS_VOICE`) |
 | Hear a name in the recap narrator's voice (🔊 Hear it beside the "said as" box; the bot makes the clip, the browser's voice reads it when narration is off) | Names page, names to check | built, switched off | `HEAR_NARRATOR_LIVE` (#3807; core #3817) |
+| "Players know:" on a suggested name before the DM confirms it (the line a shared lore upload filled in), with a way to change it | recap page, names to check | built, switched off | `PLAYERS_LINE_LIVE` (#3833; Discord's card is #3838) |
 | Search the website: the best-matching page at once (a search of the site itself, so website-only on purpose; Discord already answers questions about DMbot through table questions) | site header | built, switched off | `SEARCH_LIVE` (#3855) |
-| After-session report, session notes, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `SESSION_NOTES_LIVE`, `PRESENT_PER_SCENE_LIVE` |
+| Ask the website a question: a short answer under the search box, written from the site's own public words (website-only on purpose, as the search) | site header | built, switched off | `SEARCH_ASK_LIVE` (#3855; core #3856) |
+| After-session report, who was in each scene | recap page, campaign | built, switched off | `AFTER_SESSION_REPORT_LIVE`, `PRESENT_PER_SCENE_LIVE` |
+| Session notes and the script, read on a session's Transcripts page (Script and Session notes tabs, game masters only) and saved | `/account/transcripts` | live (#3898) | `SESSION_NOTES_LIVE`, `THEATRE_DOWNLOAD_LIVE` |
+| Make a session's script from the website (Discord offers it after a live session; imported sessions get the offer too, CloudDev's half of #3899) | `/account/transcripts` Script tab | page built, switched off; the door is next | `SCRIPT_MAKE_LIVE` (#3899) |
+| Biggest file a DM can add: a PDF up to 100 MB in Discord, 50 MB on the website (its request goes through the tunnel as base64); every other type 10 MB. **Level but for the PDF number, on purpose** | Discord uploads, `/new` wizard | core built (#4001); the wizard page's limit is the web half | |
+| Set up a campaign step by step (uploads, many choices and a Back button need a page; Discord's `＋ New campaign` offers it first and keeps its short form). **Website-first on purpose.** | `/new?server=<id>` | pages built, switched off; the doors and the finish run are CloudDev-lead's (#3955) | `WIZARD_LIVE` (#3956) |
 | Names: list, search, edit, merge, split, notes on an NPC (NPC page) | `/account/names`, `/account/npc` | live (split off) | `NAME_SPLIT_LIVE` |
 | Search names by meaning | `/account/names` | built, switched off | `NAMES_SMART_LIVE` |
 | Names fixed this session, with Undo | recap page | built, switched off | `NAMES_FIXED_LIVE` |
@@ -52,6 +58,9 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
+| DMbot adds what it is sure of after a lore upload or an import: the counts notice, Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
+| The connection panel on the Story Graph: a compact list with Add a connection on top, edits kept until Save, the direction toggle, Ctrl/⌘+click or Connect to another name to join two names, a jump from a name's panel, and ↩ Undo this save (#4155; Discord's own menus are #4154 and #4156) | the connection edit menu in Discord | `/account/web` | built, switched off | `CONNECTION_PANEL_LIVE` (dev1 checks before the flip) |
+| How two people know each other on a `knows` connection: "has met", "has heard of", or plain "knows", and the DM's change (#3882; Discord's card and edit menu are #3889) | `/account/web` | page built, switched off; the website's door is next | `KNOWS_HOW_LIVE` |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
 | Node summary on the graph | `/account/web` | built, switched off | `NODE_SUMMARY_LIVE` |
 | Transcripts: read, download (text, theatre), put back or leave out a stretch | `/account/transcripts` | live | `THEATRE_DOWNLOAD_LIVE` |
@@ -83,6 +92,7 @@ match. "In Discord" says where the DM finds it today.
 | Start listening (pick the campaign and the voice channel) | `/dmbot start` | Discord-only: choosing the voice channel and joining it is live at the table |
 | Stop listening | `/dmbot stop`, 🛑 on the DM screen | Discord-only: ending the live recording |
 | Open the campaign's settings | `/dmbot settings`, ⚙️ | Campaign settings (campaign home) |
+| ＋ New campaign | `＋ New campaign` offers a link to the start-up wizard first (when `DMBOT_WIZARD_LINK` is on and a website address is set); the short form stays one press away | Set up a campaign step by step (Section 1, `/new?server=<id>`). Website-first on purpose: uploads and many choices need a page |
 | Help | `/dmbot help` | Discord-only: a pointer to the commands |
 | Questions waiting for me | `/dmbot questions`, 📬 on the Manage card | The names waiting for a check (`/account/questions`, #3438) |
 | Make or remake a recap | `/dmbot recap`, 📜 Recaps | Recaps: make again |
@@ -133,21 +143,40 @@ match. "In Discord" says where the DM finds it today.
 
 | Function | In Discord | Answer |
 |---|---|---|
-| Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
+| Check everything after a session or an import (one walk through names, who is who, what was said, the connections and kinds of connection, then deeds, reveals and the script as they join, with progress, Stop for now and Carry on; #4192) | ✅ Check everything on the private after-session message (the old buttons stay when only one kind waits) | The Questions page in the same order with the same progress line (WebDev, #4193; until then it lists the kinds by count) |
+| Check new names (one by one; Add all N; Undo) | 📝 Check new names, read summary (after a lore upload the summary with Add all is a counts-only message in the DM Bot channel, and the private question's buttons open it: Discord-only on purpose, which Discord message opens, #3873) | The names waiting for a check; Add all (`QUESTIONS_LIVE`, #3207); Confirm kinds (`CONFIRM_KINDS_LIVE`) |
+| Uploads and imports add what DMbot is sure of (an import also adds the connections the DM's own lines state); Undo this upload (7 days); Ask me before adding | the notice in the DM Bot channel (an import's too, once its last session is scanned), ⚙️ Manage DMbot → Ask me before adding | The same notice and Undo on the upload page, a "From <upload>" filter on Names (WebDev, #3879); the setting on the campaign page (to do) |
+| Who can see the campaign's channels (the people, or everyone) and the list added by hand | ⚙️ Manage DMbot → Who can see the channels, 👥 Who can see | The same setting and list on the campaign page (WebDev, #3894) |
 | Who is this? (same as a known name) | name card, look-alikes | Who is this? (the clarify page, #3604) |
 | Names heard but not named yet | heard review, unnamed | Names DMbot has met but not named yet |
 | Which one? (Which Mara?) | connections review | Story Graph: waiting connections (#3463) |
 | Check the connections; Keep, Keep as secret, No, Keep all; Undo | Check the connections | Story Graph: waiting connections (live) |
-| Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645) |
+| A one-of-a-kind item two characters have: "Does A still have it?" (No, not any more; Yes, both have it; Not now; Undo) and the item's "How it changed hands" line | 🔁 card in 📜 Check the connections; the line on the item's name card (DM only, #4115) | #4122 (the Questions page and the Story Graph's history; the bot already applies the answers) |
+| Said at the table (claims): true, secret, All true, All secret | claims review | Story Graph: waiting connections (All true / All secret, #3640, #3645); both pages say whether the bot showed a yes to the players or kept it hidden (#3974, #3986), or kept it to the group that was there while the party was split (#2996; the website's half is #4035) |
 | Family ties | family ties card | Story Graph: waiting connections (family ties are one of its kinds) (WebDev confirmed) |
-| Change a connection; its feeling | connection edit | Story Graph: change a connection; feeling picker (#3607) |
+| Change a connection; its feeling; why (the lore quote, DM only) | connection edit | Story Graph: change a connection; feeling picker and "Why?" (#3607) |
+| Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
+| Which way a connection reads (A → B, B → A, A ↔ B) and "Cerric and Wit are rivals" for a two-way one; Undo | connection edit ("Which way does it read?", DM only, #4154) | Story Graph: the connection panel's direction toggle and `pairWords`, #4155 (the API and door are in #4154) |
 | Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
+| How big a place is (a plane down to a room; read from the lore's words, the DM sets it, Not sure clears it) | 📏 Size on a place's name card (DM only, #4173 slice 1) | Names: the API and door are built (`placeLevel` on each name, the `place-size` action, #4173); the page: Names, a place's row → "📏 Size" choice, built, switched off, `PLACE_FACTS_LIVE` (#4187) |
+| A place's parent DMbot assumed from where the story was in a lore upload (never a question; "(assumed)" on the DM's card; ✅ That's right; players see nothing until then) | the place's name card: the line ends "(assumed)", ✅ That's right (DM only, #4173 slice 3) | Names and Story Graph: not built. The waiting list and its Keep/Skip already leave assumed links out (0462); the mark and the button are WebDev's, #4304 |
+| The campaign's setting (the one place the whole story is in; a smaller place with no stated parent counts as inside it) | 🌍 Make it the setting / Not the setting on a big place's name card (DM only, #4173 slice 2) | Names: the door sends `setting` and takes `place-setting` (#4173); the page: "🌍 Make it the setting" on the same row, built, switched off, `PLACE_FACTS_LIVE` (#4187) |
+| Land, water or a road (a place's kind; read from the name, the DM sets it, land shows no line) | The second menu on a place's name card, "Land, water or a road?" (DM only, #4173 slice 6a) | Names: a place's row → "Land, water or a road?", built, switched off, `PLACE_FACTS_LIVE` (#4187) |
+| A place's land, climate and who rules it (read from the lore's set phrases as "DMbot read this", set by the DM, read up the place tree; players see only what the DM kept and showed) | 🗺️ Land, climate, ruler on a place's name card (DM only, #4256) | Names: a place's row → "🗺️ Land, climate, ruler" (DM only): built, switched off, `PLACE_WORLD_LIVE` (#4287, migration 0463). Players: a "🗺️ Land, climate, ruler" button on a place's row shows what the DM confirmed and showed, cut by the gate and the players' rule (#4311, migration 0466). Without "Same as {bigger place}" for now |
 | Make these words a kind of connection | kind offer | #3577 |
+| A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
+| A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | Questions for you: the same card, Yes or No (page built, switched off, `TRAIT_QUESTIONS_LIVE`; the bot's applier is CloudDev-lead's; #3946) |
+| Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
+| What the characters learned (Keep / Not this) | reveal card | #3863 |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
+| Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | Names page → 👣 Met but not named (DM only): built, switched off, `MET_LIST_LIVE` (#4084; core 0438 and the bot's actions are merged or in review) |
+| Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | #4084 (the website's page; the bot already applies its actions) |
+| A DM's remembered players, with Forget this player, and a player's "DMs who remember you" with Clear | the website only on purpose: Discord has no list page to hold it (the data is kept by DMbot either way, #4226) | `/account/players`: built, switched off, `REMEMBERED_PLAYERS_LIVE` (#4226; core 0450) |
+| Private scenes (two player characters alone together while split): Not private | Names home → 📋 More lists → 🤫 Private scenes, or 🤫 Open the list on the after-session note (DM only, #2996 rule 5, #4103) | Names page → 🤫 Private scenes (DM only): built, switched off, `PRIVATE_SCENES_LIVE` (#4102; core 0439) |
 | The recap's names to check; the DM's fix to a name in a recap | recap names card | The recap's name checks (`RECAP_NAME_CHECKS_LIVE`); Fix a name's words (`RECAP_FIX_LIVE`) |
 | Recap ready, failed, unchecked, hold; Write now; share; feedback | recap cards | Recaps: approve, approve unchecked, share, edit |
 | Recap audio: ask, remake | audio cards | Recaps: audio |

@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.connection import Connection
 from pathlib import PurePath
 
-from dmbot.memory.name_documents import UNREADABLE, DocumentError, text_of
+from dmbot.memory.name_documents import UNREADABLE, DocumentError, ReadText, text_of
 
 READ_TIME_S = 30.0
 # Read in a process: pure-Python parsers that a hostile file can keep busy. Other types
@@ -37,6 +37,7 @@ IN_A_PROCESS = (".pdf", ".docx", ".xlsx")
 # page holding a huge vector drawing (about 20 bytes per unpacked byte) can pass this
 # and is refused as unreadable: rare in a names list.
 MEMORY_BYTES = 256 * 1024 * 1024
+MEMORY_BASE_FILE_BYTES = 10 * 1024 * 1024  # the file size MEMORY_BYTES was measured for
 # The longest answer read back: text_of stops at 200,000 characters (up to 4 bytes each).
 MAX_REPLY_BYTES = 1024 * 1024
 RESTARTING = "DMbot is restarting. Try that file again in a minute."
@@ -74,27 +75,45 @@ def shutdown() -> None:
     _WAITERS.shutdown(wait=False, cancel_futures=True)
 
 
-def _limit_memory() -> None:
+def read_time_for(size: int) -> float:
+    """How long a read may take: the base, plus three quarters of a second for each MB over the
+    usual 10 MB, so a big illustrated PDF is not stopped for being big. A first estimate, to be
+    set from a measure of a real one (#4001)."""
+    return READ_TIME_S + 0.75 * max(0, size - MEMORY_BASE_FILE_BYTES) / (1024 * 1024)
+
+
+def memory_for(size: int) -> int:
+    """A child's memory for a file of `size` bytes: the base, plus four times what the file has
+    over the usual 10 MB. A big PDF is held whole in the parent, sent to the child and held again
+    there, and the reader works on it; the extra is what that needs, and no more (#4001)."""
+    return MEMORY_BYTES + 4 * max(0, size - MEMORY_BASE_FILE_BYTES)
+
+
+def _limit_memory(size: int = 0) -> None:
     try:
         import resource
 
-        resource.setrlimit(resource.RLIMIT_AS, (MEMORY_BYTES, MEMORY_BYTES))
+        limit = memory_for(size)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ImportError, ValueError, OSError):  # not Linux, or not allowed: no limit
         pass
 
 
 def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
-    """In the child process. Answers b"ok\\n\\n<text>", b"error\\n<cause>\\n<plain words>"
+    """In the child process. Answers b"ok\\n<pages>,<pictures>\\n<text>" (the two counts of a PDF,
+    #4000; 0,0 for any other file), b"error\\n<cause>\\n<plain words>"
     or b"failed\\n<error kind>\\n", as plain bytes (never a pickle). A traceback from
     the child itself (not from `parse`) goes to stderr as plain lines."""
     if hasattr(os, "nice"):  # not on Windows
         os.nice(10)  # behind the bot's voice and replies on a small server
     os.environ.clear()  # the bot's keys and tokens: nothing here needs them
     logging.getLogger().addHandler(logging.NullHandler())  # the bot logs, not the child
-    _limit_memory()
+    _limit_memory(len(raw))
     try:
         # errors="replace": a broken PDF can give a lone surrogate; keep the rest
-        parts = (b"ok", b"", parse(filename, raw).encode(errors="replace"))
+        read = parse(filename, raw)
+        counts = f"{getattr(read, 'pages', 0)},{getattr(read, 'picture_pages', 0)}"
+        parts = (b"ok", counts.encode(), read.encode(errors="replace"))
     except DocumentError as exc:
         cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else ""
         parts = (b"error", cause.encode(), str(exc).encode())
@@ -168,7 +187,7 @@ async def read_document(
     raw: bytes,
     *,
     parse: Parse = text_of,
-    limit_s: float = READ_TIME_S,
+    limit_s: float | None = None,
     max_reply: int = MAX_REPLY_BYTES,
 ) -> str:
     """The file's text, as `text_of` gives it. PDF and Word files are read in a child
@@ -178,6 +197,8 @@ async def read_document(
     suffix = PurePath(filename).suffix.casefold()
     if suffix not in IN_A_PROCESS:
         return await asyncio.to_thread(parse, filename, raw)
+    if limit_s is None:  # (a caller's own limit, such as the adventure's, is kept as given)
+        limit_s = read_time_for(len(raw))
     stop = threading.Event()
     try:
         work = asyncio.get_running_loop().run_in_executor(
@@ -202,6 +223,9 @@ async def read_document(
         log.exception("Couldn't read a %s file", suffix)
         raise DocumentError(UNREADABLE) from None
     if kind == "ok":
+        pages, _, pictures = cause.partition(",")
+        if pages.isdecimal() and pictures.isdecimal():
+            return ReadText(text, int(pages), int(pictures))
         return text
     if kind == "error":
         if cause:  # text_of's own "couldn't read" (the child doesn't log)

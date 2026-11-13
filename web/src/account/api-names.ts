@@ -16,6 +16,10 @@ import type {
   NameSource,
   KindOffer,
   MatchRow,
+  MetItem,
+  PlaceWorld,
+  PlaceWorldTable,
+  PrivateScene,
   NamesPage,
   PlaceSpelling,
   ToldName,
@@ -37,7 +41,19 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, NodeSummary } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, NodeSummary, TraitOffer, UploadNotice, WaitingLook } from "./api";
+
+/** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
+export function countOf(counts: unknown, key: string): number | undefined {
+  if (typeof counts !== "string") return undefined;
+  for (const [, name, digits] of counts.matchAll(/(?<![a-z_])([a-z_]+):(\d+)/g)) {
+    if (name === key) {
+      const n = Number(digits);
+      return n > 0 ? n : undefined;
+    }
+  }
+  return undefined;
+}
 
 export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
@@ -193,6 +209,30 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
         onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) }),
       );
     },
+    // "Met but not named" (#4084): the list, and each answer queued for the bot (202 {answer}) and read where every name action's is.
+    metList: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/met`)) as { items: MetItem[] }).items,
+    answerMet: async (ref, id, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/met/${encodeURIComponent(id)}`, answer)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      // (the bot's word "met_waiting" has no kind in the shared map, which would cost the first download bytes: it is read off the answer here)
+      let word = "";
+      try {
+        await waitForAnswer(`${base}/all-names/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+          word = look.error ?? "";
+          onLook?.({ waits: look.waits ?? null, progress: countsOf(look.progress) });
+        });
+      } catch (error) {
+        if (word === "met_waiting") throw new ApiError("met-waiting");
+        throw error;
+      }
+    },
+    // "Private scenes" (#4102): the list, and "Not private", which the door does itself (no queue: it is one flag on one row).
+    placeWorldTable: async (ref, placeId) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/names/${encodeURIComponent(placeId)}/world/table`)) as PlaceWorldTable,
+    placeWorld: async (ref, placeId) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/names/${encodeURIComponent(placeId)}/world`)) as PlaceWorld,
+    privateScenes: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes`)) as { items: PrivateScene[] }).items,
+    notPrivateScene: async (ref, id) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/private-scenes/${encodeURIComponent(id)}/not-private`, {})) as { first: string; second: string },
     smartNames: async (ref, words) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
@@ -338,6 +378,28 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       if (!queued?.answer) throw new ApiError("server");
       return queued;
     },
+    // What DMbot added by itself after one upload (#3879, core #3887): counts and the label only.
+    uploadNotice: async (ref, source) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice,
+    // Undo this upload is queued for the bot, then polled like any queued change: once, within 7 days, newest first.
+    undoUpload: async (ref, source, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-notice/undo`;
+      const queued = (await call("POST", base, { kind: source.kind, id: source.id })) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; undone?: number; progress?: unknown } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          onLook?.(sharedOf(got?.progress as never));
+        } catch (error) {
+          if (error instanceof ApiError && (error.kind === "signed-out" || error.kind === "not-found" || error.kind === "not-allowed")) throw error;
+        }
+        if (got?.state === "done") return { took: Number(got.undone ?? 0) };
+        if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
     confirmUndo: async (ref, answer) => {
       const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
         action: "confirm-undo",
@@ -367,7 +429,83 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       );
       const kept = (got as { kept?: unknown }).kept;
       const batch = (got as { batch?: unknown }).batch; // the change an answer made, for its Undo (#3645)
-      return { ...(typeof kept === "number" ? { kept } : {}), ...(typeof batch === "number" ? { batch } : {}) };
+      // Whether the bot showed the connection to the players, or kept it hidden (#3974, #3986); only a count above 0 is said.
+      const counts = (got as { counts?: unknown }).counts;
+      const shown = countOf(counts, "shown");
+      const held = countOf(counts, "held");
+      // Whether the bot kept it for the characters who were there, or hid it because the party was split (#4035).
+      const scene = countOf(counts, "scene");
+      const split = countOf(counts, "split");
+      return {
+        ...(typeof kept === "number" ? { kept } : {}),
+        ...(typeof batch === "number" ? { batch } : {}),
+        ...(shown !== undefined ? { shown } : {}),
+        ...(held !== undefined ? { held } : {}),
+        ...(scene !== undefined ? { scene } : {}),
+        ...(split !== undefined ? { split } : {}),
+      };
+    },
+    // The hand-over question (#4122): the list, then one queued answer polled here so the bot's own word for how it ended reaches the card.
+    handOverQuestions: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/hand-over-questions`)) as { questions: HandOverQuestion[] }).questions,
+    answerHandOver: async (ref, question, answer, undoes, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/hand-over-questions/answer`;
+      const body: Record<string, string> = { olderTie: question.olderTie, newerTie: question.newerTie, answer };
+      if (undoes) body["undoes"] = undoes;
+      const queued = (await call("POST", base, body)) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      let misses = 0;
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; undoable?: boolean; waits?: WaitingLook["waits"]; progress?: Parameters<typeof countsOf>[0] } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          misses = 0;
+          onLook?.({ waits: got.waits ?? null, progress: countsOf(got.progress) });
+        } catch (error) {
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
+        }
+        if (got?.state === "done") return { answerId: queued.id, undoable: got.undoable === true };
+        if (got?.state === "failed") {
+          const word = got.error ?? "";
+          const failure = new ApiError(word === "gone" ? "gone" : word === "not-allowed" ? "not-allowed" : "server");
+          failure.note = word;
+          throw failure;
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
+    },
+    // The lineage and class questions (#3946): the list, then one queued answer that is polled like every other edit.
+    traitOffers: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/trait-offers`)) as { offers: TraitOffer[] }).offers,
+    answerTrait: async (ref, offer, how, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/trait-offers/answer`;
+      const queued = (await call("POST", base, { entity: offer.entity, kind: offer.kind, key: offer.key, answer: how })) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      // Polled here (not by `waitForAnswer`) so the bot's own word for a failure reaches the card: `gone`, `refused`, `not-allowed`, `failed`
+      // (or the door's `lost`) each have their own plain line. The word is in `note`; the card reads it, no page prints it.
+      let misses = 0;
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got = null as { state?: string; error?: string; batch?: unknown; waits?: WaitingLook["waits"]; progress?: Parameters<typeof countsOf>[0] } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`)) as NonNullable<typeof got>;
+          misses = 0;
+          onLook?.({ waits: got.waits ?? null, progress: countsOf(got.progress) });
+        } catch (error) {
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
+        }
+        if (got?.state === "done") return typeof got.batch === "number" ? { batch: got.batch } : {};
+        if (got?.state === "failed") {
+          const word = got.error ?? "";
+          const failure = new ApiError(word === "gone" ? "gone" : word === "not-allowed" ? "not-allowed" : "server");
+          failure.note = word;
+          throw failure;
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
+      throw new ApiError("still-waiting");
     },
     webReadings: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
@@ -418,7 +556,9 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       }
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
-      return got.removed || !got.edge ? { removed: true } : got.edge;
+      // The change's batch rides along only when the bot made one (an edit that changed nothing has none).
+      const made = typeof got.batch === "number" ? { batch: got.batch } : {};
+      return got.removed || !got.edge ? { removed: true, ...made } : { ...got.edge, ...made };
     },
   };
 }

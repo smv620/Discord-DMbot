@@ -20,7 +20,9 @@ SITE = "https://dmbot.example"
 
 
 def press(user: int, *, site: str = SITE, found: Any = "yes", dms: tuple[int, ...] = (DM,)) -> Any:
-    here = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids=set(dms))
+    here = SimpleNamespace(
+        id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids=set(dms), dm_accounts=set(dms)
+    )
     store = SimpleNamespace(
         get=AsyncMock(return_value=here if found == "yes" else None),
         list_campaigns=AsyncMock(return_value=[here]),
@@ -97,9 +99,15 @@ class TheReply(WithTheSwitch):
 
     async def test_a_dm_of_several_campaigns_gets_one_link_for_each(self) -> None:
         it = press(DM)
-        other = SimpleNamespace(id="d" * 32, guild_id=GUILD, name="Embers", dm_user_ids={DM})
-        mine = SimpleNamespace(id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids={DM})
-        theirs = SimpleNamespace(id="e" * 32, guild_id=GUILD, name="Not mine", dm_user_ids={PLAYER})
+        other = SimpleNamespace(
+            id="d" * 32, guild_id=GUILD, name="Embers", dm_user_ids={DM}, dm_accounts={DM}
+        )
+        mine = SimpleNamespace(
+            id=CAMPAIGN, guild_id=GUILD, name="Frost", dm_user_ids={DM}, dm_accounts={DM}
+        )
+        theirs = SimpleNamespace(
+            id="e" * 32, guild_id=GUILD, name="Not mine", dm_user_ids={PLAYER}, dm_accounts={PLAYER}
+        )
         it.client.campaigns.list_campaigns = AsyncMock(return_value=[mine, other, theirs])
         await import_command.dmbot_import.callback(it)  # type: ignore[call-arg]
         text, view = told(it)
@@ -115,7 +123,9 @@ class TheReply(WithTheSwitch):
     async def test_after_five_campaigns_it_says_how_many_more(self) -> None:
         it = press(DM)
         many = [
-            SimpleNamespace(id=f"{n:032x}", guild_id=GUILD, name=f"C{n}", dm_user_ids={DM})
+            SimpleNamespace(
+                id=f"{n:032x}", guild_id=GUILD, name=f"C{n}", dm_user_ids={DM}, dm_accounts={DM}
+            )
             for n in range(7)
         ]
         it.client.campaigns.list_campaigns = AsyncMock(return_value=many)

@@ -20,7 +20,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from dmbot import ai_feed
+from dmbot import ai_feed, credits
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript.cleaner import clean
@@ -170,12 +170,12 @@ class ImportStore:
         """The filter leans to keeping here too (#2567): once the lines are labelled, what the AI
         was not sure about is kept, as at the end of a live session (`settle_topics`), with the
         campaign's DMs, before the name scan reads the lines."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT user_id FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s",
-                (guild_id, campaign_id),
-            )
-            dms = {int(r["user_id"]) for r in await cur.fetchall()}
+        # The Discord IDs that can act as a DM, not the account numbers the table holds: lines are
+        # labelled with the speaker's Discord ID (#2533).
+        from dmbot.campaigns.store import CampaignStore
+
+        campaign = await CampaignStore(self._db).get(guild_id, campaign_id)
+        dms = set(campaign.dm_user_ids) if campaign is not None else set()
         return await TranscriptStore(self._db).settle_topics(guild_id, session_id, dms)
 
     async def ready_for_scan(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
@@ -515,7 +515,11 @@ class ImportJob:
         try:
             # Every AI call of this cleaning belongs to this session's import, for the DM's live
             # window on the import page (#3710); the import page knows its sessions by this id.
-            with ai_feed.job(guild_id, campaign_id, "import", session_id, step=TIDYING):
+            # (the cleaning is made because the DM imported a session, so it is metered, #4005)
+            with (
+                credits.preparing(guild_id, campaign_id, "import"),
+                ai_feed.job(guild_id, campaign_id, "import", session_id, step=TIDYING),
+            ):
                 await self._run(guild_id, campaign_id, session_id)
         except asyncio.CancelledError:
             await asyncio.shield(self.store.back_to_waiting(guild_id, session_id))

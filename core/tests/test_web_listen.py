@@ -14,6 +14,7 @@ import io
 import logging
 import math
 import struct
+import time
 import wave
 from types import SimpleNamespace
 from typing import Any
@@ -209,7 +210,9 @@ class Listening(Base):
     # ---- the bot's half -----------------------------------------------------------------
 
     def campaign(self, *dms: int) -> Any:
-        return SimpleNamespace(dm_user_ids=frozenset(dms or (ALICE.id,)))
+        return SimpleNamespace(
+            dm_user_ids=frozenset(dms or (ALICE.id,)), dm_accounts=frozenset(dms or (ALICE.id,))
+        )
 
     def item(self, clip: bytes | None = None, **kw: Any) -> bot.Listen:
         return bot.Listen(
@@ -297,7 +300,10 @@ class Listening(Base):
         self.assertEqual((first.tries, second.tries), (1, 2))
         self.assertFalse(await store.finish(THURSDAY.id, first, bot.Outcome(respelling="late")))
         self.assertTrue(await store.finish(THURSDAY.id, second, bot.Outcome(respelling="ok")))
-        old = bot.ListenStore(self.db, clock=lambda: NOW + bot.KEEP_FOR_S + 1000)
+        # (the door made the row at this test's real time, not at NOW, which is when the file was
+        # loaded: late in a long run the row is younger than the sweep's age and none is swept)
+        later = int(time.time()) + bot.KEEP_FOR_S + 1000
+        old = bot.ListenStore(self.db, clock=lambda: later)
         self.assertEqual(await old.sweep(THURSDAY.id), 1)
 
     async def test_nothing_the_dm_said_reaches_a_log_line(self) -> None:

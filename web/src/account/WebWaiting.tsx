@@ -8,6 +8,7 @@
 // is read again after, so what shows is always the API's own.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { handBracket, handKeeps } from "../content/hand-over-words";
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
@@ -42,9 +43,14 @@ function waitShown(sending: { since: number; stage: string; keepAll: boolean; lo
 /** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
 const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
+/** The bracket for an item that changed hands, "Claude sold it", or "" for a plain connection or a previous holder the page cannot name. */
+const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
+const handOf = bracketOf; // (no switch: the fields only arrive with the door that sends them, 0436)
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
-type Said = { ok: boolean; text: string; n: number } | null;
+type Said = { ok: boolean; text: string; n: number; more?: string } | null;
+/** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
+type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -117,7 +123,7 @@ export default function WebWaiting({
 
   async function send(
     answer: WaitingAnswer,
-    ok: string | ((kept?: number) => string),
+    ok: string | ((got: Answered) => string),
     stage: string = w.savingStage,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
@@ -127,7 +133,11 @@ export default function WebWaiting({
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
-      setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
+      // A yes on one connection says whether it was shown to the players or kept hidden (the second line).
+      const more = answer.kind === "claim" && answer.action === "confirm"
+        ? got.shown ? w.shownOne : got.held ? w.heldOne : got.scene ? w.sceneOne : got.split ? w.splitOne : undefined
+        : undefined;
+      setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
       onChanged?.();
     } catch (error) {
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
@@ -192,6 +202,11 @@ export default function WebWaiting({
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {said?.ok && said.more ? (
+        <p class="ok" role="status">
+          <span key={`${said.n}-more`}>{said.more}</span>
+        </p>
+      ) : null}
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
@@ -455,7 +470,7 @@ export default function WebWaiting({
           <h4>{w.backstoryHeading}</h4>
           <p class="small">{w.backstoryNote}</p>
           {uploads.map((u) => {
-            const ready = u.items.filter((b) => b.ready);
+            const ready = u.items.filter((b) => b.ready && !handOf(b));
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
             return (
@@ -469,7 +484,7 @@ export default function WebWaiting({
                       disabled={busy}
                       onClick={() =>
                         void send({ kind: "backstory", action: "keep_all", ids },
-                          (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
+                          (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
                         )
                       }
@@ -480,10 +495,11 @@ export default function WebWaiting({
                 )}
                 {u.items.map((b) => (
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
-                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}{handOf(b) ? ` (${handOf(b)})` : ""}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
+                    {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
                     {b.ready ? (
                       <div class="row">
                         <button

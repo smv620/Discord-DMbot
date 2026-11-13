@@ -133,21 +133,31 @@ class TheStore(WithImports):
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}), dm_screen_channel_id=66,
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=66,
+        dm_bot_channel_id=None, ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
         settings=SimpleNamespace(recaps_on=True),
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
-        **{"memory": object(), **kw},
+        **{"memory": SimpleNamespace(entities=AsyncMock(return_value=[])), **kw},
         consent=SimpleNamespace(
-            consenting=AsyncMock(return_value={MIRA}), agreed=AsyncMock(return_value={MIRA})
+            consenting=AsyncMock(return_value={MIRA}),
+            agreed=AsyncMock(return_value={MIRA}),
+            recorded_in=AsyncMock(return_value={MIRA}),
         ),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True),
+            waiting_for_script=AsyncMock(return_value=False),
+        ),
         plan_allows=AsyncMock(return_value=True),
         recap_holds=None,
         post=AsyncMock(return_value=True),
         _import_names={},
+        _import_speakers={},
+        _import_entries={},
+        _import_batches={},
+        _import_starts={},
         _import_reports={},
         _import_unhonoured={},
         _import_party={},
@@ -170,6 +180,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_start_import_recap",
         "_apply_import_plays",
         "_tell_import_news",
+        "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
     ):
@@ -492,6 +503,40 @@ class TheCrashAndTheNews(WithImports):
         await one._tell_import_news(GUILD, self.store)
         self.assertIn("1 recap you asked for", one.post.await_args.args[1])
 
+    async def test_new_names_go_to_the_dm_bot_channel_as_a_count_and_to_the_screen_by_name(
+        self,
+    ) -> None:
+        # (#3874) the DM Bot channel is read by the campaign's people: a count there, the names in
+        # the DM's private check; with no DM Bot channel the DM screen keeps the names as before
+        for bot_channel, expect_channel, names_shown in ((88, 88, False), (None, 66, True)):
+            bot, campaign = fake_bot(self.store)
+            campaign.id = self.campaign.id
+            campaign.dm_bot_channel_id = bot_channel
+            bot._import_names[self.campaign.id] = ["Bryn Shander", "Kazeth"]
+            await bot._tell_import_news(GUILD, self.store)
+            channel, text = bot.post.await_args.args[:2]
+            self.assertEqual(channel, expect_channel)
+            self.assertIn("2 new names to check", text)
+            self.assertIn("your imported sessions", text)
+            self.assertEqual("Bryn Shander" in text, names_shown)
+            if not names_shown:
+                self.assertNotIn("Bryn", text)  # (the privacy intent, stated directly)
+                self.assertNotIn("Kazeth", text)
+            self.assertIsNotNone(bot.post.await_args.kwargs["view"])  # (the Check button)
+
+    async def test_the_given_up_note_in_the_dm_bot_channel_is_a_count_and_has_no_button(
+        self,
+    ) -> None:
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        bot._import_unchecked[self.campaign.id] = 2
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("2 imported sessions", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
         bot, campaign = fake_bot(self.store)
@@ -685,9 +730,19 @@ class TheFollowUp(WithImports):
     async def test_the_scan_asks_only_about_lines_of_people_who_still_agree(self) -> None:
         await self.imported(1)
         bot, _ = await self.bot()
-        bot.consent.consenting = AsyncMock(return_value=set())  # Mira stopped being recorded
+        bot.consent.recorded_in = AsyncMock(return_value=set())  # Mira stopped being recorded
         await rounds(bot, 1)
         bot._propose_new_names.assert_not_awaited()
+
+    async def test_an_imported_speaker_confirmed_for_the_campaign_is_scanned(self) -> None:
+        """#3962: a speaker the uploader confirmed counts (`recorded_in`), though they never
+        agreed in Discord (`consenting` is empty): their lines are scanned and can show names."""
+        await self.imported(1)
+        bot, _ = await self.bot()
+        bot.consent.consenting = AsyncMock(return_value=set())
+        bot.consent.recorded_in = AsyncMock(return_value={MIRA})
+        await rounds(bot, 1)
+        bot._propose_new_names.assert_awaited()
 
     async def test_who_agrees_is_asked_after_the_lines_are_read(self) -> None:
         await self.imported(1)
@@ -704,7 +759,7 @@ class TheFollowUp(WithImports):
             return {MIRA}
 
         self.store.scan_lines = lines  # type: ignore[assignment]
-        bot.consent.consenting = agreed
+        bot.consent.recorded_in = agreed
         await rounds(bot, 1)
         self.assertEqual(order, ["lines", "consent"])  # a stop during the read is not missed
 
@@ -721,6 +776,7 @@ class TheFollowUp(WithImports):
         def no_dm(b: Any, c: Any) -> None:
             c.owner_user_id = 0
             c.dm_user_ids = frozenset()
+            c.dm_accounts = frozenset()
 
         cases: dict[str, Callable[[Any, Any], None]] = {
             "recaps off": recaps_off,

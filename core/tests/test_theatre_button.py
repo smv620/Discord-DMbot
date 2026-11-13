@@ -7,13 +7,11 @@ from __future__ import annotations
 
 import re
 import unittest
-from functools import partial
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
-from dmbot.dm_questions import SCRIPT
 from dmbot.transcript import theatre_job as job
 from dmbot.ui import theatre_button as tb
 
@@ -29,17 +27,19 @@ def bot(*, on: bool = True, plan: bool = True, lines: int = 300) -> Any:
         transcripts=SimpleNamespace(
             session=AsyncMock(
                 return_value=SimpleNamespace(lines=lines, campaign_id="c" * 32, number=2)
-            )
+            ),
+            is_import=AsyncMock(return_value=False),  # (a live session: its script is not metered)
         ),
         campaigns=SimpleNamespace(
             get=AsyncMock(
-                return_value=SimpleNamespace(dm_user_ids=frozenset({DM}), dm_screen_channel_id=9)
+                return_value=SimpleNamespace(
+                    dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_screen_channel_id=9
+                )
             )
         ),
         plan_allows=AsyncMock(return_value=plan),
         ask_dm=AsyncMock(),
     )
-    me.offer_script = partial(BOT.offer_script, me)
     return me
 
 
@@ -66,35 +66,7 @@ def pressed(me: Any, user: int) -> Any:
     )
 
 
-class TheOffer(unittest.IsolatedAsyncioTestCase):
-    async def test_it_is_offered_with_the_switch_and_the_plan(self) -> None:
-        me = bot()
-        await me.offer_script(table())
-        me.ask_dm.assert_awaited_once()
-        ask = me.ask_dm.await_args.args[1]
-        self.assertEqual(ask.kind, SCRIPT)
-        self.assertIsInstance(ask.button(), tb.ScriptButton)
-        # the cost and who can read it are in the question, so the button is the one "yes"
-        self.assertIn(job.estimate_line(300), ask.alone)
-        self.assertIn(job.PRIVATE_NOTE, ask.alone)
-        self.assertIn("Nothing is used until you press the button.", ask.alone)
-
-    async def test_it_is_hidden_when_the_switch_is_off(self) -> None:
-        me = bot(on=False)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-
-    async def test_it_is_hidden_when_the_plan_does_not_allow_it_or_cannot_be_checked(self) -> None:
-        me = bot(plan=False)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-        self.assertEqual(me.plan_allows.await_args.kwargs, {"fail_open": False})
-
-    async def test_a_session_with_no_lines_gets_no_offer(self) -> None:
-        me = bot(lines=0)
-        await me.offer_script(table())
-        me.ask_dm.assert_not_awaited()
-
+class TheButton(unittest.IsolatedAsyncioTestCase):
     def test_the_button_knows_its_server_and_session_after_a_restart(self) -> None:
         button = tb.ScriptButton(GUILD, SESSION)
         custom_id = button.item.custom_id
@@ -114,7 +86,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         return me
 
     async def test_one_press_by_a_dm_answers_first_then_starts_the_script(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot(lines=300)
         interaction = pressed(me, DM)
@@ -136,7 +107,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(tb, "Confirm"))  # no second "are you sure?" step
 
     async def test_a_press_after_the_script_is_made_spends_nothing_and_says_so(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot()
         interaction = pressed(me, DM)
@@ -151,7 +121,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         self.assertIn(f"/account/transcripts/{GUILD}.{'c' * 32}/2", self.said(interaction))
 
     async def test_a_failed_earlier_run_may_be_tried_again(self) -> None:
-        from unittest.mock import patch
 
         interaction = pressed(self.bot(), DM)
         with (
@@ -163,7 +132,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
         made.assert_awaited_once()
 
     async def test_a_player_is_refused_even_when_the_screen_shows_the_button(self) -> None:
-        from unittest.mock import patch
 
         me = self.bot()
         interaction = pressed(me, PLAYER)
@@ -188,7 +156,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     async def test_a_question_from_before_this_change_starts_nothing_and_offers_the_new_one(
         self,
     ) -> None:
-        from unittest.mock import patch
 
         interaction = pressed(self.bot(lines=300), DM)
         old = tb.OldScriptButton(GUILD, SESSION)
@@ -209,7 +176,6 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     async def test_the_old_button_makes_the_same_checks_and_never_re_offers_a_made_script(
         self,
     ) -> None:
-        from unittest.mock import patch
 
         for me, user, words in (
             (self.bot(), PLAYER, tb.ONLY_DMS),
@@ -224,6 +190,43 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
             runs.return_value.state = AsyncMock(return_value="done")
             await tb.OldScriptButton(GUILD, SESSION).callback(interaction)
         self.assertIn(tb.ALREADY_MADE, self.said(interaction))
+
+
+class TheCreditWords(unittest.IsolatedAsyncioTestCase):
+    def test_the_question_names_the_credits_only_for_an_imported_session(self) -> None:
+        live = (
+            '📜 **Make a script of this session?** Each "he", "it" and "that one" gets the name it '
+            f"means, in brackets.\n{job.estimate_line(300)} {job.PRIVATE_NOTE}\n"
+            "Nothing is used until you press the button."
+        )
+        self.assertEqual(tb.ask_text(300), live)  # the live question is unchanged
+        self.assertEqual(tb.ask_text(300), tb.ask_text(300, imported=False))
+        imported = tb.ask_text(300, imported=True)
+        self.assertIn(job.credit_line(True), imported)
+        self.assertIn(job.estimate_line(300), imported)
+
+    async def test_the_old_question_for_an_imported_session_names_the_credits(self) -> None:
+        for check, names in (
+            (AsyncMock(return_value=True), True),
+            (AsyncMock(return_value=False), False),
+            # a failed read: still asked, with no credits
+            (AsyncMock(side_effect=OSError("down")), False),
+        ):
+            me = self.bot_with(check)
+            interaction = pressed(me, DM)
+            with patch.object(tb, "TheatreRuns") as runs:
+                runs.return_value.state = AsyncMock(return_value=None)
+                await tb.OldScriptButton(GUILD, SESSION).callback(interaction)
+            said = str(interaction.followup.send.await_args.args[0])
+            self.assertIn(tb.OLD_QUESTION, said)
+            self.assertEqual(job.credit_line(True) in said, names)
+            check.assert_awaited_with(GUILD, SESSION)
+
+    def bot_with(self, check: Any) -> Any:
+        me = bot(lines=300)
+        me.campaigns.db = object()
+        me.transcripts.is_import = check
+        return me
 
 
 class TheRun(unittest.IsolatedAsyncioTestCase):
@@ -250,7 +253,6 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         return c
 
     async def go(self, c: Any, outcome: job.Outcome) -> tuple[job.Outcome, Any]:
-        from unittest.mock import patch
 
         async def fake(*a: Any, **kw: Any) -> job.Outcome:
             if outcome.text and outcome.started:
@@ -269,6 +271,42 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw["known"], ["Kell"])
         self.assertEqual(kw["agreed"], {DM})
         self.assertEqual(kw["link"], f"https://x.test/account/transcripts/{GUILD}.{'c' * 32}/2")
+
+    async def test_an_imported_sessions_script_is_metered_and_a_live_ones_is_not(self) -> None:
+        from dmbot import credits
+
+        seen: list[Any] = []
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            seen.append(credits.current())
+            return job.Outcome("Script ready", started=True, ok=True)
+
+        for imported in (False, True):
+            me = self.bot()
+            me.transcripts.is_import = AsyncMock(return_value=imported)
+            seen.clear()
+            with patch.object(job, "make_script", AsyncMock(side_effect=fake)):
+                await tb.run(self.card(me), GUILD, SESSION)
+            self.assertEqual(
+                [s.job_kind if s else None for s in seen], ["script" if imported else None]
+            )
+        self.assertIsNone(credits.current())
+
+    async def test_a_failed_import_check_still_makes_the_script_unmetered(self) -> None:
+        from dmbot import credits
+
+        seen: list[Any] = []
+
+        async def fake(*a: Any, **kw: Any) -> job.Outcome:
+            seen.append(credits.current())
+            return job.Outcome("Script ready", started=True, ok=True)
+
+        me = self.bot()
+        me.transcripts.is_import = AsyncMock(side_effect=OSError("down"))
+        with patch.object(job, "make_script", AsyncMock(side_effect=fake)):
+            got = await tb.run(self.card(me), GUILD, SESSION)
+        self.assertEqual(seen, [None])
+        self.assertTrue(got.ok)
 
     async def test_the_switch_and_the_plan_are_checked_again_when_it_is_confirmed(self) -> None:
         for me, words in ((self.bot(on=False), tb.OFF), (self.bot(plan=False), tb.NO_PLAN)):

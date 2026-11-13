@@ -7,6 +7,7 @@
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
 import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
+import PlayersKnow from "./PlayersKnow";
 import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -26,6 +27,10 @@ const POLL_LIMIT = 30; // about a minute: the bot normally answers within second
 const SPLIT_ACTIONS = new Set(["split", "join_group", "make_group"]);
 /** The sentence for a refusal word the bot gave for a split, a group or an Undo; "" for any other word. */
 const splitReason = (code: string): string => (Object.hasOwn(gw.errors, code) ? gw.reason(code) : "");
+
+/** A name read from a picture carries its own sentence about where it came from ("Read from a picture on page 3 as …", #4003,
+ * #4116): it is shown as it is, not under "From the recap:", which would be wrong for it. */
+export const noteSaysWhere = (note: string): boolean => /^Read from a picture\b/.test(note);
 
 export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId: string }) {
   const [list, setList] = useState<NameCheckList | null>(null);
@@ -356,10 +361,12 @@ function NameRow({
         <strong id={`${id}-name`}>{name.name}</strong>
         {name.note && (
           <p class="small muted">
-            {words.noteFrom} {name.note}
+            {noteSaysWhere(name.note) ? "" : `${words.noteFrom} `}
+            {name.note}
           </p>
         )}
         <SceneLine scene={name.scene} />
+        <PlayersKnow line={name.playersText} campaignRef={campaignRef} name={name.name} />
         {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>

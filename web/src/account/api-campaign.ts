@@ -33,6 +33,7 @@ import type {
   SheetAnswer,
   StretchLine,
   Timeline,
+  ScriptOffer,
   TranscriptCampaign,
   TranscriptSessionItem,
   TranscriptView,
@@ -41,6 +42,7 @@ import {
   ApiError,
   errorKinds,
   fixErrorKinds,
+  sharedOf,
 } from "./api";
 import type { AccountApi, ApiErrorKind, ApiHelpers } from "./api";
 
@@ -53,6 +55,18 @@ const pictureErrorKinds: Record<string, ApiErrorKind> = {
 
 /** The script download's own refusal (#3244): a session with no script. Only that call reads it. */
 const scriptErrorKinds: Record<string, ApiErrorKind> = { ...errorKinds, no_script: "no-script" };
+
+/** The make-script action's own refusals (#3899): the plan gate, scripts off, and one already made. */
+// `busy`: another run (the automatic script) already has the session, so the press is not a failure: the script is on its way (#3933).
+// `not-allowed`: the bot's word for a press by someone who is no longer a game master.
+const makeScriptErrorKinds: Record<string, ApiErrorKind> = {
+  ...errorKinds,
+  plan: "plan-needed",
+  off: "script-off",
+  already: "script-already",
+  busy: "still-waiting",
+  "not-allowed": "not-allowed",
+};
 
 /** The route's own action names; the page's names for the same things are mapped here only (#3275). */
 const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
@@ -131,6 +145,31 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
         false,
         scriptErrorKinds,
       )) as Blob,
+    scriptOffer: async (campaignRef, number) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/script-offer`)) as ScriptOffer,
+    // One press queues the job for the bot, then it is polled like any queued change (a script can take minutes).
+    makeScript: async (campaignRef, number, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/script`;
+      const queued = (await call("POST", base, {}, false, undefined, false, makeScriptErrorKinds)) as { id: string };
+      if (!queued?.id) throw new ApiError("server");
+      let misses = 0;
+      for (let i = 0; i < 300; i++) {
+        let got = null as { state?: string; error?: string; progress?: unknown } | null;
+        try {
+          got = (await call("GET", `${base}/${encodeURIComponent(queued.id)}`, undefined, false, undefined, false, makeScriptErrorKinds)) as NonNullable<typeof got>;
+          misses = 0;
+        } catch (error) {
+          // A refusal ends it; a trouble in reaching the server is waited out, a few looks, then said.
+          if (error instanceof ApiError && ["signed-out", "not-found", "not-allowed", "plan-needed", "script-off", "script-already"].includes(error.kind)) throw error;
+          if ((misses += 1) >= 5) throw new ApiError("server");
+        }
+        if (got) onLook?.(sharedOf(got.progress as never));
+        if (got?.state === "done") return;
+        if (got?.state === "failed") throw new ApiError(makeScriptErrorKinds[got.error ?? ""] ?? "server");
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new ApiError("still-waiting");
+    },
     transcriptStretch: async (campaignRef, number, skip) =>
       (
         (await call(

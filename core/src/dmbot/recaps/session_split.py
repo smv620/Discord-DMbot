@@ -92,8 +92,9 @@ class SessionSplitter:
             split = await self._make(said, inputs, consenting)
             if split is None:  # a failed call: all play for now, tried again next time
                 return None
-            if split.method != "ai" or split.unsure:
-                # Only an answer the AI gave and the code backed up is kept for good. A cut or
+            if split.method not in ("ai", sp.RULE) or split.unsure:
+                # Only an answer the AI gave and the code backed up, or a spoken recap the rule
+                # found (#3298: the DM sees its count and can undo it), is kept for good. A cut or
                 # unreadable answer, a doubt, or the code's own guess is used for this read and
                 # asked again next time, so one bad reply never fixes the session's split.
                 return split
@@ -110,8 +111,10 @@ class SessionSplitter:
         """The labelling of `pipeline._split`, without the job: None if a call failed or someone
         stopped being recorded while it ran."""
         earlier = inputs.earlier
-        if earlier is None:  # nothing to retell: all play, no call
-            return sp.all_play(said)
+        if earlier is None:
+            # No earlier session to check a retelling against: only a spoken recap code can see
+            # for itself is marked (#3298), anything else is play. No call either way.
+            return sp.spoken_recap(said, inputs.dm_ids) or sp.all_play(said)
         region = sp.opening_of(said)
         rows = [
             (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text)

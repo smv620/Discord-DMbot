@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { FEELINGS } from "../content/knows-feeling-words";
 import { feelingWords as w } from "../content/knows-feeling-text";
 import type { WebLink, WebLinkChange } from "./api";
+import SavingWait from "./SavingWait";
 
 function fromLine(source: WebLink["source"]): string {
   if (source?.type === "session" && source.n) return w.from.session(source.n);
@@ -70,6 +71,7 @@ export default function LinkFeeling({
         </button>
         {picked !== feeling && <span class="small muted">{w.notSaved}</span>}
       </div>
+      <SavingWait active={saving} />
       {problem && (
         <p class="warn small" role="alert">
           {problem}

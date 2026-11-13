@@ -614,6 +614,22 @@ class UnnamedPeople(unittest.TestCase):
         report = gkc.check(old, self.raider_key())
         self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
 
+    def test_the_wind_spirit_is_found_by_the_lores_own_words(self) -> None:
+        # (the owner, 2026-11-10: lore line 30 says "an ancient wind spirit", which DMbot keeps as
+        # "unnamed - ancient wind spirit"; with only "The wind spirit" in the key, a right find and
+        # its tie to Okthandom, l035, both scored as misses)
+        key = load("lore_key.json")
+        data = backup(
+            [("ok", "Okthandom Korran", "character"), ("ws", "unnamed - ancient wind spirit",
+             "creature")],
+            [rel("r1", "ws", "associated_with", "ok")],
+        )  # fmt: skip
+        data["sections"]["memory"][1]["unnamed"] = True
+        report = gkc.check(data, key, "lore")
+        (spirit,) = [e for e in report.entries if e.id == "The wind spirit"]
+        (tie,) = [t for t in report.ties if t.id == "l035"]
+        self.assertEqual((spirit.status, tie.status), (gkc.FOUND, gkc.FOUND))
+
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
         data = backup([("u1", "unnamed - the attackers", "character")], [])
@@ -623,3 +639,45 @@ class UnnamedPeople(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceFacts(unittest.TestCase):
+    """A place's land, climate and ruler, scored per layer (#4256)."""
+
+    def test_found_wrong_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Dale", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Vault", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Council", "kind": "group", "aliases": [], "note": ""},
+            ],
+            "pairs": [],
+            "map_facts": [
+                {"place": "Dale", "layer": "climate", "value": "arctic"},
+                {"place": "Vault", "layer": "terrain", "value": "underdark"},
+                {"place": "Dale", "layer": "control", "value": "Council"},
+            ],
+        }
+
+        def fact(
+            i: str, place: str, layer: str, value: str = "", group: str | None = None
+        ) -> dict[str, Any]:
+            return {
+                "table": "map_fact", "id": i, "entity_id": place, "layer": layer, "value": value,
+                "faction_id": group, "status": "read", "to_session_at": None,
+            }  # fmt: skip
+
+        rows = [
+            fact("f1", "d", "climate", "arctic"),  # found
+            fact("f2", "v", "terrain", "mountain"),  # wrong
+            fact("f3", "d", "terrain", "hill"),  # extra: the key says nothing of Dale's land
+        ]
+        data = backup(
+            [("d", "Dale", "place"), ("v", "Vault", "place"), ("c", "Council", "faction")], rows
+        )
+        report = gkc.check(data, key)
+        self.assertEqual(report.map_facts["climate"]["found"], 1)
+        self.assertEqual(report.map_facts["terrain"]["wrong"], 1)
+        self.assertEqual(report.map_facts["terrain"]["extra"], 1)
+        self.assertEqual(report.map_facts["control"]["missed"], 1)
+        self.assertIn("Place climate: found 1, wrong 0, missed 0, extra 0", gkc.render(report))

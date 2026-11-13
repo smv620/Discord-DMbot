@@ -23,6 +23,10 @@ import { checkBuild, table } from "./weight.mjs";
 // the switched panels) load on demand with import(), so the recaps page is 174 KB and the largest page
 // is /account at 178.8 KB. The budget is back at 185 KB. A chunk loaded on demand is not part of a page's
 // weight, so it has its own limit.
+// Raised on 2026-11-11 (#4084) to 186 KB, for one reason: the Story Graph page (/account/web) was at 185.0 KB (the connection panel's
+// work in #4155 already moved its banner and button into lazy files), and a website feature's API methods must be named in
+// `NAMES_METHODS` in the first download (here `metList`, `answerMet`: about 22 bytes). Nothing else on the page grew; the list
+// itself is in a lazy file.
 // Raised on 2026-11-08 (#3855): the search bar's island is on every page once SEARCH_LIVE is on. Measured with it off and on:
 // the island's own chunk is 10.1 KB (4.1 KB compressed); a page with no island of its own also gains Astro's small start-up
 // script in its HTML (index.html 15.6 to 21.2 KB, help.html 51.5 to 57.0 KB, 2.2 KB compressed); every page gains 1.2 to

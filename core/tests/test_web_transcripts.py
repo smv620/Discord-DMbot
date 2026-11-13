@@ -560,7 +560,7 @@ class KeepDays(Transcripts):
 class Characters(Transcripts):
     """The `{character}` labels (#1512): the export's rule in a door, for any member."""
 
-    expected_characters: ClassVar[dict[int, str]] = {BOB.id: "Dorn"}
+    expected_characters: ClassVar[dict[int, str]] = {BOB.id: "Cerric / Dorn"}
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -581,7 +581,7 @@ class Characters(Transcripts):
             status="proposed", role="player_character",
         )  # fmt: skip
         async with self.db.guild(g) as conn:
-            # Dorn is the newer of Bob's two; Mira's own name is a secret.
+            # Cerric is the older of Bob's two, Dorn the newer; Mira's own name is a secret.
             await conn.execute(
                 "UPDATE memory_entities SET created_at = 10"
                 " WHERE campaign_id = %s AND name = 'Cerric'",
@@ -600,9 +600,11 @@ class Characters(Transcripts):
     async def chars(self, who: Any) -> dict[int, str]:
         return await transcripts._characters(self.web, who, THURSDAY.id, self.one.id)
 
-    async def test_newest_wins_and_a_secret_a_dm_and_a_guess_never_show(self) -> None:
+    async def test_all_of_a_players_characters_and_never_a_secret_a_dm_or_a_guess(self) -> None:
         got = await self.chars(self.carol)
-        self.assertEqual(got, {BOB.id: "Dorn"})  # Bob's newer character; not Mira (secret name),
+        self.assertEqual(
+            got, {BOB.id: "Cerric / Dorn"}
+        )  # both of Bob's, oldest first; not Mira (secret name),
         # not Hiro (Alice is a DM of the campaign), not Ghost (only a guess)
 
     async def test_any_member_may_ask_and_a_person_outside_the_server_gets_none(self) -> None:
@@ -640,14 +642,80 @@ class Characters(Transcripts):
             )
         self.assertNotIn(5005, await self.chars(self.carol))
 
+    async def test_a_plays_link_that_ended_never_beats_one_that_holds(self) -> None:
+        # (#4137: Player 5 played Vex, and now plays Ash; Vex's link was written later and ended)
+        g, c = THURSDAY.id, self.one.id
+        made = {}
+        for name in ("Ash", "Vex"):
+            made[name] = (
+                await self.memory.add_entity(
+                    g, c, type="character", name=name, source=DM_SOURCE, status="confirmed"
+                )
+            ).value.id
+        async with self.db.guild(g) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by) VALUES (%s, %s, %s, 'person', 'Player 5',"
+                " '', 'confirmed', 'dm', 0, %s)",
+                (g, c, "d" * 32, 5005),
+            )
+            for rid, who, at, ended in (("a" * 32, made["Ash"], 5, None),
+                                        ("b" * 32, made["Vex"], 9, 10)):  # fmt: skip
+                await conn.execute(
+                    "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id,"
+                    " predicate, object_id, detail, confidence, status, source, mention_ids,"
+                    " secret, created_at, to_session_at) VALUES (%s, %s, %s, %s, 'plays', %s, '',"
+                    " 1, 'confirmed', 'dm', '{}', FALSE, %s, %s)",
+                    (g, c, rid, "d" * 32, who, at, ended),
+                )
+        self.assertEqual((await self.chars(self.carol))[5005], "Ash")
+        async with self.db.guild(g) as conn:  # (playing no one now: the old one is the fallback)
+            await conn.execute("UPDATE memory_relations SET to_session_at = 6 WHERE id = %s",
+                               ("a" * 32,))  # fmt: skip
+        self.assertEqual((await self.chars(self.carol))[5005], "Vex")
+
     async def test_it_agrees_with_the_bots_own_rule_for_ordinary_data(self) -> None:
         lookup = await LookupCache(self.memory).get(THURSDAY.id, self.one.id)
         theirs = {u: n for u, n in cleaner.characters(lookup).items() if u != ALICE.id}
         self.assertEqual(await self.chars(self.carol), {BOB.id: theirs[BOB.id]})
+        self.assertEqual(theirs[BOB.id], "Cerric / Dorn")
+
+    async def test_three_characters_and_a_tie_in_time_order_alike_in_sql_and_python(
+        self,
+    ) -> None:
+        g, c = THURSDAY.id, self.one.id
+        for name in ("Ash", "Bryn"):
+            await self.memory.add_entity(
+                g, c, type="character", name=name, played_by=BOB.id, source=DM_SOURCE,
+                status="confirmed", role="player_character",
+            )  # fmt: skip
+        async with self.db.guild(g) as conn:  # Dorn, Ash and Bryn were made in the same second
+            await conn.execute(
+                "UPDATE memory_entities SET created_at = 20"
+                " WHERE campaign_id = %s AND name IN ('Ash', 'Bryn')",
+                (c,),
+            )
+        lookup = await LookupCache(self.memory).get(g, c)
+        theirs = cleaner.characters(lookup)[BOB.id]
+        self.assertEqual((await self.chars(self.carol))[BOB.id], theirs)
+        self.assertEqual(len(theirs.split(" / ")), 4)
+        self.assertTrue(theirs.startswith("Cerric / "))
+
+    async def test_a_merged_character_is_left_out_and_one_character_is_unchanged(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'merged', merged_into = ("
+                " SELECT id FROM memory_entities WHERE campaign_id = %s AND name = 'Dorn')"
+                " WHERE campaign_id = %s AND name = 'Cerric'",
+                (self.one.id, self.one.id),
+            )
+        self.assertEqual(await self.chars(self.carol), {BOB.id: "Dorn"})
+        lookup = await LookupCache(self.memory).get(THURSDAY.id, self.one.id)
+        self.assertEqual(cleaner.characters(lookup)[BOB.id], "Dorn")
 
     async def test_the_labels_are_in_the_page_and_the_download_matches_the_bots_file(self) -> None:
         shown = await read(self.web, self.carol, self.cref, 2, "heard")
-        self.assertTrue(any("{Dorn}" in line for line in shown["lines"]), shown["lines"])
+        self.assertTrue(any("{Cerric / Dorn}" in line for line in shown["lines"]), shown["lines"])
         name, text = await transcripts.render(
             self.web, self.carol, self.cref, 2, "heard", now=NOW, enforce_plans=False
         )
@@ -657,7 +725,7 @@ class Characters(Transcripts):
         assert stored is not None
         expected = export.render(
             "One", stored, lines, transcripts.speaker_names(lines, export.AS_HEARD),
-            characters={BOB.id: "Dorn"}, dms={ALICE.id}, version=export.AS_HEARD,
+            characters={BOB.id: "Cerric / Dorn"}, dms={ALICE.id}, version=export.AS_HEARD,
         )  # fmt: skip
         self.assertEqual(text, expected)
         self.assertEqual(name, export.file_name("One", stored, export.AS_HEARD))

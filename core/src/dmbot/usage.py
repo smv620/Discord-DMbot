@@ -206,6 +206,15 @@ async def add_minutes(
             " updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, session_started_at, owner_user_id, minutes, now),
         )
+        if owner_user_id not in entitlements.free_users() and await entitlements.on_free_guild(
+            conn
+        ):
+            # Free because of the server, not the person (#3792): the session's minutes are kept,
+            # but they are not this owner's plan hours, which a paid owner's other servers draw
+            # on. Nothing to limit, so no standing to report either.
+            return Standing(
+                s.access, s.month, used_before=0, used_after=0, buys_hours=False, renews=False
+            )
         # The row lock this upsert takes serialises two campaigns of one owner ticking at
         # once; the total it returns, not the earlier read, says where the hours stand now.
         cur = await conn.execute(
@@ -220,6 +229,52 @@ async def add_minutes(
     after = int(row["minutes"])
     grace = None if row["grace_session"] is None else int(row["grace_session"])
     return Standing(s.access, s.month, after - minutes, after, grace, s.buys_hours, s.renews)
+
+
+async def add_credits(
+    db: Database,
+    *,
+    guild_id: int,
+    campaign_id: str,
+    owner_user_id: int,
+    spend_id: str,
+    job_kind: str,
+    feature: str,
+    credits: int,
+    now_ms: int,
+) -> None:
+    """Write one AI call's cost (#4005): its ledger row and, for a paid owner, their month's total,
+    in one short transaction. Here because only this module opens the meter door. A listed person
+    or server is metered but not added to the month (the rule #3792 gave hours)."""
+    async with db.meter(guild_id, owner_user_id) as conn:
+        s = await standing_of(conn, owner_user_id, now_ms // 1000, read_used=False)
+        cur = await conn.execute(
+            "INSERT INTO ai_credit_spend (id, guild_id, campaign_id, owner_user_id, job_kind,"
+            " feature, credits, month_start, at_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, id) DO NOTHING",
+            (
+                spend_id,
+                guild_id,
+                campaign_id,
+                owner_user_id,
+                job_kind,
+                feature,
+                credits,
+                s.month.start,
+                now_ms,
+            ),
+        )
+        if not cur.rowcount:
+            return  # this charge was written before (a retry after a timeout): never counted twice
+        if owner_user_id in entitlements.free_users() or await entitlements.on_free_guild(conn):
+            return
+        # The row lock this upsert takes serialises two campaigns of one owner charging at once.
+        await conn.execute(
+            "INSERT INTO owner_credits (owner_user_id, month_start, credits) VALUES (%s, %s, %s)"
+            " ON CONFLICT (owner_user_id, month_start)"
+            " DO UPDATE SET credits = owner_credits.credits + EXCLUDED.credits",
+            (owner_user_id, s.month.start, credits),
+        )
 
 
 async def _hours_row(

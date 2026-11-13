@@ -32,7 +32,7 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import channel_sync, messages
 from dmbot.dm_screen.channel import DMScreenError, setup_dm_screen
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
@@ -144,7 +144,7 @@ async def names_of(guild: discord.Guild | None, user_ids: Iterable[int]) -> dict
 def card_text(campaign: Campaign, names: Mapping[int, str]) -> str:
     """The game masters, one to a line, the one whose plan the campaign uses marked."""
     lines = []
-    for user_id in sorted(campaign.dm_user_ids):
+    for user_id in sorted(campaign.dm_accounts):
         plan = " (plan)" if user_id == campaign.owner_user_id else ""
         lines.append(f"• **{md(names.get(user_id, UNREACHABLE))}**{plan}")
     return (
@@ -232,7 +232,7 @@ async def open_list(interaction: discord.Interaction, campaign_id: str) -> None:
     if found is None:
         return
     campaign, guild = found
-    names = await names_of(guild, campaign.dm_user_ids)
+    names = await names_of(guild, campaign.dm_accounts)
     await interaction.response.send_message(
         card_text(campaign, names),
         view=ListView(campaign),
@@ -282,7 +282,7 @@ class ListView(discord.ui.View):
         if found is None:
             return
         campaign, guild = found
-        names = await names_of(guild, campaign.dm_user_ids)
+        names = await names_of(guild, campaign.dm_accounts)
         await interaction.response.send_message(
             "➖ Who should stop being a game master?",
             view=RemovePicker(campaign, names),
@@ -321,7 +321,7 @@ class AddPicker(discord.ui.View):
         if person.id in campaign.dm_user_ids:
             await _say(interaction, ALREADY.format(name=md(name)))
             return
-        if len(campaign.dm_user_ids) >= MAX_DMS:
+        if len(campaign.dm_accounts) >= MAX_DMS:
             await _say(interaction, TOO_MANY)
             return
         await interaction.response.defer(ephemeral=True)
@@ -374,7 +374,7 @@ class RemovePicker(discord.ui.View):
                 )[:100],
                 value=str(uid),
             )
-            for uid in sorted(campaign.dm_user_ids)
+            for uid in sorted(campaign.dm_accounts)
         ]
         self.pick: discord.ui.Select[RemovePicker] = discord.ui.Select(
             placeholder=REMOVE_PLACEHOLDER, options=options
@@ -401,7 +401,7 @@ class RemovePicker(discord.ui.View):
         if user_id == campaign.owner_user_id:
             await _say(interaction, plan_holder_words(user_id, interaction.user.id, self.names))
             return
-        if len(campaign.dm_user_ids) <= 1:
+        if len(campaign.dm_accounts) <= 1:
             await _say(interaction, LAST_ONE)
             return
         name = self.names.get(user_id, UNREACHABLE)
@@ -502,4 +502,10 @@ async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign
         except Exception:
             log.exception("A running session could not take the new game masters")
             return ACCESS_LATE
+    # The DM Bot and transcript channels follow the DMs too (#3891): a removed game master stops
+    # seeing them now, not at the next hourly look. Its own failure is the sweep's to heal.
+    try:
+        await channel_sync.reconcile(guild, result.campaign, store, getattr(client, "memory", None))
+    except Exception:
+        log.exception("Game masters changed but the channels could not be put in step")
     return ""

@@ -6,6 +6,8 @@ script=$here/../ci-already-green.sh
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export CI_API_DIR=$tmp GITHUB_SHA=abc GITHUB_RUN_ID=9
+# CI sets GITHUB_REF to the branch; these cases must not read the real branch head (#3723).
+unset GITHUB_REF
 fails=0
 
 job() { printf '{"name":"%s","conclusion":"%s"}' "$1" "$2"; }
@@ -56,6 +58,38 @@ check "any one earlier run that covers it" "done=true" NEED_EARS=false
 
 rm -f "$tmp/runs.json"
 check "no answer from GitHub" "done=false" NEED_EARS=false
+
+# A run for a commit the feature branch no longer points at finishes at once (#3723). The head is
+# read from CI_REMOTE_HEAD in these tests; no canned run is needed for any of them.
+superseded() { # superseded <name> <want first line> [env assignments...]
+  local name=$1 want=$2
+  shift 2
+  local got
+  got=$(env GITHUB_SHA=abc "$@" bash "$script" | head -1)
+  if [ "$got" != "$want" ]; then
+    echo "FAIL $name: want '$want', got '$got'"
+    fails=$((fails + 1))
+  fi
+}
+superseded "a superseded commit on a feature branch gives done=true" "done=true" \
+  GITHUB_REF=refs/heads/clouddev/x CI_REMOTE_HEAD=fed987
+out=$(env GITHUB_SHA=abc GITHUB_REF=refs/heads/clouddev/x CI_REMOTE_HEAD=fed987 bash "$script")
+if [ "$out" != "$(printf 'done=true\nsuperseded_by=fed987')" ]; then
+  echo "FAIL superseded output names the newer head: got '$out'"
+  fails=$((fails + 1))
+fi
+superseded "the current head runs normally" "done=false" \
+  GITHUB_REF=refs/heads/clouddev/x CI_REMOTE_HEAD=abc
+superseded "development never skips" "done=false" \
+  GITHUB_REF=refs/heads/development CI_REMOTE_HEAD=fed987
+superseded "beta never skips" "done=false" GITHUB_REF=refs/heads/beta CI_REMOTE_HEAD=fed987
+superseded "main never skips" "done=false" GITHUB_REF=refs/heads/main CI_REMOTE_HEAD=fed987
+superseded "a pull_request run never takes this path" "done=false" \
+  GITHUB_REF=refs/pull/12/merge CI_REMOTE_HEAD=fed987
+superseded "an unreadable head runs everything" "done=false" \
+  GITHUB_REF=refs/heads/clouddev/x CI_REMOTE_HEAD=unreadable
+superseded "an empty head answer runs everything" "done=false" \
+  GITHUB_REF=refs/heads/clouddev/x CI_REMOTE_HEAD=
 
 # Reuse by tree (#3703): a real throw-away repository, so `git rev-parse <sha>^{tree}` is the real
 # thing. c1 and c2 are two commits with ONE tree (an empty commit); c3 changes a file.

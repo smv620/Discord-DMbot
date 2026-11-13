@@ -151,7 +151,11 @@ ignore it. See docs/PLAN.md, "Players and the DM in the names".
   A name not in the rules data keeps its words and is marked "not in DMbot's rules".
 - Rules vocabulary (species, creature type, class, background, feat, spell, skill, ability) is
   not campaign memory: memory only links to it. Unnamed monsters are not entries: "three goblins
-  attack" is a reference to the goblin stat block; an organized band is a group.
+  attack" is a reference to the goblin stat block; an organized band is a group. Creatures met in
+  play are kept apart, in a quiet list the DM sees, until the DM names one (slice 5): one row for
+  each encounter (the two ambushers, the sled dogs), only from the DM's own words, at most 10 a
+  session, in `memory_met`, which no list of names reads; naming or joining one makes it an entry
+  at rank 0 (#3172, #4045).
 
 **Examples.** *Snot, son of Garg, the goblin prince*: character · NPC · species goblin (creature
 type humanoid) · stat block Goblin Warrior; he is a member of the Cragmaw tribe (a group). *Auril*:
@@ -1099,6 +1103,19 @@ characters know is always their own rows.
 Most "spoilers" are simply unknown to one or more player characters, not secret.
 
 **4. How knowledge gets in. DMbot makes its best guess live and asks nobody during play.**
+- **What is said at the table is known to the party** (owner, 2026-11-09, #3963): "If the info was given at the
+  table, unless the DM or players state explicitly that something is unknown to character X, anything revealed
+  at the table should be considered known to the party and therefore known to the individual player characters
+  by default." So after a live session or an import, a held-back name that is said is shown, and a held-back
+  connection is shown when both its ends are shown and the session reader states that same connection (its own
+  extracted claim; two names said near each other are not enough). The DM's or a player's explicit "X doesn't
+  know" (who learned what, "Who knows this?") is the exception. One change per session, with Undo, counted to
+  the DM.
+- **Uploads, the party's own story** (#3963): the smart guess sorts each lore statement into three kinds, not
+  two: **world** (any inhabitant knows it), **party** (what the player characters did, saw, heard or were told
+  together: the party's history, a job given to "the party"; known to every player character) and **spoiler**.
+  A backstory section in campaign lore (headed by a player character's name) is known to that character, as a
+  backstory upload is.
 - **In a scene:** what is said or shown in a scene is learned by **every character in the scene**, player
   characters and NPCs. Whether the *player* came to the session doesn't matter; whether the *character* is in the
   scene does. Who is in a scene: the party together unless the game clock says it is split (#1614), plus the NPCs
@@ -1147,6 +1164,21 @@ later sessions.
 - **Not every private thing matters.** A ranger who fails to find herbs in one spot and finds them in another, then
   uses them in front of everyone, is trivial and isn't cited. Privacy alone never makes a thing interesting.
 - **A private interaction between two player characters always matters, always.** It is cited, non-specifically.
+  **How a private scene is found** (Supervisor's ruling on #2996, 2026-11-10; behind `DMBOT_PRIVATE_SCENES`, off
+  until dev1 checks it): by code after the session, never by the AI. It is a stretch when the game clock has the party
+  split and one group holds exactly two player characters, played by two different people, who both speak in it (one
+  player with two characters is no scene). Another group's lines in between neither end it nor join it; the DM's lines
+  can't be placed, so they count in no scene. Each is kept as ids and times only (`memory_private_scenes`, migration
+  0419). The DM can say "Not private", and a later run never finds that scene again. A scene goes with its session's
+  transcript and with anyone who spoke in it; a backup carries both scenes and marks. The DM's list (🤫 Private scenes, under Names → More lists) has "Not private" (#4105).
+  The entries spoken of inside a scene by one of its two are kept with it (`memory_private_scene_entries`, ids only,
+  migration 0421), and an entry in a **kept** scene is never ranked below 2 (Recurring): a floor worked out on read,
+  like the other floors (Supervisor's ruling, #4110). Nothing is stored for it, so "Not private", a speaker who stops
+  being recorded and a deleted transcript undo it by themselves. Like every floor, it holds over a rank the DM set
+  lower; the DM lowers it with "Not private". Names are matched as whole words, confirmed and open ones only, never a
+  spelling two entries or a player character share (a one-word name that is an everyday word can still match). Scenes
+  found before 0421 have no entries until their session is read again. PlotBot is told ("private scene:" with the two
+  names) so it can rank such an entry higher. Next: the recap cites each scene without saying what (#2997).
 
 **8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
 - the Story Graph and its doors;
@@ -1588,8 +1620,10 @@ gods and royalty, even while their name is hidden), 5 player character.
   in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
 - **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
   section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
-  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
-  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+  unnamed creatures met in play (the mouse in the dark), changes the rule in section 3 that unnamed
+  monsters are not entries: they are kept apart in `memory_met` until the DM names one, which then
+  enters at rank 0 with the reason `met_in_play` (Supervisor's option C, 2026-11-10). Play only;
+  behind `DMBOT_MET_UNNAMED`, off until the DM's list of them (#4045) has merged.
 
 ### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
 

@@ -9,7 +9,8 @@ import time
 import unittest
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.memory import background as bg
@@ -340,6 +341,10 @@ class ThePath(NamesTest):
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.confirmed = AsyncMock()
         self.bot.campaigns.record_confirmation = self.confirmed  # type: ignore[method-assign]
+        # These tests are of the Add all flow: "Ask me before adding" is on. The default (off) adds
+        # what DMbot is sure of by itself, which `test_upload_notice.py` and the tests marked
+        # "by itself" below cover (#3878).
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
 
     async def asyncTearDown(self) -> None:
         _ai_busy.clear()  # module state: other tests' document reads must not see ours
@@ -363,10 +368,70 @@ class ThePath(NamesTest):
     async def entities(self, status: str = PROPOSED) -> list[Any]:
         return await self.memory.entities(GUILD, self.campaign.id, statuses=[status])
 
+    async def read_by_itself(self, channel_id: int | None = None) -> tuple[Any, Any]:
+        """The reading with "Ask me before adding" off (the default): what DMbot is sure of is added
+        by itself. The bot's posts are stood in; returns the DM's card press and the stand-in."""
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        if channel_id is not None:
+            await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
+        sent = SimpleNamespace(
+            id=9,
+            channel=SimpleNamespace(id=channel_id),
+            jump_url=f"https://discord.com/channels/{GUILD}/{channel_id}/9",
+            edit=AsyncMock(),
+        )
+        self.bot.post_message = AsyncMock(return_value=sent if channel_id else None)  # type: ignore[method-assign]
+        self.bot.sidebar_send_dm = AsyncMock(return_value="sent")  # type: ignore[method-assign]
+        return await self.read(), sent
+
+    async def test_by_itself_what_is_sure_is_added_and_the_notice_counts_it(self) -> None:
+        press, sent = await self.read_by_itself(77)
+        names = {e.name: e.status for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.assertEqual(
+            {n: names[n] for n in ("Brannoch", "Vale Keep", "Oakmere", "Heartseeker")},
+            {n: "confirmed" for n in ("Brannoch", "Vale Keep", "Oakmere", "Heartseeker")},
+        )
+        channel, text, view = cast(Any, self.bot.post_message).await_args.args
+        self.assertEqual(channel, 77)  # the DM Bot channel
+        self.assertIn("Added **", text)
+        self.assertNotIn("Brannoch", text)  # counts only: no name, no word of the text
+        self.assertTrue(any("up:undo" in str(getattr(c, "custom_id", "")) for c in view.children))
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn(sent.jump_url, card["content"])
+        self.assertIsNone(card["view"])
+        self.assertEqual(
+            cast(Any, self.bot.sidebar_send_dm).await_count, 1
+        )  # (the DM's private copy)
+
+    async def test_by_itself_without_a_channel_the_notice_stays_on_the_dms_card(self) -> None:
+        press, _ = await self.read_by_itself(None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("Added **", card["content"])
+        self.assertTrue(
+            any("up:undo" in str(getattr(c, "custom_id", "")) for c in card["view"].children)
+        )
+
+    async def test_by_itself_the_notice_is_kept_for_undo(self) -> None:
+        await self.read_by_itself(77)
+        notices = self.bot.upload_notices
+        assert notices is not None
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT id, changes, message_id FROM upload_notices")
+            rows = await cur.fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["changes"])
+        self.assertEqual(rows[0]["message_id"], 9)
+
+    async def test_with_ask_me_before_adding_on_nothing_is_added_by_itself(self) -> None:
+        press = await self.read()  # (the setting is on in this class's setUp)
+        self.assertEqual(await self.entities(CONFIRMED), [])
+        self.assertIn("to check** from", press.edit_original_response.await_args.kwargs["content"])
+
     async def test_the_offer_says_what_it_costs_and_what_it_is_for(self) -> None:
         it, view = await self.offer()
         text = it.response.sent[0][0]
-        self.assertIn("Cost: about", text)
+        self.assertRegex(text, r"About [\d,]+ AI credits? for the lore\.")
+        self.assertNotIn("cent", text)  # (the old cents wording is gone)
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
@@ -600,6 +665,43 @@ class ThePath(NamesTest):
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
 
+    async def test_a_name_read_from_a_picture_keeps_its_own_note(self) -> None:  # (#4003)
+        from dmbot.memory.models import name_key
+
+        held = bg.Found("Red Larch", "place", (), (), "", "")
+        note = 'Read from a picture on page 3 as "Red Larch". Check the spelling.'
+        made: dict[str, str] = {}
+        await ui_bg.store(self.memory, self.campaign, [held], notes={name_key("Red Larch"): note},
+                          made=made)  # fmt: skip
+        (entity,) = await self.entities()
+        self.assertEqual((entity.description, entity.id), (note, made[name_key("Red Larch")]))
+
+    async def test_held_picture_names_are_stored_alone_unsplit_and_never_folded(self) -> None:
+        """#4003, the reviewer's two holes: a list-shaped picture name is one name to check (never
+        split into parts with no note), and a held "North Haven" beside the text's "Northhaven" is
+        its own name to check (never folded into the text's place as an other name)."""
+        from dmbot.memory.picture_names import ToCheck
+        from dmbot.memory.picture_read import Held, Sorted
+
+        text_place = bg.Found("Northhaven", "place", (), (), "")
+        sorted_ = Sorted(held=[
+            Held(bg.Found("Aldmoor, Quillgate, Fenwick", "place", (), (), ""), ToCheck(), 3, ""),
+            Held(bg.Found("North Haven", "place", (), (), ""), ToCheck("Northhaven"), 4, ""),
+        ])  # fmt: skip
+        stored = await ui_bg.store(self.memory, self.campaign, [text_place])
+        held = await ui_bg._store_held(
+            self.memory, self.campaign, sorted_, set(), [text_place], stored, "map.pdf"
+        )
+        self.assertEqual(len(held), 2)
+        entities = {e.name: e for e in await self.entities()}
+        self.assertEqual(
+            set(entities), {"Northhaven", "Aldmoor, Quillgate, Fenwick", "North Haven"}
+        )
+        self.assertIn("Is this Northhaven?", entities["North Haven"].description)
+        self.assertEqual({entities[n].id for n in ("North Haven", "Aldmoor, Quillgate, Fenwick")},
+                         held)  # fmt: skip
+        self.assertEqual(ui_bg.not_held(stored, held), {"place": [entities["Northhaven"].id]})
+
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
         """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
         guess or a backstory never does; a line past the column's 120 letters is left to the DM,
@@ -687,6 +789,69 @@ class ThePath(NamesTest):
         self.assertEqual(await self.entities(CONFIRMED), [])  # all of it, in one press
         labels = [str(getattr(b, "label", "")) for b in view.children]
         self.assertEqual(labels[0], f"✅ Add all {total}")  # offered again
+
+    async def read_with_channel(self, channel_id: int | None, *, post: Any = "ok") -> Any:
+        """The reading, with the campaign's DM-screen channel set (or not) and the bot's post
+        stood in. `post`: a message to hand back, "ok" for a fake one, or None for a failure."""
+        await self.campaigns.set_dm_bot_channel(GUILD, self.campaign.id, channel_id)
+        sent = SimpleNamespace(
+            id=9,
+            channel=SimpleNamespace(id=channel_id),
+            jump_url=f"https://discord.com/channels/{GUILD}/{channel_id}/9",
+            edit=AsyncMock(),
+        )
+        self.bot.post_message = AsyncMock(return_value=sent if post == "ok" else post)  # type: ignore[method-assign]
+        press = await self.read()
+        return press, sent
+
+    async def test_with_a_dm_screen_channel_the_summary_is_a_message_there(self) -> None:
+        press, sent = await self.read_with_channel(77)
+        channel, text, view = cast(Any, self.bot.post_message).await_args.args
+        self.assertEqual(channel, 77)
+        self.assertIn("to check** from", text)  # the summary, counts only
+        self.assertIsInstance(view, ui_bg.BulkConfirm)
+        self.assertTrue(view.shared)
+        # the DM's own card only points to it, with no buttons
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn(sent.jump_url, card["content"])
+        self.assertIsNone(card["view"])
+
+    async def test_without_a_channel_the_card_stays_as_it_was(self) -> None:
+        press, _ = await self.read_with_channel(None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("to check** from", card["content"])
+        self.assertFalse(card["view"].shared)
+
+    async def test_when_it_cannot_be_posted_there_the_card_stays_as_it_was(self) -> None:
+        press, _ = await self.read_with_channel(77, post=None)
+        card = press.edit_original_response.await_args.kwargs
+        self.assertIn("to check** from", card["content"])
+        self.assertFalse(card["view"].shared)
+
+    async def test_on_the_shared_summary_only_a_dm_may_press_and_one_by_one_keeps_it(self) -> None:
+        await self.read_with_channel(77)
+        view = cast(Any, self.bot.post_message).await_args.args[2]
+        self.assertFalse(await view.interaction_check(self.it(MANAGER)))  # not a DM: refused
+        self.assertTrue(await view.interaction_check(self.it(DM)))
+        (one_by_one,) = [b for b in view.children if "one by one" in str(b.label)]
+        press = self.it(DM)
+        await one_by_one.callback(press)
+        press.edit_original_response.assert_not_awaited()  # (the summary stays for the others)
+        self.assertFalse(view.is_finished())
+
+    async def test_the_summary_ends_as_all_answered_and_undo_brings_the_words_back(self) -> None:
+        await self.read_with_channel(77)
+        view = cast(Any, self.bot.post_message).await_args.args[2]
+        add = view.children[0]
+        press = self.it(DM)
+        await add.callback(press)
+        self.assertEqual(
+            press.edit_original_response.await_args.kwargs["content"], ui_bg.ALL_ANSWERED
+        )
+        undo = next(b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo"))
+        again = self.it(DM)
+        await undo.callback(again)
+        self.assertEqual(again.edit_original_response.await_args.kwargs["content"], view.words)
 
     async def test_only_a_dm_may_use_the_overall_add_all(self) -> None:
         press = await self.read()

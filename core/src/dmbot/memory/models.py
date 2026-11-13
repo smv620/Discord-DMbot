@@ -31,12 +31,19 @@ WORKED_OUT_SOURCE = "worked_out"
 # DMbot's own answer to "Who is this?" (#3602, slice 4): the one join it may make without the DM,
 # through `MemoryStore.join_by_ai` only; the DM confirms or undoes it, and `merge` stays DM-only.
 WHO_SOURCE = "who"
+# A person's first name added as their short name by rule (#3880, `short_names.py`): proposed only.
+SHORT_NAME_SOURCE = "short_name"
+# The place DMbot made for its guess at the campaign's setting (#4173 slice 2b): hidden until the
+# DM keeps it, and the only place ✅ Keep shows to the players (never one someone else hid).
+SETTING_GUESS_SOURCE = "setting_guess"
 SOURCES = (
     *("dm", "character", "scan", "cleaner", "undo", "entitybot", "backup", "extractor"),
     BACKGROUND_SOURCE,
     PARTY_SOURCE,
     WORKED_OUT_SOURCE,
     WHO_SOURCE,
+    SHORT_NAME_SOURCE,
+    SETTING_GUESS_SOURCE,
 )
 
 # What the story extractor's claims are (docs/STORY_MEMORY.md, section 1; #1297): proposals
@@ -72,8 +79,9 @@ SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND = (
     "species", "creature_type", "stat_block", "class", "background",
 )  # fmt: skip
 LINK_KINDS = (SPECIES, CREATURE_TYPE, STAT_BLOCK, CLASS, BACKGROUND)
+# "Lineage" is the word users see (owner, #2959 item 3); the rules data and the code keep "species".
 LINK_LABELS = {
-    SPECIES: "species",
+    SPECIES: "lineage",
     CREATURE_TYPE: "type",
     STAT_BLOCK: "stat block",
     CLASS: "class",
@@ -81,6 +89,11 @@ LINK_LABELS = {
 }
 LINK_SOURCE_MAX = 40
 LINK_NAME_MAX = 100
+# A language a character knows from the story (#4229): as written, at most this long, given by
+# DMbot's read or by the DM. A character with a sheet keeps its languages there instead.
+STORY_LANGUAGE_MAX = 60
+LANGUAGE = "language"  # a lore language waiting as a question, like a lineage (#4229 slice 1c)
+GIVEN_BY = ("read", "dm")
 LINK_EDITIONS = ("2014", "2024")
 
 NAME_MAX = 100
@@ -234,6 +247,8 @@ class NewName:
     secrets: tuple[str, ...] = ()
     role: str | None = None  # for a character: player character, NPC or god
     note: str = ""  # shown with a suggestion until the DM decides (a quote, how it was found)
+    place_level: str | None = None  # how big a place is, as the reader found it (#4173)
+    form: str | None = None  # a place's form, water or route, as the reader found it (#4173 6a)
     # Not held back from the players: the DM said the world knows this name (an upload's "World
     # general knowledge", #2959). The list of who knows it follows once the DM confirms the name.
     shown: bool = False
@@ -243,6 +258,44 @@ class NewName:
     # The players' line (#2967 slice a): only from an upload the DM said the players know all of;
     # "" for none. A line longer than `PLAYERS_TEXT_MAX` is not stored (the DM writes one).
     players_text: str = ""
+    # A character's lineage and classes the text states (#2959 item 3): written as its rules links
+    # in the same change, so the one Undo takes them back with the name. Ignored for anything else.
+    traits: tuple[Trait, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Trait:
+    """A lineage or a class a lore read found for a new character (#2959 item 3), as a rules link
+    to write: `kind` is `SPECIES` (shown as "lineage") or `CLASS`; `known` with its `rules_source`
+    and `edition` when the rules data has it, else the text's own words."""
+
+    kind: str
+    name: str
+    rules_source: str = ""
+    edition: str | None = None
+    known: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class StoryLanguage:
+    """A language a character knows from the story (#4229), kept beside the sheets: "Elvish" (one
+    of the SRD's, `srd`) or the campaign's own tongue. `given_by` is "read" until the DM checks it
+    ("dm")."""
+
+    id: str
+    entity_id: str
+    name: str
+    srd: bool
+    given_by: str  # GIVEN_BY
+
+
+@dataclass(frozen=True, slots=True)
+class Known:
+    """One language someone at the table knows, and where DMbot has it from (#4229): "sheet" (the
+    character's sheet, the source of truth), or the story ("read" by DMbot, or the "dm"'s word)."""
+
+    name: str
+    source: str  # "sheet", or GIVEN_BY
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +373,37 @@ class Entity:
     # view of the lists of who knows what, #2995). None: not asked (a hand-made entry in a test, or
     # a campaign with no player character yet, or an entry still only suggested): the flags answer.
     seen_by_party: bool | None = None
+    # How big a place is (#4173): one of `place_levels.LEVELS`, or None when nobody knows. A place
+    # only. `place_level_from` says who said it ("read": DMbot, from the lore's words; "dm": the
+    # DM), so a size the DM never checked is shown as DMbot's read, never as a fact.
+    place_level: str | None = None
+    place_level_from: str | None = None
+    # The campaign's setting (#4173 slice 2a): the one place the whole story is in (Faerûn). A new,
+    # smaller place sits inside it unless something says otherwise.
+    setting: bool = False
+    # Who made it the setting (#4173 slice 2b): "read" (DMbot's guess from the adventure, until the
+    # DM keeps it), "dm", or "declined" (the DM said it isn't, so DMbot never guesses again).
+    setting_from: str | None = None
+    # A place's form (#4173 slice 6a): None for an area (the default), "water" (a lake, bay, sea or
+    # river) or "route" (a named road, trade route or pass). Water and route places stand outside
+    # the size order. `form_from` says who said it, as for the size.
+    form: str | None = None
+    form_from: str | None = None
+
+    @property
+    def setting_guessed(self) -> bool:
+        """Is this the setting only as DMbot's guess from the adventure, not yet kept?"""
+        return self.setting and self.setting_from == "read"
+
+    @property
+    def form_read(self) -> bool:
+        """Is the form DMbot's own read, not yet the DM's word?"""
+        return self.form is not None and self.form_from != "dm"
+
+    @property
+    def place_level_read(self) -> bool:
+        """Is the size DMbot's own read, not yet the DM's word?"""
+        return self.place_level is not None and self.place_level_from != "dm"
 
     @property
     def unseen_by_players(self) -> bool:
@@ -418,6 +502,20 @@ class Alias:
     said_as: str | None = None  # how the recap's narrator says it (#1419); never on a secret name
 
 
+# How two people know each other (#3881, Supervisor's ruling): one `knows` relationship with this
+# in its own column, lowest first. It only moves up (aware → met), except by the DM.
+KNOWS_AWARE, KNOWS_MET = "aware", "met"
+KNOWS_HOWS = ("", KNOWS_AWARE, KNOWS_MET)
+# How an item changed hands (#4115): why a holder's `owns` or `carries` ended. Fixed words, shown
+# as history ("sold it to Belleros"); None is "used to have it".
+END_REASONS = ("sold", "gave", "traded", "stolen", "lost")
+
+
+def knows_rank(how: str | None) -> int:
+    """Where a `knows_how` stands: "" lowest, then "aware", then "met"."""
+    return KNOWS_HOWS.index(how) if how in KNOWS_HOWS else 0
+
+
 @dataclass(frozen=True, slots=True)
 class Relation:
     id: str
@@ -446,6 +544,24 @@ class Relation:
     # The secret other name a join moved it through (#3037): a character that holds that name
     # sees this connection on that name's own node, whatever else it knows. None for the rest.
     via_alias_id: str | None = None
+    # How two people know each other, on a `knows` only (#3881): "met", "aware" (heard of them, a
+    # tale, a vision) or "" (the story doesn't say, shown as plain "knows"). Between two people
+    # only. It only moves up, except by the DM.
+    knows_how: str = ""
+    # Why an `owns` or `carries` ended (#4115): one of END_REASONS, or None when the story didn't
+    # say. Only on an ended tie.
+    end_reason: str | None = None
+    # The DM's direction for it (#4154): None reads as its kind's default (`link_words.BOTH_WAYS`),
+    # True both ways (A ↔ B), False one way, from the first name.
+    both_ways: bool | None = None
+    # DMbot assumed it from where the story was (#4173 slice 3: a place's parent, never stated):
+    # "(assumed)" on the DM's card, held back from the players, until the DM says ✅ That's right
+    # or a stated parent replaces it.
+    assumed: bool = False
+    # A route's state, on a `route_to` only (#4173 slice 6d): "" (known: the way exists),
+    # "travelled" (a journey from the first place to the second, in the session `from_session_at`
+    # gives) or "planned" (the table means to go that way: never where anyone is). `route_words`.
+    route_state: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,6 +667,11 @@ class Written[T]:
 
     value: T
     batch: int | None
+    # A session's new name said only while the party was split (#4037): "group" (the group that
+    # heard it knows it) or "unknown" (which group can't be told: nobody does), for the caller to
+    # tell the DM; "" otherwise. (`confirm_kinds` counts both in `split_counts`.)
+    split: str = ""
+    split_counts: tuple[int, int] = (0, 0)
 
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).

@@ -26,10 +26,16 @@ READERS = {
     + ": counts current, confirmed connections for a rank floor; never shown to a player",
     "memory/importance_step.py": CONFIRMED_ONLY
     + ": the connections the importance reading is shown, DM-only; never for a player",
+    "memory/reveal_proposals.py": CONFIRMED_ONLY
+    + ": who learned what is placed only on a confirmed connection, for the DM (#2996)",
     "memory/role_store.py": CONFIRMED_ONLY
     + ": the roles current, confirmed connections show, for the DM's why; never for a player",
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
+    "memory/hand_over.py": DM_ONLY + ": current confirmed owns and carries of a one-of-a-kind "
+    "item, for the DM's private question (#4115); ends a tie only on the DM's answer",
+    "memory/story_chain_store.py": DM_ONLY + ": which places have a parent already, so where the "
+    "story is never guesses twice (#4173 slice 4); shows nothing",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
     "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
@@ -48,6 +54,8 @@ READERS = {
     "memory/report_store.py": "only checks that the connections of a difference still exist",
     "memory/claims.py": "DM-side: reads only the facts made by kept described-person claims of "
     "one session, to find the person they made; shows players nothing (#3431)",
+    "memory/party.py": DM_ONLY + ": the party fill reads member_of ties to find the group the "
+    "campaign already uses for the party (#3954); shows players nothing",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/gate.py": "the gate (#2995): reads each connection's ends to say which entries a "
     "viewer learns, and only for connections its list says that viewer knows",
@@ -71,6 +79,9 @@ READERS = {
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
     "memory/_changes.py": "the change log and the row writers",
     "campaigns/tables.py": "the list of tables a campaign owns",
+    "devtools/sample_run/counts.py": CONFIRMED_ONLY
+    + ": dev1's sample report (#3545); counts confirmed secret connections by source, prints "
+    "numbers only (no name, id or word), nothing reaches a player",
     "devtools/movers_check.py": CONFIRMED_ONLY
     + ": dev1's read-only command (#3363); one SELECT of confirmed, current place ties, prints "
     "counts only (no name, id or word), nothing reaches a player",
@@ -99,6 +110,19 @@ STORE = {
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
+    "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
+    "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
+    "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
+    "_not_assumed": DM_ONLY + ": refuses learning an assumed connection (#4173 slice 3)",
+    "_reopen_moved": "writes: a link putting a place inside another reopens a moved tie (slice 5)",
+    "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
+    "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
+    "decline_setting": DM_ONLY + ": a made place for a declined setting guess goes only if nothing "
+    "points at it (#4299)",
+    "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
+    "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
+    "_replace_relation_in": DM_ONLY
+    + ": new words or a turn: the connection written anew, the old one ended (#4154)",
     "_recheck_companions": DM_ONLY
     + ": a merge or a change of kind refuses a companion link left invalid",
     "_let_go_of_anchored": DM_ONLY
@@ -138,6 +162,12 @@ STORE = {
     "isolated_rows_in": "kept and waiting links, no guess connections, for the DM's graph "
     "clean-up (#3740); ids and words only, never shown to a player",
     "record_link_source": "writes: remembers the upload label of a kept connection; reads no tie",
+    "reveal_stated_in": "writes: shows a held-back connection the table stated (#3963 c), only "
+    "a confirmed, live, non-secret one whose ends are both shown",
+    "learnable_in_scene": "reads one connection to decide whether the group in a split scene may "
+    "learn it (#2996); writes nothing, shows players nothing",
+    "live_between": "which live, confirmed connections join two entries and which are held "
+    "back, so a catch-all claim beside one is held back too (#3975); shows players nothing",
 }
 
 

@@ -348,7 +348,9 @@ class Following(Base):
         assert campaign is not None
         # the in-memory check passes (the campaign object still lists them) but the store's own
         # check, in its transaction, no longer does
-        stale = dataclasses.replace(campaign, dm_user_ids=frozenset({DM_A, PLAYER}))
+        stale = dataclasses.replace(
+            campaign, dm_user_ids=frozenset({DM_A, PLAYER}), dm_accounts=frozenset({DM_A, PLAYER})
+        )
         self.host.get_campaign = lambda *_: self._stale(stale)  # type: ignore[method-assign]
         out = await ws.apply(
             self.host, GUILD_A, ws.Action(item.id, self.pub, PLAYER, ws.PUBLISH, "Mine")

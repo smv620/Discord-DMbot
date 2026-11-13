@@ -83,9 +83,13 @@ def campaign(**kw: Any) -> Any:
     base = {
         "id": "c" * 32, "guild_id": GUILD, "name": "Frozen Wastes", "dm_user_ids": frozenset({DM}),
         "owner_user_id": DM, "recaps_text": True, "recaps_audio": True, "recaps_email": True,
-        "dm_screen_channel_id": 66,
+        "dm_screen_channel_id": 66, "dm_bot_channel_id": None, "ask_before_adding": False,
     }  # fmt: skip
-    return SimpleNamespace(**{**base, **kw})
+    data = {**base, **kw}
+    data.setdefault("dm_accounts", data["dm_user_ids"])
+    made = SimpleNamespace(**data)
+    made.is_owner = lambda user_id: user_id == made.owner_user_id
+    return made
 
 
 ALICE_ID = 7
@@ -119,6 +123,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         recaps=SimpleNamespace(
             enqueue=AsyncMock(return_value=True),
             used_in_month=AsyncMock(return_value=SimpleNamespace(narrated=0, recaps=0)),
+            waiting_for_script=AsyncMock(return_value=False),
         ),
         transcripts=SimpleNamespace(
             session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
@@ -138,6 +143,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
         "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
         "recap_plan_facts", "recap_audio_why", "_recap_allowance", "_recap_refusal",
+        "_upkeep_channel",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -230,6 +236,38 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(children[3].url.startswith("https://site.example.com/"))
             self.assertEqual(children[4].item.custom_id, f"dmbot:recapshare:{'c' * 32}")
             self.assertFalse(children[1].item.disabled)  # audio is in this campaign's plan
+
+    async def test_a_ready_recap_goes_to_the_dm_bot_channel_with_no_title(self) -> None:
+        # (#3874) post-game notices leave the DM screen; the DM Bot channel is read by the
+        # campaign's people, so a draft recap's title (it can give the story away) stays out
+        bot = fake_bot(campaign(dm_bot_channel_id=77))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
+        self.assertEqual(channel, 77)
+        self.assertIn("Recap ready", line)
+        self.assertNotIn("Silver Lock", line)
+        self.assertIn("view", kwargs)
+
+    async def test_with_no_dm_bot_channel_the_dm_screen_keeps_the_notice_and_title(self) -> None:
+        bot = fake_bot(campaign(dm_bot_channel_id=None))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        self.assertEqual(bot.post.await_args.args[0], 66)
+        self.assertIn("Silver Lock", bot.post.await_args.args[1])
+
+    async def test_a_failed_recap_also_goes_to_the_dm_bot_channel(self) -> None:
+        bot = fake_bot(campaign(dm_bot_channel_id=77, recaps_email=False))
+        failed = SimpleNamespace(state="failed", session_at=100, title="", keeps_previous=False)
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+            await bot.recap_told(GUILD, "c" * 32, failed)
+        self.assertEqual(bot.post.await_args.args[0], 77)
 
     async def test_the_audio_button_is_greyed_with_its_reason_for_each_reason(self) -> None:
         # (#2420) not set up here, the DM's switch off, the plan, and the month's allowance used up

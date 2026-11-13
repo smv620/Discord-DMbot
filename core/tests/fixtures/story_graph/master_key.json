@@ -453,11 +453,16 @@
   {
    "name": "The wind spirit",
    "kind": "creature",
-   "aliases": [],
-   "note": "Unnamed ancient spirit that guides and guards Okthandom",
+   "aliases": [
+    "ancient wind spirit",
+    "wind spirit",
+    "ancient spirit"
+   ],
+   "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
    "docs": [
     "lore"
-   ]
+   ],
+   "unnamed": true
   },
   {
    "name": "Yeti",
@@ -3688,6 +3693,101 @@
     }
    ],
    "note": "the other side of the heated debate on mithril smelting (m081 is Belleros toward Brewner)"
+  },
+  {
+   "id": "m137",
+   "a": "Okthandom Korran",
+   "relation": "associate",
+   "b": "Icewind Dale",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l123",
+     "line": 30
+    }
+   ],
+   "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
+  },
+  {
+   "id": "m138",
+   "a": "Belleros Stormgrace",
+   "relation": "leads",
+   "b": "Aurora's Wind",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l124",
+     "line": 93
+    }
+   ],
+   "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)"
+  },
+  {
+   "id": "m139",
+   "a": "Okthandom Korran",
+   "relation": "enemy_of",
+   "b": "Fizzlebomb",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l125",
+     "line": 93
+    }
+   ],
+   "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)"
+  },
+  {
+   "id": "m140",
+   "a": "Cerric Vanya'elen",
+   "relation": "enemy_of",
+   "b": "Fizzlebomb",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "lore"
+   ],
+   "sources": [
+    {
+     "doc": "lore",
+     "id": "l126",
+     "line": 93
+    }
+   ],
+   "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)"
+  },
+  {
+   "id": "m141",
+   "a": "Garret Velryn",
+   "relation": "associate",
+   "b": "Dwarven Valley",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s034",
+     "line": 204
+    }
+   ],
+   "note": "the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b)"
   }
  ],
  "events": [

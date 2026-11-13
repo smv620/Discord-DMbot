@@ -228,7 +228,7 @@ def entity(created_at: int, status: str = PROPOSED, id: str = "") -> Any:
 def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id="c" * 32, recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}),
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_bot_channel_id=None,
     )  # fmt: skip
 
 
@@ -270,7 +270,10 @@ def fake_bot(
             deferred_names=AsyncMock(return_value=set()),  # no "Later" answers
         ),
         heard_questions=SimpleNamespace(count_for_session=AsyncMock(return_value=did_they_mean)),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True),
+            waiting_for_script=AsyncMock(return_value=False),
+        ),
         recap_worker=object(),
         import_job=None,
         recap_holds=store if holds == "default" else holds,
@@ -281,7 +284,7 @@ def fake_bot(
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
         "release_recap_holds", "_release_one", "recap_hold_write_now", "recheck_recap_hold",
         "recap_write_anyway", "_remind", "_say_group_writing", "_close_hold_lines",
-        "_extractor_pending", "_next_session_start", "_group_lock",
+        "_extractor_pending", "_next_session_start", "_group_lock", "_upkeep_channel",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -414,6 +417,7 @@ class TheCap(IsolatedAsyncioTestCase):
         bot.mailer = object()
         bot._email_hold = DMBot._email_hold.__get__(bot)
         bot.campaigns.get.return_value.dm_user_ids = frozenset({DM, DM + 1})
+        bot.campaigns.get.return_value.dm_accounts = frozenset({DM, DM + 1})
         send = AsyncMock(side_effect=[RuntimeError("boom"), "sent"])
         with patch("dmbot.recaps.discord.remind_the_dm", new=send):
             await self.round_with(bot, self.aged(hold.HOLD_REMIND_S + 60))
@@ -722,6 +726,15 @@ class AnImportsHolds(IsolatedAsyncioTestCase):
         await bot._say_writing(campaign(), 66, AT)
         await bot._say_writing(campaign(), 66, AT + 5)
         self.assertEqual(bot.post.await_count, 2)  # no debounce: each is told, with its own page
+
+    async def test_a_recap_waiting_for_its_script_says_so(self) -> None:
+        bot = fake_bot()
+        await bot._say_writing(campaign(), 66, AT)
+        self.assertNotIn("script", bot.post.await_args.args[1])
+        bot.recaps.waiting_for_script = AsyncMock(return_value=True)
+        await bot._say_writing(campaign(), 66, AT)
+        said = bot.post.await_args.args[1]
+        self.assertIn("waits for its script (up to 10 minutes), then gets written", said)
 
     async def test_a_group_never_takes_in_another_campaigns_hold(self) -> None:
         mine = self.group(100, 2)

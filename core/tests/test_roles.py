@@ -284,15 +284,21 @@ class TheMigration(DatabaseTest):
         await drop_schema(TEST_URL, self.schema)
         self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
         campaign = (await CampaignStore(self.db).create(GUILD, "Rime", OWNER)).id
-        made = await MemoryStore(self.db).add_entity(
-            GUILD, campaign, type="character", name="Mira", source=DM, status=CONFIRMED
-        )
+        mira = "a" * 32
         async with self.db.guild(GUILD) as conn:
+            # (the entry by hand, as the schema was then: today's store writes columns a later
+            # migration adds, such as 0437's place_level)
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at) VALUES (%s, %s, %s, 'character', 'Mira', '', %s,"
+                " %s, 1)",
+                (GUILD, campaign, mira, CONFIRMED, DM),
+            )
             for rank, basis in ((3, "mentor"), (2, "corrected"), (1, "met_a_pc")):
                 await conn.execute(
                     "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
                     " source, recorded_at) VALUES (%s, %s, %s, %s, %s, 'plotbot', 1)",
-                    (GUILD, campaign, made.value.id, rank, basis),
+                    (GUILD, campaign, mira, rank, basis),
                 )
         await self.db.migrate()
         async with self.db.guild(GUILD) as conn:

@@ -101,6 +101,9 @@ class TheActions(Acting):
         assert entity is not None
         self.assertTrue(entity.is_player_character)
         self.assertIsNone(entity.played_by)
+        # its player is "pending", and it is a member of the party all the same (#3995)
+        rows = await self.memory.relations(self.g, self.one.id, include_secret=True)
+        self.assertTrue(any(r.subject_id == self.mira and r.predicate == "member_of" for r in rows))
 
     PLAYER = "123456789012345678"
 
@@ -635,10 +638,13 @@ class TheRoutes(Acting):
 class TheDoors(Acting):
     async def test_the_doors_have_one_caller(self) -> None:
         for door in ("dmbot_web_name_action_add(", "dmbot_web_name_action_read("):
-            # the relationship web queues its edits through the same doors (#2323)
-            self.assertEqual(
-                callers(door), {"schema.py", "web/all_names.py", "web/relationships.py"}
-            )
+            # the relationship web queues its edits through the same doors (#2323); "Met but not
+            # named" queues its answers on the add door only (#4084) and reads them where every
+            # name action's answer is read
+            expected = {"schema.py", "web/all_names.py", "web/relationships.py"}
+            if door == "dmbot_web_name_action_add(":
+                expected.add("web/met_list.py")
+            self.assertEqual(callers(door), expected)
 
 
 class WhileClosing(unittest.IsolatedAsyncioTestCase):

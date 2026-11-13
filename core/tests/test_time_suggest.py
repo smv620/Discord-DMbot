@@ -172,14 +172,18 @@ class Fake:
 
         self.time_ai = SimpleNamespace(complete=complete)
         self.campaign = SimpleNamespace(
-            id="c" * 32, guild_id=GUILD, dm_user_ids=frozenset({DM}), dm_screen_channel_id=SCREEN
+            id="c" * 32,
+            guild_id=GUILD,
+            dm_user_ids=frozenset({DM}),
+            dm_accounts=frozenset({DM}),
+            dm_screen_channel_id=SCREEN,
         )
         self.stored: Stored | None = Stored(Clock(NOON4, 0), None, None)
         self.clocks = SimpleNamespace(get=self._clock)
         self.campaigns = SimpleNamespace(get=AsyncMock(side_effect=self._campaign))
         self.table = SimpleNamespace(
             guild_id=GUILD, campaign_id="c" * 32, listening=True, time_suggest=sg.State(),
-            dm_user_ids=frozenset({DM}),
+            dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}),
         )  # fmt: skip
         self.tables = {GUILD: self.table}
         self.agreed = {(GUILD, DM)}
@@ -417,7 +421,11 @@ class Routing(unittest.IsolatedAsyncioTestCase):
             suggested=[], _suggest_rest=AsyncMock(),
         )  # fmt: skip
         table = SimpleNamespace(
-            guild_id=GUILD, campaign_id="c" * 32, listening=True, dm_user_ids=frozenset({DM}),
+guild_id=GUILD,
+            campaign_id="c" * 32,
+            listening=True,
+            dm_user_ids=frozenset({DM}),
+            dm_accounts=frozenset({DM}),
             clock_said={},
         )  # fmt: skip
         bot.tables[GUILD] = table

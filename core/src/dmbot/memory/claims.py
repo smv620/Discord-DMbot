@@ -27,6 +27,8 @@ from dmbot.memory import (
     forget_readings,
     graph_review,
     kin,
+    knowers,
+    knows_how,
     link,
     one_off,
     place_words,
@@ -37,6 +39,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -81,6 +84,11 @@ from dmbot.memory.store import (
     _companion_problem,
     _load_ontology,
     _new_alias,
+    learnable_in_scene,
+    live_between,
+    record_name_session,
+    reveal_stated_in,
+    split_scene,
 )
 from dmbot.memory.voice import (
     EFFECT,
@@ -92,6 +100,7 @@ from dmbot.memory.voice import (
     voice,
 )
 from dmbot.names import not_names
+from dmbot.session_locks import lock_sessions_of
 from dmbot.word_end import at_word_end
 
 logger = logging.getLogger(__name__)
@@ -282,6 +291,18 @@ class Confirmed:
     claim: Claim
     flags: tuple[Flag, ...]  # problems the store's checks raised for the DM
     batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
+    # A connection the story held back that this claim stated, now shown to the players (#3963 c):
+    # the caller says so to the DM.
+    shown: bool = False
+    # Written held back beside a connection the story already holds back between the same two
+    # (#3975): the caller tells the DM, who shows it (👁️ Who knows this? in Discord, 👁️ Reveal to
+    # players on the website) when the players should see it.
+    held: bool = False
+    # Said while the game clock had the party split (#2996 rule 1, slice 2a): kept from the whole
+    # party. `scene` is how many characters of the group that was there now know it (0: which group
+    # can't be told, so nobody does, and the DM decides).
+    split: bool = False
+    scene: int = 0
 
 
 def _field(value: object, *, name: bool = False) -> str | None:
@@ -540,8 +561,10 @@ class Names:
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
     # Each character's (role, its player) by entry id, for who speaks for it (#2562)
     roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
-    # Each entry's source by id: only the party entry is told apart by it (#3176)
+    # Each entry's source by id (#3176)
     sources: Mapping[str, str] = field(default_factory=dict)
+    # The party entry's id: the `party` flag is the one marker (#3954), for the companion check
+    parties: frozenset[str] = frozenset()
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -586,7 +609,8 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         if str(e["type"]) == "character"
     }
     sources = {str(e["id"]): str(e.get("source") or "") for e in entities}
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources)
+    parties = frozenset(str(e["id"]) for e in entities if e.get("party"))
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles, sources, parties)
 
 
 MAX_EXPANDED = 12  # claims one list claim may become: more is a sentence, not a list of names
@@ -721,6 +745,7 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
                 "type": second[1],
                 "role": names.roles.get(second[0], (None, None))[0],
                 "source": names.sources.get(second[0], ""),
+                "party": second[0] in names.parties,
             },
             EXTRACTOR,
         )
@@ -983,6 +1008,20 @@ def which_choices(
     return out
 
 
+async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
+    """Each character of the group that was in the scene learns the connection (#2996 slice 2a),
+    in the claim's own change, so one Undo takes it back. A character the store refuses (gone
+    meanwhile) is skipped. Returns how many now know it."""
+    learned = 0
+    for character_id in characters:
+        try:
+            await knowers.learn(w, "connection", relation_id, character_id)
+            learned += 1
+        except MemoryRuleError:
+            continue
+    return learned
+
+
 class ClaimStore:
     """Proposals from the extractor, and the DM's answers to them."""
 
@@ -1231,7 +1270,9 @@ class ClaimStore:
             deferred = 0
             if chosen:
                 both = [*work, *((k, "", u) for _, k, u in old)]
-                new, joined = await self._link(w, onto, both, chosen, entities, aliases)
+                new, joined = await self._link(
+                    w, onto, both, chosen, entities, aliases, session_started_at
+                )
                 names = names_of(entities, aliases)
             else:
                 new, joined = [], 0
@@ -1436,9 +1477,14 @@ class ClaimStore:
         chosen: Sequence[str],
         entities: list[dict[str, Any]],
         aliases: list[dict[str, Any]],
+        session_started_at: int | None = None,
     ) -> tuple[list[str], int]:
         """Make the chosen name keys proposed entries, or join them to one already waiting.
         `entities` and `aliases` are the rows the caller holds; the new ones are added to them.
+        `session_started_at`: the session the names were heard in, recorded with each new one so
+        the split-party check reads that session's lines (#4043), never a guess by time. Only the
+        session a name was first made in is recorded: a spelling a later session joins to a name
+        still waiting is checked against that first session's lines (a known limit).
         Returns (the new entries' names, spellings joined to a waiting one)."""
         spelling: dict[str, str] = {}  # name key → the words as first said
         sides: dict[str, set[str]] = {}  # name key → the kinds the claims' relationships imply
@@ -1491,6 +1537,8 @@ class ClaimStore:
                 alias = await w.insert(
                     ALIASES, _new_alias(w, str(row["id"]), name, "full", PROPOSED, False, None)
                 )
+                if session_started_at is not None:
+                    await record_name_session(w, str(row["id"]), session_started_at)
                 entities.append(row)
                 aliases.append(alias)
                 home = str(row["id"])
@@ -1889,14 +1937,32 @@ class ClaimStore:
         this person's words and were not turned into a fact (waiting, turned down or dropped).
         What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
         same line (`forget_readings`): what the DM kept stays, a guess that only this person's
-        words produced goes with what it made. Returns how many claims, readings, deeds and scenes
-        went."""
+        words produced goes with what it made. Returns how many claims, readings, deeds, reveals,
+        scenes, beings met in play and private scenes went.
 
-        from dmbot.memory import deed_proposals  # (imported here: it needs this module's names)
+        Lock order (#4153): first every session row this person has lines in, `FOR UPDATE`, in id
+        order, then the rows that cite them. The after-session writers (`PrivateScenes.
+        write_session`, `MetStore.add`) hold one session's row and re-read who is recorded under
+        it, and never take a second session's row while holding one; so a writer that is mid-write
+        finishes first and this deletes what it wrote, and one that starts after this sees the stop
+        once the consent row is gone. Run again after the consent row is deleted (`withdraw_consent`
+        does), it catches the one writer that re-read just before that delete."""
+
+        # (imported here: they need this module's names)
+        from dmbot.memory import deed_proposals, met_store, private_scene_store, reveal_proposals
 
         async with self._store._db.guild(guild_id) as conn:
+            # (the one lock order "Delete my transcripts" and a speaker's removal use too). It is
+            # held for the whole forget, so a line save in a session this person spoke in waits
+            # for it (at most the stop's timeout, nothing lost): taking it later instead would put
+            # the campaign locks below before it, the reverse of "Delete my transcripts"' order
+            await lock_sessions_of(conn, guild_id, user_id)
             readings = await forget_readings.forget(conn, guild_id, user_id)
             readings += await deed_proposals.forget(conn, guild_id, user_id)
+            readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
+            readings += await met_store.forget_speaker(conn, guild_id, user_id)  # (#3172 slice 5)
+            # (the private scenes they spoke in, #2996 rule 5)
+            readings += await private_scene_store.forget_speaker(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)
@@ -2121,6 +2187,8 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
+            shown = held = split = False
+            scene = 0
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
                     w, who[0], condition, claim.session_started_at
@@ -2130,20 +2198,64 @@ class ClaimStore:
                 assert resolved is not None and not isinstance(other, str)
                 term, from_object, label = resolved
                 subject_id, object_id = (other[0], who[0]) if from_object else (who[0], other[0])
+                # A claim the reader could only file under the catch-all, between two entries the
+                # story already holds a connection back for, may be that connection in other
+                # words: it is written held back too, never shown beside it (#3975). The DM
+                # decides when to show it; DMbot never guesses which one it means.
+                live = await live_between(w, subject_id, object_id)
+                hold = term.key == FALLBACK_PREDICATE and any(live.values())
                 # On the catch-all, the words it was said in are the fact's label and nothing
                 # else: the card sets `detail` between the two names, so side notes can't go there.
                 subject_kind = other[1] if from_object else who[1]
+                # Who was in the scene, when the game clock had the party split (#2996 rule 1),
+                # read BEFORE the write: a connection said in one group's scene is written held
+                # back from the start, so nothing a shown row sets off (a "met" upgrade, an item's
+                # whereabouts ended) reaches the other group (the reviewer).
+                in_scene = (
+                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    if not secret and not hold
+                    else None
+                )
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),
                     from_session_at=claim.session_started_at,
                     secret=secret,
+                    unrevealed=hold or in_scene is not None,
+                    # whether they've met, from the reader's own words for it (#3881)
+                    knows_how=knows_how.how_from(
+                        claim.relationship, claim.details, a=claim.subject, b=claim.object
+                    )
+                    if term.key == KNOWS_PREDICATE
+                    else "",
                 )  # fmt: skip
                 fact_id = relation.id
+                if relation.id in live:
+                    if not live[relation.id]:
+                        in_scene = None  # (one already shown stays as it is: nothing to learn)
+                    elif in_scene is None and not secret:
+                        # (the table said a connection the story holds back: the party's now,
+                        # #3963 c)
+                        shown = await reveal_stated_in(w, relation.id)
+                elif hold and not relation.unrevealed:
+                    # a twin the DM once turned down comes back as it was, shown: held back here
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                elif in_scene is not None and not relation.unrevealed:
+                    # (a twin the DM once turned down, brought back shown: held back here too)
+                    await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                if in_scene is not None:
+                    # only that group heard it: its characters learn it, nobody else. An unknown
+                    # group, or a connection the together rule wouldn't show either (a secret one,
+                    # an end the players haven't been shown): nobody, and the DM decides.
+                    split = True
+                    if in_scene and await learnable_in_scene(w, relation.id):
+                        scene = await _learn_in_scene(w, relation.id, in_scene)
+                # (a secret one is the DM's own choice, and says so already)
+                held = hold and not secret and relation.id not in live
             row = await w.update(
                 CLAIMS,
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
             batch = w.batch
-        return Confirmed(claim_of(row), tuple(flags), batch)
+        return Confirmed(claim_of(row), tuple(flags), batch, shown, held, split, scene)

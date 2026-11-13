@@ -163,12 +163,22 @@ class PlanChecksSetting(unittest.TestCase):
             load_settings({**BASE, "DMBOT_STORY_WHO": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_DEEDS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_DEEDS": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_by_rank_on)  # off unless asked (#3172)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "1"}).recap_by_rank_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_BY_RANK must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):
             load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
+
+    def test_wizard_link_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).wizard_link_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_WIZARD_LINK": "on"}).wizard_link_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_WIZARD_LINK must be 1"):
+            load_settings({**BASE, "DMBOT_WIZARD_LINK": "maybe"})
 
     def test_theatre_switch_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).theatre_on)
@@ -191,6 +201,35 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings(both).role_match_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_ROLE_MATCH must be 1"):
             load_settings({**BASE, "DMBOT_ROLE_MATCH": "maybe"})
+
+    def test_private_scenes_are_off_by_default(self) -> None:  # (#2996 rule 5)
+        self.assertFalse(load_settings(BASE).private_scenes_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_PRIVATE_SCENES": "1"}).private_scenes_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_PRIVATE_SCENES must be 1"):
+            load_settings({**BASE, "DMBOT_PRIVATE_SCENES": "maybe"})
+
+    def test_the_scene_filter_is_off_by_default(self) -> None:  # (#4173 slice 4)
+        self.assertFalse(load_settings(BASE).scene_filter_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_SCENE_FILTER": "1"}).scene_filter_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_SCENE_FILTER must be 1"):
+            load_settings({**BASE, "DMBOT_SCENE_FILTER": "maybe"})
+
+    def test_picture_names_are_off_by_default(self) -> None:  # (#4003)
+        self.assertFalse(load_settings(BASE).picture_names_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_PICTURE_NAMES": "1"}).picture_names_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_PICTURE_NAMES must be 1"):
+            load_settings({**BASE, "DMBOT_PICTURE_NAMES": "maybe"})
+
+    def test_who_learned_what_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).story_reveals_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_REVEALS": "1"}).story_reveals_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS": "maybe"})
+        self.assertFalse(load_settings(BASE).story_reveals_precheck)
+        on = {**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "1"}
+        self.assertTrue(load_settings(on).story_reveals_precheck)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS_PRECHECK must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "maybe"})
 
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
@@ -223,7 +262,7 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings(both).recap_audio_on)
         self.assertFalse(load_settings({**both, "DMBOT_RECAPS": "0"}).recap_audio_on)
         self.assertNotIn("elevenlabs_key", repr(load_settings(both)))  # the key is never shown
-        self.assertEqual(load_settings(BASE).recap_audio_max_credits, 15000)
+        self.assertEqual(load_settings(BASE).recap_audio_max_credits, 20000)
         self.assertEqual(load_settings(BASE).elevenlabs_speech_model, "eleven_v3")
         self.assertEqual(
             load_settings({**BASE, "ELEVENLABS_SPEECH_MODEL": "eleven_v4"}).elevenlabs_speech_model,

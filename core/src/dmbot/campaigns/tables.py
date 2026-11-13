@@ -22,6 +22,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_predicates",
         "memory_entities",
         "memory_rule_links",
+        "memory_story_languages",  # an NPC's languages from the story (#4229)
+        "memory_map_facts",  # a place's land, climate and who rules it (#4256)
         "memory_states",
         "memory_claims",
         "memory_aliases",
@@ -42,8 +44,12 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "memory_roles": ("memory_role_codes", "memory_roles"),  # the story roles (#3172, item b)
     "pc_icons": ("pc_icons",),  # the icon chosen for each player character (#3621)
     "memory_deed_proposals": ("memory_deed_proposals",),  # deeds waiting for the DM (#3175)
+    "memory_reveal_proposals": ("memory_reveal_proposals",),  # who learned what (#2996)
+    # private scenes (#2996 rule 5) and the entries said in each (#4110)
+    "memory_private_scenes": ("memory_private_scenes", "memory_private_scene_entries"),
     "memory_scenes": ("memory_scenes",),  # the scene of a waiting question (#3596)
     "memory_kind_offers": ("memory_kind_offers",),  # the DM's Not now / Never on kinds (#3033)
+    "memory_story_chain": ("memory_story_chain",),  # where the story is (#4173 slice 4)
     "house_rules": ("house_rules",),
     "house_rule_wins": ("house_rule_wins",),
     "homebrew": ("homebrew_entries",),
@@ -96,6 +102,7 @@ _WAIT = "a wait or a pointer, kept out by its schema comment"
 _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 _QUEUE = "a request still waiting for an answer: a restored campaign starts with none"
+_MEMBER_IDS = "Discord ids of this server's members: not in a file anyone in the server may get"
 _KEY = "a key to a publisher's set, which must not travel in a file anyone in the server may get"
 _VOICE_CO = (
     "an object on the voice company's one shared account, not in our data: a file could point a "
@@ -103,6 +110,20 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "sheet_waits": "a D&D Beyond sheet link the DM gave in the wizard for a character with no "
+    "player yet, waiting for the player (#4205): the address and a time, no sheet and no person. "
+    "A request still waiting, like the wizard's own draft; the link is read when the character "
+    "has a player, and is added again on the Sheets page if a restore loses it",
+    "ai_credit_spend": "what each AI call made for the DM's uploads and imports cost, in credits "
+    "(#4005): counts and times only, a ledger like plan_spend. A restored campaign starts its "
+    "month fresh, and the account's total (owner_credits) is the person's, never the campaign's",
+    "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
+    "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
+    "answer to a question, like name_not_same: a restored campaign may ask it once more",
+    "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
+    "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
+    "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
+    "as with any request still waiting; one the DM named is an entry, which a backup carries",
     "question_counts": "the count of each kind of question waiting for the DM, made again every "
     "minute by the bot: counts and times only (#3435)",
     "question_notices": "the timer of the 'Questions for you' reminders for each DM: step, next "
@@ -120,6 +141,20 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_name_sessions": "which session a waiting name was made in, by the session's start "
+    "(#4043): a time and an id only, for the split-party check, kept only while a name waits; a "
+    "restored campaign's waiting names fall back to the check's older guess by time, which may "
+    "pick the wrong session (the DM can still choose who knows a name)",
+    "memory_name_sources": "which upload a name was read from, for the Names page's filter: "
+    "provenance of working data (an upload id or label and a time, never a word of it), made again "
+    "by the next read; a restored campaign's names read as not known yet (#3675)",
+    "memory_trait_offers": "a lore upload's lineage or class for a character the campaign already "
+    "has, waiting for the DM's Keep it or Not this (#3926): the trait, the reader's quote of the "
+    "DM's own text (up to 240 characters, DM-only) and the upload's label; a question is made "
+    "again by the next read, and a kept one is the character's rules link, which a backup carries",
+    "memory_npc_guesses": "DMbot's guesses of which NPCs and groups know a lore name, waiting for "
+    "the DM to confirm it (#2959): entry ids and a certainty, never words; made again by the next "
+    "read, and the ones already confirmed are knowers, which a backup carries",
     "memory_who_answers": "the AI's ranked answers for a name waiting on 'Who is this?' (DM-only): "
     "entry ids, kinds and confidence words DMbot chose, never a transcript line; made again each "
     "session and swept once the name is answered (#3602)",
@@ -143,6 +178,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
     "hear_use": _RUNTIME,
+    "campaign_channel_people": _MEMBER_IDS,  # members a DM let see the channels by hand (#3891)
+    "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
@@ -175,6 +212,12 @@ NOT_IN_BACKUP: dict[str, str] = {
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
     "said_as_hears": _WAIT,  # a press of Hear it: typed words and a clip, gone in an hour
+    "upload_undos": _WAIT,  # a press of Undo this upload: ids and counts, gone in a day (#3879)
+    "trait_answers": _WAIT,  # a Yes or No on a lineage or class question, gone in a day (#3946)
+    "hand_over_answers": _WAIT,  # a "Does Claude still have it?" answer, gone in a day (#4122)
+    "hand_over_questions": 'the bot\'s list of "Does Claude still have it?" questions for the '
+    "website (#4122): ids and a time, written again every minute from the campaign's connections",
+    "script_makes": _WAIT,  # a press of Make the script: ids and counts, gone in a day (#3899)
     "picture_actions": _WAIT,
     "speaker_removals": _QUEUE,
     "web_rule_actions": _WAIT,
@@ -252,4 +295,7 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "question_notices.message_id": "a message in the DM's private chat, which belongs to no "
     "server, so it stays valid after a move (#3435)",
     "campaign_handover_offers.message_id": "none: the offer is removed by the move",
+    "upload_notices.channel_id": "left: the notice stays in the old server; its buttons name the "
+    "old server, so they find nothing after a move",
+    "upload_notices.message_id": "left: as its channel",
 }
