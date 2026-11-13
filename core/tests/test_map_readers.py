@@ -16,6 +16,7 @@ ALLOWED = {
     "campaigns/tables.py",
     "lineage.py",
     "pictures/store.py",
+    "memory/_changes.py",  # (the change log and its Undo, #4346: existence checks, never content)
 }
 
 

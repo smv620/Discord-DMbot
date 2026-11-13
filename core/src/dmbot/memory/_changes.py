@@ -17,10 +17,12 @@ from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
+from dmbot.pictures.store import _lock as pictures_lock
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
+MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +159,17 @@ MAP_FACTS = Table(
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
      "also_text", "table_knows", "created_at"),
+)  # fmt: skip
+# One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
+# that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
+# (#4346, design rule 8). Only the store in `maps/store.py` writes it, through `Changes`.
+MAPS = Table(
+    "campaign_maps",
+    "id",
+    ("id", "picture_id", "title", "covers", "kind", "width", "height", "scale_value",
+     "scale_unit", "scale_from", "grid_kind", "grid_cell_px", "grid_cell_distance", "north_angle",
+     "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
+     "use_by", "use_at", "as_of", "replaces", "created_at"),
 )  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
@@ -295,7 +308,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, MAP_FACTS,
+       STORY_LANGUAGES, MAP_FACTS, MAPS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -342,6 +355,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_story_languages", "entity_id", False),  # (#4229)
         ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
         ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
+        ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),
@@ -353,6 +367,11 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_entities", "unnamed_anchor", False),
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
+    ),
+    # (the database would set these to NULL outside the log: #4346)
+    "campaign_maps": (
+        ("memory_map_facts", "map_id", False),
+        ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -1041,6 +1060,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     if not rows:
         raise TooLateToUndo(NOT_FOUND)  # pruned (#164); the store says how long Undo works
     rows = await _without_lost_parents(conn, ids, rows)
+    pictures = await _map_pictures_kept(conn, ids, rows)
     start = 0
     while start < len(rows):
         end = start + 1
@@ -1051,6 +1071,18 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
+    # A map's picture is kept permanent exactly while it is a map (#4346). Undoing an add clears a
+    # pin the DM set before it was a map, as removing a map does (Supervisor's ruling on #4344).
+    # An Undo that pins again does not re-check the 80% share: the picture was permanent until the
+    # change it undoes, and the share's size is a setting the log doesn't see (put to Supervisor).
+    if pictures:
+        await conn.execute(
+            "UPDATE campaign_pictures p SET permanent = EXISTS (SELECT 1 FROM campaign_maps m"
+            " WHERE m.guild_id = p.guild_id AND m.campaign_id = p.campaign_id"
+            " AND m.picture_id = p.id)"
+            " WHERE p.guild_id = %s AND p.campaign_id = %s AND p.id = ANY(%s)",
+            (*ids, pictures),
+        )
     # a merge's notes and sheet live outside the log: they come back with the name (#2438)
     await merge_restore.restore(conn, ids, batch, changes.batch)
     await merge_restore.redo(conn, ids, batch, changes.batch)
@@ -1156,6 +1188,37 @@ async def _without_lost_parents(
         else dict(r)
         for r in rows
     ]
+
+
+async def _map_pictures_kept(
+    conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
+) -> list[int]:
+    """The pictures of the maps a batch changed, each still kept: a map's Undo needs its picture
+    (#4346). Deleting a picture takes its map with it
+    outside the log (`PictureStore.delete`), and a deleted picture's row stays behind with
+    `deleted_at` set, so without this check an Undo could bring back a map of a picture that is
+    gone, or report a plain "changed since" for a map the picture took with it."""
+    pictures = {
+        int(side["picture_id"])
+        for r in rows
+        if r["table_name"] == MAPS.name
+        for side in (r["before"], r["after"])
+        if isinstance(side, dict) and side.get("picture_id") is not None
+    }
+    if not pictures:
+        return []
+    # (the picture store's lock first, as `MapStore` and `PictureStore.delete` take it before any
+    # picture or map row: one order, so an Undo racing a delete waits instead of deadlocking, and a
+    # picture store making room never soft-deletes a picture this Undo is pinning again)
+    await pictures_lock(conn, *ids)
+    cur = await conn.execute(
+        "SELECT id FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+        " AND id = ANY(%s) AND deleted_at IS NULL FOR UPDATE",
+        (*ids, sorted(pictures)),
+    )
+    if len(await cur.fetchall()) < len(pictures):
+        raise MemoryRuleError(MAP_PICTURE_GONE)
+    return sorted(pictures)
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
