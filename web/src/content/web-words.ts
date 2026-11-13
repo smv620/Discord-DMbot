@@ -98,6 +98,8 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
+  // The hint for the point-and-tap map, shown only to people who can edit (#4155). The button's label names the
+  // connection in full, so a screen reader does not read the button as just "Mira Voss serves Garrick".
   tapConnection: "Tap a connection to open it.",
   openConnection: (text: string): string => `Open this connection: ${text}`,
   letGo: "Let everything move again",
