@@ -1834,6 +1834,8 @@ class SuggestionReview(_Menu):
 
     async def _pick_kind(self, interaction: discord.Interaction) -> None:
         """ "✏️ Something else": the kind picker, for a name that was read with another kind."""
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is not None:
             await self._ask_kind(interaction, current[2])
@@ -1929,6 +1931,8 @@ class SuggestionReview(_Menu):
         await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2355,6 +2359,8 @@ class SuggestionReview(_Menu):
         await self._next(interaction, campaign, memory, note=None)
 
     async def _back(self, interaction: discord.Interaction) -> None:
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return

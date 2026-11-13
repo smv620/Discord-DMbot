@@ -54,6 +54,7 @@ from dmbot import (
     install,
     lore_upload,
     mail,
+    member_lookups,
     member_names,
     owner_presence,
     person_key,
@@ -295,6 +296,7 @@ from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
+    backstory_keep,
     contradiction_run,
     definitions,
     document_reader,
@@ -309,6 +311,7 @@ from dmbot.memory import (
     report_make,
     role_match,
     scan_kinds,
+    scene_move_step,
     scene_step,
     voyage,
     web_actions,
@@ -382,6 +385,9 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.story_chain_backup import StoryChainSection
+from dmbot.memory.story_chain_store import Said as StorySaid
+from dmbot.memory.story_chain_store import StoryChains, readable_lines, stored_vectors
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
@@ -720,6 +726,8 @@ WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answ
 WIZARD_FINISH_EVERY_S = 5
 MEMBER_NAMES_FIRST_S = 45  # people known only by number are given their Discord names (#4225)
 MEMBER_NAMES_EVERY_S = 60
+MEMBER_LOOKUP_FIRST_S = 20
+MEMBER_LOOKUP_EVERY_S = 3  # a typed Discord ID is answered while the DM waits (#4225)
 DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
@@ -1939,6 +1947,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if self.memory is not None
                 else []
             ),
+            self._watched(self._member_lookup_loop(), "member-lookups"),
             self._watched(self._disk_check_loop(), "disk-check"),
             self._watched(self._trait_answer_loop(), "trait-answers"),
             self._watched(self._hand_over_loop(), "hand-over-answers"),
@@ -3319,6 +3328,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # Where the story is (#4173 slice 4): the DM's lines move a chain of open places kept
+            # between sessions, and new places get an assumed parent from it. No AI call.
+            ("where the story is", lambda: self.walk_story_chain(table)),
             # The scene of each waiting question, from the lines it came from (#3596): after the
             # extractor, so the questions it made are there, and inside the same call limit.
             ("scenes", lambda: self.write_scenes(table)),
@@ -10435,6 +10447,120 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Reveals: %d waiting for the DM", count)
                 await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
+    async def walk_story_chain(self, table: Table) -> None:
+        """After a session (#4173 slice 4): walk where the story is through it. Never stops the
+        other steps (the type only in the log). It reads the session's own words, not what the
+        extractor found, so it runs whether or not a call limit cut the extractor short (an import
+        walks once its read is done)."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        dm_ids = {table.dm_user_id, *table.dm_user_ids}
+        consenting = partial(self.consent.consenting, table.guild_id)
+        await self._walk_story_chain(
+            table.guild_id, table.campaign_id, table.transcript_session_id, dm_ids, consenting
+        )
+
+    async def _walk_story_chain(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+    ) -> None:
+        """The session's own lines, as the story extractor reads them (`extractor.readable`, last
+        time's recap left out, only people who still agree, the DM too, asked just before and again
+        before anything is kept), through
+        `StoryChains`. Only for a campaign whose plan has story memory; counts only in the log."""
+        if self.memory is None or self.transcripts is None or self.backstory_links is None:
+            return
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await self.transcripts.session(gid, sid)
+                if session is None or session.lines == 0:
+                    return
+                recap = await self._recap_lines(gid, sid)
+                lines = await self.transcripts.lines(gid, sid)
+                said = readable_lines(lines, recap, set(await consenting()))
+                found = await self._scene_moves(gid, cid, sid, said, dm_ids, consenting)
+                done = await StoryChains(self.memory._db, self.backstory_links).read_session(
+                    gid, cid, session.started_at, said, dm_ids, f"Session {session.number}",
+                    consenting, scene_move_step.moves_of(found),
+                )  # fmt: skip
+                log.info(
+                    "Where the story is: %d new guesses of where a place is%s; scene moves: %d DM"
+                    " lines, %d asked (%d without numbers), %d calls, %d+%d tokens, %d moves,"
+                    " %d unreadable, %d stopped early",
+                    done.guessed,
+                    " (an older session: left out)" if done.skipped_older else "",
+                    found.dm_lines, found.asked, found.fallback, found.calls,
+                    found.input_tokens, found.output_tokens,
+                    sum(len(m) for m in found.moves.values()), found.unreadable,
+                    found.stopped_early,
+                )  # fmt: skip
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Where the story is: stopped (%s)", type(exc).__name__)
+
+    async def _scene_moves(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        said: Sequence[StorySaid],
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+    ) -> scene_move_step.Found:
+        """The session's scene moves (#4173 slice 4): the DM lines whose stored numbers look like
+        a move, with their context, to the AI (`scene_move_step`); every DM line when there are no
+        numbers. Inside the story extractor's call limits, counted as its calls; none when the
+        extractor's AI is off (nothing is read or asked)."""
+        ai, transcripts, memory = self.extractor_ai, self.transcripts, self.memory
+        if ai is None or transcripts is None or memory is None:
+            return scene_move_step.Found()
+        examples = None
+        vectors: dict[tuple[int, int], list[float]] = {}
+        if (
+            self.settings.scene_filter_on  # (off by default: every DM line goes to the call)
+            and self.voyage is not None
+            and self.settings.meaning_search_on
+        ):
+            model = self.settings.voyage_embed_model
+            try:
+                examples = await scene_move_step.example_vectors(self.voyage, model)
+                vectors = await stored_vectors(memory._db, gid, sid, model, dm_ids)
+            except Exception as exc:  # (no filter, then: every DM line is asked about)
+                log.warning("Scene moves: no numbers (%s)", type(exc).__name__)
+                examples, vectors = None, {}
+        lines = [
+            scene_move_step.DmLine(
+                s.number, s.user_id, s.text, vectors.get((s.started_ms, s.user_id))
+            )
+            for s in said
+        ]
+        _after_ms, used = await transcripts.extraction(gid, sid)
+        now = int(time.time())
+        allowed = extractor.calls_left(
+            self.settings.story_extractor_max_calls,
+            used,
+            self.settings.story_extractor_max_calls_day,
+            await transcripts.extractor_calls_since(gid, cid, now - 86400),
+        )
+
+        async def count_call() -> None:
+            await transcripts.record_extraction(
+                gid, sid, through_ms=0, calls=1, now=int(time.time())
+            )
+
+        return await scene_move_step.find(
+            ai, lines, set(dm_ids), examples, count_call=count_call, allowed=allowed,
+            agreed=consenting,
+        )  # fmt: skip
+
     async def find_private_scenes(self, table: Table) -> None:
         """After a session (#2996 rule 5), only with DMBOT_PRIVATE_SCENES: find the stretches when
         the party was split and two player characters, played by two different people, were alone
@@ -12072,6 +12198,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await step(gid, cid, sid, dm_ids, recorded, renew)
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Import: %s stopped (%s)", word.lower(), type(exc).__name__)
+        # where the story is (#4173 slice 4): the same walk as after a live session, no AI call
+        await self._walk_story_chain(gid, cid, sid, dm_ids, recorded)
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:
         """Imported sessions the story extractor did not finish (a call limit stopped it, or a
@@ -14208,6 +14336,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await disk_check.look(watch)  # (never raises)
             await asyncio.sleep(disk_check.CHECK_EVERY_S)
 
+    async def _member_lookup_loop(self) -> None:
+        """Every few seconds: answer the website's "who is this Discord ID?" questions, a few in
+        each server (#4225, point 5; `member_lookups`). A server's trouble never stops the
+        others."""
+        await asyncio.sleep(MEMBER_LOOKUP_FIRST_S)
+        while not self._closing:
+            for guild in list(self.guilds):
+                try:
+                    await member_lookups.run(self, guild.id)
+                except Exception as exc:
+                    log.warning("Member lookups: a server's round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(MEMBER_LOOKUP_EVERY_S)
+
     async def _member_names_loop(self) -> None:
         """Every minute: give the people DMbot knows only as `Player 1234` their Discord names, a
         few in each server (#4225; `member_names`). A server's trouble never stops the others."""
@@ -14549,6 +14690,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         guild_id, campaign = found
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            # A place's parent DMbot assumed (#4173 slice 3) is kept once both places are: never a
+            # question, so it is done here, where a name's keep is noticed, before the count.
+            try:
+                await backstory_keep.keep_assumed(memory, store, guild_id, campaign_id)
+            except Exception as exc:
+                log.warning("Assumed places couldn't be kept (%s)", type(exc).__name__)
             # Upkeep, not live play: the DM Bot channel (the DM screen only where there is none).
             channel_id = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
             # The whole decision runs under the campaign's lock, so two looks never post, edit and
@@ -15182,6 +15329,7 @@ def register_backup_sections(
     campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
+    campaigns.register_section(StoryChainSection())  # where the story is (#4173 slice 4)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)
     campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 

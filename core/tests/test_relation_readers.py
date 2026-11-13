@@ -34,6 +34,8 @@ READERS = {
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/hand_over.py": DM_ONLY + ": current confirmed owns and carries of a one-of-a-kind "
     "item, for the DM's private question (#4115); ends a tie only on the DM's answer",
+    "memory/story_chain_store.py": DM_ONLY + ": which places have a parent already, so where the "
+    "story is never guesses twice (#4173 slice 4); shows nothing",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
     "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
@@ -109,6 +111,12 @@ STORE = {
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
+    "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
+    "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
+    "_not_assumed": DM_ONLY + ": refuses learning an assumed connection (#4173 slice 3)",
+    "_reopen_moved": "writes: a link putting a place inside another reopens a moved tie (slice 5)",
+    "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
+    "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
     "decline_setting": DM_ONLY + ": a made place for a declined setting guess goes only if nothing "
     "points at it (#4299)",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",

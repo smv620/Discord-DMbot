@@ -153,6 +153,9 @@ FILES: dict[str, str] = {
     "memory/met_store.py": NOT_DRAWN + " (beings met in play, waiting for the DM, #3172)",
     "memory/private_scene_store.py": NOT_DRAWN + " (private scenes, ids and times, #2996)",
     "memory/private_scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/story_chain_store.py": NOT_DRAWN + " (where the story is, ids only, #4173 slice 4;"
+    " its assumed links go through backstory_keep's _write)",
+    "memory/story_chain_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
