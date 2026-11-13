@@ -56,6 +56,8 @@ from dmbot import (
     mail,
     member_names,
     owner_presence,
+    person_key,
+    person_key_backfill,
     plan_rules,
     retention,
     script_make,
@@ -1903,6 +1905,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._meter_loop(), "hours-meter"),
             self._watched(self._idle_loop(), "idle-stop"),  # #2034
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
+            self._watched(self._person_key_loop(), "person-keys"),  # #4145
             *(
                 [self._watched(questions_discord.run_loop(self, self.question_round), "questions")]
                 if self.question_round is not None
@@ -11010,6 +11013,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
+    async def drop_language_suggestions(self, gid: int, cid: str) -> None:
+        """Turn down any waiting suggestion that is an SRD language (#4227,
+        `MemoryStore.drop_language_suggestions`), before a scan or a lore read suggests more. Never
+        stops what called it; counts only."""
+        if self.memory is None:
+            return
+        try:
+            dropped = await self.memory.drop_language_suggestions(gid, cid)
+        except Exception as exc:
+            log.warning("Language suggestions: couldn't drop them (%s)", type(exc).__name__)
+            return
+        if dropped:
+            log.info("Language suggestions: %d dropped", dropped)
+
     async def add_short_names(
         self, gid: int, cid: str, texts: Sequence[str], *, before_read: bool = False
     ) -> None:
@@ -11050,6 +11067,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
         await self.add_short_names(gid, cid, lines)
+        await self.drop_language_suggestions(gid, cid)
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
@@ -13589,6 +13607,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.warning("Graph checks failed for a server: %s", type(exc).__name__)
             await asyncio.sleep(60)
 
+    async def _person_key_loop(self) -> None:
+        """A minute after start and then every 6 hours: give the trial and email rows written before
+        the secret was set their keyed hash (#4145). Does nothing while no secret is configured;
+        each pass is idempotent and resumes where the last stopped."""
+        await asyncio.sleep(60)
+        while True:
+            try:
+                await person_key_backfill.run_logged(self.campaigns.db)
+            except Exception as exc:
+                log.warning("The person key job failed (%s)", type(exc).__name__)
+            await asyncio.sleep(6 * 3600)
+
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
         few minutes first so a restart loop can't send anything twice in a hurry (each message
@@ -15203,6 +15233,8 @@ async def fill_parties(
 
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    if not person_key.configure(settings.person_key):
+        log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     dm_links.configure_site(settings.site_url)  # the website button of every private message
     alerter = alerts.Alerter(settings.mail)

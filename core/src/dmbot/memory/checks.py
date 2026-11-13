@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_levels, place_words
+from dmbot.memory import kin, next_words, place_levels, place_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -113,6 +113,8 @@ def ordered(
     ("Wit sees Cerric as a rival") keeps its order, and one the DM made two-way is sorted."""
     if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
+    if p.key == "next_to" and next_words.one_way(detail):
+        return subject_id, object_id  # "Targos is on the shore of Maer Dualdon" keeps its order
     if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
@@ -161,20 +163,23 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
 
 
 class Nesting:
-    """Which places are inside which, from the live `located_in` facts between places, and how big
-    each place is (#4173). Pure: built from (place, the place it is in) pairs and a level per
-    place."""
+    """Which places are inside which, from the live `located_in` facts between places, how big
+    each place is, and the campaign's setting (#4173). Pure: built from (place, the place it is in)
+    pairs, a level per place and the setting's id."""
 
     def __init__(
-        self, pairs: Iterable[tuple[str, str]] = (), levels: Mapping[str, str] | None = None
+        self,
+        pairs: Iterable[tuple[str, str]] = (),
+        levels: Mapping[str, str] | None = None,
+        setting: str | None = None,
     ) -> None:
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
         self._levels = dict(levels or {})
+        self._setting = setting if setting in self._levels else None  # (a setting has a size)
 
-    def above(self, place: str) -> set[str]:
-        """Every place this one is inside, at any depth (a loop in the data can't hang it)."""
+    def _stated(self, place: str) -> set[str]:
         seen: set[str] = set()
         todo = [place]
         while todo:
@@ -183,6 +188,36 @@ class Nesting:
                     seen.add(outer)
                     todo.append(outer)
         return seen
+
+    def above(self, place: str) -> set[str]:
+        """Every place this one is inside, at any depth (a loop in the data can't hang it). A place
+        of a known size smaller than the campaign's setting (or inside one) is inside the setting
+        too, unless something says otherwise (#4173 slice 2: "Is Targos in Faerûn?" is never
+        asked): its stated places reach one as big as the setting, or the setting itself."""
+        seen = self._stated(place)
+        if self._setting is None or place == self._setting or self._setting in seen:
+            return seen
+        if place in self._stated(self._setting):  # (the setting is inside it: bad data, no loop)
+            return seen
+        top = place_levels.RANK[self._levels[self._setting]]
+        sizes = [place_levels.RANK[lv] for p in (place, *seen) if (lv := self._levels.get(p))]
+        if sizes and min(sizes) > top:  # smaller than the setting, and nothing as big says other
+            return seen | {self._setting} | self._stated(self._setting)
+        return seen
+
+    @property
+    def levels(self) -> Mapping[str, str]:
+        """How big each place is that has a size."""
+        return self._levels
+
+    def outer(self, place: str) -> set[str]:
+        """The places this one is directly inside: the stated ones, or, for a smaller place with
+        none stated, the campaign's setting (as `above` counts it). One step up the tree, for
+        reading a place's land, climate or ruler up it (#4256)."""
+        stated = set(self._in.get(place, ()))
+        if stated or self._setting is None or place == self._setting:
+            return stated
+        return {self._setting} if self._setting in self.above(place) else set()
 
     def related(self, a: str, b: str) -> bool:
         """Can someone be in both at once? When one is inside the other (being in both is being in
@@ -200,7 +235,11 @@ class Nesting:
     def _inside_another(self, place: str, other: str) -> bool:
         """Is `place` inside a place, not `other`, of `other`'s size?"""
         level = self._levels.get(other)
-        return any(p != other and self._levels.get(p) == level for p in self.above(place))
+        around = self.above(other)  # (what holds `other` is not elsewhere: Toril)
+        return any(
+            p != other and p not in around and self._levels.get(p) == level
+            for p in self.above(place)
+        )
 
     def would_loop(self, inner: str, outer: str) -> bool:
         """Would putting `inner` in `outer` make a place part of itself?"""

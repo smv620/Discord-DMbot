@@ -1472,6 +1472,7 @@ class SuggestionReview(_Menu):
         self.also: list[str] = []  # names heard with the current one
         self.places = name_places.Places()  # where the current one was said (#2329)
         self.refs: list[tuple[str, int | None]] = []  # its pointers, for "Where was it said?"
+        self.lore_kept = False  # the sentence from the DM's upload is held for it (#4227)
         self.spellings: list[str] = []
         self._buttons()
 
@@ -1506,6 +1507,8 @@ class SuggestionReview(_Menu):
         self.entity_id = entity.id
         self.is_list = len(split_list(entity.name, dm=True)) > 1  # (the store checks it again)
         self.group = await self._group_hint(campaign, memory, entity) if self.is_list else None
+        context = self._context(interaction, campaign, entity)
+        self.lore_kept = bool(context)
         self._buttons()
         text = suggestion_text(
             entity,
@@ -1516,7 +1519,7 @@ class SuggestionReview(_Menu):
             fix_to=self.fix_to,
             kind=self.known_kind,
             places=self.places.text(),
-            context=self._context(interaction, campaign, entity),
+            context=context,
             tagged=await tagged_name(memory, campaign, entity),
             scene=await scene_of(interaction, campaign, entity),
             players=(
@@ -1591,7 +1594,9 @@ class SuggestionReview(_Menu):
             lore = str(held.get(campaign.guild_id, self.entity_id))
             source = str(held.source(campaign.guild_id, self.entity_id))
         try:
-            if transcripts is None:
+            if not self.refs and not lore:  # the upload's sentence is only held for a while
+                text = name_places.LORE_GONE
+            elif transcripts is None:
                 text = name_places.NOTHING_KEPT
             else:
                 text = await name_places.where_said(
@@ -1718,14 +1723,15 @@ class SuggestionReview(_Menu):
                     row=3,
                 )
             )
-        self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
-            _Button(
-                self._where,
-                label="📜 Where was it said?",
-                style=discord.ButtonStyle.secondary,
-                row=2,
+        if self.refs or self.lore_kept:  # only with something behind it (#4227)
+            self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
+                _Button(
+                    self._where,
+                    label="📜 Where was it said?",
+                    style=discord.ButtonStyle.secondary,
+                    row=2,
+                )
             )
-        )
         if self.places.link:  # the session's page on the website
             self.add_item(
                 discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
@@ -1802,6 +1808,8 @@ class SuggestionReview(_Menu):
         await self._next(interaction, campaign, memory, note=note)
 
     async def _yes(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -1854,6 +1862,8 @@ class SuggestionReview(_Menu):
         await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
 
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2309,6 +2319,8 @@ class SuggestionReview(_Menu):
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2327,6 +2339,8 @@ class SuggestionReview(_Menu):
         await self._saved(interaction, campaign, memory, note)
 
     async def _later(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return

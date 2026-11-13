@@ -22,6 +22,7 @@ from tests.pg import DatabaseTest
 
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
+PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
 REL, ST, DOC = new_id(), new_id(), new_id()
 
 
@@ -72,8 +73,9 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " status, source, created_at, played_by, role)"
                 " VALUES (%s, %s, %s, 'character', 'Aaa', '', 'confirmed', 'dm', 1, NULL, NULL),"
                 " (%s, %s, %s, 'character', 'Bbb', '', 'confirmed', 'dm', 1, %s,"
-                " 'player_character')",
-                (g, c, A, g, c, B, DM),
+                " 'player_character'),"
+                " (%s, %s, %s, 'place', 'Ccc', '', 'confirmed', 'dm', 1, NULL, NULL)",
+                (g, c, A, g, c, B, DM, g, c, PLACE),
             ),
             "memory_relations": (
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
@@ -182,6 +184,18 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " rules_source, name, known, created_at)"
                 " VALUES (%s, %s, %s, %s, 'species', 'srd', 'Goblin', true, 1)",
                 (g, c, new_id(), A),
+            ),
+            "memory_story_languages": (  # an NPC's language from the story (#4229)
+                "INSERT INTO memory_story_languages (guild_id, campaign_id, id, entity_id, name,"
+                " name_key, srd, given_by, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Elvish', 'elvish', true, 'dm', 1)",
+                (g, c, new_id(), A),
+            ),
+            "memory_map_facts": (  # a place's climate (#4256)
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
+                " 'confirmed', 'dm', 1)",
+                (g, c, new_id(), PLACE),
             ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"

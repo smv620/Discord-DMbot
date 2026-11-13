@@ -235,6 +235,16 @@ class TheStore(MemoryTest):
         assert kept is not None
         self.assertEqual((kept.place_level, kept.place_level_from), ("settlement", "dm"))
 
+    async def test_a_place_made_a_person_loses_it_and_undo_brings_it_back(self) -> None:
+        # (one batch changes the row twice, the kind and then the size: Undo takes back both)
+        targos = await self.place("Targos")
+        await self.memory.set_place_level(GUILD_A, self.c, targos, "settlement", source=BY_DM)
+        changed = await self.memory.set_entity_type(GUILD_A, self.c, targos, "npc", source=BY_DM)
+        self.assertIsNone(await self.level(targos))
+        assert changed.batch is not None
+        await self.memory.undo(GUILD_A, self.c, changed.batch)
+        self.assertEqual(await self.level(targos), "settlement")
+
     async def test_a_backup_carries_it(self) -> None:
         targos = await self.place("Targos")
         await self.memory.set_place_level(GUILD_A, self.c, targos, "settlement", source=BY_DM)
@@ -334,7 +344,7 @@ class TheMenu(unittest.TestCase):
         self.assertEqual(place_size.size_line("settlement"), "\n📏 **Size:** a town or city")
         self.assertEqual(
             place_size.size_line("settlement", read=True),
-            "\n📏 **Size:** a town or city (DMbot read this; tap 📏 Size to change)",
+            "\n📏 **Size:** a town or city (DMbot read this; tap 📏 Size and kind to change)",
         )
         self.assertEqual(place_size.size_line(None), "")
 

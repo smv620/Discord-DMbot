@@ -36,11 +36,14 @@ export interface WizardAnswers {
   characters: WizardCharacter[];
   /** The rules to play with and the fallback: "2024" or "2014". */
   target: "2024" | "2014";
-  fallback: "2024" | "2014";
+  /** The rules used when the first has no answer: the other set, or "none" (core FALLBACK_NONE). */
+  fallback: "2024" | "2014" | "none";
   /** The books the person ticked; null until they change a box, so an untouched step keeps the defaults (Xanathar's and Tasha's rules are on). */
   supplements: string[] | null;
   dataUse: boolean;
   skipped: number[];
+  /** Step 8's published homebrew pages (#4211): dndbeyond.com addresses, at most 20. The server keeps this key in this spelling. */
+  homebrew_links: string[];
 }
 
 export interface WizardDraft {
@@ -55,7 +58,7 @@ export interface WizardDraft {
   serverNow: number;
 }
 
-export type WizardFinishStage = "campaign" | "party" | "rules" | "house_homebrew" | "data_use" | "lore" | "secrets" | "sure" | "clean";
+export type WizardFinishStage = "campaign" | "party" | "rules" | "house_homebrew" | "house" | "homebrew" | "data_use" | "lore" | "secrets" | "sure" | "clean";
 
 export interface WizardFinish {
   state: "waiting" | "working" | "done" | "failed";
@@ -64,6 +67,14 @@ export interface WizardFinish {
   ofParts: number;
   /** One of the finish run's words: plan, not-allowed, gone, no-key, failed or lost; empty when none. */
   error: string;
+  /** While the lore is read (#4213): the reader's pass as one stage word, how far through it, and what it has found so far. Numbers and a word only. */
+  pass: string;
+  passDone: number;
+  passTotal: number;
+  foundNames: number;
+  foundLinks: number;
+  /** What could not be used, as words and counts only ("house_unreadable:2 homebrew_link_failed:1"); empty when nothing. */
+  notes: string;
   /** Set once the campaign exists, so the page can link to it from then on. */
   campaignRef: string;
   createdAt: number;
@@ -142,7 +153,7 @@ export function toBase64(bytes: Uint8Array): string {
 
 /** A new draft's answers: nothing chosen yet (the books are `null` until a box changes, so the defaults hold). */
 export function emptyAnswers(): WizardAnswers {
-  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [] };
+  return { name: "", invite: "", source: "", pageTextUsed: false, characters: [], target: "2024", fallback: "2014", supplements: null, dataUse: false, skipped: [], homebrew_links: [] };
 }
 
 /** What the DM chose about helping improve DMbot (#4212): nothing is pre-selected, so there is a third state the draft's yes/no cannot hold.

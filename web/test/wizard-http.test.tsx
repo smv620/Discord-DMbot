@@ -179,6 +179,25 @@ describe("the finish card", () => {
   });
 });
 
+describe("the finish row's finer counts (#4213)", () => {
+  it("reads the pass word and the four numbers, and gives zeros when the server sends none", async () => {
+    const { api } = net({ [`GET /me/wizard/${G}/finish`]: [{ body: { state: "working", stage: "lore", pass: "finding_names", passDone: 2, passTotal: 5, foundNames: 12, foundLinks: 3, now: 5 } }, { body: { state: "working", stage: "lore", now: 6 } }] });
+    const first = await api.finishState(G);
+    expect([first?.pass, first?.passDone, first?.passTotal, first?.foundNames, first?.foundLinks]).toEqual(["finding_names", 2, 5, 12, 3]);
+    const second = await api.finishState(G);
+    expect([second?.pass, second?.passDone, second?.passTotal, second?.foundNames, second?.foundLinks]).toEqual(["", 0, 0, 0, 0]);
+  });
+});
+
+describe("a link document (#4206)", () => {
+  it("goes with its source and its address as the text, and no file data", async () => {
+    const { api, seen } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d7", slot: "lore", name: "https://example.com/notes", pages: 0, words: 0, status: "ok", reason: "" } } });
+    const doc = await api.docAdd(G, "lore", { name: "https://example.com/notes", source: "link", link: "https://example.com/notes" });
+    expect(doc.id).toBe("d7");
+    expect(seen.find((c) => c.key === `POST /me/wizard/${G}/documents`)?.body).toEqual({ slot: "lore", name: "https://example.com/notes", source: "link", text: "https://example.com/notes" });
+  });
+});
+
 describe("the pictures-only count (#4030)", () => {
   it("docAdd keeps picturePages from the upload's own answer", async () => {
     const { api } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d9", slot: "lore", name: "lore-pictures.pdf", pages: 4, words: 40, status: "ok", reason: "", picturePages: 3 } } });

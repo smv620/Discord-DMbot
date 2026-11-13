@@ -944,6 +944,56 @@ class ThePath(NamesTest):
              ("Rusty Anchor", "located_in", "Aldmoor"): ""},
         )  # fmt: skip
 
+    async def test_two_places_side_by_side_keep_how_they_sit(self) -> None:
+        # (#4173 slice 6a) "on the shore of" is kept as said; plain "next to" keeps no word, and
+        # a word off the list is dropped with the link kept
+        text = (
+            "Targos lies on the shore of Maer Dualdon. Bryn Shander is next to Termalaine. "
+            "Easthaven hugs Lac Dinneshere."
+        )
+        names = [
+            name("Targos", "place", "Targos lies"),
+            name("Maer Dualdon", "place", "of Maer Dualdon"),
+            name("Bryn Shander", "place", "Bryn Shander is"),
+            name("Termalaine", "place", "to Termalaine"),
+            name("Easthaven", "place", "Easthaven hugs"),
+            name("Lac Dinneshere", "place", "Lac Dinneshere"),
+        ]
+        links = [
+            {**link("Targos", "next to", "Maer Dualdon",
+                    "Targos lies on the shore of Maer Dualdon"), "words": "on the shores of"},
+            link("Bryn Shander", "next to", "Termalaine", "Bryn Shander is next to Termalaine"),
+            {**link("Easthaven", "next to", "Lac Dinneshere", "Easthaven hugs Lac Dinneshere"),
+             "words": "hugs"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        self.assertEqual(
+            {k: v for k, v in got.items() if k[1] == "next_to"},
+            {("Targos", "next_to", "Maer Dualdon"): "on the shore of",
+             ("Bryn Shander", "next_to", "Termalaine"): "",
+             ("Easthaven", "next_to", "Lac Dinneshere"): ""},
+        )  # fmt: skip
+
+    def test_two_places_read_as_inside_and_beside_each_other_keep_the_in(self) -> None:
+        # (#4173 slice 6a) never both: the "in" is offered, as before, until 6b's question asks
+        found = [bg.Found(n, "place", (), (), "") for n in ("Targos", "Ten-Towns", "Maer Dualdon")]
+        lines = [
+            bg.Connection("Targos", "next_to", "Ten-Towns", "q"),
+            bg.Connection("Targos", "located_in", "Ten-Towns", "q"),
+            bg.Connection("Targos", "next_to", "Maer Dualdon", "q", words="on the shore of"),
+        ]
+        lost: bg.Dropped = Counter()
+        kept = bg.keep_connections([lines], found, {}, dropped=lost)
+        self.assertEqual(
+            [(c.how, c.b) for c in kept],
+            [("located_in", "Ten-Towns"), ("next_to", "Maer Dualdon")],
+        )
+        self.assertEqual(lost["in_and_next_to"], 1)
+
     def test_two_place_words_for_one_pair_are_both_kept_by_the_reader(self) -> None:
         # (#3363) lived in and lives in the same town are two readings; the same word twice is
         # one. (The DM's waiting queue still keeps one fact for a pair and kind.)

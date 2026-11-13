@@ -21,7 +21,7 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, evidence, notify, place_levels, sheets
+from dmbot.memory import beliefs, evidence, map_facts, notify, place_levels, sheets
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -35,12 +35,14 @@ from dmbot.memory._changes import (
     FLAGS,
     IMPRESSIONS,
     KNOWERS,
+    MAP_FACTS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
     SHEETS,
     STATES,
+    STORY_LANGUAGES,
     TOLD,
     TYPES,
     Table,
@@ -61,6 +63,7 @@ from dmbot.memory.models import (
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
     FIX,
+    GIVEN_BY,
     HOWS,
     KEEP,
     KNOWS_HOWS,
@@ -76,6 +79,7 @@ from dmbot.memory.models import (
     PLAYERS_TEXT_MAX,
     ROLES,
     SOURCES,
+    STORY_LANGUAGE_MAX,
     THREAD_STATES,
     is_id,
     lookup_key,
@@ -109,6 +113,8 @@ _TAGS: dict[str, Table] = {
     "predicate": PREDICATES,
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
+    "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
+    "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -141,6 +147,7 @@ _TEXT_LIMITS = {
     "parent": 40,
     "inverse_label": LABEL_MAX,
     "rules_source": LINK_SOURCE_MAX,
+    "name_key": STORY_LANGUAGE_MAX,  # (a story language's key, #4229)
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
@@ -170,10 +177,14 @@ _CHOICES: dict[str, Sequence[str]] = {
     "end_reason": END_REASONS,
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
+    "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
+    "form_from": place_levels.FROM,
+    "setting_from": (*place_levels.FROM, "declined"),  # who made it the setting (#4173 slice 2b)
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
     "edition": LINK_EDITIONS,
+    "given_by": GIVEN_BY,  # who gave a story language (#4229)
     "action": (FIX, KEEP),
     "source": SOURCES,
     "change_kind": CHANGE_KINDS,
@@ -198,6 +209,8 @@ _NULLABLE = {
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
     "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
     "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
+    "form", "form_from",  # (a place's form and who said it, #4173 slice 6a)
+    "setting_from",  # (who made it the campaign's setting, #4173 slice 2b)
     "both_ways",  # (the DM's direction, #4154: None is the kind's default)
 }  # fmt: skip
 
@@ -256,6 +269,8 @@ def _valid(column: str, value: object) -> bool:
         "pinned",
         "added_entry",
         "both_ways",
+        "setting",
+        "srd",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -493,6 +508,9 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
+        elif table is MAP_FACTS:
+            # (its own check: its `how`, `status` and `source` mean other things than elsewhere)
+            _check_map_fact(raw)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
@@ -653,9 +671,14 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_what": None,
                 "place_level": None,  # from before #4173: no place had a size
                 "place_level_from": None,
+                "setting": False,  # from before #4173: no campaign had a setting
+                "form": None,  # from before #4173 slice 6a: every place an area
+                "form_from": None,
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
+            if "setting_from" not in raw:  # (from before #4173 slice 2b: a setting was the DM's)
+                raw = {**raw, "setting_from": "dm" if raw.get("setting") else None}
         elif isinstance(raw, dict) and raw.get("table") == "belief":
             # from before the pin (#2447), a hide's sleep (#3082) and lineage (#3091)
             raw = {
@@ -977,8 +1000,86 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         by_tag["rule_link"] = kept
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    _check_story_languages(by_tag["story_language"], characters)
+    # a place's land, climate and ruler (#4256): on a place, ruled by a group, allowed there
+    places = {r["id"]: r for r in by_tag["entity"] if onto.is_a(r["type"], "place")}
+    groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}
+    every = {r["id"] for r in by_tag["entity"]}
+    open_keys: set[tuple[str, ...]] = set()
+    for r in by_tag["map_fact"]:
+        place = places.get(r["entity_id"])
+        key = (r["entity_id"], r["layer"], r["value"], r["faction_id"] or "", r["part"].lower())
+        is_open = r["status"] != map_facts.REJECTED and r["to_session_at"] is None
+        if is_open and key in open_keys:
+            raise CampaignError(DAMAGED)  # (one open row per place, layer, value and part)
+        if is_open:
+            open_keys.add(key)
+        if not is_open:  # (history: its place or group may have changed since; it must exist)
+            if r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every:
+                raise CampaignError(DAMAGED)
+            continue
+        if (
+            place is None
+            or (r["faction_id"] is not None and r["faction_id"] not in groups)
+            or not map_facts.allowed_on(
+                r["layer"], form=place.get("form"), level=place.get("place_level")
+            )
+        ):
+            raise CampaignError(DAMAGED)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
+
+
+def _check_map_fact(r: Mapping[str, Any]) -> None:
+    """One row of a place's land, climate or ruler (#4256), as the store writes it: a value the
+    layer allows, a group for control and a word for the others, the text's words only with
+    "other", and its own status, source and story time."""
+    words, part = r["words"], r["part"]
+    ints = ("from_session_at", "to_session_at", "from_game_time", "to_game_time")
+    if not (
+        is_id(r["id"])
+        and is_id(r["entity_id"])
+        and r["layer"] in map_facts.LAYERS
+        and isinstance(r["value"], str)
+        and isinstance(r["how"], str)
+        and isinstance(words, str)
+        and isinstance(part, str)
+        and len(words) <= map_facts.WORDS_MAX
+        and len(part) <= map_facts.WORDS_MAX
+        and r["status"] in (map_facts.READ, map_facts.CONFIRMED, map_facts.REJECTED)
+        and r["source"] in map_facts.RANK
+        and isinstance(r["also_text"], bool)
+        and isinstance(r["table_knows"], bool)
+        and _valid("created_at", r["created_at"])
+        and all(_valid(c, r[c]) for c in ints)
+    ):
+        raise CampaignError(DAMAGED)
+    control = r["layer"] == map_facts.CONTROL
+    if (
+        control != (r["faction_id"] is not None)
+        or (r["faction_id"] is not None and not is_id(r["faction_id"]))
+        or control != (r["value"] == "")
+        or (r["value"] == map_facts.OTHER) != (words != "")
+        or not map_facts.valid(r["layer"], r["value"], r["how"])
+    ):
+        raise CampaignError(DAMAGED)
+
+
+def _check_story_languages(rows: Sequence[Mapping[str, Any]], characters: set[str]) -> None:
+    """A character's languages from the story (#4229), as the store writes them: a character's,
+    named in at most STORY_LANGUAGE_MAX characters, each kept once, its key made from its name."""
+    seen: set[tuple[str, str]] = set()
+    for r in rows:
+        key = (r["entity_id"], r["name_key"])
+        if (
+            r["entity_id"] not in characters
+            or not 0 < len(r["name"]) <= STORY_LANGUAGE_MAX
+            or r["name_key"] != name_key(r["name"])
+            or not r["name_key"]
+            or key in seen
+        ):
+            raise CampaignError(DAMAGED)
+        seen.add(key)
 
 
 def _check_claim(row: Mapping[str, Any]) -> None:
@@ -1032,6 +1133,9 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         (r.get("place_level") is not None and not onto.is_a(r["type"], "place"))
         # a size and who said it come together (#4173)
         or (r.get("place_level") is None) != (r.get("place_level_from") is None)
+        # only a place has a form, and a form and who said it come together (#4173 slice 6a)
+        or (r.get("form") is not None and not onto.is_a(r["type"], "place"))
+        or (r.get("form") is None) != (r.get("form_from") is None)
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
@@ -1040,6 +1144,17 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
     parties = [r for r in by_tag["entity"] if r["party"]]
     if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
         raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    if any(
+        bool(r.get("setting")) != (r.get("setting_from") in place_levels.FROM)
+        for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)  # a setting says who set it, and only a setting does (2b)
+    settings = [r for r in by_tag["entity"] if r.get("setting")]
+    if len(settings) > 1 or any(
+        not onto.is_a(r["type"], "place") or r.get("place_level") not in place_levels.SETTING_LEVELS
+        for r in settings
+    ):
+        raise CampaignError(DAMAGED)  # at most one setting, and it is a place (#4173)
     _check_standing(by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:
