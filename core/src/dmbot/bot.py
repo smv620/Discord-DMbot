@@ -381,6 +381,9 @@ from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.story_chain_backup import StoryChainSection
+from dmbot.memory.story_chain_store import Said as StorySaid
+from dmbot.memory.story_chain_store import StoryChains
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
@@ -3317,6 +3320,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # Where the story is (#4173 slice 4): the DM's lines move a chain of open places kept
+            # between sessions, and new places get an assumed parent from it. No AI call.
+            ("where the story is", lambda: self.walk_story_chain(table)),
             # The scene of each waiting question, from the lines it came from (#3596): after the
             # extractor, so the questions it made are there, and inside the same call limit.
             ("scenes", lambda: self.write_scenes(table)),
@@ -10433,6 +10439,61 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Reveals: %d waiting for the DM", count)
                 await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
+    async def walk_story_chain(self, table: Table) -> None:
+        """After a session (#4173 slice 4): walk where the story is through it. Never stops the
+        other steps (the type only in the log)."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        dm_ids = {table.dm_user_id, *table.dm_user_ids}
+        consenting = partial(self.consent.consenting, table.guild_id)
+        await self._walk_story_chain(
+            table.guild_id, table.campaign_id, table.transcript_session_id, dm_ids, consenting
+        )
+
+    async def _walk_story_chain(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+    ) -> None:
+        """The session's own lines, as the story extractor reads them (`extractor.readable`, last
+        time's recap left out, only people who still agree, asked just before), through
+        `StoryChains`. Only for a campaign whose plan has story memory; counts only in the log."""
+        if self.memory is None or self.transcripts is None or self.backstory_links is None:
+            return
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await self.transcripts.session(gid, sid)
+                if session is None or session.lines == 0:
+                    return
+                recap = await self._recap_lines(gid, sid)
+                lines = await self.transcripts.lines(gid, sid)
+                people = {*dm_ids, *(await consenting())}
+                said = [
+                    StorySaid(s.started_ms, s.user_id, s.text)
+                    for s in extractor.readable(lines)
+                    if s.number not in recap and s.user_id in people
+                ]
+                done = await StoryChains(self.memory._db, self.backstory_links).read_session(
+                    gid, cid, session.started_at, said, dm_ids,
+                    f"Session {session.number}",
+                    int(time.time()),
+                )  # fmt: skip
+                log.info(
+                    "Where the story is: %d places placed, older session %s",
+                    done.guessed,
+                    "left out" if done.skipped_older else "no",
+                )
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Where the story is: stopped (%s)", type(exc).__name__)
+
     async def find_private_scenes(self, table: Table) -> None:
         """After a session (#2996 rule 5), only with DMBOT_PRIVATE_SCENES: find the stretches when
         the party was split and two player characters, played by two different people, were alone
@@ -12070,6 +12131,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await step(gid, cid, sid, dm_ids, recorded, renew)
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Import: %s stopped (%s)", word.lower(), type(exc).__name__)
+        # where the story is (#4173 slice 4): the same walk as after a live session, no AI call
+        await self._walk_story_chain(gid, cid, sid, dm_ids, recorded)
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:
         """Imported sessions the story extractor did not finish (a call limit stopped it, or a
@@ -15174,6 +15237,7 @@ def register_backup_sections(
     campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
+    campaigns.register_section(StoryChainSection())  # where the story is (#4173 slice 4)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)
     campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 

@@ -1,0 +1,283 @@
+"""Where the story is, kept from session to session (`memory_story_chain`, migration 0464; #4173
+slice 4). After a session or an import, `StoryChains.read_session` walks the session's own lines
+(`session_chain.walk`) from the chains the last session left, keeps the chains it ends with, and
+queues each new place's assumed parent the slice 3 way: a waiting link with the mark, never a
+question, kept by itself once both places are kept (`backstory_keep.keep_assumed`).
+
+- **Whose chain a line is.** The party's (`MAIN`) while it is together. While split (the game
+  clock, `game_clock_log`): a player's line is their group's (`timebot.stamp`'s rule, by the
+  characters they play); a DM's line is the group whose clock the DM last moved, the only record of
+  the group the DM picked that a past or imported session has; anything else is nobody's and
+  skipped (Supervisor's ruling, 2026-11-13 04:14: never guessed). A group's chain is keyed by its
+  split's start, so a position a later split reuses never inherits it. At Rejoin the party keeps
+  only the places every group still shares (`session_chain.rejoined`).
+- **Order.** A session older than the chains' last one never moves them (an import of an old file
+  after newer play): it is left out, counted in the log.
+- **Ids only.** The lines are read in memory and never kept; the table holds entry ids, and the log
+  gets counts.
+"""
+
+from __future__ import annotations
+
+import bisect
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from dmbot.db import Database
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.session_chain import MAIN, Line, rejoined, walk
+from dmbot.memory.story_chain import Place
+
+MAX_RANK = 20  # the table's own limit: a chain is at most this deep (a plane down to a room is 8)
+
+
+@dataclass(frozen=True, slots=True)
+class Said:
+    """One line the reader may read (the caller applied consent and left out the sidebar, the
+    off-topic lines and last time's recap): when it began (Unix ms), who said it, its words."""
+
+    started_ms: int
+    user_id: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class Result:
+    guessed: int = 0  # assumed parents queued
+    skipped_older: bool = False  # an older session than the chains': left out
+
+
+class _Clock:
+    """The game clock's log, oldest first: each row's time and group position (None: the main
+    clock, the party together), and each player character's placements."""
+
+    def __init__(
+        self,
+        rows: Sequence[tuple[int, int | None]],
+        placed: dict[str, list[tuple[int, int | None]]],
+    ) -> None:
+        self._at = [at for at, _ in rows]
+        self._pos = [pos for _, pos in rows]
+        self._placed = {c: ([a for a, _ in r], [p for _, p in r]) for c, r in placed.items()}
+
+    def state(self, at: int) -> tuple[int | None, int | None]:
+        """(the split's start, the group whose clock moved last) at this moment, or (None, None)
+        while the party is together."""
+        i = bisect.bisect_right(self._at, at) - 1
+        if i < 0 or self._pos[i] is None:
+            return None, None
+        start = i
+        while start > 0 and self._pos[start - 1] is not None:
+            start -= 1
+        return self._at[start], self._pos[i]
+
+    def group(self, character_id: str, at: int) -> int | None:
+        rows = self._placed.get(character_id)
+        if rows is None:
+            return None
+        i = bisect.bisect_right(rows[0], at) - 1
+        return rows[1][i] if i >= 0 else None
+
+
+def chain_key(split_start: int, position: int) -> str:
+    return f"s{split_start}g{position}"
+
+
+def lines_with_chains(
+    said: Sequence[Said],
+    dm_ids: Collection[int],
+    clock: _Clock,
+    plays: dict[int, list[str]],
+    last_split: int | None = None,
+) -> list[tuple[Line | None, int | None]]:
+    """Each line with its chain, and the split it ended (for Rejoin): (line, split start that
+    ended just before it, or None). `last_split`: the split the stored chains were left in, when
+    the last session ended with the party apart (a Rejoin between sessions is seen at the first
+    line)."""
+    out: list[tuple[Line | None, int | None]] = []
+    for s in said:
+        at = s.started_ms // 1000
+        split_start, picked = clock.state(at)
+        ended = last_split if last_split is not None and split_start != last_split else None
+        last_split = split_start
+        dm = s.user_id in dm_ids
+        if split_start is None:
+            key: str | None = MAIN
+        elif dm:
+            key = chain_key(split_start, picked) if picked is not None else None
+        else:
+            groups = {clock.group(c, at) for c in plays.get(s.user_id, [])} - {None}
+            key = chain_key(split_start, groups.pop()) if len(groups) == 1 else None
+        out.append((Line(s.text, dm, key), ended))
+    return out
+
+
+class StoryChains:
+    def __init__(self, db: Database, links: BackstoryLinks) -> None:
+        self._db = db
+        self._links = links
+
+    async def read_session(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        said: Sequence[Said],
+        dm_ids: Collection[int],
+        label: str,
+        now: int,
+    ) -> Result:
+        """Walk one session from the chains as they were, keep the chains it ends with, and queue
+        its assumed parents. One transaction for the chains; the queue is written after (its own
+        store), and a failure there leaves the chains as walked (the guesses are found again only
+        by a later place's mention: never twice)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"dmbot.story_chain:{guild_id}:{campaign_id}",),
+            )
+            chains, last = await _load(conn, guild_id, campaign_id)
+            if last is not None and session_started_at < last:
+                return Result(0, skipped_older=True)
+            found = await _places(conn, guild_id, campaign_id)
+            stated = await _stated(conn, guild_id, campaign_id)
+            until = (said[-1].started_ms // 1000) if said else session_started_at
+            clock = await _clock(conn, guild_id, campaign_id, until)
+            plays = await _plays(conn, guild_id, campaign_id)
+            given = set(stated)
+            pairs: list[tuple[str, str]] = []
+            batch: list[Line] = []
+            left_in = max((int(k[1:].split("g")[0]) for k in chains if k != MAIN), default=None)
+            for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in):
+                if ended is not None:  # (Rejoin: walk what came before, then join the groups)
+                    walked = walk(batch, found, chains, given)
+                    chains, batch = walked.chains, []
+                    pairs += walked.pairs
+                    given |= {p for p, _ in walked.pairs}
+                    prefix = f"s{ended}g"
+                    groups = [v for k, v in chains.items() if k.startswith(prefix)]
+                    if groups:
+                        # (a group the DM never moved is still where the split began: the party's
+                        # chain as it was, so it counts as one of the groups)
+                        start = chains.get(MAIN, [])
+                        chains = {k: v for k, v in chains.items() if not k.startswith(prefix)}
+                        chains[MAIN] = rejoined([start, *groups])
+                if line is not None:
+                    batch.append(line)
+            walked = walk(batch, found, chains, given)
+            chains = walked.chains
+            pairs += walked.pairs
+            await _save(conn, guild_id, campaign_id, chains, session_started_at)
+        if pairs:
+            await self._links.add(
+                guild_id,
+                campaign_id,
+                [NewLink(a, "located_in", b, "", upload=label, assumed=True) for a, b in pairs],
+            )
+        return Result(len(pairs))
+
+
+async def _load(
+    conn: Any, guild_id: int, campaign_id: str
+) -> tuple[dict[str, list[str]], int | None]:
+    cur = await conn.execute(
+        "SELECT chain, entity_id, updated_at FROM memory_story_chain c JOIN memory_entities e"
+        " ON (e.guild_id, e.campaign_id, e.id) = (c.guild_id, c.campaign_id, c.entity_id)"
+        " WHERE c.guild_id = %s AND c.campaign_id = %s AND e.status IN ('confirmed', 'proposed')"
+        " ORDER BY chain, rank",
+        (guild_id, campaign_id),
+    )
+    chains: dict[str, list[str]] = {}
+    last: int | None = None
+    for r in await cur.fetchall():
+        chains.setdefault(str(r["chain"]), []).append(str(r["entity_id"]))
+        last = max(last or 0, int(r["updated_at"]))
+    return chains, last
+
+
+async def _save(
+    conn: Any, guild_id: int, campaign_id: str, chains: dict[str, list[str]], at: int
+) -> None:
+    await conn.execute(
+        "DELETE FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s",
+        (guild_id, campaign_id),
+    )
+    for key, ids in chains.items():
+        for rank, entity_id in enumerate(ids[: MAX_RANK + 1]):
+            await conn.execute(
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (guild_id, campaign_id, key, rank, entity_id, max(at, 1)),
+            )
+
+
+async def _places(conn: Any, guild_id: int, campaign_id: str) -> list[Place]:
+    """The campaign's places with a known size that are areas (not water or a route), each with its
+    name and its other names: proposed ones too, so a guess can wait for its names (slice 3)."""
+    cur = await conn.execute(
+        "SELECT e.id, e.name, e.place_level, COALESCE(array_agg(a.text)"
+        " FILTER (WHERE a.text IS NOT NULL), '{}') AS others FROM memory_entities e"
+        " LEFT JOIN memory_aliases a ON (a.guild_id, a.campaign_id, a.entity_id)"
+        " = (e.guild_id, e.campaign_id, e.id) AND a.status <> 'rejected'"
+        " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.type = 'place'"
+        " AND e.status IN ('confirmed', 'proposed') AND e.place_level IS NOT NULL"
+        " AND e.form IS NULL GROUP BY e.id, e.name, e.place_level",
+        (guild_id, campaign_id),
+    )
+    return [
+        Place(str(r["id"]), str(r["place_level"]), (str(r["name"]), *map(str, r["others"])))
+        for r in await cur.fetchall()
+    ]
+
+
+async def _stated(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
+    """The places with a parent place already: live (said or assumed) or waiting (either kind)."""
+    cur = await conn.execute(
+        "SELECT r.subject_id AS id FROM memory_relations r JOIN memory_entities o"
+        " ON (o.guild_id, o.campaign_id, o.id) = (r.guild_id, r.campaign_id, r.object_id)"
+        " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = 'located_in'"
+        " AND r.status <> 'rejected' AND r.to_session_at IS NULL AND o.type = 'place'"
+        " UNION SELECT l.subject_id FROM backstory_links l JOIN memory_entities o"
+        " ON (o.guild_id, o.campaign_id, o.id) = (l.guild_id, l.campaign_id, l.object_id)"
+        " WHERE l.guild_id = %s AND l.campaign_id = %s AND l.predicate = 'located_in'"
+        " AND o.type = 'place'",
+        (guild_id, campaign_id, guild_id, campaign_id),
+    )
+    return {str(r["id"]) for r in await cur.fetchall()}
+
+
+async def _clock(conn: Any, guild_id: int, campaign_id: str, until: int) -> _Clock:
+    cur = await conn.execute(
+        "SELECT at, position FROM game_clock_log WHERE guild_id = %s AND campaign_id = %s"
+        " AND at <= %s ORDER BY at, seq",
+        (guild_id, campaign_id, until),
+    )
+    rows = [
+        (int(r["at"]), None if r["position"] is None else int(r["position"]))
+        for r in await cur.fetchall()
+    ]
+    cur = await conn.execute(
+        "SELECT character_id, at, position FROM game_clock_group_log WHERE guild_id = %s"
+        " AND campaign_id = %s AND at <= %s ORDER BY at, seq",
+        (guild_id, campaign_id, until),
+    )
+    placed: dict[str, list[tuple[int, int | None]]] = {}
+    for r in await cur.fetchall():
+        position = None if r["position"] is None else int(r["position"])
+        placed.setdefault(str(r["character_id"]), []).append((int(r["at"]), position))
+    return _Clock(rows, placed)
+
+
+async def _plays(conn: Any, guild_id: int, campaign_id: str) -> dict[int, list[str]]:
+    """Each player's confirmed player characters (who plays them, as `timebot.stamp` reads it)."""
+    cur = await conn.execute(
+        "SELECT id, played_by FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+        " AND type = 'character' AND role = 'player_character' AND status = 'confirmed'"
+        " AND played_by IS NOT NULL",
+        (guild_id, campaign_id),
+    )
+    out: dict[int, list[str]] = {}
+    for r in await cur.fetchall():
+        out.setdefault(int(r["played_by"]), []).append(str(r["id"]))
+    return out
