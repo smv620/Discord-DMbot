@@ -39,7 +39,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, next_words, place_levels, place_words
+from dmbot.memory import kin, next_words, place_levels, place_words, route_words
 from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
@@ -155,12 +155,21 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         and old.predicate == new.predicate
         and _same_order(old, new)
         and old.detail.casefold() == new.detail.casefold()
+        and old.route_state == new.route_state
+        and _same_leg(old, new)
         and same_time(old, new)
     ]
     live = [r for r in same if r.status != REJECTED]
     if live:
         return live[0]
     return same[0] if same else None
+
+
+def _same_leg(old: Relation, new: Relation) -> bool:
+    """A travelled route is a journey in one session (#4173 slice 6d): one per pair, means and
+    session, so a session that names the same road ten times keeps one leg, and the same road
+    travelled again in a later session is a new one. Every other connection: always."""
+    return new.route_state != route_words.TRAVELLED or old.from_session_at == new.from_session_at
 
 
 class Nesting:

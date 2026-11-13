@@ -978,6 +978,42 @@ class ThePath(NamesTest):
              ("Easthaven", "next_to", "Lac Dinneshere"): ""},
         )  # fmt: skip
 
+    async def test_two_places_with_a_way_between_them_keep_the_way(self) -> None:
+        # (#4173 slice 6d) a means on the list is kept as its one word; a way off the list keeps
+        # the text's own words only when they are the quote's; anything else is a plain route
+        text = (
+            "A highway runs from Targos to Bryn Shander. Mule trains link Easthaven and "
+            "Caer-Dineval. Termalaine and Lonelywood trade by magic."
+        )
+        names = [
+            name("Targos", "place", "to Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+            name("Easthaven", "place", "link Easthaven"),
+            name("Caer-Dineval", "place", "and Caer-Dineval"),
+            name("Termalaine", "place", "Termalaine and"),
+            name("Lonelywood", "place", "and Lonelywood"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Easthaven", "route to", "Caer-Dineval",
+                    "Mule trains link Easthaven and Caer-Dineval"), "words": "mule trains"},
+            {**link("Termalaine", "route to", "Lonelywood",
+                    "Termalaine and Lonelywood trade by magic"), "words": "a secret tunnel"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        routes = {frozenset((k[0], k[2])): v for k, v in got.items() if k[1] == "route_to"}
+        self.assertEqual(
+            routes,
+            {frozenset(("Targos", "Bryn Shander")): "road",
+             frozenset(("Easthaven", "Caer-Dineval")): "mule trains",
+             frozenset(("Termalaine", "Lonelywood")): ""},
+        )  # fmt: skip
+
     def test_two_places_read_as_inside_and_beside_each_other_keep_the_in(self) -> None:
         # (#4173 slice 6a) never both: the "in" is offered, as before, until 6b's question asks
         found = [bg.Found(n, "place", (), (), "") for n in ("Targos", "Ten-Towns", "Maer Dualdon")]

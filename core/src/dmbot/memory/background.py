@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, next_words, place_words, quote_kind, unique_item
+from dmbot.memory import kin, next_words, place_words, quote_kind, route_words, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -97,6 +97,10 @@ CONNECTIONS = {
     # a border, a village at the foot of a mountain, a town on a named road. Never one place inside
     # another (that is "in"). The way it is said rides in "words" (`next_words`).
     "next to": "next_to",  # a is next to b
+    # Two places with a way between them (#4173 slice 6d): a road, a river, a sea route, an
+    # airship, a portal, a path through the wild. Both places are named with the way between them;
+    # a way word alone is not a route. The means rides in "words" (`route_words`).
+    "route to": "route_to",  # a is connected to b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
@@ -900,7 +904,8 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 # not a name DMbot will have; `same_pair`: the pair was already offered; `already_have`: the
 # campaign has it; `over_cap`: past the most one reading offers; `in_and_next_to`: two places read
 # as both inside and beside each other, the "in" kept (#4173 slice 6a); `next_word_off_list`: a
-# "next to" said with a word off `next_words`' list, kept as plain "next to".
+# "next to" said with a word off `next_words`' list, kept as plain "next to"; `route_word_off_list`:
+# a route's way off `route_words`' list and not the quote's own words, kept as a plain route.
 Dropped = Counter[str]
 
 
@@ -1016,6 +1021,19 @@ def read_connections(
             label = next_words.word_of(raw_next)
             if raw_next and not label:
                 lost["next_word_off_list"] += 1
+        if how == "route_to":
+            # The way between them, one of `route_words`' means ("road"); a way off the list keeps
+            # the text's own words only when they are the quote's own (the one free text, as for
+            # "other"), else it is kept as a plain route and counted.
+            raw_way = " ".join(str(item.get("words") or "").split())
+            label = route_words.means_of(raw_way)
+            if raw_way and not label:
+                quoted_words = set(re.findall(r"\w+", _squash(str(quote))))
+                own_words = at_word_end(raw_way, WORDS_CHARS)
+                if own_words and set(re.findall(r"\w+", _squash(own_words))) <= quoted_words:
+                    label = own_words
+                else:
+                    lost["route_word_off_list"] += 1
         if how == "knows":
             # How the one feels about the other: one of nine words (a reputation, #3175), in the
             # line's "words". One off the list is dropped and counted; the connection is kept

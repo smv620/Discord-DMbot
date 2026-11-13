@@ -62,6 +62,7 @@ RELEASED = {
     ("captive_of", 1): "60efcb060e24ab3f",
     ("contains", 1): "c50a7cc648af878b",
     ("next_to", 1): "511ce390352a2d8b",  # two places beside each other (#4173 slice 6a)
+    ("route_to", 1): "f9ef825b22993dab",  # two places with a way between them (#4173 slice 6d)
     ("disguised_as", 1): "be30056c2bb8d27f",  # one character posing as another (#3091)
     ("travels_with", 1): "fc30c06e5f1d3759",  # a companion goes with a PC or the party (#3176)
 }
