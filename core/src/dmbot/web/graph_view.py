@@ -137,11 +137,6 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
     for link in live:
-        if link.get("route_state"):
-            # A journey or a plan on a route (#4173 slice 6d) is never drawn as a road: the page
-            # has no words for one yet (the website half of slice 6d), so until then it is left
-            # out for everyone, and the DM's lists and Discord card say it
-            continue
         a, b = str(link["a"]), str(link["b"])
         via = split.links.get(str(link["id"]))
         if via is not None:
@@ -166,6 +161,9 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
                 "directional": link["directional"],
                 # the DM's direction for it (#4154): None is its kind's default
                 "both_ways": link.get("both_ways"),
+                # a journey or a plan on a route (#4173 slice 6d): `relationships.edges_from` words
+                # it from where the party set out, so it is never read as a road
+                "route_state": str(link.get("route_state") or ""),
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
                 # whether two people have met (#3882), under the door's own key, as
