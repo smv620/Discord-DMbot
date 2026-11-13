@@ -269,6 +269,7 @@ def _valid(column: str, value: object) -> bool:
         "pinned",
         "added_entry",
         "both_ways",
+        "assumed",
         "setting",
         "srd",
     ):
@@ -726,6 +727,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "knows_how": "",  # from before #3881: the story's word on how was not kept
                 "end_reason": None,  # from before #4115: why a tie ended was not kept
                 "both_ways": None,  # from before #4154: every direction was its kind's default
+                "assumed": False,  # from before #4173 slice 3: every connection was stated
                 **raw,
                 "definition_version": version,
             }
