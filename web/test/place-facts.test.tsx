@@ -24,6 +24,7 @@ afterEach(() => {
 });
 
 const DM = "/account/names/100.cmp1";
+const MANAGER = "/account/names/100.cmp1.names-manager"; // a server manager who is not a DM (names.test.tsx)
 const rows = () => screen.getAllByRole("listitem").filter((li) => li.classList.contains("name-row"));
 const rowOf = (name: string) => rows().find((li) => li.textContent?.includes(name)) as HTMLElement;
 
@@ -196,5 +197,66 @@ describe("who sees it and when", () => {
     const { row } = await openPlace("Saltmarsh");
     expect(row.queryByLabelText(w.sizeLabel)).toBeNull();
     expect(row.queryByText(/^Size:/)).toBeNull();
+  });
+});
+
+describe("a refusal, a smaller size, a double press, and a non-DM", () => {
+  it("a refused setting shows the refusal in a warning", async () => {
+    const { api, row } = await openPlace("Saltmarsh");
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "region" } });
+    await pressSave(row);
+    expect(await row.findByText(w.noted("Saltmarsh", "region"))).toBeTruthy();
+    const real = api.changeName!.bind(api);
+    api.changeName = async (ref, id, change) => {
+      if (change.action === "place-setting") throw new ApiError("bad-target");
+      return real(ref, id, change);
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.settingMake }));
+    // (the row has other status lines; the refusal is the one warning on it)
+    await waitFor(() => expect(row.getAllByRole("status").filter((s) => s.classList.contains("warn"))).toHaveLength(1));
+    const [warning] = row.getAllByRole("status").filter((s) => s.classList.contains("warn"));
+    expect(warning!.textContent).toBe(namesPage.errors["bad-target"]);
+  });
+
+  it("Remove as setting is still offered when the size was made smaller", async () => {
+    const { row } = await openPlace("Saltmarsh");
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "region" } });
+    await pressSave(row);
+    expect(await row.findByText(w.noted("Saltmarsh", "region"))).toBeTruthy();
+    fireEvent.click(await row.findByRole("button", { name: w.settingMake }));
+    expect(await row.findByText(w.notedSetting("Saltmarsh"))).toBeTruthy();
+    fireEvent.change(row.getByLabelText(w.sizeLabel), { target: { value: "building" } });
+    await pressSave(row);
+    expect(await row.findByText(w.noted("Saltmarsh", "building"))).toBeTruthy();
+    expect(await row.findByRole("button", { name: w.settingRemove })).toBeTruthy();
+  });
+
+  it("a second press while it is saving sends nothing more", async () => {
+    const { api, row } = await openPlace("Saltmarsh");
+    const real = api.changeName!.bind(api);
+    api.changeName = async (ref, id, change) => {
+      await new Promise((go) => setTimeout(go, 60));
+      return real(ref, id, change);
+    };
+    fireEvent.change(await row.findByLabelText(w.sizeLabel), { target: { value: "district" } });
+    // Two clicks on the same button before the page re-renders: the second one must be stopped by the in-flight guard, not by
+    // the disabled attribute (a disabled button ignores clicks, so a test that waits between presses cannot tell them apart).
+    const save = row.getByRole("button", { name: w.save }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    save.click();
+    save.click();
+    expect(await row.findByText(w.noted("Saltmarsh", "district"))).toBeTruthy();
+    expect(api.calls.filter((c) => c.includes('"place-size"'))).toHaveLength(1);
+  });
+
+  it("a reader who is not a DM gets no panel", async () => {
+    const api = mockApi("table");
+    render(<Names api={api} path={MANAGER} />);
+    await screen.findByRole("list", { name: namesPage.listLabel });
+    // A manager gets the list read-only: a place's name is not a button, so the panel cannot open. Check the row itself.
+    await waitFor(() => expect(rowOf("Saltmarsh")).toBeTruthy());
+    expect(within(rowOf("Saltmarsh")).queryByRole("button", { name: "Saltmarsh" })).toBeNull();
+    expect(screen.queryByLabelText(w.sizeLabel)).toBeNull();
+    expect(screen.queryByRole("button", { name: w.save })).toBeNull();
   });
 });
