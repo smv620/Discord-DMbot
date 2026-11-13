@@ -9,7 +9,9 @@ and no longer the ID.
 - `dmbot_forget_person_ids()`, called by account deletion: sets `user_id` to NULL on this person's
   rows that already have a key. A row with no key (the secret was never set) keeps its ID, as
   before: clearing it would leave nothing to recognise the person by.
-- `dmbot_move_account` takes the old and new accounts' keys (the website computes them), checks
+- Note: `dmbot_trial_people` still counts extensions by `user_id`, so a cleared extension row is not
+  counted. A returning person is stopped by `try_it_used` first, so that count does not matter yet.
+- `dmbot_move_account` takes the old and new accounts' keys (the bot computes them), checks
   their shape, and writes them with the trial marker and the copied unsubscribe.
 
 `sent_emails` is unchanged: its rows for the person are deleted at account deletion (0071), so

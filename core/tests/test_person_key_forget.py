@@ -4,6 +4,8 @@ trial, still unsubscribed. A row with no hash keeps its ID, as before. Needs Pos
 
 from __future__ import annotations
 
+import psycopg
+
 from dmbot import accounts, entitlements, mail, person_key
 from dmbot.campaigns import CampaignStore
 from dmbot.web import entitlements_writer
@@ -94,8 +96,6 @@ class Forgotten(DatabaseTest):
         self.assertEqual((row["user_id"], row["person_key"]), (ALICE, None))
 
     async def test_a_row_must_have_an_id_or_a_key(self) -> None:
-        import psycopg
-
         async with self.db.unscoped() as conn:
             with self.assertRaises(psycopg.errors.CheckViolation):
                 await conn.execute("INSERT INTO email_unsubscribed (user_id, at) VALUES (NULL, 1)")
