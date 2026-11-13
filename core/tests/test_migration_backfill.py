@@ -25,10 +25,15 @@ FORCED = (
     set(schema.ISOLATED_TABLES) | set(schema.USER_ISOLATED_TABLES) | set(schema.WRITE_ONLY_TABLES)
 )
 
-# (migration, table) pairs that are correct without the wrapper, each with the reason. Empty
-# today: every statement is wrapped, or touches only a table the same migration just created
-# (which has no rows yet; the check sees that for itself).
-NOT_NEEDED: dict[tuple[str, str], str] = {}
+# (migration, table) pairs that are correct without the wrapper, each with the reason. Otherwise
+# every statement is wrapped, or touches only a table the same migration just created (which has
+# no rows yet; the check sees that for itself).
+NOT_NEEDED: dict[tuple[str, str], str] = {
+    # 0461 rewrites the text of dmbot_move_account (a read-back swap); the INSERT INTO try_it_used
+    # the check finds is inside that function's new body and runs only when the function is
+    # called, under its own gate. The migration itself changes no rows of the table.
+    ("0461_person_key_forget", "try_it_used"): "function body text, no rows changed",
+}
 
 DOLLAR = re.compile(r"\$(\w*)\$")
 _NAME = r"(?:\w+\.)?(\w+)"
