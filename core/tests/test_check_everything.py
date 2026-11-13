@@ -21,6 +21,7 @@ from dmbot.dm_questions import (
     KINDS,
     NAMES,
     PEOPLE,
+    REVEALS,
     WALK_PRESS,
     Ask,
     combine,
@@ -50,9 +51,11 @@ def labels(view: discord.ui.View) -> list[str | None]:
 
 class TheWalksOrderAndWords(unittest.TestCase):
     def test_the_parts_run_names_then_who_is_who_then_what_was_said_then_connections(self) -> None:
-        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS))
-        counts = {DEEDS: 2, KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
-        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS, DEEDS))
+        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS, REVEALS))
+        counts = {REVEALS: 1, DEEDS: 2, KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
+        self.assertEqual(
+            walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS, DEEDS, REVEALS)
+        )
 
     def test_nothing_waiting_is_no_walk(self) -> None:
         self.assertEqual(walks.parts_for({}), ())
@@ -369,17 +372,18 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
         bot = SimpleNamespace(
             count_waiting=AsyncMock(return_value=found),
             memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
-            settings=SimpleNamespace(story_deeds_on=True),
+            settings=SimpleNamespace(story_deeds_on=True, story_reveals_on=True),
             campaigns=SimpleNamespace(get=AsyncMock(return_value=object())),
             plan_allows=AsyncMock(return_value=True),
         )
         with (
             patch("dmbot.ui.check_everything._bot", return_value=bot),
             patch("dmbot.ui.deed_card.count_deeds", AsyncMock(return_value=4)),
+            patch("dmbot.ui.reveal_card.count_reveals", AsyncMock(return_value=5)),
         ):
             counts = await ce.waiting_counts(cast(Any, object()), GUILD, CID)
         self.assertEqual(
-            counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1, DEEDS: 4}
+            counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1, DEEDS: 4, REVEALS: 5}
         )
 
     async def test_the_kinds_part_opens_the_kinds_cards(self) -> None:
@@ -423,3 +427,30 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
         )
         assert combined is not None
         self.assertEqual(ids(combined[1]), [f"dmbot:walk:{GUILD}:{CID}"])
+
+    async def test_the_reveals_part_opens_its_cards_and_a_broken_count_is_zero(self) -> None:
+        walk = Walk(CID, GUILD, 1, (REVEALS,))
+        with patch("dmbot.ui.reveal_card.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+        with patch("dmbot.ui.reveal_card.count_reveals", AsyncMock(side_effect=RuntimeError("x"))):
+            self.assertEqual(await ce._count_reveals(self.reveals_bot(), GUILD, CID), 0)
+
+    def reveals_bot(self, *, on: bool = True, plan: bool = True, campaign: bool = True) -> Any:
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_reveals_on=on),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object() if campaign else None)),
+            plan_allows=AsyncMock(return_value=plan),
+        )
+
+    async def test_reveals_are_counted_only_where_they_are_asked(self) -> None:
+        counted = AsyncMock(return_value=3)
+        with patch("dmbot.ui.reveal_card.count_reveals", counted):
+            self.assertEqual(await ce._count_reveals(self.reveals_bot(), GUILD, CID), 3)
+            for bot in (
+                self.reveals_bot(on=False),
+                self.reveals_bot(plan=False),
+                self.reveals_bot(campaign=False),
+            ):
+                self.assertEqual(await ce._count_reveals(bot, GUILD, CID), 0)
+        counted.assert_awaited_once()
