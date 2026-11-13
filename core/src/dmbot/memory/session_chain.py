@@ -34,7 +34,8 @@ MAIN = "main"  # the party's chain, when it is together
 _HEADING = re.compile(
     r"\b(?:left|leaves?|leaving|set(?:s|ting)?\s+(?:out|off)|head(?:s|ed|ing)?|bound"
     r"|travel(?:s|led|ed|ling|ing)?|journey(?:s|ed|ing)?|march(?:es|ed|ing)?|r(?:ide|ides|ode|iding)"
-    r"|on\s+(?:the|their|our|his|her)\s+way|mak(?:e|es|ing)\s+(?:their|our|his|her)\s+way)"
+    r"|on\s+(?:the|their|our|his|her)\s+way|mak(?:e|es|ing)\s+(?:their|our|his|her)\s+way"
+    r"|(?:on\s+)?the\s+road)"
     r"\s+(?:back\s+)?(?:for|to|towards?)\s+(?:the\s+)?$",
     re.IGNORECASE,
 )
@@ -44,10 +45,20 @@ _LEAVING = re.compile(
     r"\s+(?:the\s+)?$",
     re.IGNORECASE,
 )
-# A leaving verb earlier in the sentence that isn't aimed at the place ("She left the letter in
-# Bryn Shander"): the place is named in passing, read against the chain, and moves nothing
-# (Supervisor's condition on #4173: that line closes nothing)
-_LEAVE_VERB = re.compile(r"\b(?:left|leaves?|leaving|depart(?:s|ed|ing)?|fled)\b", re.IGNORECASE)
+# A place named in passing: read against the chain, it moves nothing. Two shapes (the reviewer on
+# slice 4): something left somewhere, a leaving verb with its own object and then "in/at/with/on"
+# just before the place, in the same clause ("She left the letter in Bryn Shander": Supervisor's
+# condition on #4173, that line closes nothing; "They left Targos and reached Bryn Shander" is a
+# new clause and does move); and a place someone comes from ("A messenger from Bryn Shander").
+_IN_PASSING = re.compile(
+    r"(?:\b(?:left|leaving|depart(?:s|ed|ing)?|fled)\b"
+    r"(?:(?!\b(?:and|then|but|before|after|until|when)\b)[^,;:])*"
+    r"\b(?:in|at|with|on)\s+(?:the\s+)?|\bfrom\s+(?:the\s+)?)$",
+    re.IGNORECASE,
+)
+# "X in Y" with Y the bigger place, in one breath: Y opens first, so X sits inside it (the
+# reviewer on slice 4: "rooms at the Three Flags Sailing in Targos")
+_INSIDE = re.compile(r"^\s*,?\s*(?:in|at|of|inside|within|near)\s+(?:the\s+)?$", re.IGNORECASE)
 # Travel between places: closes every settlement and smaller
 _TRAVEL = re.compile(
     r"\b(?:on\s+the\s+(?:road|trail)|days?\s+of\s+travel|through\s+the\s+wild(?:s|erness)?)\b",
@@ -81,20 +92,19 @@ def _mentions(text: str, found: Sequence[Place]) -> list[tuple[int, int, Place]]
     mention ("Bryn" inside "Bryn Shander")."""
     spots: list[tuple[int, int, Place]] = []
     for p in found:
-        words = sorted({s.strip() for s in p.spellings if s.strip()}, key=len, reverse=True)
-        if not words:
-            continue
-        pattern = re.compile(
-            r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)", re.IGNORECASE
-        )
-        spots += [(m.start(), m.end(), p) for m in pattern.finditer(text)]
-    spots.sort(key=lambda s: (s[0], -(s[1] - s[0])))
+        # (each spelling on its own: one regex of them all would stop at the first that fits)
+        for word in {s.strip() for s in p.spellings if s.strip()}:
+            pattern = re.compile(r"(?<!\w)" + re.escape(word) + r"(?!\w)", re.IGNORECASE)
+            spots += [(m.start(), m.end(), p) for m in pattern.finditer(text)]
+    # (overlapping spellings: the longest wins, "the Three Flags" inside "Three Flags Sailing"
+    # counts once, as the whole name)
+    spots.sort(key=lambda s: (-(s[1] - s[0]), s[0]))
     kept: list[tuple[int, int, Place]] = []
     for spot in spots:
-        if kept and spot[0] < kept[-1][1]:
-            continue  # (inside the one before)
+        if any(spot[0] < k[1] and k[0] < spot[1] for k in kept):
+            continue
         kept.append(spot)
-    return kept
+    return sorted(kept, key=lambda s: s[0])
 
 
 def _listed(text: str, spots: Sequence[tuple[int, int, Place]]) -> set[int]:
@@ -131,10 +141,22 @@ def walk(
         chain = out.chains.setdefault(line.chain, list(out.chains.get(MAIN, [])))
         spots = _mentions(line.text, usable)
         listed = _listed(line.text, spots)
-        events: list[tuple[int, str, Place | None]] = [(s[0], "place", s[2]) for s in spots]
+        # (the order a place is taken in: its own start, or just before the place it is said to
+        # be inside of, when that place is smaller and the words between are "in/at/of")
+        order = {s[0]: float(s[0]) for s in spots}
+        for a, b in itertools.pairwise(spots):
+            if ranks[b[2].entity_id] < ranks[a[2].entity_id] and _INSIDE.match(
+                line.text[a[1] : b[0]]
+            ):
+                order[b[0]] = order[a[0]] - 0.5
+        events: list[tuple[float, str, Place | None, int]] = [
+            (order[s[0]], "place", s[2], s[0]) for s in spots
+        ]
         if line.dm:
-            events += [(m.start(), "travel", None) for m in _TRAVEL.finditer(line.text)]
-        for at, kind, p in sorted(events, key=lambda e: e[0]):
+            events += [
+                (float(m.start()), "travel", None, m.start()) for m in _TRAVEL.finditer(line.text)
+            ]
+        for _, kind, p, at in sorted(events, key=lambda e: e[0]):
             if kind == "travel":
                 chain[:] = [e for e in chain if ranks[e] < _ON_THE_ROAD]
                 continue
@@ -154,7 +176,7 @@ def walk(
             if parent is not None and p.entity_id not in given and parent != p.entity_id:
                 out.pairs.append((p.entity_id, parent))
                 given.add(p.entity_id)
-            in_passing = bool(_LEAVE_VERB.search(_SENTENCE_END.split(before)[-1]))
+            in_passing = bool(_IN_PASSING.search(_SENTENCE_END.split(before)[-1]))
             if line.dm and not in_passing:
                 chain[:] = [e for e in chain if ranks[e] < rank]
                 chain.append(p.entity_id)

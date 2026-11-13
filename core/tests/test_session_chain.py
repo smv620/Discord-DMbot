@@ -143,3 +143,33 @@ class Spellings(unittest.TestCase):
     def test_a_short_spelling_inside_a_longer_one_is_one_place(self) -> None:
         got = run(dm("You enter the Three Flags Sailing."), chains={MAIN: ["dale", "targos"]})
         self.assertEqual(got.pairs, [("inn", "targos")])
+
+
+class AfterTheReview(unittest.TestCase):
+    """The reviewer's cases on slice 4."""
+
+    def test_x_in_y_puts_x_inside_y(self) -> None:
+        got = run(
+            dm("You take rooms at the Three Flags Sailing in Targos."), chains={MAIN: ["dale"]}
+        )
+        self.assertEqual(got.pairs, [("targos", "dale"), ("inn", "targos")])
+        self.assertEqual(got.chains[MAIN], ["dale", "targos", "inn"])
+
+    def test_leaving_then_arriving_moves_to_the_new_place(self) -> None:
+        got = run(
+            dm("They left Targos and reached Bryn Shander."), chains={MAIN: ["dale", "targos"]}
+        )
+        self.assertEqual(got.chains[MAIN], ["dale", "bryn"])
+
+    def test_the_noun_leaves_is_no_leaving(self) -> None:
+        got = run(dm("The leaves fall as you walk into Bryn Shander."), chains={MAIN: ["dale"]})
+        self.assertEqual(got.chains[MAIN], ["dale", "bryn"])
+
+    def test_a_place_someone_comes_from_moves_nothing(self) -> None:
+        got = run(dm("A messenger from Bryn Shander arrives."), chains={MAIN: ["dale", "targos"]})
+        self.assertEqual(got.chains[MAIN], ["dale", "targos"])
+        self.assertEqual(got.pairs, [("bryn", "dale")])  # (still read)
+
+    def test_on_the_road_to_is_a_heading_for(self) -> None:
+        got = run(dm("On the road to Bryn Shander, snow falls."), chains={MAIN: ["dale", "targos"]})
+        self.assertEqual(got.chains[MAIN], ["dale"])

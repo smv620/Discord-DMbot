@@ -382,8 +382,7 @@ from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_chain_backup import StoryChainSection
-from dmbot.memory.story_chain_store import Said as StorySaid
-from dmbot.memory.story_chain_store import StoryChains
+from dmbot.memory.story_chain_store import StoryChains, readable_lines
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
@@ -10441,7 +10440,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def walk_story_chain(self, table: Table) -> None:
         """After a session (#4173 slice 4): walk where the story is through it. Never stops the
-        other steps (the type only in the log)."""
+        other steps (the type only in the log). It reads the session's own words, not what the
+        extractor found, so it runs whether or not a call limit cut the extractor short (an import
+        walks once its read is done)."""
         if table.campaign_id is None or table.transcript_session_id is None:
             return
         dm_ids = {table.dm_user_id, *table.dm_user_ids}
@@ -10459,7 +10460,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         consenting: Callable[[], Awaitable[Collection[int]]],
     ) -> None:
         """The session's own lines, as the story extractor reads them (`extractor.readable`, last
-        time's recap left out, only people who still agree, asked just before), through
+        time's recap left out, only people who still agree, the DM too, asked just before and again
+        before anything is kept), through
         `StoryChains`. Only for a campaign whose plan has story memory; counts only in the log."""
         if self.memory is None or self.transcripts is None or self.backstory_links is None:
             return
@@ -10475,21 +10477,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 recap = await self._recap_lines(gid, sid)
                 lines = await self.transcripts.lines(gid, sid)
-                people = {*dm_ids, *(await consenting())}
-                said = [
-                    StorySaid(s.started_ms, s.user_id, s.text)
-                    for s in extractor.readable(lines)
-                    if s.number not in recap and s.user_id in people
-                ]
+                said = readable_lines(lines, recap, set(await consenting()))
                 done = await StoryChains(self.memory._db, self.backstory_links).read_session(
-                    gid, cid, session.started_at, said, dm_ids,
-                    f"Session {session.number}",
-                    int(time.time()),
+                    gid, cid, session.started_at, said, dm_ids, f"Session {session.number}",
+                    consenting,
                 )  # fmt: skip
                 log.info(
-                    "Where the story is: %d places placed, older session %s",
+                    "Where the story is: %d new guesses of where a place is%s",
                     done.guessed,
-                    "left out" if done.skipped_older else "no",
+                    " (an older session: left out)" if done.skipped_older else "",
                 )
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Where the story is: stopped (%s)", type(exc).__name__)

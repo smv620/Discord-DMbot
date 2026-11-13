@@ -44,7 +44,8 @@ class Chains(NamesTest):
             )
             await self.memory.set_place_level(GUILD, self.cid, made.value.id, level, source=BY_DM)
             self.ids[name] = str(made.value.id)
-        self.names = {v: k for k, v in self.ids.items()}
+        self.by_id = {v: k for k, v in self.ids.items()}
+        self.agreeing = {DM, P1, P2}
         self.wren = await self.pc("Wren", P1)
         self.ash = await self.pc("Ash", P2)
 
@@ -57,25 +58,29 @@ class Chains(NamesTest):
 
     async def read(self, *lines: tuple[int, int, str], started: int = START) -> Any:
         said = [Said(at(t), who, text) for t, who, text in lines]
+
+        async def agreed() -> set[int]:
+            return set(self.agreeing)
+
         return await self.chains.read_session(
-            GUILD, self.cid, started, said, {DM}, "Session 1", started + 3600
+            GUILD, self.cid, started, said, {DM}, "Session 1", agreed
         )
 
     async def stored(self) -> dict[str, list[str]]:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
                 "SELECT chain, entity_id FROM memory_story_chain WHERE campaign_id = %s"
-                " ORDER BY chain, rank",
+                " AND chain <> 'mark' ORDER BY chain, rank",
                 (self.cid,),
             )
             out: dict[str, list[str]] = {}
             for r in await cur.fetchall():
-                out.setdefault(str(r["chain"]), []).append(self.names[str(r["entity_id"])])
+                out.setdefault(str(r["chain"]), []).append(self.by_id[str(r["entity_id"])])
         return out
 
     async def guesses(self) -> list[tuple[str, str]]:
         waiting = await self.links.waiting(GUILD, self.cid, assumed=True)
-        return sorted((self.names[w.subject_id], self.names[w.object_id]) for w in waiting)
+        return sorted((self.by_id[w.subject_id], self.by_id[w.object_id]) for w in waiting)
 
     async def test_the_dm_moves_it_and_the_next_session_starts_there(self) -> None:
         done = await self.read(
@@ -104,8 +109,11 @@ class Chains(NamesTest):
             await conn.execute(
                 "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
                 " VALUES (%s, %s, NULL, %s, 0), (%s, %s, 1, %s, 0), (%s, %s, 2, %s, 0),"
-                " (%s, %s, NULL, %s, 0)",
-                (GUILD, self.cid, START, GUILD, self.cid, SPLIT, GUILD, self.cid, SPLIT + 300,
+                " (%s, %s, 1, %s, 10), (%s, %s, 2, %s, 10), (%s, %s, NULL, %s, 0)",
+                # (at the split every group's clock is written in one second, as the triggers
+                # do; then the DM moves group 1's, later group 2's)
+                (GUILD, self.cid, START, GUILD, self.cid, SPLIT, GUILD, self.cid, SPLIT,
+                 GUILD, self.cid, SPLIT + 5, GUILD, self.cid, SPLIT + 300,
                  GUILD, self.cid, REJOIN),
             )  # fmt: skip
             for character, group in ((self.wren, 1), (self.ash, 2)):
@@ -129,7 +137,7 @@ class Chains(NamesTest):
         self.assertEqual(await self.stored(), {MAIN: ["Icewind Dale"]})  # (only what both share)
         self.assertIn(("Speaker's Hall", "Kelvenmoor"), await self.guesses())
         self.assertIn(("Gull's Rest", "Kelvenmoor"), await self.guesses())
-        self.assertTrue(g2)
+        self.assertNotIn(g2, await self.stored())
 
     async def test_a_session_that_ends_split_is_rejoined_at_the_next(self) -> None:
         await self.split()
@@ -146,3 +154,35 @@ class Chains(NamesTest):
         )
         await self.read((1210, DM, "Together again."), started=START + 1200)
         self.assertEqual(await self.stored(), {MAIN: ["Icewind Dale", "Kelvenmoor"]})
+
+    async def test_a_dm_line_at_the_split_instant_goes_to_no_group(self) -> None:
+        await self.split()
+        await self.read(
+            (1, DM, "You are in Icewind Dale, in Kelvenmoor."),
+            (602, DM, "Someone walks into Speaker's Hall."),  # (no group's clock moved yet)
+        )
+        self.assertNotIn(("Speaker's Hall", "Kelvenmoor"), await self.guesses())
+
+    async def test_two_groups_that_reach_one_town_keep_it_at_rejoin(self) -> None:
+        await self.split()
+        await self.read(
+            (1, DM, "You are in Icewind Dale, in Kelvenmoor."),
+            (610, DM, "Wren's group rides into Brindleford."),
+            (910, DM, "Ash's group rides into Brindleford too."),
+            (1210, DM, "Back together."),
+        )
+        self.assertEqual(await self.stored(), {MAIN: ["Icewind Dale", "Brindleford"]})
+
+    async def test_someone_who_stops_meanwhile_is_read_again_without(self) -> None:
+        self.agreeing = {DM, P2}  # (P1 stopped between the first ask and the keep)
+        await self.read(
+            (1, DM, "You reach Icewind Dale, in Kelvenmoor."),
+            (2, P1, "My cousin keeps Speaker's Hall."),
+        )
+        self.assertNotIn(("Speaker's Hall", "Kelvenmoor"), await self.guesses())
+
+    async def test_an_older_session_is_left_out_even_after_an_empty_chain(self) -> None:
+        await self.read((1, P1, "Nothing about places."), started=START + 86_400)
+        self.assertEqual(await self.stored(), {})  # (no chain, but the mark is kept)
+        done = await self.read((1, DM, "You reach Icewind Dale."), started=START)
+        self.assertTrue(done.skipped_older)
