@@ -208,6 +208,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_PRIVATE_SCENES must be 1"):
             load_settings({**BASE, "DMBOT_PRIVATE_SCENES": "maybe"})
 
+    def test_the_scene_filter_is_off_by_default(self) -> None:  # (#4173 slice 4)
+        self.assertFalse(load_settings(BASE).scene_filter_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_SCENE_FILTER": "1"}).scene_filter_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_SCENE_FILTER must be 1"):
+            load_settings({**BASE, "DMBOT_SCENE_FILTER": "maybe"})
+
     def test_picture_names_are_off_by_default(self) -> None:  # (#4003)
         self.assertFalse(load_settings(BASE).picture_names_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_PICTURE_NAMES": "1"}).picture_names_on)
