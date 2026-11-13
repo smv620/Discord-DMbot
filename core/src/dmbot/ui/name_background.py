@@ -3303,21 +3303,21 @@ class ConnectionOffer(_Menu):
             return (
                 f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
                 "Change this?\n"
+                + self._scope(c)
                 + self._change_line(c, how, handed[0])
                 + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
                 + who_resolve.checked_line(c.decided)
                 + inferred_line(c.inferred)
                 + f"{note}"
-                + self._scope(c)
             )
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
-            f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            + self._scope(c)
+            + f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
             + who_resolve.checked_line(c.decided)
             + inferred_line(c.inferred)
             + f"{note}"
-            + self._scope(c)
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3346,9 +3346,15 @@ class ConnectionOffer(_Menu):
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return f"\n✅ Keep all keeps the {keeps}."
+            return f"✅ Keep all keeps the {keeps}.\n"
         decide = " and ".join(left)
-        return f"\n✅ Keep all keeps the {keeps}. For you to decide one by one: {decide}."
+        # (the counter above counts every one waiting; this says which the button covers and
+        # which the DM decides here, so the two numbers are never read as one, #4320)
+        rest = len(self.shown) - len(mine)
+        return (
+            f"✅ Keep all keeps the {keeps}. The other {rest} waiting you decide one by one: "
+            f"{decide}.\n"
+        )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
