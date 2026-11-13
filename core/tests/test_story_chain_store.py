@@ -186,3 +186,44 @@ class Chains(NamesTest):
         self.assertEqual(await self.stored(), {})  # (no chain, but the mark is kept)
         done = await self.read((1, DM, "You reach Icewind Dale."), started=START)
         self.assertTrue(done.skipped_older)
+
+
+class Journeys(Chains):
+    """#4173 slice 6d part 3: the party's journey is written as the DM's own travelled route, only
+    between kept places, one per session, and one Undo takes it back."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.chains = StoryChains(self.db, self.links, self.memory)
+
+    async def legs(self) -> list[tuple[str, str, str, int | None]]:
+        return sorted(
+            (self.by_id[r.subject_id], self.by_id[r.object_id], r.detail, r.from_session_at)
+            for r in await self.memory.relations(GUILD, self.cid)
+            if r.predicate == "route_to" and r.route_state == "travelled"
+        )
+
+    async def test_a_journey_is_written_with_its_way_and_session(self) -> None:
+        done = await self.read(
+            (1, DM, "You reach Kelvenmoor."),
+            (2, DM, "You take the road east."),
+            (3, DM, "You reach Brindleford."),
+            (4, DM, "Back at Brindleford."),
+        )
+        self.assertEqual((done.journeys, done.journeys_unkept), (1, 0))
+        self.assertEqual(await self.legs(), [("Kelvenmoor", "Brindleford", "road", START)])
+        rels = [
+            r for r in await self.memory.relations(GUILD, self.cid) if r.predicate == "route_to"
+        ]
+        self.assertEqual((rels[0].status, rels[0].source), (CONFIRMED, "dm"))
+
+    async def test_no_journey_to_a_place_not_kept(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.cid, name="Easthaven", type="place", status="proposed", source="extractor"
+        )
+        await self.memory.set_place_level(
+            GUILD, self.cid, made.value.id, "settlement", source=BY_DM
+        )
+        done = await self.read((1, DM, "You reach Kelvenmoor."), (2, DM, "You reach Easthaven."))
+        self.assertEqual((done.journeys, done.journeys_unkept), (0, 1))
+        self.assertEqual(await self.legs(), [])

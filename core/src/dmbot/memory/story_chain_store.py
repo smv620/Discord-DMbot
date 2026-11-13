@@ -22,13 +22,18 @@ from __future__ import annotations
 import bisect
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dmbot.db import Database
+from dmbot.memory import route_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.models import CONFIRMED, DM
 from dmbot.memory.scene_moves import Move
-from dmbot.memory.session_chain import MAIN, Line, rejoined, walk
+from dmbot.memory.session_chain import MAIN, Leg, Line, rejoined, walk
 from dmbot.memory.story_chain import Place
+
+if TYPE_CHECKING:
+    from dmbot.memory.store import MemoryStore
 
 MARK = "mark"  # the one row that says when the last session was walked
 MAX_RANK = 20  # the table's own limit: a chain is at most this deep (a plane down to a room is 8)
@@ -49,6 +54,8 @@ class Said:
 class Result:
     guessed: int = 0  # assumed parents queued (new ones only)
     skipped_older: bool = False  # an older session than the chains': left out
+    journeys: int = 0  # the party's journeys written (#4173 slice 6d part 3)
+    journeys_unkept: int = 0  # journeys left out: an end the DM hasn't kept yet
 
 
 class _Clock:
@@ -147,9 +154,12 @@ def readable_lines(
 
 
 class StoryChains:
-    def __init__(self, db: Database, links: BackstoryLinks) -> None:
+    def __init__(
+        self, db: Database, links: BackstoryLinks, memory: MemoryStore | None = None
+    ) -> None:
         self._db = db
         self._links = links
+        self._memory = memory  # (writes the party's journeys; None writes none)
 
     async def read_session(
         self,
@@ -176,15 +186,20 @@ class StoryChains:
             if last is not None and session_started_at < last:
                 return Result(0, skipped_older=True)
             found = await _places(conn, guild_id, campaign_id)
+            routes = await _routes(conn, guild_id, campaign_id)
             stated = await _stated(conn, guild_id, campaign_id)
             until = (said[-1].started_ms // 1000) if said else session_started_at
             clock = await _clock(conn, guild_id, campaign_id, until)
             plays = await _plays(conn, guild_id, campaign_id)
-            walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated, moves)
+            walked, pairs, legs = _walk_all(
+                said, dm_ids, clock, plays, chains, found, stated, moves, routes
+            )
             still = set(await agreed())  # (consent again, after the reads: #4153's rule)
             if any(s.user_id not in still for s in said):
                 said = [s for s in said if s.user_id in still]
-                walked, pairs = _walk_all(said, dm_ids, clock, plays, chains, found, stated, moves)
+                walked, pairs, legs = _walk_all(
+                    said, dm_ids, clock, plays, chains, found, stated, moves, routes
+                )
             await _save(conn, guild_id, campaign_id, walked, session_started_at)
             added = 0
             if pairs:  # (inside the lock: the next walk sees them as waiting)
@@ -193,7 +208,36 @@ class StoryChains:
                     campaign_id,
                     [NewLink(a, "located_in", b, "", upload=label, assumed=True) for a, b in pairs],
                 )
-        return Result(added)
+            ends = {e for leg in legs for e in (leg.start, leg.end)}
+            kept = await _kept(conn, guild_id, campaign_id, ends)
+        written, unkept = await self._journeys(
+            guild_id, campaign_id, session_started_at, legs, kept
+        )
+        return Result(added, journeys=written, journeys_unkept=unkept)
+
+    async def _journeys(
+        self, guild_id: int, campaign_id: str, at: int, legs: Sequence[Leg], kept: set[str]
+    ) -> tuple[int, int]:
+        """The party's journeys (Supervisor's ruling on part 3, 2026-11-13): written straight away
+        as the DM's own travelled routes, never queued, since only the DM's narration moves the
+        party's chain; each its own change, so one Undo takes it back. Only between two places the
+        DM has kept (one still proposed is left out and counted). After the chain's lock, so the
+        memory store's own write never waits on it. A journey said twice in one session is one
+        (`checks.duplicate_of`: one per pair, means and session)."""
+        if self._memory is None:
+            return 0, 0
+        written = unkept = 0
+        for leg in legs:
+            if not {leg.start, leg.end} <= kept:
+                unkept += 1
+                continue
+            await self._memory.add_relation(
+                guild_id, campaign_id, leg.start, route_words.ROUTE_TO, leg.end, source=DM,
+                confidence=1.0, status=CONFIRMED, detail=leg.means,
+                route_state=route_words.TRAVELLED, from_session_at=at,
+            )  # fmt: skip
+            written += 1
+        return written, unkept
 
 
 def _walk_all(
@@ -205,17 +249,21 @@ def _walk_all(
     found: Sequence[Place],
     stated: Collection[str],
     moves: Mapping[int, tuple[Move, ...]] | None = None,
-) -> tuple[dict[str, list[str]], list[tuple[str, str]]]:
-    """The whole session, Rejoins included: the chains it ends with and the guesses it made."""
+    routes: Sequence[Place] = (),
+) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[Leg]]:
+    """The whole session, Rejoins included: the chains it ends with, the guesses it made and the
+    party's journeys."""
     given = set(stated)
     pairs: list[tuple[str, str]] = []
+    legs: list[Leg] = []
     batch: list[Line] = []
     left_in = max((int(k[1:].split("g")[0]) for k in chains if k != MAIN), default=None)
     for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in, moves):
         if ended is not None:  # (Rejoin: walk what came before, then join the groups)
-            walked = walk(batch, found, chains, given)
+            walked = walk(batch, found, chains, given, routes)
             chains, batch = walked.chains, []
             pairs += walked.pairs
+            legs += walked.legs
             given |= {p for p, _ in walked.pairs}
             prefix = f"s{ended}g"
             groups = {k: v for k, v in chains.items() if k.startswith(prefix)}
@@ -229,8 +277,8 @@ def _walk_all(
                 chains[MAIN] = rejoined([*groups.values(), *idle])
         if line is not None:
             batch.append(line)
-    walked = walk(batch, found, chains, given)
-    return walked.chains, pairs + walked.pairs
+    walked = walk(batch, found, chains, given, routes)
+    return walked.chains, pairs + walked.pairs, legs + walked.legs
 
 
 async def _load(
@@ -298,6 +346,36 @@ async def _places(conn: Any, guild_id: int, campaign_id: str) -> list[Place]:
         Place(str(r["id"]), str(r["place_level"]), (str(r["name"]), *map(str, r["others"])))
         for r in await cur.fetchall()
     ]
+
+
+async def _routes(conn: Any, guild_id: int, campaign_id: str) -> list[Place]:
+    """The campaign's named route places ("the Eastway"), each with its spellings: being on one
+    closes the town level (#4173 slice 6d). Proposed ones too, as `_places` reads them."""
+    cur = await conn.execute(
+        "SELECT e.id, e.name, COALESCE(array_agg(a.text)"
+        " FILTER (WHERE a.text IS NOT NULL), '{}') AS others FROM memory_entities e"
+        " LEFT JOIN memory_aliases a ON (a.guild_id, a.campaign_id, a.entity_id)"
+        " = (e.guild_id, e.campaign_id, e.id) AND a.status <> 'rejected'"
+        " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.type = 'place'"
+        " AND e.status IN ('confirmed', 'proposed') AND e.form = 'route' GROUP BY e.id, e.name",
+        (guild_id, campaign_id),
+    )
+    return [
+        Place(str(r["id"]), "", (str(r["name"]), *map(str, r["others"])))
+        for r in await cur.fetchall()
+    ]
+
+
+async def _kept(conn: Any, guild_id: int, campaign_id: str, ids: set[str]) -> set[str]:
+    """Which of these places the DM has kept (a journey is written only between two of them)."""
+    if not ids:
+        return set()
+    cur = await conn.execute(
+        "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+        " AND id = ANY(%s) AND status = 'confirmed'",
+        (guild_id, campaign_id, sorted(ids)),
+    )
+    return {str(r["id"]) for r in await cur.fetchall()}
 
 
 async def _stated(conn: Any, guild_id: int, campaign_id: str) -> set[str]:

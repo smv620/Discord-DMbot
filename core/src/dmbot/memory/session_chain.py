@@ -28,7 +28,7 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import place_levels
+from dmbot.memory import place_levels, route_words
 from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.story_chain import LIST_PLACES, Place
 
@@ -51,12 +51,24 @@ class Line:
     moves: tuple[Move, ...] = ()  # the AI's scene moves on this line (DM lines only)
 
 
+@dataclass(frozen=True, slots=True)
+class Leg:
+    """A journey the party made (#4173 slice 6d part 3): from one settlement to another, on the
+    party's own chain, and the way the DM's words said ("" when they didn't say)."""
+
+    start: str
+    end: str
+    means: str
+
+
 @dataclass(slots=True)
 class Walked:
-    """What a walk leaves: each chain's open places (widest first) and the assumed parents found."""
+    """What a walk leaves: each chain's open places (widest first), the assumed parents found and
+    the party's journeys."""
 
     chains: dict[str, list[str]]
     pairs: list[tuple[str, str]] = field(default_factory=list)
+    legs: list[Leg] = field(default_factory=list)
 
 
 def _mentions(text: str, found: Sequence[Place]) -> list[tuple[int, int, Place]]:
@@ -101,15 +113,25 @@ def walk(
     found: Sequence[Place],
     chains: Mapping[str, Sequence[str]],
     stated: Collection[str],
+    routes: Sequence[Place] = (),
 ) -> Walked:
-    """Walk a session's lines in order from the chains as they were (see the module's rules)."""
+    """Walk a session's lines in order from the chains as they were (see the module's rules).
+    `routes`: the campaign's named route places ("the Eastway"); being on one closes the town level
+    and below (#4173 slice 6d, the movement rule), as travel does."""
     usable = [p for p in found if p.level in place_levels.RANK]
     ranks = {p.entity_id: place_levels.RANK[p.level] for p in usable}
     out = Walked({k: [e for e in v if e in ranks] for k, v in chains.items()})
     given = set(stated)
+    # The party's journeys (Supervisor's ruling on part 3, 2026-11-13): only on the party's own
+    # chain while it is together, from the town it was last in (kept even when travel closed it) to
+    # the next one the DM brings it to; the way is the one the DM's words since then say, or none.
+    town = next((e for e in out.chains.get(MAIN, []) if ranks[e] == _ON_THE_ROAD), None)
+    way_words: list[str] = []
     for line in lines:
         if line.chain is None:
             continue  # (nobody can tell whose story it is: skipped, never guessed)
+        if line.chain == MAIN and line.dm:
+            way_words.append(line.text)
         chain = out.chains.setdefault(line.chain, list(out.chains.get(MAIN, [])))
         spots = _mentions(line.text, usable)
         listed = _listed(line.text, spots)
@@ -132,7 +154,10 @@ def walk(
                 travel = True
             elif m.place.casefold() in said:
                 moved[said[m.place.casefold()].entity_id] = m.kind
-        if travel:
+        on_route = line.dm and any(
+            _mentions(line.text, [r]) and moved_kind(line, r) != NONE for r in routes
+        )
+        if travel or on_route:
             chain[:] = [e for e in chain if ranks[e] < _ON_THE_ROAD]
         named = {s[2].entity_id for s in spots}
         for entity_id, kind in moved.items():  # (a move whose place the line doesn't spell out)
@@ -153,7 +178,25 @@ def walk(
             if line.dm and kind != NONE:  # (named in passing: read, and it moves nothing)
                 chain[:] = [e for e in chain if ranks[e] < rank]
                 chain.append(p.entity_id)
+                if line.chain == MAIN and rank == _ON_THE_ROAD:
+                    if town is not None and town != p.entity_id:
+                        out.legs.append(Leg(town, p.entity_id, _way(way_words)))
+                    town, way_words = p.entity_id, []
     return out
+
+
+def moved_kind(line: Line, place: Place) -> str:
+    """The AI's move for this place on this line, by any of its spellings ("arrive" when it gave
+    none: a DM line naming a place takes the party there)."""
+    spellings = {sp.casefold() for sp in place.spellings}
+    return next((m.kind for m in line.moves if m.place.casefold() in spellings), ARRIVE)
+
+
+def _way(words: Sequence[str]) -> str:
+    """The way the DM's words since the last town said, the first on `route_words`' list, or ""
+    (Supervisor: never a guessed "wild")."""
+    text = " ".join(words)
+    return next((m for m in route_words.MEANS if route_words.said_in(text, m)), "")
 
 
 def _move(chain: list[str], ranks: Mapping[str, int], entity_id: str, kind: str) -> None:
