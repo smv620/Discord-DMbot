@@ -19,6 +19,11 @@ export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
   { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
 
+import { minimumAge } from "./legal";
+
+// The consent button's label exactly as the bot has it (core/src/dmbot/consent_words.py), as the Help page quotes it.
+const consentButton = `I'm ${minimumAge} or older, record me`;
+
 export const wizardWords = {
   title: "Set up a campaign",
   notYet: "This page isn't available yet.",
@@ -244,6 +249,16 @@ export const wizardWords = {
     } as Record<string, string>,
     done: "Your campaign is ready.",
     open: "Open the campaign",
+    openDiscord: "Open in Discord",
+    noChannels: "DMbot couldn't make the campaign's channels. In Discord, type /dmbot start in your server to set them up.",
+    // What to do next in Discord (#4219), one line each; the bold words are the buttons and commands as Discord shows them.
+    nextHeading: "Next, in Discord",
+    next: [
+      "Open your campaign's DM Bot channel. Your menu is there, with ⚙️ Manage DMbot.",
+      "When you play, join your table's voice channel and type /dmbot start. DMbot asks which voice channel is the table the first time.",
+      `Each player presses "${consentButton}" on DMbot's message to be recorded. Nobody is recorded until they do.`,
+      "DMbot sends you a private message when there is something to check, like ✅ Check everything after a session.",
+    ] as readonly string[],
     // The finish run's failure words (docs/WIZARD_DESIGN.md, 4.4).
     errors: {
       plan: "Your plan has no room for another campaign.",

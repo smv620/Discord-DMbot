@@ -77,6 +77,8 @@ export interface WizardFinish {
   notes: string;
   /** Set once the campaign exists, so the page can link to it from then on. */
   campaignRef: string;
+  /** The campaign's DM Bot channel id (as text) once the bot has made it, for the Open in Discord link; empty when there is none (#4219). */
+  dmBotChannel: string;
   createdAt: number;
   movedAt: number;
   serverNow: number;

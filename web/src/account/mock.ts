@@ -940,6 +940,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const worldRows = new Map<string, PlaceWorldRow[]>();
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
+  // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
+  const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
+  const factsOf = (n: NameRow) => {
+    if (n.kind !== "place") return {};
+    const f = placeFacts.get(n.id) ?? (n.name === "Saltmarsh" ? { level: "settlement", levelFrom: "read" as const, form: null, formFrom: null, setting: false } : { level: null, levelFrom: null, form: null, formFrom: null, setting: false });
+    return { placeLevel: f.level, placeLevelFrom: f.levelFrom, form: f.form, formFrom: f.formFrom, setting: f.setting };
+  };
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
   const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
     const recap = names.find((n) => n.id === id);
@@ -3105,7 +3112,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -3173,6 +3180,20 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           rest.push({ layer, value: change.action === "map-control" ? "" : (value as string), words: "", group: group?.id ?? null, groupName: group?.name ?? null, how: change.action === "map-control" ? change.how : change.how, part: "", read: false, source: "dm", shown: false });
         }
         worldRows.set(id, rest);
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "place-size" || change.action === "place-form" || change.action === "place-setting") {
+        // A place's size, kind and setting (#4173): only a place has them, and a setting is a region or bigger.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const f = { ...factsOf(row) } as { placeLevel?: string | null };
+        const was = placeFacts.get(id) ?? { level: (f.placeLevel ?? null) as string | null, levelFrom: (row.name === "Saltmarsh" ? "read" : null) as "read" | "dm" | null, form: null as "water" | "route" | null, formFrom: null as "read" | "dm" | null, setting: false };
+        if (change.action === "place-size") placeFacts.set(id, { ...was, level: change.size, levelFrom: change.size === null ? null : "dm" });
+        else if (change.action === "place-form") placeFacts.set(id, { ...was, form: change.form, formFrom: change.form === null ? null : "dm" });
+        else {
+          if (change.setting && !["plane", "world", "region"].includes(was.level ?? "")) throw new ApiError("bad-target");
+          for (const [other, value] of placeFacts) if (change.setting && value.setting) placeFacts.set(other, { ...value, setting: false });
+          placeFacts.set(id, { ...was, setting: change.setting });
+        }
         return { ...row, others: [...row.others] };
       }
       if (change.action === "players-line") {

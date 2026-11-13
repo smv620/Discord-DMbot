@@ -2045,6 +2045,15 @@ export interface NameRow {
   secret: boolean;
   /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
   hidden?: boolean;
+  /** A place's size (#4173): plane, world, region, settlement, district, street, building or room; null when it has none. Only places have one. */
+  placeLevel?: string | null;
+  /** Who set it: "read" (DMbot read it from the lore's words) or "dm"; null when there is no size. */
+  placeLevelFrom?: "read" | "dm" | null;
+  /** Land, water or a road (#4173 slice 6a): "water", "route", or null for land. */
+  form?: "water" | "route" | null;
+  formFrom?: "read" | "dm" | null;
+  /** True on the campaign's one setting, a confirmed place (#4173 slice 2). */
+  setting?: boolean;
   /** For a DM: which of `others` are secret names. */
   secretOthers?: string[];
   /** The NPC's own page (#2266), for an NPC; null otherwise. */
@@ -2180,6 +2189,10 @@ export type NameChange =
   | { action: "told-add" | "told-remove"; alias: string; character: string }
   // The line the players are told about a name; a blank clears it (#3568).
   | { action: "players-line"; line: string }
+  // A place's size, kind and setting (#4173): `size` null is "Not sure"; `form` null is land; the bot refuses a name that is not a place.
+  | { action: "place-size"; size: string | null }
+  | { action: "place-form"; form: "water" | "route" | null }
+  | { action: "place-setting"; setting: boolean }
   // A place's land, climate and ruler (#4287): a null value (or group) is "Not sure"; `how` is the shade ("" for none).
   | { action: "map-terrain" | "map-climate"; value: string | null; how: string }
   | { action: "map-control"; group: string | null; how: string }
