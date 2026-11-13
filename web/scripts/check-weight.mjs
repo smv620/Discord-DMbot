@@ -27,9 +27,14 @@ import { checkBuild, table } from "./weight.mjs";
 // work in #4155 already moved its banner and button into lazy files), and a website feature's API methods must be named in
 // `NAMES_METHODS` in the first download (here `metList`, `answerMet`: about 22 bytes). Nothing else on the page grew; the list
 // itself is in a lazy file.
+// Raised on 2026-11-08 (#3855): the search bar's island is on every page once SEARCH_LIVE is on. Measured with it off and on:
+// the island's own chunk is 10.1 KB (4.1 KB compressed); a page with no island of its own also gains Astro's small start-up
+// script in its HTML (index.html 15.6 to 21.2 KB, help.html 51.5 to 57.0 KB, 2.2 KB compressed); every page gains 1.2 to
+// 11.1 KB in all, and the three heaviest signed-in pages (names 188.3, recaps 191.0, web 192.2 KB) pass 185. Each budget is
+// the largest page now plus about 1 KB.
 export const budgets = {
-  htmlKB: 52,
-  totalKB: 186,
+  htmlKB: 58,
+  totalKB: 194,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };

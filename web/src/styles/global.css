@@ -282,9 +282,12 @@ a {
   font-size: var(--text-sm);
 }
 
-/* The search bar in the header (#3855): a 🔍 that opens a box under the bar. Off until SEARCH_LIVE. */
-.site-search { position: relative; }
+/* The search bar in the header (#3855): a 🔍 that opens a box under the bar. The box is placed against the header, not the
+   button, so on a phone (where the button can sit at the left) it never reaches past the window; and a hidden box must stay
+   hidden, which the grid below would otherwise undo. */
+.site-header { position: relative; }
 .site-search-open { min-height: var(--tap); min-width: var(--tap); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: var(--text-lg); cursor: pointer; }
-.site-search-panel { position: absolute; right: 0; top: calc(100% + var(--space-2)); z-index: 20; width: min(24rem, calc(100vw - 2 * var(--gutter))); display: grid; gap: var(--space-2); padding: var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-.site-search-panel input { min-height: var(--tap); padding: 0 var(--space-3); border: 1px solid var(--control-edge); border-radius: var(--radius); font: inherit; color: var(--text); background: var(--surface); }
+.site-search-panel { position: absolute; left: var(--gutter); right: var(--gutter); top: calc(100% + var(--space-2)); z-index: 20; box-sizing: border-box; max-width: 24rem; margin-inline-start: auto; display: grid; gap: var(--space-2); padding: var(--space-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.site-search-panel[hidden] { display: none; }
+.site-search-panel input { box-sizing: border-box; width: 100%; min-height: var(--tap); padding: 0 var(--space-3); border: 1px solid var(--control-edge); border-radius: var(--radius); font: inherit; color: var(--text); background: var(--surface); }
 .site-search-result p { margin: 0; overflow-wrap: anywhere; }
