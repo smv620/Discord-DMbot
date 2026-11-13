@@ -115,3 +115,36 @@ def said_in(text: str, means: str) -> bool:
     A route's means must be stated (Supervisor's condition): the AI's choice alone is not enough."""
     words = f" {' '.join(re.findall(r'[\w-]+', text.casefold()))} "
     return any(f" {said} " in words for said, kept in _SAID.items() if kept == means)
+
+
+# A journey or a plan reads one way only, from where the party set out (`checks.ordered` keeps that
+# order): "Targos is where the party set out by road for Bryn Shander", never "connected by road".
+_STATE_FORWARD = {
+    TRAVELLED: "is where the party set out {by} for",
+    PLANNED: "is where the party plans to set out {by} for",
+}
+_STATE_BACK = {
+    TRAVELLED: "is where the party arrived {by} from",
+    PLANNED: "is where the party plans to go {by} from",
+}
+
+
+def _by(detail: str) -> str:
+    means = means_of(detail)
+    if means:
+        return _MEANS[means].by
+    return f"(“{detail}”)" if detail else ""
+
+
+def state_forward(detail: str, state: str) -> str:
+    """How a journey or a plan reads from where the party set out; `forward` for a known route."""
+    if state not in _STATE_FORWARD:
+        return forward(detail)
+    return " ".join(_STATE_FORWARD[state].format(by=_by(detail)).split())
+
+
+def state_backward(detail: str, state: str, *, one_way: bool = False) -> str:
+    """How a journey or a plan reads from where the party arrived; `backward` for a known route."""
+    if state not in _STATE_BACK:
+        return backward(detail, one_way=one_way)
+    return " ".join(_STATE_BACK[state].format(by=_by(detail)).split())

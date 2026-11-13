@@ -116,7 +116,11 @@ CORE_KEYS = frozenset(p.key for p in CORE_PREDICATES)
 
 
 def reads_both_ways(
-    predicate: str, detail: str = "", directional: bool = False, both_ways: bool | None = None
+    predicate: str,
+    detail: str = "",
+    directional: bool = False,
+    both_ways: bool | None = None,
+    route_state: str = "",
 ) -> bool:
     """Does the connection read the same from either name? `both_ways` is the DM's own direction
     for it (#4154; None: its kind's default, `BOTH_WAYS`). Never a family connection whose role
@@ -125,6 +129,8 @@ def reads_both_ways(
         return False
     if predicate == "next_to" and next_words.one_way(detail):
         return False  # "on the shore of" reads from the place beside, whatever the mark (#4173 6a)
+    if predicate == route_words.ROUTE_TO and route_state:
+        return False  # a journey or a plan reads from where the party set out (#4173 6d)
     return predicate in BOTH_WAYS if both_ways is None else both_ways
 
 
@@ -192,6 +198,7 @@ def link_words(
     *,
     feeling: bool = False,
     knows_how: str | None = None,
+    route_state: str = "",
 ) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
@@ -214,8 +221,8 @@ def link_words(
         return place_words.forward(detail, subject_kind)
     if predicate == "next_to":
         return next_words.forward(detail)
-    if predicate == "route_to":
-        return route_words.forward(detail)
+    if predicate == "route_to":  # (a journey or a plan by its state, #4173 6d)
+        return route_words.state_forward(detail, route_state)
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
     # "knows" with the feeling a reader gave it (#3175): "knows (hostile)", the old friend and enemy
@@ -270,13 +277,14 @@ def back_words(
     *,
     knows_how: str | None = None,
     both_ways: bool | None = None,
+    route_state: str = "",
 ) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
     niece". None for one that reads the same either way, or has no fixed reading back.
     `knows_how` (#3881): two people who met read "has met" from either side. `both_ways` (#4154):
     a two-way kind the DM made one-way reads `ONE_WAY_BACK` ("is seen as a rival by")."""
     if predicate == "route_to":  # (its means both ways, or "is reached by road from": #4173 6d)
-        return route_words.backward(detail, one_way=both_ways is False)
+        return route_words.state_backward(detail, route_state, one_way=both_ways is False)
     if (
         both_ways is False
         and predicate in ONE_WAY_BACK

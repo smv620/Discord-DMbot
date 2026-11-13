@@ -155,7 +155,7 @@ def direction_choices(
         )
 
     turned = one_way(dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id))
-    both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways)
+    both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways, r.route_state)
     choices = [
         (f"{a} → {b}", r.subject_id, not both, said(one_way(r))),
         (f"{b} → {a}", r.object_id, False, said(turned)),
@@ -413,7 +413,10 @@ class OneConnection(_Menu):
         # connection with no direction ("is an enemy of") is said from the card the DM is on,
         # whichever way round the row happens to be stored, as the card itself reads it.
         first, second = stored.subject_id, stored.object_id
-        if reads_both_ways(stored.predicate, stored.detail, stored.directional, stored.both_ways):
+        if reads_both_ways(
+            stored.predicate, stored.detail, stored.directional, stored.both_ways,
+            stored.route_state,
+        ):  # fmt: skip
             # said of the two together, from the card's name: "Cerric and Wit are rivals" (#4154)
             if second == card_id:
                 stored = dataclasses.replace(stored, subject_id=second, object_id=first)
@@ -427,6 +430,7 @@ class OneConnection(_Menu):
             subject.type if subject else "",
             feeling=True,
             knows_how=stored.knows_how,
+            route_state=stored.route_state,
         )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
