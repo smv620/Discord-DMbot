@@ -1808,6 +1808,8 @@ class SuggestionReview(_Menu):
         await self._next(interaction, campaign, memory, note=note)
 
     async def _yes(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -1860,6 +1862,8 @@ class SuggestionReview(_Menu):
         await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
 
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2315,6 +2319,8 @@ class SuggestionReview(_Menu):
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2333,6 +2339,8 @@ class SuggestionReview(_Menu):
         await self._saved(interaction, campaign, memory, note)
 
     async def _later(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
