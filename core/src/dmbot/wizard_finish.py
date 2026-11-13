@@ -20,6 +20,7 @@ left in the draft.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -27,10 +28,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import discord
+
 from dmbot import wizard_homebrew, wizard_house
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.db import Database
 from dmbot.dm_screen import channel_sync
+from dmbot.dm_screen.channel import setup_dm_screen
 from dmbot.logs import log_context
 from dmbot.memory import sheets, short_names
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, name_key
@@ -60,6 +64,7 @@ LORE_WAIT_S = 20 * 60  # the most one document's read is waited for
 NOT_ALLOWED, PLAN, GONE, FAILED = "not-allowed", "plan", "gone", "failed"
 DRIVE_GONE, LORE_FAILED, BAD_ANSWERS = "drive_gone", "lore_failed", "bad_answers"
 PARTY_FAILED = "party_failed"  # the characters could not be made; the campaign stands
+CHANNELS_FAILED = "channels_failed"  # a Discord channel could not be made; the campaign stands
 # Sheet links (#4205): the campaign and its characters stand whatever these say. The row keeps the
 # first word as its `error` and every word with its count in `notes`.
 SHEET_PRIVATE = "sheet_private"  # D&D Beyond said the sheet is not public; the link is kept
@@ -80,7 +85,8 @@ SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 DOCS_LEFT = "docs_left"
 NO_RIGHTS = "no_rights"  # documents with no right-to-use confirmation: nothing is read
 SOME_DOCS = (
-    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, DOCS_LEFT, HOUSE_FAILED, DOC_LINK_FAILED,
+    DRIVE_GONE, LORE_FAILED, PARTY_FAILED, CHANNELS_FAILED, DOCS_LEFT, HOUSE_FAILED,
+    DOC_LINK_FAILED,
     wizard_house.HOUSE_UNREADABLE,
     HOMEBREW_FAILED, wizard_homebrew.HOMEBREW_UNREADABLE, wizard_homebrew.HOMEBREW_LINK_FAILED,
     SHEET_PRIVATE, SHEET_SLOW, SHEET_BAD, SHEET_WAITING, SHEET_UNREADABLE, SHEETS_FAILED,
@@ -393,6 +399,38 @@ async def run_round(bot: Any, guild_id: int) -> int:
     return 1
 
 
+async def _make_channels(bot: Any, guild: Any, guild_id: int, campaign_id: str) -> str:
+    """The campaign's DM screen, transcript and DM Bot channels, made the way `/dmbot start` makes
+    them and in its order (WIZARD_DESIGN step 1; #4303), so the private message's "look in your
+    campaign's DM Bot channel" is true. A campaign that has all three already (a run resumed after
+    the channels were made) makes none again. If Discord refuses any, the campaign is still made
+    and the run ends with a word the page shows ("" when all went well)."""
+    try:
+        campaign = await bot.campaigns.get(guild_id, campaign_id)
+        if campaign is None:
+            return ""
+        if (
+            campaign.dm_screen_channel_id
+            and campaign.transcript_channel_id
+            and campaign.dm_bot_channel_id
+        ):
+            return ""
+        screen = await setup_dm_screen(guild, campaign_id, bot.campaigns)
+        if screen.warning:  # who else can see the new screen: said in the screen, as /dmbot does
+            with contextlib.suppress(discord.HTTPException):
+                await screen.channel.send(
+                    screen.warning, allowed_mentions=discord.AllowedMentions.none()
+                )
+        _, transcript_problem = await bot._transcript_channel(
+            guild, screen.campaign, screen.channel
+        )
+        dm_bot_problem = await bot._dm_bot_channel(guild, screen.campaign, screen.channel)
+    except Exception as exc:  # (a refusal or a Discord hiccup): the campaign is usable without them
+        log.warning("A wizard run could not make its channels (%s)", type(exc).__name__)
+        return CHANNELS_FAILED
+    return CHANNELS_FAILED if transcript_problem or dm_bot_problem else ""
+
+
 async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> str:
     """The word the run ends with ("" for a campaign made and its lore read). Every check is made
     again here: minutes may have passed since the page queued it."""
@@ -439,13 +477,14 @@ async def _answer(bot: Any, runs: WizardFinishes, guild_id: int, run: Run) -> st
     if campaign_id != run.made_campaign:
         await runs.move(guild_id, run, stage="campaign", made_campaign=campaign_id)
     await _record_rights(bot, guild_id, campaign_id, run.user_id, draft)  # (once, on any path)
+    channels_word = await _make_channels(bot, guild, guild_id, campaign_id)
     await runs.move(guild_id, run, stage="data_use")
     if "data_use" in answers:
         await bot.campaigns.set_share_improve(guild_id, campaign_id, bool(answers["data_use"]))
     await runs.move(guild_id, run, stage="rules")
     await _apply_supplements(bot, guild_id, campaign_id, answers)
     await runs.move(guild_id, run, stage="party")
-    word = ""
+    word = channels_word
     try:
         await _make_characters(bot, guild, guild_id, campaign_id, answers)
     except Lost:
