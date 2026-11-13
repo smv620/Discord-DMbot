@@ -81,6 +81,9 @@ class NewLink:
     # A hand-over (#4115): who had the item before (an entry id) and how it moved, or "" for none.
     hand_over_from: str = ""
     hand_over: str = ""
+    # A place's parent DMbot assumed from where the story was (#4173 slice 3): never a question,
+    # kept by itself once both places are kept (`backstory_keep.keep_assumed`).
+    assumed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +156,7 @@ class Waiting:
     hand_over_from: str = ""
     hand_over_name: str = ""
     hand_over: str = ""
+    assumed: bool = False  # DMbot assumed it (#4173 slice 3): never one of the DM's questions
 
 
 def _hand_over(link: NewLink) -> tuple[str, str]:
@@ -210,7 +214,8 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM backstory_links"
-                " WHERE guild_id = %s AND campaign_id = %s",
+                # (DMbot's assumed places never crowd out a question: #4173 slice 3)
+                " WHERE guild_id = %s AND campaign_id = %s AND NOT assumed",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
@@ -221,15 +226,16 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
-                    " known_by, world, inferred_reason, npc_guesses, hand_over_from, hand_over)"
+                    " known_by, world, inferred_reason, npc_guesses, hand_over_from, hand_over,"
+                    " assumed)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s)"
+                    " %s, %s)"
                     " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
                      int(link.world), link.inferred[:INFERRED_MAX],
-                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link)),
+                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link), link.assumed),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth and not link.inferred:
@@ -249,6 +255,19 @@ class BackstoryLinks:
                         (*_hand_over(link), guild_id, campaign_id, link.subject_id,
                          link.predicate, link.object_id),
                     )  # fmt: skip
+                if cur.rowcount == 0 and not link.assumed:
+                    # already waiting as DMbot's assumption: a text that states it makes it a
+                    # question, with this text's own quote, secrecy and who knows it
+                    await conn.execute(
+                        "UPDATE backstory_links SET assumed = false, quote = %s, secret = %s,"
+                        " detail = %s, truth = %s, upload = %s, decided = %s, known_by = %s,"
+                        " world = %s, created_at = %s WHERE guild_id = %s AND campaign_id = %s"
+                        " AND subject_id = %s AND predicate = %s AND object_id = %s AND assumed",
+                        (link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth,
+                         link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX],
+                         link.known_by[:ID_MAX], int(link.world), now, guild_id, campaign_id,
+                         link.subject_id, link.predicate, link.object_id),
+                    )  # fmt: skip
                 if cur.rowcount == 0 and not link.inferred:
                     # already waiting as DMbot's inference: a text that states it makes it stated
                     await conn.execute(
@@ -266,7 +285,8 @@ class BackstoryLinks:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT (SELECT count(*) FROM backstory_links WHERE guild_id = %s"
-                " AND campaign_id = %s) + (SELECT count(*) FROM backstory_which WHERE guild_id = %s"
+                " AND campaign_id = %s AND NOT assumed)"
+                " + (SELECT count(*) FROM backstory_which WHERE guild_id = %s"
                 " AND campaign_id = %s) AS n",
                 (guild_id, campaign_id, guild_id, campaign_id),
             )
@@ -416,7 +436,7 @@ class BackstoryLinks:
                     return GONE  # (the question's own end is no answer: the question stays)
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
-                    " AND campaign_id = %s",
+                    " AND campaign_id = %s AND NOT assumed",
                     (guild_id, campaign_id),
                 )
                 counted = await cur.fetchone()
@@ -450,21 +470,28 @@ class BackstoryLinks:
         return DONE
 
     async def waiting(
-        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        symmetric: Collection[str] = (),
+        assumed: bool = False,
     ) -> list[Waiting]:
         """The connections still worth asking about, oldest first, after the clean-up above.
         `symmetric`: the relationships that read the same both ways (family, friend, enemy), so
-        a pair the campaign has either way round is already known."""
+        a pair the campaign has either way round is already known. `assumed` (#4173 slice 3):
+        False (the default, every list and count of questions) leaves out the places' parents
+        DMbot assumed; True gives only those, for `backstory_keep.keep_assumed`."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
                 " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses,"
-                " hand_over_from, hand_over"
+                " hand_over_from, hand_over, assumed"
                 " FROM backstory_links"
-                " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
-                " predicate, object_id",
-                (guild_id, campaign_id),
+                " WHERE guild_id = %s AND campaign_id = %s AND assumed = %s"
+                " ORDER BY created_at, subject_id, predicate, object_id",
+                (guild_id, campaign_id, assumed),
             )
             rows = list(await cur.fetchall())
             if not rows:
@@ -528,7 +555,7 @@ class BackstoryLinks:
                         str(r["known_by"]), int(r["world"]), str(r["inferred_reason"]),
                         _guesses(r["npc_guesses"]), prev or "",
                         str(entities[prev]["name"]) if prev else "",
-                        str(r["hand_over"]) if prev else "",
+                        str(r["hand_over"]) if prev else "", bool(r["assumed"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -539,14 +566,20 @@ class BackstoryLinks:
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
                     " told, decided, known_by, world, inferred_reason, npc_guesses,"
-                    " hand_over_from, hand_over)"
+                    " hand_over_from, hand_over, assumed)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, %s)"
-                    " ON CONFLICT DO NOTHING",
+                    " %s, %s, %s, %s)"
+                    # (a stated one moved by a merge onto a key DMbot's assumption holds takes it
+                    # over: the DM's question is never lost to a guess, #4173 slice 3)
+                    " ON CONFLICT (guild_id, campaign_id, subject_id, predicate, object_id)"
+                    " DO UPDATE SET assumed = false, quote = EXCLUDED.quote,"
+                    " secret = EXCLUDED.secret, detail = EXCLUDED.detail, upload = EXCLUDED.upload"
+                    " WHERE backstory_links.assumed AND NOT EXCLUDED.assumed",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
                      r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"],
-                     Jsonb(_guesses(r["npc_guesses"])), r["hand_over_from"], r["hand_over"]),
+                     Jsonb(_guesses(r["npc_guesses"])), r["hand_over_from"], r["hand_over"],
+                     r["assumed"]),
                 )  # fmt: skip
         return out
 
@@ -564,7 +597,7 @@ class BackstoryLinks:
                 " l.campaign_id AND s.id = l.subject_id"
                 " LEFT JOIN memory_entities o ON o.guild_id = l.guild_id AND o.campaign_id ="
                 " l.campaign_id AND o.id = l.object_id"
-                " WHERE l.guild_id = %s AND l.campaign_id = %s"
+                " WHERE l.guild_id = %s AND l.campaign_id = %s AND NOT l.assumed"
                 " GROUP BY l.predicate, l.upload, ready ORDER BY l.upload, l.predicate, ready",
                 (guild_id, campaign_id),
             )
@@ -700,6 +733,9 @@ class BackstoryLinks:
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
             # (a connection that was ended is history: the same kind may be offered again, #3021)
             " AND to_session_at IS NULL"
+            # (DMbot's assumed place is not known yet: a text that states it asks, and keeping it
+            # clears the mark, #4173 slice 3)
+            " AND NOT assumed"
             " AND subject_id = ANY(%s) AND object_id = ANY(%s)",
             (guild_id, campaign_id, list(ids), list(ids)),
         )

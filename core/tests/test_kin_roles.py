@@ -175,7 +175,7 @@ def relation(subject: str, object_: str, detail: str, directional: bool = True) 
     return SimpleNamespace(
         id="r1", subject_id=subject, object_id=object_, predicate="kin_of", detail=detail,
         status="confirmed", secret=False, directional=directional, both_ways=None,
-        knows_how="",
+        knows_how="", assumed=False,
     )  # fmt: skip
 
 

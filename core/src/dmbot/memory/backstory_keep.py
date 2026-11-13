@@ -451,3 +451,30 @@ async def _undo_all(
         )
         back += 1
     return back
+
+
+async def keep_assumed(
+    memory: MemoryStore, store: BackstoryLinks, guild_id: int, campaign_id: str
+) -> int:
+    """Keep each place's parent DMbot assumed from where the story was (#4173 slice 3) whose two
+    places are both kept now: never a question (Supervisor: "stored, not asked"), so nothing waits
+    for a press. Kept with the mark, held back from the players, as one change each. One whose place
+    has a parent that was said by now is dropped (the said one stands), and so is a refused one;
+    a waiting name leaves it waiting, and a turned-down name takes it away (the queue's own
+    clean-up). Returns how many were kept."""
+    kept = 0
+    for c in await store.waiting(guild_id, campaign_id, assumed=True):
+        if not c.ready:
+            continue
+        try:
+            await memory.add_relation(
+                guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
+                source=DM, confidence=1.0, status=CONFIRMED, assumed=True,
+            )  # fmt: skip
+            kept += 1
+        except (MemoryRuleError, ValueError):
+            # (a parent said meanwhile, one the DM turned down, or an end no longer a place: the
+            # guess is not needed, and is dropped so it never fails a later look)
+            pass
+        await store.remove(guild_id, campaign_id, c)
+    return kept
