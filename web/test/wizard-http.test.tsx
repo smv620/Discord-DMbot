@@ -128,8 +128,9 @@ describe("the refusals", () => {
     expect(w.finish.errors["docs_left"]).toContain("House rules");
   });
 
-  it("channels_failed says the campaign is made, points to Manage DMbot in Discord, and does not offer a retry", () => {
-    expect(w.finish.errors["channels_failed"]).toContain("Manage DMbot");
+  it("channels_failed says the campaign is made and points to /dmbot start, not to a button that may not exist", () => {
+    expect(w.finish.errors["channels_failed"]).toContain("/dmbot start");
+    expect(w.finish.errors["channels_failed"]).not.toContain("Manage DMbot");
     expect(w.finish.errors["channels_failed"]).toContain("campaign is ready");
   });
 });

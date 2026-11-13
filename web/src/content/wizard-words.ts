@@ -267,7 +267,7 @@ export const wizardWords = {
       "no-key": "Your campaign is ready. DMbot can't read the lore until you add an AI key in Settings. Nothing is lost.",
       failed: "Something went wrong. Nothing you entered is lost. Try again in a minute.",
       party_failed: "Your campaign is ready, but DMbot couldn't add the party. Open the campaign and add the characters on its Names page.",
-      channels_failed: "Your campaign is ready, but DMbot couldn't make its Discord channels. In Discord, press ⚙️ Manage DMbot to try again.",
+      channels_failed: "Your campaign is ready, but DMbot couldn't make its Discord channels. Check that DMbot may manage channels in your server. They are made the first time you type /dmbot start.",
       lore_failed: "Your campaign is ready, but DMbot couldn't read your lore. Add it again from the campaign's Lore page.",
       drive_gone: "Your campaign is ready, but a Google Drive file couldn't be read. Add it again from the campaign's pages.",
       house_unreadable: "Your campaign is ready, but DMbot couldn't read your house rules. Add them again from the campaign's House rules page.",
