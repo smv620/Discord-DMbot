@@ -38,7 +38,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory import kin, link_words
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
@@ -217,6 +217,7 @@ class _Fact:
     near: str  # the end already reached when this fact was found
     far: str
     directional: bool = False  # a family role that reads one way (#2457)
+    both_ways: bool | None = None  # the DM's own direction for it (#4154; None: the kind's)
 
 
 def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
@@ -224,7 +225,7 @@ def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
         str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
         str(r["detail"]), r["from_session_at"], bool(r["secret"]),
         tuple(str(m) for m in r["mention_ids"] or ()), hops, near, far,
-        bool(r.get("directional", False)),
+        bool(r.get("directional", False)), r.get("both_ways"),
     )  # fmt: skip
 
 
@@ -491,7 +492,8 @@ class RecallService:
             ends = sorted(frontier)
             cur = await scope.conn.execute(
                 "SELECT id, subject_id, predicate, object_id, detail, from_session_at,"
-                " to_session_at, secret, source, mention_ids, directional FROM memory_relations"
+                " to_session_at, secret, source, mention_ids, directional, both_ways"
+                " FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}"
                 " ORDER BY from_session_at DESC NULLS LAST, id LIMIT %s",
@@ -802,8 +804,17 @@ class _Found:
         detail = f.detail
         if self.guard and f.predicate == FALLBACK_PREDICATE:
             detail = safe_label(detail, self.guard)
+        a, b = walk.entities[f.subject_id]["name"], walk.entities[f.object_id]["name"]
+        # (a kind that reads one way, made two-way by the DM, #4164: the AI is given the card's own
+        # pair words, "A and B are connected (“sworn to”)", never one-way words that leave B out)
+        if (
+            f.both_ways
+            and not link_words.reads_both_ways(f.predicate, detail, f.directional)
+            and link_words.reads_both_ways(f.predicate, detail, f.directional, True)
+        ):
+            return f"{a} and {b} {link_words.pair_words(f.predicate, detail)}"
         what = _predicate_words(self.onto, f.predicate, detail, f.directional)
-        return f"{walk.entities[f.subject_id]['name']} {what} {walk.entities[f.object_id]['name']}"
+        return f"{a} {what} {b}"
 
 
 def _cut(
