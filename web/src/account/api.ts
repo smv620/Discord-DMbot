@@ -1892,6 +1892,9 @@ export interface WebLink {
   /** The DM pinned it as 100% truth (#2448, API #2447). Sent to a DM in the full view only; the page
    * also drops it for anyone else. */
   pinned?: boolean;
+  /** DMbot assumed this place's parent from where the story was (#4304, core #4173 slice 3). Sent to a DM in the full
+   * view only, for a line the DM has not said is right; the page also drops it for anyone else. */
+  assumed?: boolean;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -2000,6 +2003,8 @@ export type WebLinkChange =
   | { action: "words"; id: string; words: string }
   | { action: "secret"; id: string; secret: boolean }
   | { action: "pin"; id: string; pinned: boolean }
+  // ✅ That's right on a place's assumed parent (#4304): clears the mark, one change for the page's Undo.
+  | { action: "right"; id: string }
   // Which way a connection reads (#4154, core #4166), relative to the edge's own two names. Turning one round writes it anew, so its id
   // changes: take the link from the answer's edge. Both ways, or back to one way, keeps the id.
   | { action: "direction"; id: string; direction: "a-b" | "b-a" | "both" }

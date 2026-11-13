@@ -196,6 +196,9 @@ def edges_from(
                 # view carries them (the door sends nothing otherwise)
                 "known_by": row.get("knownBy"),
                 "held": row.get("held"),
+                # a place's parent DMbot assumed from where the story was (#4173 slice 3, #4304);
+                # only the DM's full view door sends it
+                "assumed": bool(row.get("assumed", False)),
                 "at": int(row["at"]),
             }
         )
@@ -226,6 +229,7 @@ def edges_from(
                         # (a knows line only, one this reader is shown, #3882)
                         **({"knowsHow": x["knowsHow"]} if x["knowsHow"] is not None else {}),
                         **(who_knows(x) if is_dm else {}),
+                        **({"assumed": True} if is_dm and x["assumed"] else {}),
                         **({"standing": x["standing"]} if is_dm and x["standing"] else {}),
                     }
                     for x in links
@@ -976,6 +980,11 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action=web_actions.DIRECTION_ACTION, target=link_id,
             text=str(body["direction"]), flag=False,
+        )  # fmt: skip
+    if action == "right":  # ✅ That's right on an assumed parent (#4304); the door lets only a DM
+        return await _queue(
+            db, session, ref, entity=None, action=web_actions.RIGHT_ACTION, target=link_id,
+            text="", flag=False,
         )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:
