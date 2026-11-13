@@ -61,6 +61,31 @@ def valid(key: object) -> bool:
     return isinstance(key, str) and _HEX64.fullmatch(key) is not None
 
 
+_configured: PersonKeys | None = None  # set once at start-up, like the free users list
+
+
+def configure(secret: str) -> bool:
+    """Set the one secret the running process hashes with; True when it is usable. An unset or
+    short secret leaves no key: the records are then written without one and work as before (the
+    backfill job needs it, and the log says so at start-up). Called by the bot and by the API."""
+    global _configured
+    try:
+        _configured = PersonKeys(secret)
+    except PersonKeyMissing:
+        _configured = None
+    return _configured is not None
+
+
+def key_for(user_id: int) -> str | None:
+    """The key to store beside this Discord ID, or None when no secret is configured."""
+    if _configured is None:
+        return None
+    try:
+        return _configured.of(user_id)
+    except ValueError:
+        return None  # (not a Discord ID: a read finds nothing, as it always did)
+
+
 def from_settings(settings: object) -> PersonKeys:
     """The keys for the running settings; raises `PersonKeyMissing` when the secret is not set."""
     return PersonKeys(str(getattr(settings, "person_key", "") or ""))
