@@ -1790,8 +1790,9 @@ class Lists(MemoryTest):
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
-        # (35 with #4229's story languages; 37 with #4256's places: one read per kind written)
-        self.assertLess(statements, 38)
+        # (35 with #4229's story languages; 37 with #4256's places: one read per kind written;
+        # 38 with #4346's maps, which name the place they cover)
+        self.assertLess(statements, 39)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:
