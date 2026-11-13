@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import time
 
+from psycopg import errors as pg_errors
+
 from dmbot.db import Database
 
 log = logging.getLogger(__name__)
@@ -78,20 +80,40 @@ async def record_install(
     """DMbot was added to this server through the website by this person (#435).
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
-    async with db.user(user_id, install_guild=guild_id, session=session) as conn:
-        # The write contract (schema.py, migration 0014): someone else's install is left
-        # alone, quietly (no row comes back).
-        cur = await conn.execute(
-            "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
-            " VALUES (%s, %s, %s, 'site')"
-            " ON CONFLICT (guild_id) DO UPDATE SET"
-            "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site', left_at = NULL"
-            " WHERE installs.installed_by_user_id IS NULL"
-            "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
-            " RETURNING guild_id",
-            (guild_id, user_id, now),
-        )
-        return "recorded" if await cur.fetchone() is not None else "already_linked"
+    # Someone else's install is left alone. Migration 0014 relied on Postgres applying the upsert's
+    # WHERE before the update policy (so it skipped quietly); Postgres 16.16 checks the policy
+    # first and raises instead. So the installer is read first, and a policy error is taken as
+    # "already linked" only when the row now shows another installer (two people installing at
+    # once); for a server the person may not touch the error stands (row-level security refuses).
+    try:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+            if row is not None and row["installed_by_user_id"] not in (None, user_id):
+                return "already_linked"
+            cur = await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, %s, %s, 'site')"
+                " ON CONFLICT (guild_id) DO UPDATE SET"
+                "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site',"
+                "   left_at = NULL"
+                " WHERE installs.installed_by_user_id IS NULL"
+                "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
+                " RETURNING guild_id",
+                (guild_id, user_id, now),
+            )
+            return "recorded" if await cur.fetchone() is not None else "already_linked"
+    except pg_errors.InsufficientPrivilege:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+        if row is not None and row["installed_by_user_id"] not in (None, user_id):
+            return "already_linked"
+        raise
 
 
 async def link_install(db: Database, user_id: int, guild_id: int, *, session: str) -> str:
@@ -176,6 +198,28 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # A start-up wizard draft is the person's own answers and documents: it goes in every
         # server (#3955).
         await conn.execute("SELECT dmbot_forget_wizard()")
+        # The AI credit totals are the person's Discord ID too; the ledger rows keep their numbers
+        # with the owner set to nobody (#4094).
+        await conn.execute("SELECT dmbot_forget_credits()")
+        # The listening hours are the person's Discord ID too: the month totals go, and each
+        # campaign's minutes stay with the owner set to nobody (#4132).
+        await conn.execute("SELECT dmbot_forget_hours()")
+        # The person's own requests and records go; authorship and transcripts are the campaign's
+        # (#4141).
+        await conn.execute("SELECT dmbot_forget_person()")
+        # What they wrote or decided for a campaign stays, with nobody as the author (#4141).
+        await conn.execute("SELECT dmbot_forget_authorship()")
+        # More of their own requests and codes (#4148).
+        await conn.execute("SELECT dmbot_forget_requests()")
+        # Their typed-id questions, and any that asked about them (#4225).
+        await conn.execute("SELECT dmbot_forget_lookups()")
+        # Who decided or set a campaign's records goes to 0; the records stay (#4148).
+        await conn.execute("SELECT dmbot_forget_decisions()")
+        # The DM's list of players they remember, and every list that names the person (#4226).
+        await conn.execute("SELECT dmbot_forget_dm_players()")
+        # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash
+        # (#4145); a row with no hash yet keeps the ID, as before.
+        await conn.execute("SELECT dmbot_forget_person_ids()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

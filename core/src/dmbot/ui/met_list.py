@@ -20,6 +20,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns.models import Campaign
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.met_store import MetRow, MetStore
 from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
@@ -52,6 +53,7 @@ EMPTY = (
 DM_ONLY = "Only a DM of this campaign can see this list."
 NOTHING_CHANGED = "Something went wrong, so nothing was changed. Try again in a moment."
 SHOWN_MAX = 25  # one menu's choices
+MESSAGE_LIMIT = MESSAGE_MAX  # (the one message limit, #1835)
 NAME_LABEL = "Their name"
 NAME_HELP = "What you call them"
 GROUP_HELP = "Their name, or the group's name"
@@ -85,10 +87,15 @@ def label(row: MetRow) -> str:
     return f"{row.what}{many}"
 
 
-def when(row: MetRow) -> str:
-    """When they were met, as a date. Pure."""
+def when(row: MetRow, *, menu: bool = False) -> str:
+    """When they were met. In a message, Discord's own date (`<t:…:d>`), which each reader sees in
+    their own time zone: a US evening session is never the next day (#4104). A menu's option text
+    can't show one, so it keeps the date (UTC), and the message above it carries the real one.
+    Pure."""
     if row.session_started_at is None:
         return "met in play"
+    if not menu:
+        return f"met on <t:{row.session_started_at}:d>"
     day = datetime.fromtimestamp(row.session_started_at, UTC)
     return f"met on {day.day} {day:%b %Y}"
 
@@ -134,14 +141,26 @@ async def show(
         await _replace(interaction, head + EMPTY, BackOnly(campaign.id))
         return
     shown = rows[:SHOWN_MAX]
+    await _replace(interaction, list_text(head, shown, len(rows)), MetList(campaign.id, shown))
+
+
+def list_text(head: str, shown: list[MetRow], total: int) -> str:
+    """The list's message, one row a line, inside Discord's limit (#4106: `logic.shorten` joined
+    every line into one paragraph). When every line does not fit, the newest that do are written
+    and the rest are counted; the menu below still offers them all. Pure."""
     lines = [f"• **{_md(logic.shorten(label(r), 90))}** · {when(r)}" for r in shown]
-    more = (
-        f"\n…and {len(rows) - len(shown)} more. Name or remove some to see the rest."
-        if len(rows) > len(shown)
-        else ""
-    )
-    text = f"{head}**{TITLE}**\n{INTRO}\n\n" + "\n".join(lines) + more
-    await _replace(interaction, logic.shorten(text, 1990), MetList(campaign.id, shown))
+    top = f"{head}**{TITLE}**\n{INTRO}\n\n"
+    for written in range(len(lines), -1, -1):
+        rest = total - written
+        more = ""
+        if rest and written < len(shown):
+            more = f"\n…and {rest} more: pick them in the menu below."
+        elif rest:
+            more = f"\n…and {rest} more. Name or remove some to see the rest."
+        text = top + "\n".join(lines[:written]) + more
+        if len(text) <= MESSAGE_LIMIT:
+            return text
+    return fit_message(top, limit=MESSAGE_LIMIT)
 
 
 async def _back_to_names(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -174,7 +193,7 @@ class MetList(BackOnly):
                 discord.SelectOption(
                     label=logic.shorten(label(r), logic.OPTION_LABEL_MAX),
                     value=r.id,
-                    description=logic.shorten(when(r), 100),
+                    description=logic.shorten(when(r, menu=True), 100),
                 )
                 for r in rows[:SHOWN_MAX]
             ],

@@ -280,6 +280,12 @@ class Isolation(MemoryTest):
                 " 5)",
                 (GUILD_A, self.c, "d" * 32, min(a, b), max(a, b), DM),
             )
+            # and the entries said in it (#4110): ids only
+            await conn.execute(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (GUILD_A, self.c, "d" * 32, a),
+            )
         # and the session a waiting name was made in (#4043): a time and an id only
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
@@ -300,6 +306,14 @@ class Isolation(MemoryTest):
                 " 'barbarians', 'barbarian', 2, ARRAY[1000::bigint], ARRAY[%s::bigint], 5)",
                 (GUILD_A, self.c, "f" * 32, DM),
             )
+        # and the DM's "Yes, both have it" about a one-of-a-kind item (#4115): ids only
+        brand = await self.add("Frost Brand", type="item")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_hand_over_both (guild_id, campaign_id, item_id, first_id,"
+                " second_id, created_at) VALUES (%s, %s, %s, %s, %s, 5)",
+                (GUILD_A, self.c, brand, min(a, b), max(a, b)),
+            )
         # and which upload a name was read from (#3675): an id and a label only
         await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
         # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only
@@ -311,6 +325,18 @@ class Isolation(MemoryTest):
         await TraitOfferStore(self.memory._db).offer(
             GUILD_A, self.c, [Offer(view, Trait(SPECIES, "Dwarf"), "is a dwarf", "Notes")]
         )
+        # and a language from the story (#4229)
+        await self.memory.add_story_language(GUILD_A, self.c, view, "Dwarvish", source="dm")
+        # and a place's climate (#4256)
+        dale = await self.add("Icewind Dale", type="place", status="confirmed")
+        await self.memory.set_map_fact(GUILD_A, self.c, dale, "climate", "cold", source="dm")
+        # and where the story is (#4173 slice 4): ids only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
+                (GUILD_A, self.c, dale),
+            )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -1139,7 +1165,9 @@ class Undo(MemoryTest):
         # execute, so the savepoints around bulk undo runs (their own round trips) aren't. (59
         # before the people who hang off a merged entry were moved with it, #2790: one statement;
         # 60 before who-knows moved with it, #2995: one read for the whole list.)
-        self.assertLess(merge_statements, 62)
+        # (62 before a merged entry's languages from the story moved with it, #4229: one read;
+        # 63 before a place's land, climate and ruler moved with it, #4256: one read)
+        self.assertLess(merge_statements, 64)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1262,8 +1290,9 @@ class Undo(MemoryTest):
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
         self.assertLess(
-            merge_statements, 61
-        )  # (60 with #2790: one statement for the people who hang off a merge)
+            merge_statements, 63
+        )  # (60 with #2790: one statement for the people who hang off a merge; 61 with #4229; 62
+        # with #4256's places)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 
@@ -1761,7 +1790,8 @@ class Lists(MemoryTest):
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
-        self.assertLess(statements, 35)  # (34 with #2790's unnamed-anchor link to check)
+        # (35 with #4229's story languages; 37 with #4256's places: one read per kind written)
+        self.assertLess(statements, 38)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

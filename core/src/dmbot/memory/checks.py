@@ -35,13 +35,15 @@ campaign's items, so a same-named item elsewhere raises nothing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory import kin, place_words
+from dmbot.memory import kin, next_words, place_levels, place_words, route_words
+from dmbot.memory.link_words import reads_both_ways
 from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
+from dmbot.memory.place_levels import MOVE, ONE, RIVALS
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
 TOO_MANY, CONTRADICTION = "too_many", "contradiction"
@@ -98,15 +100,26 @@ def conflicts(onto: Ontology, p: PredicateTerm, other_key: str) -> bool:
 
 
 def ordered(
-    p: PredicateTerm, subject_id: str, object_id: str, detail: str = "", directional: bool = False
+    p: PredicateTerm,
+    subject_id: str,
+    object_id: str,
+    detail: str = "",
+    directional: bool = False,
+    both_ways: bool | None = None,
+    route_state: str = "",
 ) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
     "B ally A" are the same fact (inverse consistency by construction). Not a family connection
     with a role true of one name only ("Mira is the niece of Aldric"): there the order is the
-    meaning (#2457)."""
+    meaning (#2457). `both_ways` is the DM's own direction for it (#4154): one the DM made one-way
+    ("Wit sees Cerric as a rival") keeps its order, and one the DM made two-way is sorted."""
     if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
-    if p.symmetric and object_id < subject_id:
+    if p.key == "next_to" and next_words.one_way(detail):
+        return subject_id, object_id  # "Targos is on the shore of Maer Dualdon" keeps its order
+    if p.key == route_words.ROUTE_TO and route_state != route_words.KNOWN:
+        return subject_id, object_id  # a journey goes from where they set out (#4173 slice 6d)
+    if (p.symmetric if both_ways is None else both_ways) and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
 
@@ -117,6 +130,14 @@ def _same_order(old: Relation, new: Relation) -> bool:
     order: the plain one has no direction, so the DM's word on it wins (#2457). Two with a
     direction must agree on it."""
     if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
+        return True
+    if old.route_state != route_words.KNOWN or new.route_state != route_words.KNOWN:
+        return False  # (a journey or a plan has a direction: back the other way is another one)
+    # one the DM turned one way (#4154) is still the same fact as a two-way one said again, in
+    # either order: the DM's direction is kept on the old row
+    if any(
+        reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways) for r in (old, new)
+    ) and (old.subject_id, old.object_id) == (new.object_id, new.subject_id):
         return True
     if new.predicate == "kin_of" and not (old.directional and new.directional):
         return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
@@ -138,7 +159,9 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         if old.id != new.id
         and old.predicate == new.predicate
         and _same_order(old, new)
-        and old.detail.casefold() == new.detail.casefold()
+        and (old.detail.casefold() == new.detail.casefold() or _plain_route(new))
+        and old.route_state == new.route_state
+        and _same_leg(old, new)
         and same_time(old, new)
     ]
     live = [r for r in same if r.status != REJECTED]
@@ -147,17 +170,41 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
     return same[0] if same else None
 
 
-class Nesting:
-    """Which places are inside which, from the live `located_in` facts between places.
-    Pure: built from (place, the place it is in) pairs."""
+def _plain_route(new: Relation) -> bool:
+    """A route said with no means ("Targos links to Bryn Shander") is the same as a route already
+    known between them by any means (#4173 slice 6d: no second, vaguer line beside "by road")."""
+    return new.predicate == route_words.ROUTE_TO and not new.detail
 
-    def __init__(self, pairs: Iterable[tuple[str, str]] = ()) -> None:
+
+def _same_leg(old: Relation, new: Relation) -> bool:
+    """A travelled route is a journey in one session (#4173 slice 6d): one per pair, means and
+    session, so a session that names the same road ten times keeps one leg, and the same road
+    travelled again in a later session is a new one. Every other connection: always."""
+    return new.route_state != route_words.TRAVELLED or old.from_session_at == new.from_session_at
+
+
+class Nesting:
+    """Which places are inside which, from the live `located_in` facts between places, how big
+    each place is, the campaign's setting (#4173) and the places open on where the story is
+    (slice 5: `memory_story_chain`, every chain). Pure: built from (place, the place it is in)
+    pairs, a level per place, the setting's id and the open places."""
+
+    def __init__(
+        self,
+        pairs: Iterable[tuple[str, str]] = (),
+        levels: Mapping[str, str] | None = None,
+        setting: str | None = None,
+        open_places: Collection[str] | None = None,
+    ) -> None:
+        # None: no session walked yet (no chain at all); empty: walked, and nothing open now
+        self._open = None if open_places is None else frozenset(open_places)
         self._in: dict[str, set[str]] = {}
         for inner, outer in pairs:
             self._in.setdefault(inner, set()).add(outer)
+        self._levels = dict(levels or {})
+        self._setting = setting if setting in self._levels else None  # (a setting has a size)
 
-    def above(self, place: str) -> set[str]:
-        """Every place this one is inside, at any depth (a loop in the data can't hang it)."""
+    def _stated(self, place: str) -> set[str]:
         seen: set[str] = set()
         todo = [place]
         while todo:
@@ -167,9 +214,76 @@ class Nesting:
                     todo.append(outer)
         return seen
 
+    def above(self, place: str) -> set[str]:
+        """Every place this one is inside, at any depth (a loop in the data can't hang it). A place
+        of a known size smaller than the campaign's setting (or inside one) is inside the setting
+        too, unless something says otherwise (#4173 slice 2: "Is Targos in Faerûn?" is never
+        asked): its stated places reach one as big as the setting, or the setting itself."""
+        seen = self._stated(place)
+        if self._setting is None or place == self._setting or self._setting in seen:
+            return seen
+        if place in self._stated(self._setting):  # (the setting is inside it: bad data, no loop)
+            return seen
+        top = place_levels.RANK[self._levels[self._setting]]
+        sizes = [place_levels.RANK[lv] for p in (place, *seen) if (lv := self._levels.get(p))]
+        if sizes and min(sizes) > top:  # smaller than the setting, and nothing as big says other
+            return seen | {self._setting} | self._stated(self._setting)
+        return seen
+
+    @property
+    def levels(self) -> Mapping[str, str]:
+        """How big each place is that has a size."""
+        return self._levels
+
+    def outer(self, place: str) -> set[str]:
+        """The places this one is directly inside: the stated ones, or, for a smaller place with
+        none stated, the campaign's setting (as `above` counts it). One step up the tree, for
+        reading a place's land, climate or ruler up it (#4256)."""
+        stated = set(self._in.get(place, ()))
+        if stated or self._setting is None or place == self._setting:
+            return stated
+        return {self._setting} if self._setting in self.above(place) else set()
+
     def related(self, a: str, b: str) -> bool:
-        """Is one inside the other (so being in both is just being in the smaller one)?"""
-        return a == b or b in self.above(a) or a in self.above(b)
+        """Is being in both being in one place? (`relation` is ONE.)"""
+        return self.relation(a, b) == ONE
+
+    def relation(self, a: str, b: str) -> str:
+        """What the two places are to someone in both (#4173 slices 1 and 5, Supervisor's rulings):
+        - ONE: the same place, one inside the other, or two of different sizes with no link either
+          way where the bigger one is open on where the story is (the bank and Waterdeep, while
+          the story is in Waterdeep: the bank is in it). With no session walked yet (no chain at
+          all), every pair of different sizes with no link is ONE, as before slice 5.
+        - MOVE: different sizes, and the bigger one is elsewhere: not open on any chain, or the
+          smaller one is known to be inside another place of the bigger one's size (a bakery in
+          Neverwinter and the town of Waterdeep). Someone was in one, then the other.
+        - RIVALS: the same size, or a size nobody knows: in both at once is the DM's question."""
+        if a == b or b in self.above(a) or a in self.above(b):
+            return ONE
+        if not place_levels.different(self._levels.get(a), self._levels.get(b)):
+            return RIVALS
+        if self._inside_another(a, b) or self._inside_another(b, a):
+            return MOVE
+        if self._open is None:
+            return ONE
+        ra = place_levels.RANK[self._levels[a]]
+        rb = place_levels.RANK[self._levels[b]]
+        bigger = a if ra < rb else b
+        return ONE if bigger in self._open else MOVE
+
+    def _inside_another(self, place: str, other: str) -> bool:
+        """Is `place` inside a place, not `other`, of `other`'s size?"""
+        level = self._levels.get(other)
+        around = self.above(other)  # (what holds `other` is not elsewhere: Toril)
+        return any(
+            p != other and p not in around and self._levels.get(p) == level
+            for p in self.above(place)
+        )
+
+    def stated_inside(self, inner: str, outer: str) -> bool:
+        """Is `inner` inside `outer` by links someone stated (never by the setting's default):
+        what reopens a moved tie (#4173 slice 5)."""
+        return outer in self._stated(inner)
 
     def would_loop(self, inner: str, outer: str) -> bool:
         """Would putting `inner` in `outer` make a place part of itself?"""
@@ -230,9 +344,11 @@ def check_relation(
     # neither judged against facts nor are facts judged against it. Every other proposal is.
     if waiting_guess(new):
         return problems
+    # (an assumed parent, #4173 slice 3, is never anyone's rival: Supervisor's condition)
     live = [
         r for r in existing
         if r.status != REJECTED and not waiting_guess(r) and r.id != new.id and same_time(r, new)
+        and not r.assumed
     ]  # fmt: skip
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.
@@ -258,7 +374,10 @@ def check_relation(
                 )
             if p.key == NESTS and nesting is not None:
                 # Being in the inn and in the town it is in is one place, not two.
-                others = [r for r in others if not nesting.related(r.object_id, new.object_id)]
+                # (a move from one to the other is no conflict either: #4173 slice 5)
+                others = [
+                    r for r in others if nesting.relation(r.object_id, new.object_id) == RIVALS
+                ]
             if len(others) >= p.max_per_subject:
                 problems += [Problem(TOO_MANY, r.id) for r in others]
     if p.max_per_object is not None and object_unique:

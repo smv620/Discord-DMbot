@@ -12,9 +12,9 @@ it gives against the document's own names (`picture_names.check`, Supervisor's r
   reaches here: the read skips it, as it does in the text.
 - **Corrected**: a plain misreading of exactly one of the document's names: it IS that name, so
   nothing new is kept; counted for the upload's notice.
-- **ToCheck**: anything else. Never added as it reads: held for the DM's Names to check, with a link
-  to the picture when it was kept (`picture_id`). Showing them is the next slice: until it ships,
-  DMBOT_PICTURE_NAMES stays off.
+- **ToCheck**: anything else. Never added by itself: it waits in the DM's Names to check, its note
+  saying it was read from a picture and on which page, with "Is this …?" when a document name came
+  close (`held_note`). The link to the picture itself comes with the picture store (`picture_id`).
 
 The pictures' words go only to the lore reader and are never logged: logs carry counts only.
 """
@@ -104,6 +104,16 @@ def sort(
     return out
 
 
+def held_note(held: Held) -> str:
+    """What the DM reads on a held name in Names to check: where it came from and, when one of the
+    document's names came close, the question. Never the picture's other words. Pure."""
+    where = f"on page {held.page}" if held.page else "in the file"
+    said = f'Read from a picture {where} as "{held.found.name}".'
+    if held.check.likely:
+        return f"{said} Is this {held.check.likely}?"
+    return f"{said} Check the spelling."
+
+
 def _where_from(name: str, pictures: Sequence[PictureText]) -> tuple[int, str]:
     """The first picture whose words hold the name as whole words (case aside), or (0, "") when none
     does: a short name never links the picture of a longer one ("Kal" is not in "Kaltro")."""
@@ -113,4 +123,4 @@ def _where_from(name: str, pictures: Sequence[PictureText]) -> tuple[int, str]:
     return 0, ""
 
 
-__all__ = ["MAX_PICTURES", "Held", "PictureText", "Sorted", "as_pages", "sort"]
+__all__ = ["MAX_PICTURES", "Held", "PictureText", "Sorted", "as_pages", "held_note", "sort"]

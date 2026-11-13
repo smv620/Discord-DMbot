@@ -88,8 +88,9 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        # (`role_match`: new story roles matched by meaning, #3172; a part of meaning search)
-        ("meaning_search", "voyage_key", "role_match"),
+        # (`role_match`: new story roles matched by meaning, #3172; `scene_filter_on`: scene
+        # moves sent to the AI only for lines that look like one, #4173 slice 4; both parts of it)
+        ("meaning_search", "voyage_key", "role_match", "scene_filter_on"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
     ),
     Feature(
@@ -305,6 +306,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
     "ears_port": "where the voice service is",
+    "person_key": "a secret, always needed once account records use it (#4145)",
     "dev_guild_id": "the test server's commands, not a feature",
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",

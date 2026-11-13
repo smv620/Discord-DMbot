@@ -342,3 +342,20 @@ class CarryingReadsAsCarrying(unittest.TestCase):
     def test_carries_reads_both_ways(self) -> None:  # (offered by the readers since #3619)
         self.assertEqual(ns._wording(fact("carries", outward=True)), "carried by them")
         self.assertEqual(ns._wording(fact("carries", outward=False)), "carries it")
+
+
+class Routes(unittest.TestCase):
+    """#4173 slice 6d: a journey or a plan in a place's summary is never read as a road."""
+
+    def test_a_route_reads_by_its_state(self) -> None:
+        def said(state: str, outward: bool) -> str:
+            return ns._wording(ns.Fact("route_to", outward, "road", route_state=state))
+
+        self.assertEqual(said("", True), "connected by road")
+        self.assertEqual(said("travelled", True), "where the party went by road")
+        self.assertEqual(said("travelled", False), "where the party came from by road")
+        self.assertEqual(said("planned", True), "where the party plans to go by road")
+        self.assertEqual(
+            ns._wording(ns.Fact("route_to", True, "", route_state="travelled")),
+            "where the party went",
+        )

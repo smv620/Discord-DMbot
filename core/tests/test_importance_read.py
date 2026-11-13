@@ -52,6 +52,38 @@ class ThePrompt(unittest.TestCase):
         self.assertLess(len(text), 2000)
 
 
+class PrivateScenes(unittest.TestCase):
+    """#2996 rule 5: an entry said in a private scene between two player characters always
+    matters: the rule is given only when one is in the call, and the floor is held in code."""
+
+    def test_the_rule_and_the_line_only_when_an_entry_has_one(self) -> None:
+        self.assertNotIn("never below 2 (Recurring)", ir.system({}))
+        self.assertIn("never below 2 (Recurring)", ir.system({}, private=True))
+        text = ir.message([item(1, "e1", private_with=("Ash and Wren",))])
+        self.assertIn("private scene: Ash and Wren", text)
+        self.assertNotIn("private scene", ir.message([item(1, "e1")]))
+
+    def test_two_scenes_are_two_lines(self) -> None:
+        text = ir.message([item(1, "e1", private_with=("Ash and Wren", "Bryn and Cass"))])
+        self.assertEqual(text.count("private scene: "), 2)
+
+    def test_no_private_scene_reason_is_ever_stored(self) -> None:
+        """#4110 (Supervisor): the floor is worked out on read, so an answer that names the reason
+        reads as an ordinary one, and nothing is raised or added for it."""
+        raw = answer({"entry": 1, "rank": 3, "reason": "private_scene"},
+                     {"entry": 2, "rank": 3, "reason": "private_scene"})  # fmt: skip
+        got = ir.parse(raw, [item(1, "a", private_with=("Ash and Wren",)), item(2, "b")], CODES,
+                       cut=False)  # fmt: skip
+        assert got is not None
+        self.assertEqual([(v.entity_id, v.rank, v.reason) for v in got.verdicts],
+                         [("a", 3, "reading")])  # fmt: skip
+        self.assertEqual(got.lost["bad_reason"], 1)  # (said for an entry with no scene)
+        left_out = ir.parse(answer(), [item(1, "a", rank=0, private_with=("A and B",))], CODES,
+                            cut=False)  # fmt: skip
+        assert left_out is not None
+        self.assertEqual(left_out.verdicts, [])
+
+
 class TheAnswer(unittest.TestCase):
     def test_a_good_answer_and_every_refusal_counted(self) -> None:
         items = [item(1, "a"), item(2, "b", dm_roles=("spy",)), item(3, "pc", player=True),
@@ -296,6 +328,54 @@ class TheStep(DatabaseTest):
         self.assertIn("knows (hostile) Tavin", by_name["Vex"].links)
         self.assertEqual(items[-1].name, "Hara")  # (no connections: last)
         self.assertIn("mentor", codes)
+
+    async def test_an_entry_said_in_a_private_scene_carries_its_two(self) -> None:
+        pcs = []
+        for name, player in (("Wren", 5), ("Ash", 6)):
+            made = await self.memory.add_entity(
+                self.g, self.c, type="character", name=name, source=DM, status=CONFIRMED,
+                role="player_character", played_by=player,
+            )  # fmt: skip
+            pcs.append(str(made.value.id))
+        first, second = sorted(pcs)
+        async with self.db.guild(self.g) as conn:
+            for eid in (self.hara, self.vex):
+                await conn.execute(
+                    "INSERT INTO memory_heard (guild_id, campaign_id, entity_id,"
+                    " session_started_at, speaker_id, times) VALUES (%s, %s, %s, 100, 5, 1)",
+                    (self.g, self.c, eid),
+                )
+            await conn.execute(
+                "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
+                " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids, status,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 5000, 2, '{5,6}', 'kept', 1)",
+                (self.g, self.c, "d" * 32, first, second),
+            )
+            await conn.execute(  # (Hara was said in it; Vex was not)
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (self.g, self.c, "d" * 32, self.hara),
+            )
+
+        from dmbot.transcript.store import TranscriptStore
+
+        async def no_mentions(_: str) -> list[tuple[str, int | None]]:
+            return []
+
+        async def gathered(private: bool, agreed: set[int]) -> dict[str, ir.Item]:
+            items, _, _ = await step.gather(
+                self.db, TranscriptStore(self.db), guild_id=self.g, campaign_id=self.c,
+                session_id="s", session_started_at=100, agreed=agreed, mentions=no_mentions,
+                private=private,
+            )  # fmt: skip
+            return {i.entity_id: i for i in items}
+
+        both = await gathered(True, {5, 6})
+        self.assertEqual(both[self.hara].private_with, ("Ash and Wren",))
+        self.assertIn(6, both[self.hara].speaker_ids)  # (the scene's two: re-checked after)
+        self.assertEqual(both[self.vex].private_with, ())  # (not said in it)
+        self.assertEqual((await gathered(False, {5, 6}))[self.hara].private_with, ())  # (off)
+        self.assertEqual((await gathered(True, {5}))[self.hara].private_with, ())  # (6 stopped)
 
 
 if __name__ == "__main__":

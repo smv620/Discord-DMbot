@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urlencode
 
+from dmbot import person_key
 from dmbot.db import Database
 from dmbot.link_tokens import make_link_token
 from dmbot.mail import Mailer
@@ -121,9 +122,10 @@ async def take_extension_notice(db: Database, user_id: int, now: int) -> str | N
     once."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
-            "UPDATE trial_extensions SET told_at = %s WHERE user_id = %s AND told_at IS NULL"
+            "UPDATE trial_extensions SET told_at = %s"
+            " WHERE (user_id = %s OR person_key = %s) AND told_at IS NULL"
             " RETURNING extended_at",
-            (now, user_id),
+            (now, user_id, person_key.key_for(user_id)),
         )
         return EXTENSION_NOTICE if await cur.fetchone() else None
 
@@ -171,9 +173,9 @@ async def claim(db: Database, user_id: int, kind: str, now: int) -> bool:
     """Take the once-only record for a message that is not an email (a private message)."""
     async with db.unscoped() as conn:
         cur = await conn.execute(
-            "INSERT INTO sent_emails (user_id, kind, sent_at) VALUES (%s, %s, %s)"
+            "INSERT INTO sent_emails (user_id, kind, sent_at, person_key) VALUES (%s, %s, %s, %s)"
             " ON CONFLICT DO NOTHING RETURNING user_id",
-            (user_id, kind, now),
+            (user_id, kind, now, person_key.key_for(user_id)),
         )
         return await cur.fetchone() is not None
 
@@ -181,7 +183,8 @@ async def claim(db: Database, user_id: int, kind: str, now: int) -> bool:
 async def release(db: Database, user_id: int, kind: str) -> None:
     async with db.unscoped() as conn:
         await conn.execute(
-            "DELETE FROM sent_emails WHERE user_id = %s AND kind = %s", (user_id, kind)
+            "DELETE FROM sent_emails WHERE kind = %s AND (user_id = %s OR person_key = %s)",
+            (kind, user_id, person_key.key_for(user_id)),
         )
 
 
@@ -285,8 +288,8 @@ class TrialJobs:
         async with self._db.unscoped() as conn:
             # The database works out the new cap from the meter; nothing is passed for it.
             cur = await conn.execute(
-                "SELECT dmbot_extend_trial(%s, %s, %s) AS ok",
-                (person.user_id, now, EXTENSION_DAYS),
+                "SELECT dmbot_extend_trial(%s, %s, %s, %s) AS ok",
+                (person.user_id, now, EXTENSION_DAYS, person_key.key_for(person.user_id)),
             )
             row = await cur.fetchone()
         if not (row and row["ok"]):

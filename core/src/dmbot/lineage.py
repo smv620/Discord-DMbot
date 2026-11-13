@@ -68,6 +68,9 @@ STAMPED_MEMORY = (
     "name_pass_reports", "rel_ties", "lore_uploads", "memory_reveal_proposals",
     "memory_name_sources", "memory_name_sessions",
     "memory_npc_guesses", "memory_trait_offers", "memory_met", "memory_private_scenes",
+    "memory_private_scene_entries",
+    "memory_hand_over_both",
+    "memory_story_languages", "memory_map_facts",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -160,10 +163,13 @@ NOT_STAMPED: dict[str, str] = {
         (
             "name_actions",
             "setting_actions",
+            "sheet_waits",  # the DM's wizard sheet link, waiting for its character's player
             "said_as_hears",
             "said_as_listens",
             "script_makes",
             "trait_answers",
+            "hand_over_answers",
+            "hand_over_questions",
             "upload_undos",
             "web_backup_parts",
             "web_backups",
@@ -202,6 +208,7 @@ NOT_STAMPED: dict[str, str] = {
             "transcript_respells",  # positions kept so one Undo can put a spelling fix back
             "session_usage",
             "graph_review_pending",
+            "memory_story_chain",  # where the story is: the reader's working state (#4173 4)
         ),
         _PLUMBING,
     ),

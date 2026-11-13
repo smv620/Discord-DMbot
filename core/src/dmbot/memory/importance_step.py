@@ -31,7 +31,7 @@ import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
 from dmbot.db import Database
@@ -93,10 +93,14 @@ async def gather(
     session_started_at: int,
     agreed: Collection[int],
     mentions: Callable[[str], Awaitable[list[tuple[str, int | None]]]],
+    private: bool = False,
 ) -> tuple[list[ir.Item], dict[str, str], dict[str, str]]:
     """The items for the entries this session touched (heard in it, or in a connection it
     confirmed), busiest first, the campaign's role codes (code -> source) and the labels of its
-    own (code -> label)."""
+    own (code -> label). `private` (DMBOT_PRIVATE_SCENES, #2996 rule 5): an entry said in one of
+    the session's kept private scenes (`memory_private_scene_entries`, #4110) carries that scene's
+    two player characters (`Item.private_with`); a scene citing someone not recorded now is left
+    out."""
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
             "SELECT id, type, name, description, role, status, merged_into FROM memory_entities"
@@ -138,6 +142,24 @@ async def gather(
             (guild_id, campaign_id),
         )
         newest = await cur.fetchall()
+        # The entries said in this session's kept private scenes, by one of their two (#4110: found
+        # by the store when the scene was kept), each with its scene's two and their ids.
+        in_scenes: list[tuple[str, str, str, frozenset[int]]] = []
+        if private:
+            cur = await conn.execute(
+                "SELECT x.entity_id, s.first_id, s.second_id, s.speaker_ids"
+                " FROM memory_private_scene_entries x JOIN memory_private_scenes s"
+                " ON s.guild_id = x.guild_id AND s.campaign_id = x.campaign_id"
+                " AND s.id = x.scene_id"
+                " WHERE x.guild_id = %s AND x.campaign_id = %s AND s.session_started_at = %s"
+                " AND s.status = 'kept' AND s.speaker_ids <@ %s::bigint[]",
+                (guild_id, campaign_id, session_started_at, sorted(set(agreed))),
+            )
+            in_scenes = [
+                (str(r["entity_id"]), str(r["first_id"]), str(r["second_id"]),
+                 frozenset(int(u) for u in r["speaker_ids"]))
+                for r in await cur.fetchall()
+            ]  # fmt: skip
     if not codes:
         codes = {c: "seeded" for c in roles.STORED_SEEDED}  # (seeded before its first role)
     ended = roots(entities)
@@ -181,6 +203,12 @@ async def gather(
         row = entities[eid]
         quotes: list[str] = []
         speakers: set[int] = set()
+        private_with: set[str] = set()
+        # (a scene's two are this item's speakers too: re-checked against consent after the call)
+        for entity_id, a, b, said_by in in_scenes:
+            if ended.get(entity_id) == eid:
+                private_with.add(" and ".join(sorted(_name(entities, ended, x) for x in (a, b))))
+                speakers.update(said_by)
         for ref, at in await mentions(eid):
             if len(quotes) >= ir.QUOTES_MAX:
                 break
@@ -201,9 +229,18 @@ async def gather(
                 player=row["type"] == "character" and row["role"] == "player_character",
                 dm_rank=last.get(eid, (0, ""))[1] == DM_CORRECTED,
                 group=tuple(sorted(groups.get(eid, ()))),
+                private_with=tuple(sorted(private_with)),
             )
         )  # fmt: skip
     return items, codes, labels
+
+
+def _name(entities: Mapping[str, Any], ended: Mapping[str, str | None], entity_id: str) -> str:
+    """A scene's character by the name it ended up as (a merge follows); "a player character"
+    when it is gone."""
+    root = ended.get(entity_id)
+    row = entities.get(root) if root is not None else None
+    return str(row["name"]) if row is not None else "a player character"
 
 
 async def run(
@@ -270,7 +307,11 @@ async def run(
         report.calls += 1
         try:
             reply = await asyncio.wait_for(
-                client.complete(ir.system(added), ir.message(sendable), max_tokens=MAX_TOKENS),
+                client.complete(
+                    ir.system(added, private=any(i.private_with for i in sendable)),
+                    ir.message(sendable),
+                    max_tokens=MAX_TOKENS,
+                ),
                 CALL_TIMEOUT_S,
             )
         except AIOutOfFunds:

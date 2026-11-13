@@ -43,9 +43,21 @@ export const sectionIds = {
 /**
  * Hands out "game-master-1", "game-master-2", … in the order the steps are drawn. A step's address is
  * its place, so a link keeps pointing at the same step only while nothing is put in front of it:
- * add new steps at the end of a list. (A test pins a few addresses to their words so a shift shows.)
+ * add new steps at the end of a list. `after` starts the count part-way, for a list drawn on another page (#4235) so its steps
+ * keep the addresses they had. (A test pins a few addresses to their words so a shift shows.)
  */
-export const stepCounter = (section: string): (() => string) => {
-  let n = 0;
+export const stepCounter = (section: string, after = 0): (() => string) => {
+  let n = after;
   return () => `${section}-${++n}`;
 };
+
+/** The Help page was split in three (#4235): these addresses now live on the pages named here, and /help keeps an empty
+ * marker for each so an old "/help#snags-3" still lands on a page that says where they went. */
+export const movedTo = { questions: "/help/questions", snags: "/help/snags" } as const;
+export const movedIds = (dmStepsBefore: number, quickCount: number, snagCount: number): { id: string; page: string }[] => [
+  { id: "quick-heading", page: movedTo.questions },
+  ...Array.from({ length: quickCount }, (_, i) => ({ id: `${sectionIds.gameMaster}-${dmStepsBefore + i + 1}`, page: movedTo.questions })),
+  { id: sectionIds.snags, page: movedTo.snags },
+  { id: "snags-heading", page: movedTo.snags },
+  ...Array.from({ length: snagCount }, (_, i) => ({ id: `${sectionIds.snags}-${i + 1}`, page: movedTo.snags })),
+];

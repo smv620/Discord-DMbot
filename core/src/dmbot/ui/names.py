@@ -47,6 +47,7 @@ from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places, player_id, split_words
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -62,12 +63,16 @@ from dmbot.ui.dmbot_commands import (
     _tell,
     dmbot_group,
 )
+from dmbot.walk import Walk
 
 if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
+    from dmbot.ui.more_lists import Counts as MoreCounts
     from dmbot.ui.name_lists import Upload
 
 log = logging.getLogger(__name__)
+
+FINISHED = "✅ Names: checked."  # (the line a "Check everything" walk leaves behind, #4192)
 
 SHOWN_PER_SECTION = 10
 PANEL_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
@@ -312,7 +317,7 @@ class NamesHome(_Menu):
         left_out: bool = False,
         connections: int = 0,
         look_alikes: int | None = None,
-        met: int = 0,
+        more: MoreCounts | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -350,10 +355,12 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
         self.add_item(_Button(self._sheets, label="📜 Refresh sheets", style=grey, row=3))
-        if met:  # the DM's: who the party met that nobody named (#4045), only while any wait
-            from dmbot.ui.met_list import count_text
+        # The DM's after-session lists with no room here (#4103): 👣 Met but not named and
+        # 🤫 Private scenes, behind one button, hidden while both their switches are off.
+        if more is not None and more.shown:
+            from dmbot.ui.more_lists import button_label
 
-            self.add_item(_Button(self._met, label=count_text(met), style=grey, row=3))
+            self.add_item(_Button(self._more, label=button_label(more), style=grey, row=3))
         # The reviews the after-session posts open, one button each, only while something waits
         # (#1986). Row 4 is free: the other rows hold the menu's buttons and the name picker.
         if reviews:
@@ -504,11 +511,11 @@ class NamesHome(_Menu):
 
         await start_claims_review(interaction, self.campaign_id)
 
-    async def _met(self, interaction: discord.Interaction) -> None:
-        from dmbot.ui.met_list import show as show_met
+    async def _more(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.more_lists import show as show_more
 
         self.stop()
-        await show_met(interaction, self.campaign_id)
+        await show_more(interaction, self.campaign_id)
 
     async def _sheets(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.sheets import refresh_all
@@ -602,15 +609,11 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections += len(await memory.worked_out_waiting(campaign.guild_id, campaign.id))
         except Exception:
             log.exception("Couldn't count the worked-out family links")
-    met = 0
-    if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#4045)
-        try:
-            from dmbot.memory.met_store import MetStore
+    more = None
+    if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#4103)
+        from dmbot.ui.more_lists import count as count_more
 
-            agreed = await _bot(interaction).consent.consenting(campaign.guild_id)
-            met = await MetStore(memory._db).count(campaign.guild_id, campaign.id, opted_in=agreed)
-        except Exception:
-            log.exception("Couldn't count the met-but-not-named list")
+        more = await count_more(interaction, campaign)
     look_alikes = None
     if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
         from dmbot.ui.look_alikes import count_groups
@@ -629,7 +632,7 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             left_out=known > len(shown),
             connections=connections,
             look_alikes=look_alikes,
-            met=met,
+            more=more,
         ),
     )
 
@@ -1255,7 +1258,11 @@ async def _review_match(memory: MemoryStore, campaign: Campaign, entity: Entity)
 
 
 async def start_review(
-    interaction: discord.Interaction, campaign_id: str, *, bulk: bool = True
+    interaction: discord.Interaction,
+    campaign_id: str,
+    *,
+    bulk: bool = True,
+    walk: Walk | None = None,
 ) -> None:
     memory = _memory(interaction)
     if memory is None:
@@ -1264,13 +1271,21 @@ async def start_review(
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    await _review(interaction, memory, campaign, bulk=bulk)
+    await _review(interaction, memory, campaign, bulk=bulk, walk=walk)
 
 
 async def _review(
-    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign, *, bulk: bool = True
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    *,
+    bulk: bool = True,
+    walk: Walk | None = None,
 ) -> None:
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
+    if not waiting and walk is not None:  # (answered meanwhile: on to the next part)
+        await next_part(interaction, walk)
+        return
     if not waiting:
         await _tell(interaction, "✅ No new names to check. DMbot suggests some after a session.")
         from dmbot.ui.name_background import offer_ready  # (it imports this module)
@@ -1278,9 +1293,9 @@ async def _review(
         await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
-    if bulk and await _offer_add_all(interaction, memory, campaign, waiting):
+    if bulk and await _offer_add_all(interaction, memory, campaign, waiting, walk=walk):
         return
-    view = SuggestionReview(campaign.id, [e.id for e in waiting])
+    view = SuggestionReview(campaign.id, [e.id for e in waiting], walk=walk)
     text = await view.prepare(interaction, campaign, memory, waiting[0])
     await _send(interaction, text, view)
 
@@ -1290,6 +1305,8 @@ async def _offer_add_all(
     memory: MemoryStore,
     campaign: Campaign,
     waiting: Sequence[Entity],
+    *,
+    walk: Walk | None = None,
 ) -> bool:
     """The lore review's "✅ Add all 4 places" for the name scan's suggestions that were given a
     kind (#2937), opened by the same persistent "Check new names" button, so it works after a
@@ -1328,9 +1345,10 @@ async def _offer_add_all(
     )
     await _send(
         interaction,
-        f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
-        f"are. Nothing is added until you press a button.{left}",
-        BulkConfirm(campaign.id, by_kind),
+        progress(walk, 0, 0)  # (inside "Check everything": which part this is, #4192)
+        + f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of "
+        f"them are. Nothing is added until you press a button.{left}",
+        BulkConfirm(campaign.id, by_kind, walk=walk),
     )
     return True
 
@@ -1430,10 +1448,14 @@ class WordsPicker(_Menu):
 class SuggestionReview(_Menu):
     """One suggested name at a time: Yes (then what it is), Same as…, Not a name, Later."""
 
-    def __init__(self, campaign_id: str, entity_ids: list[str]) -> None:
+    def __init__(
+        self, campaign_id: str, entity_ids: list[str], *, walk: Walk | None = None
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.queue = entity_ids
+        self.walk = walk  # inside "Check everything" (#4192): a progress line and Stop for now
+        self.total = len(entity_ids)
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
@@ -1450,6 +1472,7 @@ class SuggestionReview(_Menu):
         self.also: list[str] = []  # names heard with the current one
         self.places = name_places.Places()  # where the current one was said (#2329)
         self.refs: list[tuple[str, int | None]] = []  # its pointers, for "Where was it said?"
+        self.lore_kept = False  # the sentence from the DM's upload is held for it (#4227)
         self.spellings: list[str] = []
         self._buttons()
 
@@ -1484,6 +1507,8 @@ class SuggestionReview(_Menu):
         self.entity_id = entity.id
         self.is_list = len(split_list(entity.name, dm=True)) > 1  # (the store checks it again)
         self.group = await self._group_hint(campaign, memory, entity) if self.is_list else None
+        context = self._context(interaction, campaign, entity)
+        self.lore_kept = bool(context)
         self._buttons()
         text = suggestion_text(
             entity,
@@ -1494,7 +1519,7 @@ class SuggestionReview(_Menu):
             fix_to=self.fix_to,
             kind=self.known_kind,
             places=self.places.text(),
-            context=self._context(interaction, campaign, entity),
+            context=context,
             tagged=await tagged_name(memory, campaign, entity),
             scene=await scene_of(interaction, campaign, entity),
             players=(
@@ -1507,7 +1532,8 @@ class SuggestionReview(_Menu):
                 f"\n👥 Is this your group **{_md(logic.shorten(self.group.group_name, 60))}**? "
                 f"Already in it: {inside}. Yes adds this to it."
             )
-        return text
+        done = self.total - len(self.queue) + 1
+        return progress(self.walk, min(done, self.total), self.total) + text
 
     @staticmethod
     def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
@@ -1568,7 +1594,9 @@ class SuggestionReview(_Menu):
             lore = str(held.get(campaign.guild_id, self.entity_id))
             source = str(held.source(campaign.guild_id, self.entity_id))
         try:
-            if transcripts is None:
+            if not self.refs and not lore:  # the upload's sentence is only held for a while
+                text = name_places.LORE_GONE
+            elif transcripts is None:
                 text = name_places.NOTHING_KEPT
             else:
                 text = await name_places.where_said(
@@ -1695,18 +1723,20 @@ class SuggestionReview(_Menu):
                     row=3,
                 )
             )
-        self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
-            _Button(
-                self._where,
-                label="📜 Where was it said?",
-                style=discord.ButtonStyle.secondary,
-                row=2,
+        if self.refs or self.lore_kept:  # only with something behind it (#4227)
+            self.add_item(  # up to three places, newest first (#3384; was "More places", #2329)
+                _Button(
+                    self._where,
+                    label="📜 Where was it said?",
+                    style=discord.ButtonStyle.secondary,
+                    row=2,
+                )
             )
-        )
         if self.places.link:  # the session's page on the website
             self.add_item(
                 discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
             )
+        add_stop(self, self.walk)
 
     async def _current(
         self, interaction: discord.Interaction
@@ -1746,6 +1776,11 @@ class SuggestionReview(_Menu):
 
     async def _finish(self, interaction: discord.Interaction, note: str | None) -> None:
         self.stop()
+        if self.walk is not None:  # the walk says what is next; no "done" of its own
+            await _replace(interaction, f"{note}\n\n{FINISHED}" if note else FINISHED, None)
+
+            await next_part(interaction, self.walk)
+            return
         if self.later:
             done = (
                 f"Done for now. {_plural(self.later, 'name')} still waiting: run "
@@ -1773,6 +1808,8 @@ class SuggestionReview(_Menu):
         await self._next(interaction, campaign, memory, note=note)
 
     async def _yes(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -1797,6 +1834,8 @@ class SuggestionReview(_Menu):
 
     async def _pick_kind(self, interaction: discord.Interaction) -> None:
         """ "✏️ Something else": the kind picker, for a name that was read with another kind."""
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is not None:
             await self._ask_kind(interaction, current[2])
@@ -1825,6 +1864,8 @@ class SuggestionReview(_Menu):
         await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
 
     async def _kind_picked(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -1890,6 +1931,8 @@ class SuggestionReview(_Menu):
         await self._saved(interaction, campaign, memory, note)
 
     async def _same(self, interaction: discord.Interaction) -> None:
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2280,6 +2323,8 @@ class SuggestionReview(_Menu):
         )
 
     async def _no(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2298,6 +2343,8 @@ class SuggestionReview(_Menu):
         await self._saved(interaction, campaign, memory, note)
 
     async def _later(self, interaction: discord.Interaction) -> None:
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2312,6 +2359,8 @@ class SuggestionReview(_Menu):
         await self._next(interaction, campaign, memory, note=None)
 
     async def _back(self, interaction: discord.Interaction) -> None:
+        # Reading the campaign can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return

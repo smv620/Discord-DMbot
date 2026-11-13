@@ -19,6 +19,7 @@ from dmbot.memory.met_store import MAX_PER_SESSION, MetAdded, MetRow, MetStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
+from tests.agreed import agree
 from tests.test_extractor import DM, Kept, dm_session, go, line, session
 from tests.test_memory_names import DM as DM_ID
 from tests.test_memory_names import GUILD, NamesTest
@@ -126,6 +127,17 @@ class Keeping:
         return MetAdded(made=len(met))
 
 
+class Gone(Keeping):
+    """A met store whose every speaker's lines went before the write (#4091)."""
+
+    async def add(
+        self, guild_id: int, campaign_id: str, session_id: str,
+        met: Sequence[tuple[str, int, Sequence[int], Sequence[int]]],
+        *, session_started_at: int | None,
+    ) -> MetAdded:  # fmt: skip
+        return MetAdded(gone=len(met))
+
+
 LINE_MS = 1_700_000_001_000
 
 DOGS = {"what": "sled dogs", "count": 7, "lines": [1]}
@@ -154,6 +166,13 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
                           met_store=Keeping(), session_id="s")  # fmt: skip
         self.assertEqual(report.met_cut, 1)
         self.assertIn("1 cut short", report.line().split("met:")[1])
+
+    async def test_a_speaker_gone_before_the_write_is_counted(self) -> None:
+        lines = [line(1, DM, "The sled dogs pull hard."), *dm_session(10)[1:]]
+        report = await go(MetAnswer([DOGS]), Kept(), lines, met=True, met_store=Gone(),
+                          session_id="s")  # fmt: skip
+        self.assertEqual((report.met_gone, report.met_made), (1, 0))
+        self.assertIn("1 speaker gone", report.line().split("met:")[1])
 
     async def test_a_players_line_is_refused(self) -> None:
         ai, store = MetAnswer([DOGS]), Keeping()
@@ -187,6 +206,7 @@ class Store(NamesTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        await agree(self.db, GUILD, DM_ID, 8, 99)  # (the writer re-reads it, #4153)
         self.met_store = MetStore(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_000_000)
@@ -222,6 +242,22 @@ class Store(NamesTest):
         assert row is not None
         self.assertEqual(row["n"], 0)
         self.assertEqual(await self.memory.unnamed(GUILD, self.campaign.id), [])
+
+    async def test_a_speaker_whose_lines_went_before_the_write_is_never_cited(self) -> None:
+        # (#4091: "Delete my transcripts" committed between the read and this write)
+        await self.transcripts.delete_person(GUILD, DM_ID)
+        done = await self.met(("barbarians", 2))
+        self.assertEqual((done.made, done.gone), (0, 1))
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_speaker_who_stopped_before_the_write_is_never_cited(self) -> None:
+        # (#4153: "Stop recording me" deletes no lines; the writer re-reads who agreed)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM consent WHERE guild_id = %s AND user_id = %s",
+                               (GUILD, DM_ID))  # fmt: skip
+        done = await self.met(("barbarians", 2))
+        self.assertEqual((done.made, done.gone), (0, 1))
+        self.assertEqual(await self.rows(), [])
 
     async def test_the_same_words_in_the_session_are_found_again(self) -> None:
         await self.met(("barbarians", 2))

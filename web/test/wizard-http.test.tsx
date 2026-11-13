@@ -78,7 +78,7 @@ describe("the routes", () => {
       [`POST /me/wizard/${G}/rights`]: { body: { status: "ok" } },
       [`POST /me/wizard/${G}/page-text`]: { body: { name: "Winter", characters: ["Brannoc Stonebelt"] } },
       [`POST /me/wizard/${G}/finish`]: { body: { id: "f1" } },
-      [`GET /me/wizard/${G}/finish`]: [{ body: {} }, { body: { id: "f1", state: "working", stage: "lore", part: 1, ofParts: 2, campaign: "c9", error: "", createdAt: 10, movedAt: 20, now: 30 } }],
+      [`GET /me/wizard/${G}/finish`]: [{ body: {} }, { body: { id: "f1", state: "working", stage: "lore", part: 1, ofParts: 2, campaign: "c9", dmBotChannel: "400000000000000009", error: "", createdAt: 10, movedAt: 20, now: 30 } }],
       [`DELETE /me/wizard/${G}`]: { body: { status: "ok" } },
     });
     await api.docRemove(G, "d1");
@@ -86,7 +86,7 @@ describe("the routes", () => {
     expect(await api.pageText(G, "Characters:\nBrannoc Stonebelt")).toEqual({ name: "Winter", characters: [{ full: "Brannoc Stonebelt", partyName: "Brannoc" }] });
     expect(await api.finish(G)).toBe("f1");
     expect(await api.finishState(G)).toBeNull(); // ({} is "not started")
-    expect(await api.finishState(G)).toMatchObject({ state: "working", stage: "lore", part: 1, ofParts: 2, campaignRef: `${G}.c9`, createdAt: 10, movedAt: 20, serverNow: 30 });
+    expect(await api.finishState(G)).toMatchObject({ state: "working", stage: "lore", part: 1, ofParts: 2, campaignRef: `${G}.c9`, dmBotChannel: "400000000000000009", createdAt: 10, movedAt: 20, serverNow: 30 });
     await api.discard(G);
     expect(seen.find((s) => s.key === `POST /me/wizard/${G}/rights`)?.body).toEqual({ kind: "shared" });
   });
@@ -123,9 +123,15 @@ describe("the refusals", () => {
   });
 
   it("every word the finish run can end with has a plain line, and the ones that leave a campaign link to it", () => {
-    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "docs_left", "bad_answers", "no_rights", "drive_gone"];
+    const words = ["plan", "not-allowed", "gone", "no-key", "failed", "lost", "party_failed", "lore_failed", "channels_failed", "docs_left", "bad_answers", "no_rights", "drive_gone"];
     for (const word of words) expect(w.finish.errors[word], word).toBeTruthy();
     expect(w.finish.errors["docs_left"]).toContain("House rules");
+  });
+
+  it("channels_failed says the campaign is made and points to /dmbot start, not to a button that may not exist", () => {
+    expect(w.finish.errors["channels_failed"]).toContain("/dmbot start");
+    expect(w.finish.errors["channels_failed"]).not.toContain("Manage DMbot");
+    expect(w.finish.errors["channels_failed"]).toContain("campaign is ready");
   });
 });
 
@@ -176,6 +182,25 @@ describe("the finish card", () => {
     expect((await screen.findAllByText(w.finish.errors["docs_left"]!)).length).toBeGreaterThan(0);
     expect(screen.getByRole("link", { name: w.finish.open })).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.finish.retry })).toBeNull();
+  });
+});
+
+describe("the finish row's finer counts (#4213)", () => {
+  it("reads the pass word and the four numbers, and gives zeros when the server sends none", async () => {
+    const { api } = net({ [`GET /me/wizard/${G}/finish`]: [{ body: { state: "working", stage: "lore", pass: "finding_names", passDone: 2, passTotal: 5, foundNames: 12, foundLinks: 3, now: 5 } }, { body: { state: "working", stage: "lore", now: 6 } }] });
+    const first = await api.finishState(G);
+    expect([first?.pass, first?.passDone, first?.passTotal, first?.foundNames, first?.foundLinks]).toEqual(["finding_names", 2, 5, 12, 3]);
+    const second = await api.finishState(G);
+    expect([second?.pass, second?.passDone, second?.passTotal, second?.foundNames, second?.foundLinks]).toEqual(["", 0, 0, 0, 0]);
+  });
+});
+
+describe("a link document (#4206)", () => {
+  it("goes with its source and its address as the text, and no file data", async () => {
+    const { api, seen } = net({ [`POST /me/wizard/${G}/documents`]: { body: { id: "d7", slot: "lore", name: "https://example.com/notes", pages: 0, words: 0, status: "ok", reason: "" } } });
+    const doc = await api.docAdd(G, "lore", { name: "https://example.com/notes", source: "link", link: "https://example.com/notes" });
+    expect(doc.id).toBe("d7");
+    expect(seen.find((c) => c.key === `POST /me/wizard/${G}/documents`)?.body).toEqual({ slot: "lore", name: "https://example.com/notes", source: "link", text: "https://example.com/notes" });
   });
 });
 

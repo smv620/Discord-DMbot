@@ -2878,6 +2878,55 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
         self.assertEqual({a.status for a in aliases}, {CONFIRMED})
 
+    async def test_a_kind_pick_answers_discord_before_it_saves(self) -> None:
+        # The owner's "DMbot didn't respond in time": saving can take over 3 seconds, so every
+        # answer on the card must answer Discord first, then edit the same message.
+        await self.suggest("Hrothgar")
+        view, _ = await self.review()
+        await view._yes(self.it())
+        view.kind = SimpleNamespace(values=["npc"])  # type: ignore[assignment]
+        it = self.it()
+        saw_done: list[bool] = []
+        real = self.memory.confirm_entity
+
+        async def slow_confirm(*args: Any, **kw: Any) -> Any:
+            saw_done.append(it.response.is_done())
+            await asyncio.sleep(0.05)
+            return await real(*args, **kw)
+
+        with patch.object(self.memory, "confirm_entity", side_effect=slow_confirm):
+            await view._kind_picked(it)
+        self.assertEqual(saw_done, [True])
+        it.edit_original_response.assert_awaited()
+
+    async def test_pick_kind_same_and_back_answer_discord_first(self) -> None:
+        # Reading the campaign can take over 3 seconds: each of these answers Discord first.
+        # "Same as" needs a known name to offer, as in test_same_as_folds_it_into_a_known_name.
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        for press in ("_pick_kind", "_same", "_back"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            saw_done: list[bool] = []
+            real = view._current
+
+            async def probe(interaction: Any, real: Any = real, saw: list[bool] = saw_done) -> Any:
+                saw.append(interaction.response.is_done())  # at the first store read
+                return await real(interaction)
+
+            with patch.object(view, "_current", probe):
+                await getattr(view, press)(it)
+            self.assertEqual(saw_done, [True], press)
+            it.edit_original_response.assert_awaited()
+
+    async def test_yes_no_and_later_answer_discord_before_they_save(self) -> None:
+        for press in ("_yes", "_no", "_later"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            await getattr(view, press)(it)
+            self.assertTrue(it.response.is_done(), press)
+
     async def test_same_as_folds_it_into_a_known_name(self) -> None:
         belleros = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
         await self.suggest("Bellaros")
@@ -3166,7 +3215,7 @@ class Review(NamesTest):
                 "🚫 Not a name",
                 "⏳ Later",
                 "✏️ Change the words",
-                "📜 Where was it said?",
+                # (no "Where was it said?": nothing is kept for a name added by hand, #4227)
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))

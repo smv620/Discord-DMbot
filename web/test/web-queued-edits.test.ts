@@ -45,6 +45,17 @@ describe("a connection edit", () => {
     expect(seen.filter((s) => s.startsWith("GET")).length).toBe(2);
   });
 
+  it("carries the change's batch when the bot made one, for Undo", async () => {
+    vi.useFakeTimers();
+    const { api } = server({
+      [`POST /me/campaigns/${REF}/web/links/l1`]: [{ status: 202, body: { answer: "a1" } }],
+      [`GET /me/campaigns/${REF}/web/answers/a1`]: [{ status: 200, body: { state: "done", edge: EDGE, removed: false, batch: 812 } }],
+    });
+    const done = api.changeWebLink!(REF, { id: "l1", action: "pin", pinned: true } as never);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await done).toEqual({ ...EDGE, batch: 812 });
+  });
+
   it("says removed when the answer has no edge, and refuses with the bot's word when it fails", async () => {
     vi.useFakeTimers();
     const gone = server({

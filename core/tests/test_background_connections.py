@@ -591,6 +591,64 @@ class ThePath(NamesTest):
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
+    async def test_a_refused_keep_logs_the_fixed_rule_sentence_and_never_a_names_words(
+        self,
+    ) -> None:
+        """#4161: "couldn't keep that one" left nothing to go on. A refusal that is one of the fixed
+        rule sentences is logged as it is; any other message (one built from a value) is logged as
+        "unlisted rule" and its class. The card still says only what to do."""
+        from unittest.mock import patch
+
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        card = view.current
+        built = f"{card.subject} is not one of {card.object}'s friends."
+        for raised, logged_as in (
+            (COMPANION_TARGET, COMPANION_TARGET),
+            (built, "unlisted rule (MemoryRuleError)"),
+        ):
+            press = self.it()
+            with (
+                patch.object(
+                    type(self.memory), "add_relation", side_effect=MemoryRuleError(raised)
+                ),
+                self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
+            ):
+                await self.button(view, "✅ Keep").callback(press)
+            line = next(m for m in logged.output if "was refused" in m)
+            self.assertIn(logged_as, line)
+            self.assertNotIn(card.subject, line)  # (the log never has the names)
+            self.assertNotIn(card.object, line)
+            said = press.followup.send.await_args.args[0]
+            self.assertIn("couldn't keep that one", said)
+            self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
+        self.assertEqual(await self.relations(), [])  # (nothing was kept)
+        self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
+
+    async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
+        self,
+    ) -> None:
+        """The rule behind #4161's likely case, through the real store: its sentence is on the
+        allowlist, so the log can say it."""
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET, refusal_for_log
+
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        first, second = sorted(ids)[:2]
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, ids[first], "travels_with", ids[second],
+                source=DM_SOURCE, confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        self.assertEqual(refusal_for_log(caught.exception), COMPANION_TARGET)
+
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
         for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):
@@ -885,6 +943,117 @@ class ThePath(NamesTest):
             {("Tavin", "located_in", "Aldmoor"): "works in",
              ("Rusty Anchor", "located_in", "Aldmoor"): ""},
         )  # fmt: skip
+
+    async def test_two_places_side_by_side_keep_how_they_sit(self) -> None:
+        # (#4173 slice 6a) "on the shore of" is kept as said; plain "next to" keeps no word, and
+        # a word off the list is dropped with the link kept
+        text = (
+            "Targos lies on the shore of Maer Dualdon. Bryn Shander is next to Termalaine. "
+            "Easthaven hugs Lac Dinneshere."
+        )
+        names = [
+            name("Targos", "place", "Targos lies"),
+            name("Maer Dualdon", "place", "of Maer Dualdon"),
+            name("Bryn Shander", "place", "Bryn Shander is"),
+            name("Termalaine", "place", "to Termalaine"),
+            name("Easthaven", "place", "Easthaven hugs"),
+            name("Lac Dinneshere", "place", "Lac Dinneshere"),
+        ]
+        links = [
+            {**link("Targos", "next to", "Maer Dualdon",
+                    "Targos lies on the shore of Maer Dualdon"), "words": "on the shores of"},
+            link("Bryn Shander", "next to", "Termalaine", "Bryn Shander is next to Termalaine"),
+            {**link("Easthaven", "next to", "Lac Dinneshere", "Easthaven hugs Lac Dinneshere"),
+             "words": "hugs"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        self.assertEqual(
+            {k: v for k, v in got.items() if k[1] == "next_to"},
+            {("Targos", "next_to", "Maer Dualdon"): "on the shore of",
+             ("Bryn Shander", "next_to", "Termalaine"): "",
+             ("Easthaven", "next_to", "Lac Dinneshere"): ""},
+        )  # fmt: skip
+
+    async def test_two_places_with_a_way_between_them_keep_the_way(self) -> None:
+        # (#4173 slice 6d) a means on the list is kept as its one word; a way off the list keeps
+        # the text's own words only when they are the quote's; anything else is a plain route
+        text = (
+            "A highway runs from Targos to Bryn Shander. Mule trains link Easthaven and "
+            "Caer-Dineval. Termalaine and Lonelywood trade by magic."
+        )
+        names = [
+            name("Targos", "place", "to Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+            name("Easthaven", "place", "link Easthaven"),
+            name("Caer-Dineval", "place", "and Caer-Dineval"),
+            name("Termalaine", "place", "Termalaine and"),
+            name("Lonelywood", "place", "and Lonelywood"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Easthaven", "route to", "Caer-Dineval",
+                    "Mule trains link Easthaven and Caer-Dineval"), "words": "mule trains"},
+            {**link("Termalaine", "route to", "Lonelywood",
+                    "Termalaine and Lonelywood trade by magic"), "words": "a secret tunnel"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        routes = {frozenset((k[0], k[2])): v for k, v in got.items() if k[1] == "route_to"}
+        self.assertEqual(
+            routes,
+            {frozenset(("Targos", "Bryn Shander")): "road",
+             frozenset(("Easthaven", "Caer-Dineval")): "mule trains",
+             frozenset(("Termalaine", "Lonelywood")): ""},
+        )  # fmt: skip
+
+    async def test_a_road_and_a_river_between_one_pair_are_two_offers(self) -> None:
+        # (#4173 slice 6d part 2, Supervisor's test) both are offered; the same road twice is one
+        text = (
+            "A highway runs from Targos to Bryn Shander. Boats go downriver from Targos to Bryn "
+            "Shander. The road from Targos reaches Bryn Shander."
+        )
+        names = [
+            name("Targos", "place", "from Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Targos", "route to", "Bryn Shander",
+                    "Boats go downriver from Targos to Bryn Shander"), "words": "downriver"},
+            {**link("Bryn Shander", "route to", "Targos",
+                    "The road from Targos reaches Bryn Shander"), "words": "road"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = sorted(w.detail for w in await self.waiting() if w.predicate == "route_to")
+        self.assertEqual(got, ["river", "road"])
+
+    def test_two_places_read_as_inside_and_beside_each_other_keep_the_in(self) -> None:
+        # (#4173 slice 6a) never both: the "in" is offered, as before, until 6b's question asks
+        found = [bg.Found(n, "place", (), (), "") for n in ("Targos", "Ten-Towns", "Maer Dualdon")]
+        lines = [
+            bg.Connection("Targos", "next_to", "Ten-Towns", "q"),
+            bg.Connection("Targos", "located_in", "Ten-Towns", "q"),
+            bg.Connection("Targos", "next_to", "Maer Dualdon", "q", words="on the shore of"),
+        ]
+        lost: bg.Dropped = Counter()
+        kept = bg.keep_connections([lines], found, {}, dropped=lost)
+        self.assertEqual(
+            [(c.how, c.b) for c in kept],
+            [("located_in", "Ten-Towns"), ("next_to", "Maer Dualdon")],
+        )
+        self.assertEqual(lost["in_and_next_to"], 1)
 
     def test_two_place_words_for_one_pair_are_both_kept_by_the_reader(self) -> None:
         # (#3363) lived in and lives in the same town are two readings; the same word twice is
