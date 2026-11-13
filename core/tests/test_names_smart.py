@@ -517,7 +517,10 @@ class TheDirection(Smart):
         await self.link("serves", self.mira, self.auril)
         self.assertNotIn("Mira Voss", await self.text_of(self.auril))  # (one way by its kind)
         await self.mark(self.mira, self.auril, True)
-        self.assertIn("Mira Voss", await self.text_of(self.auril))
+        text = await self.text_of(self.auril)
+        self.assertIn("is the boss of Mira Voss", text)  # (the card's words from Auril's side)
+        self.assertNotIn("serves Mira Voss", text)  # (never the wrong way round)
+        self.assertIn("serves Auril", await self.text_of(self.mira))
 
 
 class TheWaits(Smart):

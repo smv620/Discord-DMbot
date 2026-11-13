@@ -326,10 +326,11 @@ class Recalling(MemoryTest):
             confidence=1.0, status="confirmed",
         )  # fmt: skip
         before = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira serves Ulfgar", before)  # (the fact is there, one way)
         self.assertNotIn("Mira and Ulfgar", before)
         await self.memory.set_direction(GUILD_A, self.c, made.value[0].id, None, source="dm")
         after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
-        self.assertIn("Mira and Ulfgar are connected", after)
+        self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
 
     async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
         """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
