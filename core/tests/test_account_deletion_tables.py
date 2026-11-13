@@ -21,7 +21,10 @@ FORGET_PERSON = import_module("dmbot.migrations.0431_forget_person")
 FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
 FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
 FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
-DELETED: tuple[tuple[str, str], ...] = FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED
+FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
+DELETED: tuple[tuple[str, str], ...] = (
+    FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED
+)
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED + FORGET_DECISIONS.ZEROED
 )
@@ -31,6 +34,7 @@ ZEROED: tuple[tuple[str, str], ...] = (
 EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
     (
         ("hand_over_answers", "user_id"),
+        ("member_lookups", "user_id"),
         ("move_codes", "user_id"),
         ("name_answers", "user_id"),
         ("web_sheet_actions", "user_id"),
@@ -237,6 +241,10 @@ ROWS: dict[str, str] = {
     "name_answers": (
         "INSERT INTO name_answers (guild_id, campaign_id, id, entity_id, user_id, action, state,"
         " created_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, %(u)s, 'confirm', 'done', 1)"
+    ),
+    "member_lookups": (
+        "INSERT INTO member_lookups (guild_id, id, user_id, target, created_at)"
+        " VALUES (%(g)s, %(k)s, %(u)s, %(u)s, 1)"
     ),
     "move_codes": (
         "INSERT INTO move_codes (user_id, code_hash, created_at, expires_at)"
