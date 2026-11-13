@@ -16,6 +16,7 @@ ALLOWED = {
     "campaigns/tables.py",
     "lineage.py",
     "pictures/store.py",
+    "memory/_changes.py",  # (the change log's entry: it writes only what the store hands it, #4346)
 }
 
 
