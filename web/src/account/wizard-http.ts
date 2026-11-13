@@ -18,6 +18,7 @@ interface DraftWire {
 export function draftFrom(wire: DraftWire): WizardDraft {
   const answers = { ...emptyAnswers(), ...(wire.answers ?? {}) } as WizardDraft["answers"];
   if (!Array.isArray(answers.characters)) answers.characters = [];
+  if (!Array.isArray(answers.homebrew_links)) answers.homebrew_links = [];
   if (!Array.isArray(answers.skipped)) answers.skipped = [];
   return {
     step: typeof wire.step === "number" ? wire.step : 1,
@@ -108,9 +109,17 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
       const names = Array.isArray(got.characters) ? got.characters.map(String) : [];
       return { name: typeof got.name === "string" ? got.name : "", characters: names.map((full) => ({ full, partyName: full.split(" ")[0] ?? full })) };
     },
+    async members(guild) {
+      const got = (await call("GET", at(guild, "/members"))) as { members?: unknown };
+      return Array.isArray(got.members) ? (got.members as { userId: string; name: string; before: boolean }[]).map((m) => ({ userId: String(m.userId), name: String(m.name), before: m.before === true })) : [];
+    },
     async docAdd(guild, slot, input) {
       const body: Record<string, unknown> = { slot, name: input.name };
-      if (input.data !== undefined) body["data"] = input.data;
+      // A link document (#4206): its address goes as the text, with the source saying it is to be fetched, not read now.
+      if (input.source === "link" && input.link !== undefined) {
+        body["source"] = "link";
+        body["text"] = input.link;
+      } else if (input.data !== undefined) body["data"] = input.data;
       else if (input.text !== undefined) body["text"] = input.text;
       else throw new WizardError("bad_document");
       const got = (await call("POST", at(guild, "/documents"), body)) as Partial<WizardDoc>;
@@ -137,6 +146,12 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
         part: Number(got["part"] ?? 0),
         ofParts: Number(got["ofParts"] ?? 0),
         error: String(got["error"] ?? ""),
+        pass: String(got["pass"] ?? ""),
+        passDone: Number(got["passDone"] ?? 0),
+        passTotal: Number(got["passTotal"] ?? 0),
+        foundNames: Number(got["foundNames"] ?? 0),
+        foundLinks: Number(got["foundLinks"] ?? 0),
+        notes: String(got["notes"] ?? ""),
         campaignRef: campaign ? `${guild}.${campaign}` : "",
         createdAt: Number(got["createdAt"] ?? 0),
         movedAt: Number(got["movedAt"] ?? 0),

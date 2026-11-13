@@ -4434,7 +4434,7 @@ through them. `dmbot_forget_person` has a test that every table it names exists 
 
 | Rule | What it covers | What happens |
 |---|---|---|
-| 1. The person's own requests and records | the website's action queues (name, setting, rule, report, restore, line, recap-style, house-file, picture, script, trait, upload-undo and hand-over answers, lore uploads, backups, recap requests, peeks), `member_directory` (the bot may add the name again if the person is still seen in the server), `npc_notes`, `question_notices`, `rule_set_editors`; the credits and hours totals have their own functions (0425, 0430) | **Deleted.** |
+| 1. The person's own requests and records | the website's action queues (name, setting, rule, report, restore, line, recap-style, house-file, picture, script, trait, upload-undo and hand-over answers, lore uploads, backups, recap requests, peeks, character-sheet and name answers; 0440, #4148), a move-account code (`move_codes`; its asks go by their own cascade), `member_directory` (the bot may add the name again if the person is still seen in the server), `npc_notes`, `question_notices`, `rule_set_editors`; the credits and hours totals have their own functions (0425, 0430) | **Deleted.** |
 | 1b. The campaign's own record of a confirmation | `shared_confirmations` (who confirmed the right to use a text, and when: the IP rule) | **Kept, ID set to 0** ("someone who has left"). |
 | 2. Protects the person | `improvement_opt_outs` | **Kept.** Deleting it would quietly turn their data back on if their Discord account were ever seen again. |
 | 2b. Anti-abuse and legal records, ids and times only | `try_it_used`, `trial_extensions`, `email_unsubscribed` (the unsubscribe list), `payment_events` (`sent_emails` is deleted by its own forget function, 0071) | **Kept** so a person who signs up again gets no second free trial and no repeated email (0064, 0065). A one-way keyed hash instead of the ID is a follow-up if the owner wants the ID gone from them too. |
@@ -6313,3 +6313,37 @@ for no speakers, funds or stopped recording does not. The failing check's fixed 
     DM a note, never a block. Nothing enters the story memory without the DM's confirmation.
   - **Right to use:** confirmed once per campaign and recorded. It stays in that campaign and its backup.
   - **Replacing:** an earlier recap is kept as a version, never overwritten.
+
+## Decisions of 2026-11-12 (Supervisor, recorded with the owner's words)
+
+- **Wizard step 9 is an active choice** (owner, #4212): neither "help improve DMbot" option is
+  pre-selected, and the wizard can't finish until the DM picks one.
+- **A DM's remembered players: the third exception to isolation** (owner, #4226; built in #4250,
+  #4252, #4262). A DM's own list of the players they have played with (`dm_players`: two Discord
+  ids, the name last seen, when, and how many campaigns; no campaign, character, story or server id)
+  is kept on the DM's account across campaigns and servers. Only that DM sees it, and a picker
+  marks "played with you before" only for members of the server being asked about. The player sees
+  which DMs remember them and can remove themselves; either person's account deletion removes the
+  rows; deleting a campaign and "Stop recording me" do not. The privacy page says so from the deploy
+  that starts the list; `TERMS_VERSION` is unchanged (owner).
+- **Languages, cultures and biases** (owner's five answers and Supervisor's ruling, #4229):
+  languages known come from the character sheet, with a story-only list beside the sheets for a
+  character with none (`memory_story_languages`), never in the graph; a lore language for a
+  character the campaign already had is a question for the DM, or for a player character with a
+  sheet one private line; SRD languages are never suggested as names (#4227). Cultures and lineages
+  are a per-campaign catalogue outside the graph; cultural influence, political control and
+  population sit in MapBot's layer; biases toward places and lineages live in `memory_attitudes`.
+- **MapBot** (owner; `docs/design/mapbot_layers.md`, revision 2, binding): maps are kept as maps
+  after their uploader's right-to-use yes (a player's map also needs a DM's yes before DMbot uses
+  it); positions live per map, never on a place; distances, directions and travel times are worked
+  out from one map at a time and shown as "about"; the DM's word wins, and a stated distance more
+  than 20% off a map, or a direction 45° or more off, is flagged privately to the DM; travel time is
+  suggested, never flagged. Build order: #4173 6a, MapBot slice 2, #4173 2b to 5, then 6d with
+  slice 1 (Supervisor, #4255).
+- **How DMbot gets the DM's attention** (owner): anything DMbot says to the DM unasked is a
+  private message, with at most one button; a review with several steps is a link from it to the
+  DM Bot channel or the website. The DM screen is a mostly static, virtual DM screen with quick
+  access to what matters at the table, never a place for general alerts. Whether live in-session
+  advice (rules alerts, heads-ups) stays on the DM screen is open with the owner.
+- **The Expert session** (owner; CLAUDE.md): an on-demand architect who writes binding design
+  basis documents in `docs/design/`.

@@ -22,7 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, place_words, quote_kind, unique_item
+from dmbot.memory import kin, next_words, place_words, quote_kind, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -93,6 +93,10 @@ CONNECTIONS = {
     # party (it is written before there is one), so the store refuses any other end and the
     # suggestion is dropped with the rest of the refused ones.
     "travels with": "travels_with",  # a travels with b (a player character)
+    # Two places beside each other (#4173 slice 6a): a town on a lake's shore, two lands that share
+    # a border, a village at the foot of a mountain, a town on a named road. Never one place inside
+    # another (that is "in"). The way it is said rides in "words" (`next_words`).
+    "next to": "next_to",  # a is next to b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
@@ -894,7 +898,9 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 # empty, too long or doubled name, or a quote of no words or too many; `not_in_text`: a name or
 # the quote is not in the text, or the quote does not hold both names; `name_not_found`: an end is
 # not a name DMbot will have; `same_pair`: the pair was already offered; `already_have`: the
-# campaign has it; `over_cap`: past the most one reading offers.
+# campaign has it; `over_cap`: past the most one reading offers; `in_and_next_to`: two places read
+# as both inside and beside each other, the "in" kept (#4173 slice 6a); `next_word_off_list`: a
+# "next to" said with a word off `next_words`' list, kept as plain "next to".
 Dropped = Counter[str]
 
 
@@ -1003,6 +1009,13 @@ def read_connections(
             label = place_words.canonical(raw_place) or ""
             if raw_place and not label:
                 lost["place_word_off_list"] += 1  # (kept without it, as an off-list feeling is)
+        if how == "next_to":
+            # How the two places sit, one of `next_words`' wordings ("on the shore of"), or none
+            # for plain "next to". One off the list is dropped and counted; the link is kept.
+            raw_next = " ".join(str(item.get("words") or "").split())
+            label = next_words.word_of(raw_next)
+            if raw_next and not label:
+                lost["next_word_off_list"] += 1
         if how == "knows":
             # How the one feels about the other: one of nine words (a reputation, #3175), in the
             # line's "words". One off the list is dropped and counted; the connection is kept
@@ -1249,7 +1262,7 @@ def keep_connections(
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
     friends and family read the same both ways). At most `cap`. `dropped` counts why each one that
     was not kept was not (`name_not_found`, `which_one`, `same_pair`, `already_have`,
-    `over_cap`).
+    `over_cap`, `in_and_next_to`).
 
     An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
     title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
@@ -1556,4 +1569,20 @@ def keep_connections(
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
             if c.how == "knows":
                 knows_held[(ka, kb)] = len(out) - 1
-    return out
+    return _in_beats_next_to(out, lost)
+
+
+def _in_beats_next_to(out: list[Connection], lost: Dropped) -> list[Connection]:
+    """Two places read as both "in" and "next to" each other (#4173 slice 6a): the same two places
+    can't be both. Until MapBot's one grouped question asks the DM which (slice 6b), the "in" is
+    offered, as before slice 6a, and the "next to" is dropped and counted (`in_and_next_to`)."""
+    inside = {frozenset((name_key(c.a), name_key(c.b))) for c in out if c.how == "located_in"}
+    if not inside:
+        return out
+    kept = [
+        c
+        for c in out
+        if c.how != "next_to" or frozenset((name_key(c.a), name_key(c.b))) not in inside
+    ]
+    lost["in_and_next_to"] += len(out) - len(kept)
+    return kept

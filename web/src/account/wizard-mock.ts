@@ -135,16 +135,29 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const per = guild.endsWith(".slow") ? 3 : 1; // looks for each stage
       const at = Math.floor((run.looks - 1) / per);
       const now = NOW();
-      const base = { createdAt: run.started, movedAt: now, serverNow: now, part: 0, ofParts: 0 };
+      const base = { createdAt: run.started, movedAt: now, serverNow: now, part: 0, ofParts: 0, notes: "", pass: "", passDone: 0, passTotal: 0, foundNames: 0, foundLinks: 0 };
       if (guild.endsWith(".fail") && at >= 2) return { ...base, state: "failed", stage: STAGES[2]!, error: "failed", campaignRef: "" };
       if (guild.endsWith(".nokey") && at >= 5) return { ...base, state: "failed", stage: "lore", error: "no-key", campaignRef: `${guild}.cmp-new` };
       if (at >= STAGES.length) {
         drafts.delete(guild);
-        return { ...base, state: "done", stage: "clean", error: "", campaignRef: `${guild}.cmp-new` };
+        return { ...base, state: "done", stage: "clean", error: "", notes: guild.endsWith(".notes") ? "house_unreadable:2 homebrew_link_failed:1" : "", campaignRef: `${guild}.cmp-new` };
       }
       const stage = STAGES[at]!;
       const docs = stage === "lore" || stage === "secrets" ? (drafts.get(guild)?.documents.filter((d) => d.slot === stage).length ?? 0) : 0;
-      return { ...base, state: "working", stage, part: docs ? 1 : 0, ofParts: docs, error: "", campaignRef: at > 0 ? `${guild}.cmp-new` : "" };
+      const counts = guild.endsWith(".counts") && stage === "lore" ? { pass: "finding_names", passDone: 2, passTotal: 5, foundNames: 12, foundLinks: 1 } : {};
+      return { ...base, ...counts, state: "working", stage, part: docs ? 1 : 0, ofParts: docs, error: "", campaignRef: at > 0 ? `${guild}.cmp-new` : "" };
+    },
+    // This server's members (#4204): those who played with the DM before come first, then by name; ".nomembers" has none, ".brokenmembers" fails.
+    async members(guild) {
+      calls.push(`members:${guild}`);
+      if (guild.endsWith(".brokenmembers")) throw new WizardError("server");
+      if (guild.endsWith(".nomembers")) return [];
+      return [
+        { userId: "1001", name: "Zoe", before: true },
+        { userId: "1002", name: "Ada", before: false },
+        { userId: "1003", name: "Ben", before: false },
+        { userId: "1004", name: "Eric the Red", before: false },
+      ];
     },
     async discard(guild) {
       calls.push(`discard:${guild}`);

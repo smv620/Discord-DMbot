@@ -8,14 +8,15 @@ export type WizardStepId = "where" | "confirm" | "players" | "lore" | "secrets" 
 export const WIZARD_STEPS: readonly WizardStepId[] = ["where", "confirm", "players", "lore", "secrets", "rules", "house", "homebrew", "data", "finish"];
 
 /** The seven supplements the rules step offers (PLAN, step 6). The codes are core's (wizard.py refuses any other). Choosing one only tells the rules advisor which books the table uses. */
+// The books step 6 offers, alphabetical by title for the screen. Core keeps its own order; that only affects how saved values are sorted.
 export const SUPPLEMENTS: readonly { code: string; title: string }[] = [
-  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
+  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
   { code: "ravnica", title: "Guildmasters' Guide to Ravnica (2018)" },
+  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
   { code: "theros", title: "Mythic Odysseys of Theros (2020)" },
   { code: "tasha", title: "Tasha's Cauldron of Everything (2020)" },
-  { code: "fizban", title: "Fizban's Treasury of Dragons (2021)" },
-  { code: "mordenkainen", title: "Mordenkainen Presents: Monsters of the Multiverse (2022)" },
-  { code: "bigby", title: "Bigby Presents: Glory of the Giants (2023)" },
+  { code: "xanathar", title: "Xanathar's Guide to Everything (2017)" },
 ];
 
 export const wizardWords = {
@@ -78,6 +79,8 @@ export const wizardWords = {
     pasteHint: "Open the campaign page on dndbeyond.com, select everything, copy it and paste it here. DMbot looks for the campaign's name and the characters. The text is not kept.",
     pasteRead: "Look for the characters",
     pasteNone: "I couldn't find the characters in that text. You can add them by hand.",
+    // Shown when the text was used but the box is empty (a reload: the text is kept in the page's memory only, never on the server).
+    pastedEarlier: (n: number): string => `You pasted this page's text earlier. DMbot found ${n} ${n === 1 ? "character" : "characters"} in it (step 2). Paste it again only to read it again.`,
     pasteFound: (n: number): string => `Found ${n} ${n === 1 ? "character" : "characters"}. You will check them on the next page.`,
     fileLead: "You will add your files on the pages that follow: lore, secrets, rules, house rules and homebrew.",
     driveLead: "On the pages that follow, choose a Google Drive file or folder. DMbot can only see the files you pick.",
@@ -89,9 +92,15 @@ export const wizardWords = {
     nameLabel: "The campaign's name",
     charactersLabel: "Player characters",
     none: "No characters yet. Add one below, or carry on and add them later.",
-    fullLabel: "Full name",
-    partyLabel: "Name in the party",
-    add: "Add a character",
+    fullLabel: "Character's full name",
+    partyLabel: "What the party calls them",
+    partyHint: "Optional. For example 'Tav' for 'Tavin Ashgrove'.",
+    // The label reads "Public character sheet link from dndbeyond.com (optional)"; "dndbeyond.com" is a link to its site, so it comes in pieces.
+    sheetLabelBefore: "Public character sheet link from ",
+    sheetLabelLink: "dndbeyond.com",
+    sheetLabelAfter: " (optional)",
+    sheetLabel: "Public character sheet link from dndbeyond.com (optional)",
+    add: "Add this character to the campaign",
     remove: "Remove",
     tooMany: "A setup holds up to 12 characters. Add the rest later from the Names page.",
   },
@@ -101,7 +110,16 @@ export const wizardWords = {
     heading: "Who plays each character?",
     lead: "You can skip this. Pick who plays each character, or set it later on the Names page.",
     pending: "Not set yet",
+    placeholder: "Pick a player…",
     none: "There are no characters to match yet.",
+    before: "played with you before",
+    open: "Show the players",
+    listLabel: (character: string): string => `Players for ${character}`,
+    noMatch: (typed: string): string => `No one called ${typed} is in this server's member list. Pick a name from the list, or leave it as Not set yet.`,
+    noPlayerYet: (n: number): string => `${n} ${n === 1 ? "character has" : "characters have"} no player yet`,
+    cannotSee: "DMbot can't see this server's members yet. You can set who plays each character later on the Names page.",
+    loading: "Loading this server's members…",
+    pickedEarlier: "Picked earlier",
   },
 
   // Steps 4 and 5: lore and secrets.
@@ -120,8 +138,20 @@ export const wizardWords = {
     addDrive: "Choose from Google Drive",
     linkLabel: "A link",
     linkBad: "A link must start with https://.",
+    linkTooLong: "That link is too long for DMbot to keep. Use a shorter one.",
     remove: "Remove",
     none: "Nothing added.",
+    // Step 8's homebrew links (#4211): only pages published on dndbeyond.com can be read.
+    homebrewLinkLabel: "A link to homebrew you published on dndbeyond.com",
+    homebrewLinkAdd: "Add this link",
+    homebrewLinkBad: "DMbot can only read links from dndbeyond.com. Check the address and try again.",
+    homebrewLinkMany: "That's the most links you can add here. Add the rest from the Homebrew page later.",
+    // Step 7 also takes house rules typed in, so a DM with no file isn't sent away (#4211): kept as one document.
+    typedLabel: "Or type your house rules here",
+    typedNote: "One rule per line. Numbers are optional. DMbot reads them when you press \"Make the campaign\".",
+    typedAdd: "Add these rules",
+    typedName: "Typed house rules",
+    typedEmpty: "Type at least one rule first.",
     // Pages that are only pictures (#4030): DMbot cannot read them, so the person types the text that matters into a file.
     picturePages: (n: number): string =>
       n === 1
@@ -140,19 +170,23 @@ export const wizardWords = {
     } as Record<string, string>,
     full: "A setup holds up to 20 files. Remove one to add another.",
     // The right-to-use confirmation (CLAUDE.md, IP): required before DMbot reads shared material.
-    rights: "I have the right to use what I add here.",
-    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files stay in this campaign only.",
-    rightsNeeded: "Tick the box to say you have the right to use these files.",
+    rights: "I have the right to use what I add here, including any homebrew pages I link to.",
+    rightsNote: "DMbot doesn't check this. It is recorded with your name and the date, and the files and links stay in this campaign only.",
+    rightsNeeded: "Tick the box to say you have the right to use these files and links.",
   },
 
   // Step 6: rules.
   rules: {
     heading: "Which rules do you play?",
-    lead: "Pick the rules to use first. DMbot uses the other set only when the first has no answer.",
+    lead: "Pick the rules DMbot uses first. You can pick a second set for when the first has no answer.",
     current: "5e current (2024)",
     legacy: "5e legacy (2014)",
-    targetLabel: "Play with",
-    fallbackLabel: "If it has nothing, use",
+    primaryLabel: "Primary rule set",
+    secondaryLabel: "Secondary rule set (optional)",
+    secondaryHint: "Used only when the primary rule set has no answer.",
+    none: "None",
+    uploadOwn: "Upload your own rule set…",
+    houseNote: "House rules and homebrew come in the next steps. Don't add them here.",
     same: "The two sets must be different.",
     supplementsLabel: "Books your table uses",
     supplementsNote: "Choosing a book only tells DMbot's rules advisor which books you use. No book's text is stored.",
@@ -180,6 +214,7 @@ export const wizardWords = {
     yes: "Yes, use this campaign's story",
     no: "No, keep it to this campaign",
     note: "Players still choose for themselves whether to be recorded.",
+    pick: "Pick Yes or No to go on.",
   },
 
   // Step 10: finish.
@@ -190,6 +225,8 @@ export const wizardWords = {
     summaryRules: "Rules",
     summaryFiles: (n: number): string => `${n} ${n === 1 ? "file" : "files"} added`,
     summarySkipped: "Skipped steps use the defaults.",
+    summaryData: (choice: "yes" | "no" | "none"): string =>
+      `Help improve DMbot: ${choice === "yes" ? "yes, use this campaign's story" : choice === "no" ? "no, keep it to this campaign" : "not chosen (off)"}`,
     button: "Make the campaign",
     retry: "Try again",
     stages: {
@@ -197,6 +234,8 @@ export const wizardWords = {
       party: "Adding the party",
       rules: "Setting the rules",
       house_homebrew: "Adding house rules and homebrew",
+      house: "Reading your house rules",
+      homebrew: "Reading your homebrew",
       data_use: "Saving your choice",
       lore: "Reading the lore",
       secrets: "Reading the secrets",
@@ -215,11 +254,41 @@ export const wizardWords = {
       party_failed: "Your campaign is ready, but DMbot couldn't add the party. Open the campaign and add the characters on its Names page.",
       lore_failed: "Your campaign is ready, but DMbot couldn't read your lore. Add it again from the campaign's Lore page.",
       drive_gone: "Your campaign is ready, but a Google Drive file couldn't be read. Add it again from the campaign's pages.",
+      house_unreadable: "Your campaign is ready, but DMbot couldn't read your house rules. Add them again from the campaign's House rules page.",
+      house_failed: "Your campaign is ready, but DMbot couldn't add your house rules. Add them again from the campaign's House rules page.",
+      homebrew_unreadable: "Your campaign is ready, but DMbot couldn't read your homebrew. Add it again from the campaign's Homebrew page.",
+      homebrew_link_failed: "Your campaign is ready, but DMbot couldn't read a homebrew link. Add it again from the campaign's Homebrew page.",
+      doc_link_failed: "Your campaign is ready, but DMbot couldn't read a link you added. Add it again from the campaign's pages.",
+      homebrew_failed: "Your campaign is ready, but DMbot couldn't add your homebrew. Add it again from the campaign's Homebrew page.",
       docs_left: "Your campaign is ready. Add your house rules and homebrew on the campaign's House rules and Homebrew pages.",
       bad_answers: "Some of your answers couldn't be used. Go back, check them, and try again.",
       no_rights: "Tick the box that says you have the right to use your files, then try again.",
       lost: "DMbot stopped partway. Try again: it carries on where it stopped.",
     } as Record<string, string>,
-    quiet: "Still working. You can leave this page: the campaign will be ready when it is done.",
+    // The lore reader's pass and what it has found so far (#4213): a stage word, a count and two numbers, never a word of a document.
+    passes: {
+      first_read: "Reading the lore",
+      reading: "Reading the lore",
+      finding_names: "Finding names",
+      finding_links: "Finding how they connect",
+      sorting: "Working out what the players know",
+    } as Record<string, string>,
+    passPart: (done: number, total: number): string => `part ${done} of ${total}`,
+    foundSoFar: (names: number, links: number): string =>
+      `Found so far: ${names} ${names === 1 ? "name" : "names"}, ${links} ${links === 1 ? "connection" : "connections"}`,
+    // What the run could not use, one line for each kind, when the campaign was made anyway (counts only: never a name or a link).
+    notes: {
+      house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
+      homebrew_unreadable: (n: number): string => `${n} ${n === 1 ? "homebrew file" : "homebrew files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+      doc_link_failed: (n: number): string => `${n} ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the campaign's pages.`,
+      homebrew_link_failed: (n: number): string => `${n} homebrew ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
+    } as Record<string, (n: number) => string>,
+    // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.
+    told: "You can leave this page. When the campaign is ready, DMbot sends you a private message in Discord with what to check, and this page will say Ready. No email is sent.",
+    toldClosed: "If your Discord private messages are closed, look in your campaign's DM Bot channel.",
+    // The running clock, redrawn twice a second, and when the bot last moved (counts and times only, never a word of a document).
+    runningFor: (seconds: number): string => `Running for ${seconds >= 60 ? `${Math.floor(seconds / 60)} min ` : ""}${seconds % 60} s`,
+    lastProgress: (seconds: number): string => (seconds < 1 ? "Last progress just now" : `Last progress ${seconds} s ago`),
+    working: "Working…",
   },
 } as const;

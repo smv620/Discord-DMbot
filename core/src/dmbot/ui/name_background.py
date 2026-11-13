@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -34,7 +35,10 @@ from dmbot.memory import (
     lore_knowledge,
     lore_pc_names,
     lore_read,
+    map_fact_store,
+    map_facts,
     picture_read,
+    place_levels,
     pronouns,
     traits_read,
     who_ask,
@@ -63,9 +67,11 @@ from dmbot.memory.models import (
     CONFIRMED,
     DESCRIPTION_MAX,
     DM,
+    LANGUAGE,
     NEEDS_A_LOOK,
     PLAYER_CHARACTER,
     PROPOSED,
+    REJECTED,
     SPECIES,
     MemoryRuleError,
     MoreNames,
@@ -80,6 +86,7 @@ from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -105,6 +112,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
+from dmbot.walk import Walk
 from dmbot.word_end import in_the_middle
 
 log = logging.getLogger(__name__)
@@ -662,6 +670,13 @@ class BackgroundOffer(_Menu):
                     guild, campaign.id, key, posted, sum(map(len, stored.values()))
                 )
             await bot.tell_dm_waiting(guild, campaign.id, key, where="your upload")
+            if done.sheet_languages:  # (#4229 1c) to this DM alone: never the DM Bot channel,
+                # which the campaign's people read and which only ever gets counts; sent after
+                # either kind of note, so neither path loses it
+                with contextlib.suppress(discord.HTTPException):
+                    await interaction.followup.send(
+                        sheet_languages_line(done.sheet_languages).strip(), ephemeral=True
+                    )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -707,6 +722,9 @@ class BackgroundRead:
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
     # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
     trait_questions: int = 0
+    # A lore language a player character's sheet lacks (#4229 slice 1c, Supervisor's ruling): one
+    # plain line on the note naming each, never a row or a question (the sheet is the truth).
+    sheet_languages: tuple[tuple[str, str], ...] = ()
     # The ids of the names read from its pictures that its text did not plainly resolve (#4003):
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
@@ -768,6 +786,21 @@ async def _read_background(
     ai = bot.background_ai
     guild = campaign.guild_id
     label = upload_label(upload.label, time.time())  # (the same words on the connections queued)
+    # A waiting suggestion that is an SRD language ("Elvish") is turned down first (#4227). (A
+    # stand-in bot in tests may not have it.)
+    drop = getattr(bot, "drop_language_suggestions", None)
+    if drop is not None:
+        await drop(guild, campaign.id)
+    # A player character's first name the lore uses alone ("Cerric" for the wizard's Cerric
+    # Vanya'elen) is their short name before the read looks (#3880): run only after the read, the
+    # read had already made "Cerric" a name of its own, the rule could no longer give the word to
+    # the character, and the lore's ties hung on the copy (#4224). Before the read it is only the
+    # DM's confirmed player characters, and a word the upload also writes before another name
+    # ("Cerric Dorn") waits for the run after the read, which sees both owners. (A stand-in bot in
+    # tests may not have it.)
+    short = getattr(bot, "add_short_names", None)
+    if short is not None:  # (player characters only, and never a namesake's word)
+        await short(guild, campaign.id, [upload.text], before_read=True)
     known = await memory.known_keys(guild, campaign.id)
     own = await own_kinds(memory, campaign)
     aliases = await confirmed_aliases(memory, campaign)
@@ -881,6 +914,15 @@ async def _read_background(
         read.trait_lines, upload.text, found, known, campaign, read.stats.dropped, homebrew,
         offers=trait_offers,
     )  # fmt: skip
+    # The languages the text says a character speaks (#4229 slice 1b): checked like the traits,
+    # stored after the names, as DMbot's read until the DM checks them.
+    spoken = traits_read.read_languages(
+        read.trait_lines,
+        upload.text,
+        [n for f in found for n in (f.name, *f.also)],
+        read.stats.dropped,
+        existing=known,
+    )
     # A player character's backstory written into campaign lore is known to that character
     # (#3963 b, Supervisor's ruling): the section a quote is in names whose it is. With the smart
     # guess only (see `_backstory_owners`).
@@ -907,9 +949,8 @@ async def _read_background(
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     await _record_sources(memory, campaign, stored, upload, label)
-    # A character's first name the lore uses alone ("Tran" for Tran Vosk) becomes their short
-    # name by rule, whatever the AI listed (#3880). (A stand-in bot in tests may not have it.)
-    short = getattr(bot, "add_short_names", None)
+    # ... and again for the people this read made ("Tran" for a new Tran Vosk), whatever the AI
+    # listed (#3880).
     if short is not None:
         await short(guild, campaign.id, [upload.text])
     await save_place_spellings(
@@ -1031,6 +1072,16 @@ async def _read_background(
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
         done.questions_left += done.trait_questions
+    if spoken:
+        await store_languages(memory, campaign, spoken, known)
+        notice_id = done.notice.id if done.notice is not None else None
+        asked, on_sheets = await ask_languages(
+            memory, campaign, [s for s in spoken if name_key(s.name) in known], label, notice_id
+        )
+        done.sheet_languages = tuple(on_sheets)
+        done.trait_questions += asked
+        done.questions_left += asked
+    await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
     return done
 
 
@@ -1249,13 +1300,198 @@ def picture_held_line(n: int) -> str:
 
 
 def trait_questions_line(n: int) -> str:
-    """The count line for an upload whose lineage questions wait (#3926); "" for none."""
+    """The count line for an upload whose questions about characters wait: lineage, class
+    (#3926) or language (#4229); "" for none."""
     if not n:
         return ""
     return (
-        f"\n🧬 **{n} lineage question{'' if n == 1 else 's'}** wait{'s' if n == 1 else ''} for you"
-        " in ❓ Questions for you."
+        f"\n🧬 **{n} question{'' if n == 1 else 's'} about your characters** "
+        f"wait{'s' if n == 1 else ''} for you in ❓ Questions for you."
     )
+
+
+SHEET_LANGUAGES_SHOWN = 5  # the note names a few; the rest are counted
+
+
+def sheet_languages_line(found: Sequence[tuple[str, str]]) -> str:
+    """One plain line for the lore languages that player characters' sheets lack (#4229 slice 1c):
+    named, never stored, since the sheet is the truth: "🗣️ Your lore says Testa speaks Elvish,
+    which isn't on their sheet." "" for none."""
+    if not found:
+        return ""
+    shown = found[:SHEET_LANGUAGES_SHOWN]
+    said = "; ".join(f"**{_md(who)}** speaks **{_md(lang)}**" for who, lang in shown)
+    more = len(found) - len(shown)
+    rest = f" (and {more} more)" if more > 0 else ""
+    return (
+        f"\n🗣️ Your lore says {said}{rest}, but the sheet doesn't list it. Add it on the sheet "
+        "if it's right."
+    )
+
+
+async def store_languages(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spoken: Sequence[traits_read.Spoken],
+    known: Collection[str] = (),
+) -> int:
+    """The languages the lore says a character speaks (#4229 slice 1b), kept beside the sheets as
+    DMbot's read ("not checked yet" on the DM's card) until the DM checks them. Only for a character
+    this read is making: a name the campaign had before it (`known`, keys) is never written to
+    silently, as #3926 rules for lineage and class; asking about those is its own step. A character
+    with a sheet keeps its languages there, so the store skips it; a name two entries share is
+    skipped (DMbot can't tell whose). One language that can't be kept never stops the rest.
+    Returns how many were added. Never raises: the log gets counts and the error type only."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Lore languages couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    whose: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        # (a campaign's own kind under character counts: is_a, never the word itself)
+        if who is not None and onto.is_a(who.type, "character"):
+            whose.setdefault(name_key(entry.text), set()).add(who.id)
+    added = skipped = 0
+    for one in spoken:
+        ids = whose.get(name_key(one.name), set())
+        if name_key(one.name) in known or len(ids) != 1:
+            skipped += 1
+            continue
+        entity_id = next(iter(ids))
+        try:
+            had = {
+                name_key(r.name)
+                for r in await memory.story_languages(campaign.guild_id, campaign.id, entity_id)
+            }
+            written = await memory.add_story_language(
+                campaign.guild_id, campaign.id, entity_id, one.language, source="background"
+            )
+        except Exception as exc:  # the type only; the next language still gets its turn
+            log.warning("A lore language couldn't be kept (%s)", type(exc).__name__)
+            continue
+        added += written.value is not None and name_key(one.language) not in had
+    if added or skipped:
+        log.info("Lore languages: %d added as DMbot's read, %d left for later", added, skipped)
+    return added
+
+
+async def store_place_facts(
+    memory: MemoryStore, campaign: Campaign, text: str, session_at: int | None = None
+) -> int:
+    """A place's land, climate or ruler, from the set phrases right beside its name
+    (`map_facts.read_facts`, #4256), written as DMbot's read for the DM to check: they wait on the
+    place's card, DM-only, marked "(DMbot read this)". Any place of the campaign named in the text,
+    the ones this read just made included; a name two places share is skipped (DMbot can't tell
+    which). `session_at`: the session the text was said in, so the table knows it. Never raises;
+    the log gets counts per layer only (`unknown` is a place named with nothing found)."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Place facts couldn't be read (%s)", type(exc).__name__)
+        return 0
+    places: dict[str, set[str]] = {}
+    groups: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if who is None or who.status == REJECTED:
+            continue
+        if onto.is_a(who.type, "place"):
+            places.setdefault(entry.text, set()).add(who.id)
+        elif onto.is_a(who.type, "faction"):
+            groups.setdefault(entry.text, set()).add(who.id)
+    group_ids = {name: next(iter(ids)) for name, ids in groups.items() if len(ids) == 1}
+    found: list[map_fact_store.Read] = []
+    counts: Counter[str] = Counter()
+    for name, ids in places.items():
+        if len(ids) != 1 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
+            continue
+        read = map_facts.read_facts(name, text, group_ids)
+        if not read:
+            counts["unknown"] += 1
+        for f in read:
+            counts[f.layer] += 1
+            value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
+            found.append(map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at))
+    if not found:
+        return 0
+    try:
+        written = await memory.add_read_map_facts(
+            campaign.guild_id, campaign.id, found, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # the type only
+        log.warning("Place facts couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    log.info(
+        "Place facts read: terrain=%d climate=%d control=%d unknown=%d; %s",
+        counts[map_facts.TERRAIN], counts[map_facts.CLIMATE], counts[map_facts.CONTROL],
+        counts["unknown"], dict(sorted(written.value.items())),
+    )  # fmt: skip
+    return written.value["written"]
+
+
+async def ask_languages(
+    memory: MemoryStore,
+    campaign: Campaign,
+    spoken: Sequence[traits_read.Spoken],
+    upload: str,
+    notice_id: str | None,
+) -> tuple[int, list[tuple[str, str]]]:
+    """The languages the lore gives characters the campaign already had (#4229 slice 1c,
+    Supervisor's ruling): one with no sheet that doesn't know it yet gets a question, as #3926 does
+    for a lineage ("Does Brewner speak Giant?"); a player character whose sheet lacks it is named
+    to the DM alone instead (a private line after the upload's note), with nothing stored. Only a
+    confirmed character, and never a name two entries share. Returns the new questions and the
+    sheet lines. Never raises."""
+    offers: list[trait_offers_mod.Offer] = []
+    on_sheets: list[tuple[str, str]] = []
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        whose: dict[str, set[str]] = {}
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if (
+                who is not None
+                and who.status == CONFIRMED
+                and onto.is_a(who.type, "character")  # (a campaign's own kinds too)
+            ):
+                whose.setdefault(name_key(entry.text), set()).add(who.id)
+        ids = {s.name: next(iter(whose[name_key(s.name)])) for s in spoken
+               if len(whose.get(name_key(s.name), ())) == 1}  # fmt: skip
+        if not ids:
+            return 0, []
+        everyone = sorted(set(ids.values()))
+        known = await memory.languages_known(campaign.guild_id, campaign.id, everyone)
+        for s in spoken:
+            entity_id = ids.get(s.name)
+            if entity_id is None:
+                continue
+            has = known.get(entity_id, [])
+            if any(name_key(k.name) == name_key(s.language) for k in has):
+                continue  # already known: nothing to ask or say
+            if await memory.has_sheet(campaign.guild_id, campaign.id, entity_id):
+                on_sheets.append((lookup.entities[entity_id].name, s.language))
+                continue
+            offers.append(
+                trait_offers_mod.Offer(
+                    entity_id, Trait(LANGUAGE, s.language, "", None, False), s.quote, upload
+                )
+            )
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Language questions couldn't be read (%s)", type(exc).__name__)
+        return 0, []
+    if not offers:
+        return 0, on_sheets
+    try:
+        store = trait_offers_mod.TraitOfferStore(memory._db)
+        return await store.offer(campaign.guild_id, campaign.id, offers, notice_id), on_sheets
+    except Exception as exc:  # (the sheet lines are kept: they need no write)
+        log.warning("Language questions couldn't be kept (%s)", type(exc).__name__)
+        return 0, on_sheets
 
 
 async def ask_traits(
@@ -1560,6 +1796,11 @@ async def store(
                 # it; a spoilers upload, a smart guess and a backstory never fill it
                 players_text=item.about if known and fold_secret else "",
                 traits=tuple((traits or {}).get(name_key(item.name), ())),
+                # how big a place is, from its name or the words beside it (#4173 slice 1): the
+                # store keeps it only for a place, and no word means no level, never a guess
+                place_level=place_levels.read_level(item.name, item.quote, item.about, text),
+                # its form, water or route, from its own name only (#4173 slice 6a)
+                form=place_levels.read_form(item.name) if item.kind == "place" else None,
             )
         )
         items.append(item)
@@ -1587,6 +1828,13 @@ async def store(
                 )
             if known_by and item.secret:
                 await _secret_names_known_by(memory, campaign, entity_id, item.secret, known_by)
+    places = [n for n, e in zip(names, written.value, strict=False) if e and n.type == "place"]
+    if places:  # (counts only; level_unknown shows the words the fixed list misses, #4173)
+        log.info(
+            "Places read: %d with a size, level_unknown=%d",
+            sum(1 for n in places if n.place_level),
+            sum(1 for n in places if not n.place_level),
+        )
     return stored
 
 
@@ -2527,13 +2775,19 @@ async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
     return {p.key for p in onto.predicates.values() if p.symmetric}
 
 
-async def ask_connections(interaction: discord.Interaction, campaign_id: str) -> None:
+async def ask_connections(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> None:
     """The 📜 button (on the names summary, the 📇 Names card and the DM-screen notice): the "Which
-    one?" questions, then the connections that are ready, or why none is."""
+    one?" questions, then the connections that are ready, or why none is. Inside "Check
+    everything" (#4192) the walk is handed on to the connection cards."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
     asked = await offer_which(interaction, campaign_id)
-    if not await offer_ready(interaction, campaign_id) and not asked:
+    if not await offer_ready(interaction, campaign_id, walk=walk) and not asked:
+        if walk is not None:  # (nothing is ready: the walk is at its end)
+            await next_part(interaction, walk)
+            return
         await _tell(
             interaction,
             "None to check yet. Each connection waits until both its names are answered. "
@@ -2742,7 +2996,9 @@ class WhichOffer(_Menu):
             )
 
 
-async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> bool:
+async def offer_ready(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> bool:
     """The connections whose two names are answered, one at a time in a private message. Called
     when the DM has answered names (Add all, the end of 📝 Check new names) and by the 📜 button.
     Returns whether there was anything to ask."""
@@ -2756,7 +3012,7 @@ async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> boo
         asked_names = await offer_worked_out(interaction, campaign_id) or asked_names
         asked_names = await offer_same_person(interaction, campaign_id) or asked_names
         asked_names = await offer_hand_over(interaction, campaign_id) or asked_names
-        view = ConnectionOffer(campaign_id)
+        view = ConnectionOffer(campaign_id, walk=walk)
         if not await view.load(interaction):
             return asked_names
         with contextlib.suppress(discord.HTTPException):
@@ -2811,9 +3067,10 @@ class ConnectionOffer(_Menu):
     the DM's word (never proposed). One that the text wrote with a secret spelling can only be kept
     as secret."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, *, walk: Walk | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): a part line and Stop for now
         self.kept = 0
         self.left_out = 0
         self.current: Waiting | None = None
@@ -2838,6 +3095,7 @@ class ConnectionOffer(_Menu):
         self.add_item(self.all_button)
         self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
         self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
+        add_stop(self, walk, row=1)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -2928,6 +3186,13 @@ class ConnectionOffer(_Menu):
         )
 
     def text(self) -> str:
+        """The card, with the walk's part line above it when this is inside "Check everything"."""
+        if self.walk is None or self.current is None:
+            return self._card()
+        done = self.kept + self.left_out + 1
+        return progress(self.walk, done, max(self.total, done)) + self._card()
+
+    def _card(self) -> str:
         c = self.current
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
@@ -3021,6 +3286,8 @@ class ConnectionOffer(_Menu):
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
+        if self.current is None and self.walk is not None:  # the last card: the walk goes on
+            await next_part(interaction, self.walk)
 
     async def _dm(self, interaction: discord.Interaction) -> Campaign | None:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3211,6 +3478,8 @@ class ConnectionOffer(_Menu):
                     view=self,
                     allowed_mentions=NO_PINGS,
                 )
+            if self.walk is not None:  # (this card keeps its Undo; the walk goes on below it)
+                await next_part(interaction, self.walk)
 
     async def _undo_all(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -3256,9 +3525,17 @@ class BulkConfirm(_Menu):
     """Say yes to every name of a kind from this reading at once ("All 14 places"), undo it, or
     open the checking. Only the names this reading found: never an earlier reading's."""
 
-    def __init__(self, campaign_id: str, stored: dict[str, list[str]], queued: int = 0) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        stored: dict[str, list[str]],
+        queued: int = 0,
+        *,
+        walk: Walk | None = None,
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): its own Stop, and the walk goes on
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
         # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
@@ -3307,7 +3584,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
-        if self.queued:
+        if self.queued and self.walk is None:  # (a walk reaches the connections itself)
             self.add_item(
                 _Button(
                     self._connections,
@@ -3330,6 +3607,7 @@ class BulkConfirm(_Menu):
                     row=1,
                 )
             )
+        add_stop(self, self.walk, row=2)
 
     def _addable(self) -> dict[str, list[str]]:
         """The names a yes-to-all may cover: every kind but ideas, which need a look, and player
@@ -3366,11 +3644,11 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         if self.shared:
             # (the summary stays for the other game masters; the cards are this DM's, privately)
-            await start_review(interaction, self.campaign_id, bulk=False)
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
             return
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id, bulk=False)
+        await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)
@@ -3433,7 +3711,9 @@ class BulkConfirm(_Menu):
             text += f"\n{split}"
         with contextlib.suppress(discord.HTTPException):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
-        if total and self.queued:  # their names may be answered now
+        if self.walk is not None:  # the names left to look at one by one, then the next part
+            await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
+        elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
     async def _undo(self, interaction: discord.Interaction) -> None:

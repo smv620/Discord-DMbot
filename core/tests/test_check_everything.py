@@ -1,0 +1,425 @@
+"""The "✅ Check everything" walk-through (#4192, first slice): its order and words (`walk.py`),
+the one button on the after-session message (`dm_questions.combine`), the button's id, and the way
+from one part to the next. Needs no database and no Discord."""
+
+from __future__ import annotations
+
+import unittest
+from functools import partial
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock, patch
+
+import discord
+
+from dmbot import walk as walks
+from dmbot.dm_questions import (
+    CLAIMS,
+    CONNECTIONS,
+    DEEDS,
+    FAMILY,
+    KINDS,
+    NAMES,
+    PEOPLE,
+    WALK_PRESS,
+    Ask,
+    combine,
+)
+from dmbot.ui import check_everything as ce
+from dmbot.walk import Walk
+
+CID = "a" * 32
+GUILD = 4242
+
+
+def ask(kind: str, count: int = 3) -> Ask:
+    def button() -> discord.ui.Item[Any]:
+        return discord.ui.Button(label=kind, custom_id=f"test:{kind}")
+
+    return Ask(kind, f"{kind} alone", f"{kind} line", button, button, f"{kind} screen", count)
+
+
+def ids(view: discord.ui.View) -> list[str | None]:
+    return [getattr(child, "custom_id", None) for child in view.children]
+
+
+def labels(view: discord.ui.View) -> list[str | None]:
+    # (a dynamic item holds its button in `.item`)
+    return [getattr(getattr(child, "item", child), "label", None) for child in view.children]
+
+
+class TheWalksOrderAndWords(unittest.TestCase):
+    def test_the_parts_run_names_then_who_is_who_then_what_was_said_then_connections(self) -> None:
+        self.assertEqual(walks.PARTS, (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS))
+        counts = {DEEDS: 2, KINDS: 1, CONNECTIONS: 2, NAMES: 5, CLAIMS: 1, PEOPLE: 0}
+        self.assertEqual(walks.parts_for(counts), (NAMES, CLAIMS, CONNECTIONS, KINDS, DEEDS))
+
+    def test_nothing_waiting_is_no_walk(self) -> None:
+        self.assertEqual(walks.parts_for({}), ())
+
+    def test_the_progress_line_says_which_part_and_how_far(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        self.assertEqual(walk.progress(4, 11), "Names, part 1 of 3 · 4 of 11")
+        self.assertEqual(walk.next().progress(1, 9), "What was said, part 2 of 3 · 1 of 9")
+        self.assertEqual(walk.progress(0, 0), "Names, part 1 of 3")
+        self.assertEqual(Walk(CID, GUILD, 1, (NAMES,)).progress(2, 5), "Names · 2 of 5")
+
+    def test_the_last_part_knows_it_is_last(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS))
+        self.assertFalse(walk.last)
+        self.assertTrue(walk.next().last)
+
+    def test_the_line_between_two_parts(self) -> None:
+        self.assertEqual(walks.between(NAMES, CLAIMS, 11), "Names done. Next: what was said (11).")
+
+    def test_the_message_button_reads_check_everything_then_carry_on(self) -> None:
+        self.assertEqual(walks.button_label(7, started=False), "✅ Check everything (7)")
+        self.assertEqual(walks.button_label(4, started=True), "✅ Carry on (4 left)")
+
+    def test_the_card_line_is_empty_outside_a_walk(self) -> None:
+        self.assertEqual(ce.progress(None, 1, 2), "")
+        walk = Walk(CID, GUILD, 1, (NAMES,))
+        self.assertEqual(ce.progress(walk, 1, 2), "_Names · 1 of 2_\n")
+
+
+class TheButtonOnTheMessage(unittest.TestCase):
+    def walk_button(self, total: int) -> discord.ui.Item[Any]:
+        return ce.WalkButton(GUILD, CID, total)
+
+    def test_two_or_more_kinds_become_one_check_everything_button(self) -> None:
+        combined = combine(
+            [ask(NAMES, 3), ask(CLAIMS, 8), ask(CONNECTIONS, 29)], walk=self.walk_button
+        )
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])
+        self.assertEqual(labels(view), ["✅ Check everything (40)"])
+        self.assertTrue(text.endswith(WALK_PRESS))
+        self.assertIn("• names line", text)  # (the count lines keep their words)
+
+    def test_a_kinds_offer_beside_another_walked_kind_joins_the_walk(self) -> None:
+        combined = combine([ask(CLAIMS, 8), ask(KINDS, 1)], walk=self.walk_button)
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])
+        self.assertEqual(labels(view), ["✅ Check everything (9)"])
+        self.assertIn("• kinds line", text)
+
+    def test_one_kind_keeps_its_own_button_and_words(self) -> None:
+        combined = combine([ask(CLAIMS, 8)], walk=self.walk_button)
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(text, "claims alone")
+        self.assertEqual(ids(view), ["test:claims"])
+
+    def test_one_walked_kind_among_others_keeps_every_button(self) -> None:
+        combined = combine([ask(CLAIMS, 8), ask(FAMILY, 2)], walk=self.walk_button)
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), ["test:claims", "test:family"])
+        self.assertNotIn("Check everything", text)
+
+    def test_other_kinds_keep_their_own_button_beside_the_walk(self) -> None:
+        combined = combine([ask(NAMES, 1), ask(CLAIMS, 1), ask(FAMILY, 2)], walk=self.walk_button)
+        assert combined is not None
+        _, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}", "test:family"])
+
+    def test_the_uploads_summary_links_go_when_the_walk_is_used(self) -> None:
+        combined = combine(
+            [ask(NAMES, 2), ask(CLAIMS, 1), ask(CONNECTIONS, 4)], walk=self.walk_button
+        )
+        assert combined is not None
+        _, view = combined
+        self.assertEqual(ids(view), [f"dmbot:walk:{GUILD}:{CID}"])  # (one check button)
+
+    def test_a_kind_that_was_not_counted_leaves_the_total_off_the_label(self) -> None:
+        combined = combine([ask(NAMES, 3), ask(CLAIMS, 0)], walk=self.walk_button)
+        assert combined is not None
+        self.assertEqual(labels(combined[1]), ["✅ Check everything"])
+
+    def test_without_a_walk_maker_nothing_changes(self) -> None:
+        combined = combine([ask(NAMES), ask(CLAIMS)])
+        assert combined is not None
+        text, view = combined
+        self.assertEqual(ids(view), ["test:names", "test:claims"])
+        self.assertTrue(text.endswith("Press a button to answer."))
+
+    def test_the_buttons_id_names_the_server_and_the_campaign(self) -> None:
+        button = ce.WalkButton(GUILD, CID, 3)
+        item = cast("discord.ui.Button[Any]", button.item)
+        self.assertEqual(item.custom_id, f"dmbot:walk:{GUILD}:{CID}")
+        match = ce.WalkButton.__discord_ui_compiled_template__.fullmatch(item.custom_id or "")
+        assert match is not None
+        self.assertEqual((match["guild"], match["campaign"]), (str(GUILD), CID))
+
+
+class FromOnePartToTheNext(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.told: list[str] = []
+        self.opened: list[str] = []
+
+        async def tell(interaction: object, text: str, **_: object) -> None:
+            self.told.append(text)
+
+        async def run_part(interaction: object, walk: Walk) -> None:
+            self.opened.append(walk.kind)
+
+        for target, replacement in (
+            ("dmbot.ui.check_everything._tell", tell),
+            ("dmbot.ui.check_everything.run_part", run_part),
+        ):
+            patcher = patch(target, replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def counts(self, found: dict[str, int]) -> Any:
+        return patch("dmbot.ui.check_everything.waiting_counts", AsyncMock(return_value=found))
+
+    async def test_the_next_part_with_something_waiting_opens_after_one_line(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        with self.counts({NAMES: 0, PEOPLE: 0, CLAIMS: 11, CONNECTIONS: 29}):
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, ["Names done. Next: what was said (11)."])
+        self.assertEqual(self.opened, [CLAIMS])
+
+    async def test_a_part_answered_meanwhile_is_skipped(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        with self.counts({NAMES: 0, CLAIMS: 0, CONNECTIONS: 4}):
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, ["Names done. Next: connections (4)."])
+        self.assertEqual(self.opened, [CONNECTIONS])
+
+    async def test_answers_left_for_later_are_not_called_everything_checked(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS)).next()
+        with self.counts({NAMES: 2, CLAIMS: 1}):  # (two names were left for later)
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, [walks.left_for_later(3)])
+        self.assertIn("3 checks left for later", self.told[0])
+        self.assertEqual(self.opened, [])
+
+    async def test_after_the_last_part_everything_is_checked(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS)).next()
+        with self.counts({NAMES: 0, CLAIMS: 0}):
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, [walks.ALL_DONE])
+        self.assertEqual(self.opened, [])
+
+    async def test_nothing_left_in_later_parts_is_everything_checked(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        with self.counts({NAMES: 0, CLAIMS: 0, CONNECTIONS: 0}):
+            await ce.next_part(cast(Any, object()), walk)
+        self.assertEqual(self.told, [walks.ALL_DONE])
+        self.assertEqual(self.opened, [])
+
+
+class StopForNow(unittest.IsolatedAsyncioTestCase):
+    def test_a_card_in_a_walk_gets_a_stop_button_and_one_outside_does_not(self) -> None:
+        from dmbot.ui.dmbot_commands import _Menu
+
+        walk = Walk(CID, GUILD, 1, (NAMES,))
+        inside, outside = _Menu(), _Menu()
+        ce.add_stop(inside, walk, row=2)
+        ce.add_stop(outside, None)
+        self.assertEqual(labels(inside), ["Stop for now"])
+        self.assertEqual(cast("discord.ui.Button[Any]", inside.children[0]).row, 2)
+        self.assertEqual(outside.children, [])
+
+    async def test_stop_says_so_and_changes_the_messages_button_to_carry_on(self) -> None:
+        from dmbot.ui.dmbot_commands import _Menu
+
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS), origin=(7, 8))
+        view = _Menu()
+        replaced: list[str] = []
+
+        async def replace(interaction: object, text: str, new: object) -> None:
+            replaced.append(text)
+
+        relabel = AsyncMock()
+        with (
+            patch("dmbot.ui.dmbot_commands._replace", replace),
+            patch(
+                "dmbot.ui.check_everything.waiting_counts",
+                AsyncMock(return_value={NAMES: 3, CLAIMS: 1}),
+            ),
+            patch("dmbot.ui.check_everything.relabel_origin", relabel),
+        ):
+            await ce.stop_walk(cast(Any, SimpleNamespace()), walk, view)
+        self.assertEqual(replaced, [walks.STOPPED])
+        self.assertTrue(view.is_finished())
+        assert relabel.await_args is not None
+        self.assertEqual(relabel.await_args.args[1:], (walk, 4))
+
+
+class ChangingTheMessagesButton(unittest.IsolatedAsyncioTestCase):
+    def message(self) -> Any:
+        walk_button: discord.ui.Button[Any] = discord.ui.Button(
+            label="✅ Check everything (9)", custom_id=f"dmbot:walk:{GUILD}:{CID}"
+        )
+        other: discord.ui.Button[Any] = discord.ui.Button(label="Other", custom_id="test:other")
+        link: discord.ui.Button[Any] = discord.ui.Button(
+            label="Open", url="https://discord.com/channels/1/2/3"
+        )
+        view = discord.ui.View(timeout=None)
+        for item in (walk_button, other, link):
+            view.add_item(item)
+        edit = AsyncMock()
+        message = SimpleNamespace(edit=edit, components=[])
+        return message, view, edit
+
+    async def run_relabel(self, left: int, origin: tuple[int, int] | None = (7, 8)) -> Any:
+        message, view, edit = self.message()
+        channel = SimpleNamespace(fetch_message=AsyncMock(return_value=message))
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(fetch_channel=AsyncMock(return_value=channel))
+        )
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS), origin=origin)
+        with (
+            patch("dmbot.ui.check_everything.discord.abc.Messageable", SimpleNamespace),
+            patch.object(discord.ui.View, "from_message", return_value=view),
+        ):
+            await ce.relabel_origin(cast(Any, interaction), walk, left)
+        return view, edit
+
+    async def test_only_the_walk_button_changes_and_the_link_stays(self) -> None:
+        view, edit = await self.run_relabel(4)
+        edit.assert_awaited_once()
+        self.assertEqual(labels(view), ["✅ Carry on (4 left)", "Other", "Open"])
+        self.assertEqual(
+            getattr(view.children[2], "url", None), "https://discord.com/channels/1/2/3"
+        )
+
+    async def test_nothing_left_or_no_message_changes_nothing(self) -> None:
+        for left, origin in ((0, (7, 8)), (4, None)):
+            _view, edit = await self.run_relabel(left, origin)
+            edit.assert_not_awaited()
+
+    async def test_a_message_that_cannot_be_fetched_is_logged_by_type_and_swallowed(self) -> None:
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(
+                fetch_channel=AsyncMock(side_effect=RuntimeError("secret words"))
+            )
+        )
+        walk = Walk(CID, GUILD, 1, (NAMES,), origin=(7, 8))
+        with self.assertLogs("dmbot.ui.check_everything", level="WARNING") as logged:
+            await ce.relabel_origin(cast(Any, interaction), walk, 3)
+        self.assertIn("RuntimeError", logged.output[0])
+        self.assertNotIn("secret words", logged.output[0])
+
+
+class TheNamesPartOpensWithAddAll(unittest.TestCase):
+    def test_the_walk_asks_for_add_all_first(self) -> None:
+        import inspect
+
+        source = inspect.getsource(ce.run_part)
+        self.assertIn("start_review(interaction, walk.campaign_id, bulk=True, walk=walk)", source)
+
+    def test_the_add_all_card_in_a_walk_has_its_own_stop_and_no_connections_button(self) -> None:
+        from dmbot.ui.name_background import BulkConfirm
+
+        walk = Walk(CID, GUILD, 1, (NAMES, CONNECTIONS))
+        ids_ = {"place": ["a", "b"], "person": ["c"]}
+        inside = BulkConfirm(CID, ids_, queued=3, walk=walk)
+        outside = BulkConfirm(CID, ids_, queued=3)
+        self.assertIn("Stop for now", labels(inside))
+        self.assertNotIn("📜 Check the connections", labels(inside))  # (the walk gets there itself)
+        self.assertNotIn("Stop for now", labels(outside))
+        self.assertIn("📜 Check the connections", labels(outside))  # (today's card is unchanged)
+        self.assertIn("📝 Check them one by one", labels(inside))
+
+    def test_the_part_line_is_above_the_add_all_words(self) -> None:
+        walk = Walk(CID, GUILD, 1, (NAMES, CLAIMS, CONNECTIONS))
+        self.assertEqual(ce.progress(walk, 0, 0), "_Names, part 1 of 3_\n")
+
+
+class WithoutAWalkNothingChanges(unittest.TestCase):
+    def test_a_flow_started_the_old_way_has_no_walk(self) -> None:
+        from dmbot.ui.claims_review import ClaimsReview
+        from dmbot.ui.names import SuggestionReview
+        from dmbot.ui.people_review import PeopleReview
+
+        self.assertIsNone(SuggestionReview(CID, ["x"]).walk)
+        self.assertIsNone(ClaimsReview(CID, GUILD).walk)
+        self.assertIsNone(PeopleReview(CID, GUILD).walk)
+        self.assertNotIn("Stop for now", labels(SuggestionReview(CID, ["x"])))
+
+    def test_a_flow_started_in_a_walk_shows_stop_for_now(self) -> None:
+        from dmbot.ui.claims_review import ClaimsReview
+
+        walk = Walk(CID, GUILD, 1, (CLAIMS,))
+        review = ClaimsReview(CID, GUILD, walk=walk)
+        review.page = []
+        review._render()
+        self.assertIn("Stop for now", labels(review))
+
+
+_ = partial  # (kept for the stand-in makers above)
+
+
+class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
+    async def test_the_count_reads_the_offers_and_a_broken_store_counts_zero(self) -> None:
+        memory = SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1, 2, 3]))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=memory), GUILD, CID), 3)
+        broken = SimpleNamespace(kind_offer_list=AsyncMock(side_effect=RuntimeError("down")))
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=broken), GUILD, CID), 0)
+        self.assertEqual(await ce._count_kinds(SimpleNamespace(memory=None), GUILD, CID), 0)
+
+    async def test_the_walks_counts_include_the_kinds(self) -> None:
+        found = SimpleNamespace(names=1, people=0, claims=2, connections=3)
+        bot = SimpleNamespace(
+            count_waiting=AsyncMock(return_value=found),
+            memory=SimpleNamespace(kind_offer_list=AsyncMock(return_value=[1])),
+            settings=SimpleNamespace(story_deeds_on=True),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object())),
+            plan_allows=AsyncMock(return_value=True),
+        )
+        with (
+            patch("dmbot.ui.check_everything._bot", return_value=bot),
+            patch("dmbot.ui.deed_card.count_deeds", AsyncMock(return_value=4)),
+        ):
+            counts = await ce.waiting_counts(cast(Any, object()), GUILD, CID)
+        self.assertEqual(
+            counts, {NAMES: 1, PEOPLE: 0, CLAIMS: 2, CONNECTIONS: 3, KINDS: 1, DEEDS: 4}
+        )
+
+    async def test_the_kinds_part_opens_the_kinds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (KINDS,))
+        with patch("dmbot.ui.kind_offer.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+
+    def deeds_bot(self, *, on: bool = True, plan: bool = True, campaign: bool = True) -> Any:
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_deeds_on=on),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object() if campaign else None)),
+            plan_allows=AsyncMock(return_value=plan),
+        )
+
+    async def test_a_deeds_count_that_cannot_be_read_is_zero(self) -> None:
+        with patch("dmbot.ui.deed_card.count_deeds", AsyncMock(side_effect=RuntimeError("down"))):
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 0)
+
+    async def test_deeds_are_counted_only_where_they_are_asked(self) -> None:
+        counted = AsyncMock(return_value=3)
+        with patch("dmbot.ui.deed_card.count_deeds", counted):
+            self.assertEqual(await ce._count_deeds(self.deeds_bot(), GUILD, CID), 3)
+            for bot in (
+                self.deeds_bot(on=False),
+                self.deeds_bot(plan=False),
+                self.deeds_bot(campaign=False),
+            ):
+                self.assertEqual(await ce._count_deeds(bot, GUILD, CID), 0)
+        counted.assert_awaited_once()  # (the three refusals never counted)
+
+    async def test_the_deeds_part_opens_the_deeds_cards(self) -> None:
+        walk = Walk(CID, GUILD, 1, (DEEDS,))
+        with patch("dmbot.ui.deed_card.start_walk_part", AsyncMock()) as start:
+            await ce.run_part(cast(Any, object()), walk)
+        start.assert_awaited_once()
+
+    def test_deeds_beside_another_walked_kind_join_the_walk(self) -> None:
+        combined = combine(
+            [ask(DEEDS, 2), ask(CLAIMS, 8)], walk=lambda total: ce.WalkButton(GUILD, CID, total)
+        )
+        assert combined is not None
+        self.assertEqual(ids(combined[1]), [f"dmbot:walk:{GUILD}:{CID}"])
