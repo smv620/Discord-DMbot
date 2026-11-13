@@ -558,6 +558,10 @@ class Relation:
     # "(assumed)" on the DM's card, held back from the players, until the DM says ✅ That's right
     # or a stated parent replaces it.
     assumed: bool = False
+    # A route's state, on a `route_to` only (#4173 slice 6d): "" (known: the way exists),
+    # "travelled" (a journey from the first place to the second, in the session `from_session_at`
+    # gives) or "planned" (the table means to go that way: never where anyone is). `route_words`.
+    route_state: str = ""
 
 
 @dataclass(frozen=True, slots=True)
