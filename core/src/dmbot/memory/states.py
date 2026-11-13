@@ -119,10 +119,12 @@ async def place_nesting(w: Scope, onto: Ontology, *, players: bool = False) -> N
         w.ids,
     )
     levels = {str(r["id"]): str(r["place_level"]) for r in await cur.fetchall()}
-    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it
+    # and the campaign's setting (#4173 slice 2): a smaller place with no stated parent is in it,
+    # but only once the DM has kept it; DMbot's guess from the adventure places nothing silently
+    # (Supervisor's condition 3 on slice 2b)
     cur = await w.conn.execute(
         "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND setting"
-        " AND status = 'confirmed'",
+        " AND setting_from = 'dm' AND status = 'confirmed'",
         w.ids,
     )
     row = await cur.fetchone()
@@ -276,6 +278,7 @@ async def settle_kind(
             undo["form_from"] = None
         if r.get("setting") and not onto.is_a(type_key, "place"):
             undo["setting"] = False  # only a place is the campaign's setting (#4173)
+            undo["setting_from"] = None
         if undo:
             clears[r["id"]] = undo
     if clears:

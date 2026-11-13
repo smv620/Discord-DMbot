@@ -114,6 +114,8 @@ STORE = {
     "_not_assumed": DM_ONLY + ": refuses learning an assumed connection (#4173 slice 3)",
     "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
     "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
+    "decline_setting": DM_ONLY + ": a made place for a declined setting guess goes only if nothing "
+    "points at it (#4299)",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
     "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
     "_replace_relation_in": DM_ONLY
