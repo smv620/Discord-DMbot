@@ -42,10 +42,10 @@ class TheWords(unittest.TestCase):
         long = screen.option(place_note(name="N" * 200))
         self.assertLessEqual(len(long.label), 100)
 
-    def test_not_right_says_what_happens_next_for_each_kind(self) -> None:
+    def test_not_right_says_it_wont_come_back_for_each_kind(self) -> None:
+        # (#4362: a language the DM says no to is remembered, as a place is)
         self.assertIn(screen.NEVER_AGAIN, screen.done_text(place_note(), kept=False))
-        self.assertIn(screen.MAY_COME_BACK, screen.done_text(language_note(), kept=False))
-        self.assertNotIn(screen.NEVER_AGAIN, screen.done_text(language_note(), kept=False))
+        self.assertIn(screen.NEVER_AGAIN, screen.done_text(language_note(), kept=False))
 
     def test_the_list_fits_and_says_how_many_are_shown(self) -> None:
         many = [place_note(id=f"place:{n}", name=f"Place {n} " + "x" * 60) for n in range(60)]
@@ -206,7 +206,7 @@ class TheScreen(NamesTest):
         it = self.it()
         await screen.OneNote(self.campaign.id, lang)._not_right(it)
         text, done = self.last(it)
-        self.assertIn(screen.MAY_COME_BACK, text)
+        self.assertIn(screen.NEVER_AGAIN, text)
         self.assertEqual(await self.memory.story_languages(GUILD, self.campaign.id, brewner.id), [])
         it = self.it()
         await done._undo(it)

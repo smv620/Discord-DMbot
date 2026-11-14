@@ -37,3 +37,12 @@ class TheDoorsWordsMatchTheStores(unittest.TestCase):
 
         self.assertEqual(set(_module().ACTIONS), set(MAP_ACTIONS))
         self.assertTrue(set(MAP_ACTIONS) <= set(ACTIONS))
+
+
+class TheWorldNotesActionsMatch(unittest.TestCase):
+    def test_the_doors_world_actions_are_the_bots(self) -> None:
+        # (#4285: 0481 lets the website queue them; the bot's applier must take each one)
+        from dmbot.memory.web_actions import WORLD_ACTIONS
+
+        door = importlib.import_module("dmbot.migrations.0481_world_notes_door")
+        self.assertEqual(set(door.ACTIONS), set(WORLD_ACTIONS))
