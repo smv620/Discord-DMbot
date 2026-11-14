@@ -5,6 +5,7 @@ are also in a backup, so a backup taken afterwards holds "0" and must restore. N
 
 from __future__ import annotations
 
+import unittest
 from importlib import import_module
 from typing import Any
 
@@ -133,3 +134,12 @@ class ForgetDecisionsTwo(DatabaseTest):
         self.assertEqual([r["answered_by"] for r in rows], ["0"])
         async with self.db.guild(self.guild[ALICE]) as conn:
             section.check(rows)  # (the checker accepts "someone who has left")
+
+
+class ResumeAfterTheStarterLeft(unittest.TestCase):
+    def test_a_session_started_by_a_deleted_account_runs_for_another_dm_or_nobody(self) -> None:
+        from dmbot.bot import dm_for_resume
+
+        self.assertEqual(dm_for_resume(7, frozenset({7, 9})), 7)
+        self.assertEqual(dm_for_resume(0, frozenset({9, 8})), 8)
+        self.assertEqual(dm_for_resume(0, frozenset()), 0)
