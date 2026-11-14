@@ -304,6 +304,21 @@ class Row:
 # A place's parent DMbot assumed from where the story was (#4173 slice 3): the DM's card only
 # (players never get the row), with ✅ That's right on the place's own card.
 ASSUMED_MARK = " (assumed)"
+LENGTH_READ_MARK = " (DMbot read this)"  # (the same words as a place's land or climate, #4255)
+_NO_LENGTH: dict[str, Any] = {
+    "length_words": None, "length_amount": None, "length_unit": None, "length_approx": False,
+    "length_from": None,
+}  # fmt: skip
+
+
+def length_after(r: Relation) -> str:
+    """A route's stated length after its line (#4255): " · two days by cart", marked when it is
+    DMbot's read (only the DM's card ever has one: `_rows` takes it off a player's)."""
+    if r.length_words is None:
+        return ""
+    return f" · {_md(r.length_words)}" + (LENGTH_READ_MARK if r.length_from == "read" else "")
+
+
 RIGHT_BUTTON = "✅ That's right"
 RIGHT_NOTE = "📍 Noted: **{place}** is in **{parent}**."
 ONLY_DM_RIGHT = "Only the DM can say where a place is."
@@ -392,6 +407,10 @@ def _rows(
             if ahead or r.predicate != "located_in"
             else back_after(r.predicate, r.detail, r.directional, subject_kind)
         )
+        if not secrets and r.length_from != "dm":
+            # (a route's length DMbot only read is the DM's until kept: a player never sees it,
+            # #4255)
+            r = dataclasses.replace(r, **_NO_LENGTH)
         found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
@@ -411,6 +430,7 @@ def _groups(
             f"**{_md(row.other)}**"
             + (f" {row.after}" if row.after else "")
             + (ASSUMED_MARK if row.relation.assumed else "")
+            + length_after(row.relation)
             + (" 🤫" if row.secret else "")
         )
     return groups
@@ -423,6 +443,7 @@ def connection_line(row: Row) -> str:
         f"{row.words} **{_md(row.other)}**"
         + (f" {row.after}" if row.after else "")
         + (ASSUMED_MARK if row.relation.assumed else "")
+        + length_after(row.relation)
         + (" 🤫" if row.secret else "")
     )
 

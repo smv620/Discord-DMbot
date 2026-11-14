@@ -175,3 +175,22 @@ class RouteLength(MemoryTest):
         )
         for batches in done.ended:  # (the keep's own Undo takes the length back too)
             self.assertTrue(all(b is not None for b in batches))
+
+    async def card_lines(self, *, dm: bool) -> str:
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.ui import name_card
+
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        rows = name_card._rows(lookup, self.targos, [await self.row()], dm)
+        return " | ".join(name_card.connection_line(row) for row in rows)
+
+    async def test_a_player_never_sees_an_unkept_read_and_the_dm_sees_it_marked(self) -> None:
+        await self.set("a day by cart", source="background")
+        self.assertIn("· a day by cart (DMbot read this)", await self.card_lines(dm=True))
+        self.assertNotIn("a day by cart", await self.card_lines(dm=False))
+        await self.memory.keep_route_length(
+            GUILD_A, self.c, self.road.id, on="connection", source=DM_SOURCE
+        )
+        player = await self.card_lines(dm=False)
+        self.assertIn("· a day by cart", player)
+        self.assertNotIn("DMbot read this", player)
