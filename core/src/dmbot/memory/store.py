@@ -6311,9 +6311,11 @@ class MemoryStore:
 
         Both ways is the row's own `both_ways` mark, stored only where it differs from its kind's
         default (`link_words.BOTH_WAYS`), so a kind's default can still change for every row that
-        never had one. Turning it round is the words change's own path (Supervisor's ruling): the
-        connection is written anew the other way, through every check a new connection gets (the
-        kinds of names each end may be, the travel and "led to" rules, flags), keeping who sees it
+        never had one; a campaign's own kind that reads both ways stores the DM's choice either way
+        (#4354: its default is in its own table, which the card's words never read). Turning it
+        round is the words change's own path (Supervisor's ruling): the connection is written
+        anew the other way, through every check a new connection gets (the kinds of names each
+        end may be, the travel and "led to" rules, flags), keeping who sees it
         and what is believed of it, and the old one is ended as a correction (rejected, never a
         "used to" line). A twin that already reads that way takes over, as for new words. A
         family role turns round with its names: "Mira is the niece of Aldric" turned is "Aldric
@@ -6331,11 +6333,14 @@ class MemoryStore:
             role = kin.role_of(detail) if predicate == link_words.KIN else None
             one_way_role = role is not None and kin.directional(role)
             directional = bool(current["directional"])
-            # A campaign's own kind (#4354) has its default in its own table (`is_symmetric`),
-            # which the card's `link_words` never reads: its row always carries the DM's choice,
-            # so the card, the search text and the website read the same way whatever the kind.
-            term = (await _load_ontology(w)).predicates.get(predicate)
-            own_kind = term is not None and not term.core
+            # A campaign's own kind that reads both ways (#4354) has that default in its own table
+            # (`is_symmetric`), which the card's `link_words` never reads: its row always carries
+            # the DM's choice, so the card, the search text and the website read the same way. An
+            # own kind that reads one way already reads one way everywhere with no mark.
+            own_kind = False
+            if predicate not in link_words.CORE_KEYS:
+                term = (await _load_ontology(w)).predicates.get(predicate)
+                own_kind = term is not None and not term.core and term.symmetric
             if first is None:
                 if one_way_role and directional:
                     raise MemoryRuleError(ROLE_ONE_WAY)
