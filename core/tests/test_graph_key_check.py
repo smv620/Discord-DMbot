@@ -10,7 +10,7 @@ import unittest
 from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.devtools import graph_key_check as gkc
 
@@ -742,3 +742,75 @@ class Languages(unittest.TestCase):
                 [("Cerric Vanya'elen", "Draconic"), ("Cerric Vanya'elen", "Elvish")],
             )
             self.assertFalse([p for p in key["pairs"] if "language" in p["relation"]])
+
+
+class Roads(unittest.TestCase):
+    """A road between two places, read either way round, and how far it is: a property of the road
+    scored like languages (#4255; Supervisor's ruling): found, missed and extra."""
+
+    KEY: ClassVar[dict[str, Any]] = {
+        "nodes": [
+            {"name": "Kelvenmoor", "kind": "place", "aliases": [], "note": ""},
+            {"name": "Brindleford", "kind": "place", "aliases": [], "note": ""},
+            {"name": "Ashwick", "kind": "place", "aliases": [], "note": ""},
+        ],
+        "pairs": [
+            {"id": "r1", "a": "Kelvenmoor", "relation": "route", "b": "Brindleford",
+             "tier": "stated", "must_find": False, "line": 1},
+        ],
+        "route_lengths": [
+            {"from": "Kelvenmoor", "to": "Brindleford", "words": "1 hour", "line": 1},
+            {"from": "Kelvenmoor", "to": "Ashwick", "words": "a few days", "line": 2},
+        ],
+    }  # fmt: skip
+    PLACES: ClassVar[list[tuple[str, str, str]]] = [
+        ("k", "Kelvenmoor", "place"),
+        ("b", "Brindleford", "place"),
+        ("a", "Ashwick", "place"),
+    ]
+
+    def road(self, rid: str, s: str, o: str, words: str = "", **length: Any) -> dict[str, Any]:
+        return {**rel(rid, s, "route_to", o), "length_words": words or None, **length}
+
+    def test_a_road_is_found_either_way_round(self) -> None:
+        report = gkc.check(backup(self.PLACES, [self.road("x", "b", "k")]), self.KEY)
+        self.assertEqual({t.id: t.status for t in report.ties}, {"r1": gkc.FOUND})
+
+    def test_found_by_amount_and_unit_missed_and_extra(self) -> None:
+        rows = [
+            # "an hour" is "1 hour": the same amount and unit, the road read the other way round
+            self.road("x", "b", "k", "an hour", length_amount=1.0, length_unit="hours"),
+            self.road("y", "a", "b", "two days", length_amount=2.0, length_unit="days"),  # extra
+        ]
+        report = gkc.check(backup(self.PLACES, rows), self.KEY)
+        self.assertEqual(dict(report.route_lengths), {"found": 1, "missed": 1, "extra": 1})
+        self.assertIn("Road lengths: found 1, missed 1, extra 1", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["route_lengths"]["missed"], 1)
+
+    def test_words_with_no_amount_match_by_their_words(self) -> None:
+        rows = [self.road("x", "k", "a", "A few days")]
+        report = gkc.check(backup(self.PLACES, rows), self.KEY)
+        self.assertEqual(report.route_lengths["found"], 1)
+
+    def test_a_lore_only_run_never_scores_the_sessions_lengths(self) -> None:
+        report = gkc.check(backup([], []), load("master_key.json"), docs="lore")
+        self.assertEqual(report.route_lengths, Counter())
+        both = gkc.check(backup([], []), load("master_key.json"), docs="both")
+        self.assertEqual(both.route_lengths["missed"], 2)
+
+    def test_the_sample_keys_roads_and_lengths(self) -> None:
+        for name in ("session_key.json", "master_key.json"):
+            key = load(name)
+            roads = sorted((p["a"], p["b"]) for p in key["pairs"] if p["relation"] == "route")
+            self.assertEqual(
+                roads,
+                [("Easthaven", "Bryn Shander"), ("Easthaven", "Caer-Konig"),
+                 ("Easthaven", "Good Mead"), ("Targos", "Bryn Shander"),
+                 ("Targos", "Easthaven")],
+            )  # fmt: skip
+            self.assertEqual(
+                [(x["from"], x["to"], x["words"]) for x in key["route_lengths"]],
+                [("Targos", "Bryn Shander", "1 hour"), ("Targos", "Easthaven", "five hours")],
+            )
+            # (a distance to a mountain and one trip through a branch stay travel facts)
+            self.assertEqual(sorted(m["line"] for m in key["map_context"]), [6, 171])
