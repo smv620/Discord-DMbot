@@ -878,6 +878,12 @@ class TheRoutes(Base):
         )
         await self.store_t.end_session(THURSDAY.id, sid, START + 600)
         self.cref = f"{THURSDAY.id}.{self.one.id}"
+        # (the routes are read as a plain member, Carol: open the campaign to everyone, #3891)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
         app = create_app(
             settings(enforce_plans=False),
             self.web,
