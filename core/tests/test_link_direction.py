@@ -340,3 +340,52 @@ class TheDirectionsUndo(Editing):
         stored = await self.memory.relation(self.g, self.one.id, rid)
         assert stored is not None
         self.assertEqual((stored.status, stored.both_ways), ("confirmed", None))
+
+
+class ACampaignsOwnKind(TheStore):
+    """A campaign's own kind (#4354): its default lives in its table (`is_symmetric`), which the
+    card's words never read, so the row carries the DM's choice and every reader agrees."""
+
+    async def own(self, symmetric: bool) -> str:
+        from dmbot.memory.ontology import PredicateTerm
+
+        key = "oath_kin_of" if symmetric else "patron_of"
+        term = PredicateTerm(
+            key, "is oath-bound to", "Two sworn to each other.", ("character",), ("character",),
+            symmetric=symmetric, core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD_A, self.c, term, examples=["Cerric is oath-bound to Wit."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        return key
+
+    def text_of_other_end(self, r: Relation, symmetric: bool) -> str | None:
+        from dmbot.memory.entity_text import _connection
+
+        return _connection(
+            {"predicate": r.predicate, "label": "is oath-bound to", "other": "Cerric",
+             "outgoing": False, "symmetric": symmetric, "both_ways": r.both_ways}
+        )  # fmt: skip
+
+    async def test_a_two_way_own_kind_made_one_way_reads_one_way_everywhere(self) -> None:
+        key = await self.own(symmetric=True)
+        r = await self.tie(key, self.cerric, self.wit)
+        one = (await self.turn(r.id, r.subject_id)).value
+        self.assertIs(one.both_ways, False)
+        self.assertFalse(reads_both_ways(one.predicate, one.detail, False, one.both_ways))  # card
+        self.assertIsNone(self.text_of_other_end(one, symmetric=True))  # search text
+        back = (await self.turn(r.id, None)).value
+        self.assertIs(back.both_ways, True)
+        self.assertTrue(reads_both_ways(back.predicate, back.detail, False, back.both_ways))
+        self.assertIsNotNone(self.text_of_other_end(back, symmetric=True))
+
+    async def test_a_one_way_own_kind_made_two_way_and_back(self) -> None:
+        key = await self.own(symmetric=False)
+        r = await self.tie(key, self.cerric, self.wit)
+        both = (await self.turn(r.id, None)).value
+        self.assertIs(both.both_ways, True)
+        one = (await self.turn(r.id, r.subject_id)).value
+        self.assertIs(one.both_ways, False)
+        self.assertFalse(reads_both_ways(one.predicate, one.detail, False, one.both_ways))
+        self.assertIsNone(self.text_of_other_end(one, symmetric=False))
