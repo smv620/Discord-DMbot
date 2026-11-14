@@ -37,7 +37,8 @@ class Answering(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.pictures = PictureStore(self.db, clock=lambda: 1000.0)
-        self.maps = MapStore(self.db, MemoryStore(self.db), clock=lambda: 2000.0)
+        self.memory = MemoryStore(self.db)
+        self.maps = MapStore(self.db, self.memory, clock=lambda: 2000.0)
         self.campaign = await self.campaigns.create(GUILD, "One", DM)
         self.members = {PLAYER: "Mia", DM: "Ada", DM2: "Bo"}
         guild = SimpleNamespace(
@@ -47,6 +48,7 @@ class Answering(DatabaseTest):
             picture_store=self.pictures,
             picture_keeper=PictureKeeper(self.pictures, Bucket(), 5),
             map_store=self.maps,
+            memory=self.memory,
             campaigns=self.campaigns,
             settings=SimpleNamespace(site_url="https://example.org", picture_storage_mb=5),
             get_guild=lambda gid: guild,
@@ -130,10 +132,57 @@ class Answering(DatabaseTest):
         self.assertTrue(self.shown(it).endswith(words.NOTHING_WAITING))
         self.assertTrue(self.shown(it).startswith(words.done_no()))
 
-    async def test_remove_deletes_the_map_and_its_picture(self) -> None:
+    async def test_remove_takes_only_the_map_and_the_picture_stays(self) -> None:
         only = await self.waiting_map()
-        await self.act(DM, "r", only)
+        removed = await self.maps.get(GUILD, self.campaign.id, only, Viewer(dm=True))
+        assert removed is not None
+        it = await self.act(DM, "r", only)
         self.assertIsNone(await self.maps.get(GUILD, self.campaign.id, only, Viewer(dm=True)))
+        kept = await self.pictures.by_id(GUILD, removed.picture_id)
+        assert kept is not None
+        self.assertFalse(kept.gone)  # (no confirmation needed: it is one undoable change)
+        self.assertTrue(self.shown(it).startswith(words.done_removed()))
+
+    async def undo(self, user: int, batch: int) -> Any:
+        it = self.press(user)
+        with patch("dmbot.ui.map_answer._dm_campaign", new=self.dm_only):
+            await map_answer.UndoButton(self.campaign.id, batch).callback(it)
+        return it
+
+    @staticmethod
+    def batch_of(it: Any) -> int:
+        view = it.edit_original_response.await_args.kwargs["view"]
+        undo = [c.item for c in view.children if c.item.custom_id.startswith("dmbot:mapsq:u:")]
+        return int(undo[0].custom_id.rsplit(":", 1)[1])
+
+    async def test_a_yes_a_no_and_a_remove_can_each_be_undone(self) -> None:
+        a, b, c = await self.waiting_map(), await self.waiting_map(), await self.waiting_map()
+        yes = await self.act(DM, "y", a)
+        await self.undo(DM, self.batch_of(yes))
+        first = await self.maps.get(GUILD, self.campaign.id, a, Viewer(dm=True))
+        assert first is not None
+        self.assertTrue(first.waiting)  # (back to waiting for a yes)
+        no = await self.act(DM, "n", b)
+        back = await self.undo(DM, self.batch_of(no))
+        self.assertTrue(self.shown(back).startswith(words.UNDONE))
+        second = await self.maps.get(GUILD, self.campaign.id, b, Viewer(dm=True))
+        assert second is not None
+        self.assertTrue(second.waiting)
+        gone = await self.act(DM, "r", c)
+        await self.undo(DM, self.batch_of(gone))
+        self.assertIsNotNone(await self.maps.get(GUILD, self.campaign.id, c, Viewer(dm=True)))
+
+    async def test_only_a_dm_may_undo_and_a_second_undo_says_so(self) -> None:
+        only = await self.waiting_map()
+        yes = await self.act(DM, "y", only)
+        batch = self.batch_of(yes)
+        await self.undo(STRANGER, batch)
+        still = await self.maps.get(GUILD, self.campaign.id, only, Viewer(dm=True))
+        assert still is not None
+        self.assertTrue(may_use_map(still))  # (a stranger's press did nothing)
+        await self.undo(DM, batch)
+        again = await self.undo(DM, batch)
+        self.assertEqual(self.shown(again), words.UNDO_FAILED)
 
     async def test_only_a_dm_may_press(self) -> None:
         only = await self.waiting_map()

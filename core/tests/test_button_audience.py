@@ -237,6 +237,7 @@ AUDIENCE: dict[str, str] = {
             # A DM of the campaign, read from the database on every press (`_dm_campaign`) (#4344).
             "ui.map_answer.ActButton",
             "ui.map_answer.OpenButton",
+            "ui.map_answer.UndoButton",
             "ui.map_question.NoButton",
             "ui.map_question.YesButton",
             "ui.line_fix.FixLineButton",

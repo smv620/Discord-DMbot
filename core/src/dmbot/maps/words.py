@@ -79,7 +79,8 @@ def dm_body(player: str) -> str:
     """The question to a DM: what each button does, and that the claim is the player's."""
     return (
         "Use this map? **Yes** lets DMbot read it. **No** keeps the picture but DMbot never reads "
-        f"it. **Remove** deletes it.\n{player} says they may use it."
+        "it. **Remove** takes it off your maps; the picture stays.\n"
+        f"{player} says they may use it."
     )
 
 
@@ -103,4 +104,9 @@ def done_no() -> str:
 
 
 def done_removed() -> str:
-    return "Removed."
+    return "Removed from your maps. The picture is still kept."
+
+
+UNDO_LABEL = "Undo"
+UNDONE = "↩️ Undone."
+UNDO_FAILED = "Couldn't undo: that map was changed again since."

@@ -18,6 +18,7 @@ import discord
 
 from dmbot.maps import words
 from dmbot.maps.store import GONE, AlreadyAnswered, MapError, Viewer
+from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 from dmbot.ui.family_ties import _dm_campaign
 
@@ -25,6 +26,7 @@ log = logging.getLogger(__name__)
 
 _OPEN = r"dmbot:mapsq:open:(?P<campaign>[0-9a-f]{32})"
 _ACT = r"dmbot:mapsq:(?P<act>[ynr]):(?P<campaign>[0-9a-f]{32}):(?P<id>[0-9a-f]{32})"
+_UNDO = r"dmbot:mapsq:u:(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
 LABELS = {"y": words.USE_YES_LABEL, "n": words.USE_NO_LABEL, "r": words.REMOVE_LABEL}
 STYLES = {
     "y": discord.ButtonStyle.success,
@@ -77,6 +79,48 @@ class ActButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
         await _answer(interaction, self.act, self.campaign_id, self.map_id)
 
 
+class UndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_UNDO):
+    """↩️ Undo after a DM's yes, no or remove: one change in the change log (rule 8). Works after a
+    restart (the campaign and the batch are in the button's ID); a DM only, read on every press."""
+
+    def __init__(self, campaign_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=words.UNDO_LABEL,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:mapsq:u:{campaign_id}:{batch}",
+            )
+        )
+        self.campaign_id, self.batch = campaign_id, batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> UndoButton:
+        return cls(match["campaign"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _answer_first(interaction, in_place=True)
+        campaign = await _dm_campaign(interaction, self.campaign_id)
+        memory = _bot(interaction).memory
+        if campaign is None or memory is None:
+            return
+        try:
+            await memory.undo(campaign.guild_id, campaign.id, self.batch)
+        except TooLateToUndo as exc:  # (older than Undo works for: its own words)
+            await _edit(interaction, str(exc))
+            return
+        except MemoryRuleError:
+            await _edit(interaction, words.UNDO_FAILED)
+            return
+        except Exception as exc:
+            log.warning("A map undo failed (%s)", type(exc).__name__)
+            await _edit(interaction, words.FAILED)
+            return
+        log.info("A DM undid a map answer")
+        await _show_next(interaction, campaign, edit=True, note=words.UNDONE)
+
+
 class OpenButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_OPEN):
     """🗺️ Maps, from the Questions message; works after a restart."""
 
@@ -106,7 +150,12 @@ class OpenButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
 
 
 async def _show_next(
-    interaction: discord.Interaction, campaign: Any, *, edit: bool, note: str = ""
+    interaction: discord.Interaction,
+    campaign: Any,
+    *,
+    edit: bool,
+    note: str = "",
+    undo: int | None = None,
 ) -> None:
     """The first map still waiting, as a card; or "nothing waiting". `edit`: replace the card the
     DM pressed on (after an answer), else send a new private message."""
@@ -116,15 +165,20 @@ async def _show_next(
     lead = f"{note}\n\n" if note else ""
     if not waiting:
         if edit:
+            closing = discord.ui.View(timeout=None)
+            if undo is not None:
+                closing.add_item(UndoButton(campaign.id, undo))
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
-                    content=f"{lead}{words.NOTHING_WAITING}", view=None
+                    content=f"{lead}{words.NOTHING_WAITING}", view=closing if undo else None
                 )
         else:
             await _tell(interaction, words.NOTHING_WAITING)
         return
     text, view = await _card(bot, campaign, waiting[0])
     text = lead + text
+    if undo is not None:  # the answer just given can be taken back from this card
+        view.add_item(UndoButton(campaign.id, undo))
     if edit:
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(content=text, view=view)
@@ -137,9 +191,9 @@ async def _answer(
 ) -> None:
     bot = _bot(interaction)
     await _answer_first(interaction, in_place=True)
-    maps, keeper = bot.map_store, bot.picture_keeper
+    maps = bot.map_store
     campaign = await _dm_campaign(interaction, campaign_id)  # (a DM, read now, not from the button)
-    if campaign is None or maps is None or keeper is None:
+    if campaign is None or maps is None:
         return
     try:
         found = await maps.get(campaign.guild_id, campaign.id, map_id, Viewer(dm=True))
@@ -152,13 +206,13 @@ async def _answer(
             await _show_next(interaction, campaign, edit=False)
             return
         if act == "r":
-            picture = await bot.picture_store.get(campaign.guild_id, campaign.id, found.picture_id)
-            if picture is not None:
-                await keeper.discard(campaign.guild_id, campaign.id, picture)
+            # Only the map goes (the picture stays a picture): one undoable change, so no
+            # confirmation is needed before a player's picture is deleted (rule 8; #4373).
+            written = await maps.remove_map(campaign.guild_id, campaign.id, map_id)
             log.info("A map was removed by a DM")
             note = words.done_removed()
         else:
-            await maps.answer_use(
+            written = await maps.answer_use(
                 campaign.guild_id, campaign.id, map_id, dm_id=interaction.user.id,
                 yes=act == "y", first_only=True,
             )  # fmt: skip
@@ -176,7 +230,7 @@ async def _answer(
         log.warning("A map answer failed (%s)", type(exc).__name__)
         await _edit(interaction, words.FAILED)
         return
-    await _show_next(interaction, campaign, edit=True, note=note)
+    await _show_next(interaction, campaign, edit=True, note=note, undo=written.batch)
 
 
 async def _edit(interaction: discord.Interaction, text: str) -> None:
