@@ -9,8 +9,9 @@ never on the DM screen or where players are. Names and the lists' own words only
 
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import discord
@@ -19,9 +20,19 @@ from dmbot.memory import map_facts as mf
 from dmbot.memory import world_notes as wn
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.ui import logic
-from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
+from dmbot.ui.dmbot_commands import (
+    Handler,
+    _answer_first,
+    _Button,
+    _Menu,
+    _replace,
+    _Select,
+    _tell,
+)
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.place_world import RULED, climate_words, land_words
+
+log = logging.getLogger(__name__)
 
 INTRO = (
     "🌍 **World notes**: DMbot's guesses about your world. Only you see these. Keep the ones that "
@@ -75,6 +86,8 @@ def full_line(note: wn.Note) -> str:
     """The note in the message text, where it wraps: "**Icewind Dale** · land: arctic"."""
     if note.kind == wn.LANGUAGE:
         return f"**{_md(note.name)}** speaks {_md(note.value)}"
+    if note.layer == mf.CONTROL:  # ("ruled by Ten-Towns" says what it is: no "ruler:" before it)
+        return f"**{_md(note.name)}** · {_md(guess(note))}"
     return f"**{_md(note.name)}** · {LAYER[note.layer].lower()}: {_md(guess(note))}"
 
 
@@ -88,37 +101,44 @@ def option(note: wn.Note) -> discord.SelectOption:
     )
 
 
-def list_text(notes: Sequence[wn.Note]) -> str:
-    """The intro, then each group's lines cut to fit, and how many are shown when not all."""
-    if not notes:
-        return EMPTY
-    lines = [INTRO]
-    used = len(INTRO)
-    shown = 0
+def shown_notes(notes: Sequence[wn.Note]) -> list[wn.Note]:
+    """The lines the screen shows: in the groups' order, as many as fit the message and the menu
+    (25). Text, menu and ✅ Keep all all use these, so Keep all never keeps a line the DM didn't
+    see (#4285)."""
+    out: list[wn.Note] = []
+    used = len(INTRO) + len(MORE) + 20  # (room for the "Showing … of …" line)
     for kind in wn.KINDS:
         group = [n for n in notes if n.kind == kind]
         if not group:
             continue
-        head = f"\n**{GROUP[kind]}**"
-        if used + len(head) > LIST_MAX:
-            break
-        lines.append(head)
-        used += len(head)
+        used += len(GROUP[kind]) + 6
         for n in group:
-            line = f"• {full_line(n)}"
-            if used + len(line) + 1 > LIST_MAX:
-                break
-            lines.append(line)
-            used += len(line) + 1
-            shown += 1
-    if shown < len(notes) or len(notes) > MENU_MAX:
-        lines.append(MORE.format(shown=min(shown, MENU_MAX), total=len(notes)))
+            line = len(full_line(n)) + 3
+            if used + line > LIST_MAX or len(out) >= MENU_MAX:
+                return out  # (the whole list stops here, so no later group skips ahead)
+            out.append(n)
+            used += line
+    return out
+
+
+def list_text(notes: Sequence[wn.Note]) -> str:
+    """The intro, then the lines shown by group, and how many are shown when not all."""
+    if not notes:
+        return EMPTY
+    shown = shown_notes(notes)
+    lines = [INTRO]
+    for kind in wn.KINDS:
+        group = [n for n in shown if n.kind == kind]
+        if group:
+            lines.append(f"\n**{GROUP[kind]}**")
+            lines.extend(f"• {full_line(n)}" for n in group)
+    if len(shown) < len(notes):
+        lines.append(MORE.format(shown=len(shown), total=len(notes)))
     return "\n".join(lines)
 
 
 def note_text(note: wn.Note) -> str:
-    where = "from a session" if note.session_at is not None else "from your lore"
-    return f"{full_line(note)}\nDMbot guessed this {where}."
+    return f"{full_line(note)}\nDMbot guessed this {source(note)}."
 
 
 def done_text(note: wn.Note, kept: bool) -> str:
@@ -144,18 +164,17 @@ async def show_world_notes(
     text = list_text(notes)
     if note:
         text = f"{note}\n\n{text}"
-    await _replace(interaction, text, NotesMenu(campaign_id, notes) if notes else None)
+    shown = shown_notes(notes)
+    await _replace(interaction, text, NotesMenu(campaign_id, shown) if shown else None)
 
 
 class NotesMenu(_Menu):
-    """The list's controls: pick one note, or keep a whole group the DM was shown."""
+    """The list's controls: pick one note, or keep a whole group, of the lines shown only."""
 
-    def __init__(self, campaign_id: str, notes: Sequence[wn.Note]) -> None:
+    def __init__(self, campaign_id: str, shown: Sequence[wn.Note]) -> None:
         super().__init__()
-        self.campaign_id, self.notes = campaign_id, list(notes)
-        self.pick = _Select(
-            self._picked, placeholder=PICK, options=[option(n) for n in self.notes[:MENU_MAX]]
-        )
+        self.campaign_id, self.notes = campaign_id, list(shown)[:MENU_MAX]
+        self.pick = _Select(self._picked, placeholder=PICK, options=[option(n) for n in self.notes])
         self.add_item(self.pick)
         for kind in wn.KINDS:
             ids = wn.of_kind(self.notes, kind)
@@ -165,6 +184,12 @@ class NotesMenu(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # (every press, as the others)
+            await _tell(interaction, ONLY_DM)
+            return
         chosen = next((n for n in self.notes if n.id == self.pick.values[0]), None)
         if chosen is None:
             await show_world_notes(interaction, self.campaign_id, STALE)
@@ -172,12 +197,10 @@ class NotesMenu(_Menu):
         self.stop()
         await _replace(interaction, note_text(chosen), OneNote(self.campaign_id, chosen))
 
-    def _keep_all(self, kind: str):  # type: ignore[no-untyped-def]  # (a button's callback)
+    def _keep_all(self, kind: str) -> Handler:
         async def press(interaction: discord.Interaction) -> None:
             ids = wn.of_kind(self.notes, kind)  # (exactly the lines this screen showed)
-            await _act(
-                interaction, self.campaign_id, ids, None, f"✅ Kept {counted(len(ids), kind)}."
-            )
+            await _act(interaction, self.campaign_id, ids, lambda n: f"✅ Kept {counted(n, kind)}.")
 
         return press
 
@@ -195,13 +218,13 @@ class OneNote(_Menu):
 
     async def _keep(self, interaction: discord.Interaction) -> None:
         await _act(
-            interaction, self.campaign_id, [self.note.id], self.note, done_text(self.note, True)
+            interaction, self.campaign_id, [self.note.id], lambda _: done_text(self.note, True)
         )
 
     async def _not_right(self, interaction: discord.Interaction) -> None:
         await _act(
-            interaction, self.campaign_id, [self.note.id], self.note,
-            done_text(self.note, False), turn_down=True,
+            interaction, self.campaign_id, [self.note.id], lambda _: done_text(self.note, False),
+            turn_down=True,
         )  # fmt: skip
 
     async def _change(self, interaction: discord.Interaction) -> None:
@@ -224,12 +247,12 @@ async def _act(
     interaction: discord.Interaction,
     campaign_id: str,
     ids: Sequence[str],
-    note: wn.Note | None,
-    done: str,
+    done: Callable[[int], str],
     *,
     turn_down: bool = False,
 ) -> None:
-    """Keep these lines, or turn one down, as one change; then say so, with ↩ Undo."""
+    """Keep these lines, or turn one down, as one change; then say so (`done` gets how many were
+    kept), with ↩ Undo."""
     await _answer_first(interaction, in_place=True)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -240,22 +263,25 @@ async def _act(
         return
     try:
         if turn_down:
-            assert note is not None
             written = await memory.turn_down_world_note(
-                campaign.guild_id, campaign.id, note.id, source=DM
+                campaign.guild_id, campaign.id, ids[0], source=DM
             )
-            batch = written.batch
+            batch, n = written.batch, 1
         else:
             kept = await memory.keep_world_notes(campaign.guild_id, campaign.id, ids, source=DM)
-            batch = kept.batch
-    except MemoryRuleError:
+            batch, n = kept.batch, kept.value
+    except MemoryRuleError as exc:
+        if str(exc) != wn.GONE:
+            await _tell(interaction, str(exc))  # (a rule's own words, never a false "stale")
+            return
         await show_world_notes(interaction, campaign_id, STALE)
         return
-    except Exception:  # (the type only: the DM is told nothing changed, and may press again)
+    except Exception as exc:  # (one plain reply, the type only in the log)
+        log.warning("World notes: a check couldn't be saved (%s)", type(exc).__name__)
         await _tell(interaction, FAILED)
-        raise
+        return
     changed(interaction, campaign)
-    await _replace(interaction, done, Done(campaign_id, batch))
+    await _replace(interaction, done(n), Done(campaign_id, batch))
 
 
 class Done(_Menu):

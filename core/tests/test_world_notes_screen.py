@@ -45,7 +45,7 @@ class TheWords(unittest.TestCase):
     def test_not_right_says_what_happens_next_for_each_kind(self) -> None:
         self.assertIn(screen.NEVER_AGAIN, screen.done_text(place_note(), kept=False))
         self.assertIn(screen.MAY_COME_BACK, screen.done_text(language_note(), kept=False))
-        self.assertNotIn("again", screen.MAY_COME_BACK.replace("says it again", ""))  # (no promise)
+        self.assertNotIn(screen.NEVER_AGAIN, screen.done_text(language_note(), kept=False))
 
     def test_the_list_fits_and_says_how_many_are_shown(self) -> None:
         many = [place_note(id=f"place:{n}", name=f"Place {n} " + "x" * 60) for n in range(60)]
@@ -53,6 +53,21 @@ class TheWords(unittest.TestCase):
         self.assertLessEqual(len(text), 2000)
         self.assertIn("of 60", text)
         self.assertEqual(screen.list_text([]), screen.EMPTY)
+        with_note = f"{screen.STALE}\n\n{text}"
+        self.assertLessEqual(len(with_note), 2000)
+
+    def test_text_menu_and_keep_all_share_one_shown_set(self) -> None:
+        # (#4285: Keep all never keeps a line the DM didn't see; a later group never skips ahead)
+        many = [place_note(id=f"place:{n}", name=f"Place {n} " + "x" * 40) for n in range(40)]
+        many.append(language_note())
+        shown = screen.shown_notes(many)
+        self.assertLessEqual(len(shown), screen.MENU_MAX)
+        self.assertNotIn(language_note(), shown)
+        text = screen.list_text(many)
+        for n in shown:
+            self.assertIn(screen.full_line(n), text)
+        menu_ids = [n.id for n in shown]
+        self.assertEqual(wn.of_kind(shown, wn.PLACE), menu_ids)
 
     def test_keep_all_counts_one_and_many(self) -> None:
         self.assertEqual(screen.keep_all_label(1, wn.PLACE), "✅ Keep the 1 place")
@@ -141,4 +156,59 @@ class TheScreen(NamesTest):
         one = screen.OneNote(self.campaign.id, menu.notes[0])
         it = self.it(MANAGER)
         await one._keep(it)
+        self.assertIn(screen.ONLY_DM, self.last(it)[0])
         self.assertEqual(len(await self.memory.world_notes(GUILD, self.campaign.id)), 1)
+        menu.pick._values = [menu.notes[0].id]
+        it = self.it(MANAGER)
+        await menu._picked(it)  # (a pick is checked too)
+        self.assertIn(screen.ONLY_DM, self.last(it)[0])
+        kept = await self.memory.keep_world_notes(
+            GUILD, self.campaign.id, [menu.notes[0].id], source="dm"
+        )
+        it = self.it(MANAGER)
+        await screen.Done(self.campaign.id, kept.batch)._undo(it)
+        self.assertIn(screen.ONLY_DM, self.last(it)[0])
+        self.assertEqual(await self.memory.world_notes(GUILD, self.campaign.id), [])
+
+    async def test_keep_all_never_keeps_a_line_added_after_the_list(self) -> None:
+        _, menu = await self.shown()
+        lake = await ui.save_name(self.memory, self.campaign, "Maer Dualdon", "place", [], [])
+        await self.memory.set_place_level(GUILD, self.campaign.id, lake.id, "region", source="dm")
+        await self.memory.add_read_map_facts(
+            GUILD, self.campaign.id, [Read(lake.id, mf.CLIMATE, "cold")], source="background"
+        )
+        it = self.it()
+        await menu._keep_all(wn.PLACE)(it)
+        self.assertIn("✅ Kept 1 place.", self.last(it)[0])
+        left = await self.memory.world_notes(GUILD, self.campaign.id)
+        self.assertEqual([n.entity_id for n in left], [lake.id])
+
+    async def test_a_failure_says_so_once_and_changes_nothing(self) -> None:
+        _, menu = await self.shown()
+        one = screen.OneNote(self.campaign.id, menu.notes[0])
+
+        async def broken(*_: Any, **__: Any) -> Any:
+            raise RuntimeError("boom")
+
+        self.memory.keep_world_notes = broken  # type: ignore[method-assign]
+        it = self.it()
+        await one._keep(it)
+        replies = [t for t, _ in it.response.edited] + [t for t, _ in it.response.sent]
+        self.assertEqual([str(t) for t in replies if screen.FAILED in str(t)], [screen.FAILED])
+
+    async def test_a_language_note_keeps_and_comes_back_with_undo(self) -> None:
+        brewner = await ui.save_name(self.memory, self.campaign, "Brewner", "npc", [], [])
+        await self.memory.add_story_language(
+            GUILD, self.campaign.id, brewner.id, "Giant", source="background"
+        )
+        notes = await self.memory.world_notes(GUILD, self.campaign.id)
+        lang = next(n for n in notes if n.kind == wn.LANGUAGE)
+        it = self.it()
+        await screen.OneNote(self.campaign.id, lang)._not_right(it)
+        text, done = self.last(it)
+        self.assertIn(screen.MAY_COME_BACK, text)
+        self.assertEqual(await self.memory.story_languages(GUILD, self.campaign.id, brewner.id), [])
+        it = self.it()
+        await done._undo(it)
+        langs = await self.memory.story_languages(GUILD, self.campaign.id, brewner.id)
+        self.assertEqual([lg.name for lg in langs], ["Giant"])
