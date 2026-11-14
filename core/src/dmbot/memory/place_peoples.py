@@ -18,12 +18,17 @@ What is read, and what never is:
   number, with no share word;
 - never from a character's own lineage: a dwarf living somewhere doesn't make it dwarven, so a
   phrase whose noun is a person ("a dwarven smith of Bree") says nothing about Bree;
-- "some" and "traces" are the DM's words only: no phrase gives them.
+- "some" and "traces" are the DM's words only: no phrase gives them;
+- a named culture (#4257 slice 3b, Supervisor's ruling): the same culture shapes with a capitalised
+  name where the lineage word goes ("the Illuskan town of Luskan", "old Netherese ruins"), only when
+  the name is no entry the campaign knows, no lineage, and not on the stop list below of ordinary
+  words that also come before a settlement word ("the Northern town of Bree" says nothing).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import NamedTuple
 
 CULTURE, POPULATION = "culture", "population"
@@ -66,12 +71,42 @@ _SENTENCE_END = re.compile(r"[.!?;:\n]")
 
 
 class Found(NamedTuple):
-    """One row a phrase gives: its layer, lineage, share ('' when none was said) and part."""
+    """One row a phrase gives: its layer, lineage, share ('' when none was said) and part; for a
+    named culture, `value` is '' and `culture` is its name as the text wrote it ("Illuskan")."""
 
     layer: str
     value: str
     how: str = ""
     part: str = ""
+    culture: str = ""
+
+
+# Capitalised words that come before a settlement word and are no culture: directions, sizes, ages,
+# colours and other plain describing words. A missing culture is the safe side, so the list is wide.
+STOP = frozenset(
+    w.casefold()
+    for w in (
+        "North", "South", "East", "West", "Northern", "Southern", "Eastern", "Western",
+        "Northeast", "Northwest", "Southeast", "Southwest", "Upper", "Lower", "Inner", "Outer",
+        "Central", "Middle", "Far", "Near", "Great", "Grand", "Little", "Small", "Big", "High",
+        "Low", "Long", "Old", "Ancient", "Elder", "New", "Young", "First", "Last", "Lost",
+        "Forgotten", "Hidden", "Sunken", "Buried", "Fallen", "Ruined", "Abandoned", "Former",
+        "Free", "Royal", "Imperial", "Holy", "Sacred", "Cursed", "Haunted", "Dark", "Bright",
+        "Black", "White", "Red", "Blue", "Green", "Grey", "Gray", "Golden", "Silver", "Iron",
+        "Stone", "Frozen", "Burning", "Broken", "Twin", "Walled", "Fortified", "Capital", "Port",
+        "Border", "Frontier", "Mountain", "River", "Sea", "Forest", "Desert", "Island", "Hill",
+        "Coastal", "Trade", "Trading", "Mining", "Fishing", "Farming", "Merchant", "Temple",
+        "Elven", "Dwarven", "Human", "Gnomish", "Orcish", "Halfling", "Tiefling", "Goliath",
+        "Dragonborn",
+    )
+)  # fmt: skip
+_NAME = re.compile(r"[A-Z][a-z]+(?:['-][A-Za-z]+)?")
+
+
+def culture_key(name: str) -> str:
+    """A named culture's key, one per campaign: its words, trimmed, in lower case (migration 0496
+    makes the same key from 3a's "other" words)."""
+    return name.strip().lower()
 
 
 def words_of(value: str, words: str = "", *, plural: bool) -> str:
@@ -144,25 +179,63 @@ _SHARES = {
 }  # fmt: skip
 
 
-def read(name: str, text: str) -> list[Found]:
+def _named(words: list[str], known: Collection[str]) -> Found | None:
+    """A named culture from "[an|the] [old] <Name> <settlement|quarter|ruins>", in the text's own
+    case: None unless the name is capitalised, no lineage, not on STOP and not in `known` (the
+    campaign's entry names, casefolded)."""
+    if len(words) < 3 or words[0].casefold() not in ("a", "an", "the"):
+        return None
+    rest = words[1:]
+    gone = bool(rest) and rest[0].casefold() in _GONE
+    if gone:
+        rest = rest[1:]
+    if len(rest) < 2 or _NAME.fullmatch(rest[0]) is None:
+        return None
+    culture, noun = rest[0], rest[1].casefold()
+    lowered = culture.casefold()
+    if lowered in STOP or lowered in known or lowered in _ADJECTIVES or lowered in _PLURALS:
+        return None
+    if lowered in LINEAGES:
+        return None
+    if noun in _RUINS:
+        return Found(CULTURE, "", "once", culture=culture)
+    if noun in _PARTS:
+        part = " ".join(words[: words.index(rest[1]) + 1])  # ("the Illuskan quarter")
+        return Found(CULTURE, "", "once" if gone else "strong", part, culture)
+    if noun in _SETTLEMENTS:
+        return Found(CULTURE, "", "once" if gone else "strong", culture=culture)
+    return None
+
+
+def _words(text: str) -> list[str]:
+    """The text's words in their own case, punctuation off (so "Hall," is "Hall")."""
+    return [w for w in (re.sub(r"[^\w'-]", "", w) for w in text.split()) if w]
+
+
+def read(name: str, text: str, known: Collection[str] = ()) -> list[Found]:
     """The culture and the people the words right beside a place's name state, by the set phrases
-    above only; at most one of each. Anything else says nothing: a missing row is the safe side."""
+    above only; at most one of each. Anything else says nothing: a missing row is the safe side.
+    `known`: the campaign's entry names, so a named culture is never one of them."""
     around = _around(name, text)
     if around is None:
         return []
     before, after = around
+    known = {k.casefold() for k in known}
     out: list[Found] = []
     back = _clean(before).split()
+    named = _words(before)
     # "the dwarven hold of Mithral Hall", "the dwarven quarter of Waterdeep": the phrase, then "of"
     if len(back) >= 4 and back[-1] == "of":
         for length in (4, 3):  # ("the old dwarven hold" before "the dwarven hold", then "of")
             found = _culture(back[-length - 1 : -1])
+            if found is None and len(named) >= 4 and named[-1].casefold() == "of":
+                found = _named(named[-length - 1 : -1], known)  # ("the Illuskan town of")
             if found is not None:
                 out.append(found)
                 break
     tail = _clean(after) if after.lstrip().startswith(",") else ""
     if tail and not out:  # "Mithral Hall, a dwarven hold"
-        found = _culture(tail.split()[:4])
+        found = _culture(tail.split()[:4]) or _named(_words(after)[:4], known)
         if found is not None and not found.part:  # ("Waterdeep, the dwarven quarter": not said)
             out.append(found)
     said = " ".join(after.split()).casefold()
@@ -177,5 +250,5 @@ def read(name: str, text: str) -> list[Found]:
 
 __all__ = [
     "CULTURE", "CULTURE_HOWS", "HOW_WORDS", "LINEAGES", "OTHER", "POPULATION", "POPULATION_HOWS",
-    "Found", "read", "words_of",
+    "STOP", "Found", "culture_key", "read", "words_of",
 ]  # fmt: skip

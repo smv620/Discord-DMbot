@@ -38,6 +38,30 @@ class TheLines(unittest.TestCase):
             "\n🏘️ **Who lives here:** mostly halflings, humans",
         )
 
+    def test_a_named_culture_reads_like_a_lineage(self) -> None:
+        """#4257 slice 3b: "Culture: strongly Illuskan", the culture's name as it was written."""
+        cid = "a" * 32
+        named = mf.Fact("f1", "p", mf.CULTURE, cid, "Illuskan", "strong", "", mf.CONFIRMED,
+                        mf.FROM_DM, True)  # fmt: skip
+        held = {mf.CULTURE: mf.Held((named, fact(mf.CULTURE, "human", "some")))}
+        self.assertEqual(
+            pw.card_lines(held, {}, dm=False),
+            "\n🏛️ **Culture:** strongly Illuskan, somewhat human",
+        )
+
+    def test_the_menu_lists_kept_cultures_first_and_fits_discord(self) -> None:
+        named = [(f"{i:032x}", f"Culture {i}") for i in range(20)]
+        options = pp.culture_options(None, named)
+        self.assertLessEqual(len(options), 25)
+        self.assertEqual([o.label for o in options[:2]], ["Culture 0", "Culture 1"])
+        self.assertEqual(sum(o.label.startswith("Culture") for o in options), pp.NAMED_SHOWN)
+        self.assertEqual([o.label for o in options[-2:]], ["Something else…", "Not sure"])
+        # (the place's own named culture is always there, and chosen)
+        own = mf.Fact("f1", "p", mf.CULTURE, f"{19:032x}", "Culture 19", "strong", "",
+                      mf.CONFIRMED, mf.FROM_DM, True)  # fmt: skip
+        first = pp.culture_options(own, named)[0]
+        self.assertEqual((first.label, first.default), ("Culture 19", True))
+
     def test_a_part_and_once(self) -> None:
         held = {mf.CULTURE: mf.Held((fact(mf.CULTURE, "gnome", "once", part="the old quarter"),))}
         self.assertIn("once gnomish (in the old quarter)", pw.card_lines(held, {}, dm=False))

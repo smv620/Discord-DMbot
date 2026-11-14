@@ -91,6 +91,48 @@ class Population(unittest.TestCase):
                 self.assertEqual(pp.read("Bree", text), [])
 
 
+class NamedCultures(unittest.TestCase):
+    """A culture the story names (#4257 slice 3b; Supervisor's ruling): the culture shapes with a
+    capitalised name, never a stop-list word, an entry's name or a lineage."""
+
+    def test_the_shapes_give_a_named_culture(self) -> None:
+        cases = {
+            ("Luskan", "Luskan, an Illuskan port on the coast."): ("Illuskan", "strong", ""),
+            ("Luskan", "the Illuskan city of Luskan rose there."): ("Illuskan", "strong", ""),
+            ("Ascore", "the old Netherese ruins of Ascore lie buried."): ("Netherese", "once", ""),
+            ("Waterdeep", "the Illuskan quarter of Waterdeep."): (
+                "Illuskan", "strong", "the Illuskan quarter",
+            ),
+        }  # fmt: skip
+        for (name, text), (culture, how, part) in cases.items():
+            with self.subTest(text):
+                self.assertEqual(
+                    pp.read(name, text), [Found(CULTURE, "", how, part, culture=culture)]
+                )
+
+    def test_ordinary_words_entry_names_and_small_letters_say_nothing(self) -> None:
+        for text, known in (
+            ("the Northern town of Bree", ()),  # (a stop-list word, as the ruling names)
+            ("the Great city of Bree", ()),
+            ("the Old town of Bree", ()),
+            ("the Harpers town of Bree", ("Harpers",)),  # (an entry the campaign knows)
+            ("the illuskan town of Bree", ()),  # (not capitalised)
+            ("the Illuskan smith of Bree", ()),  # (a person, never the place's culture)
+        ):
+            with self.subTest(text):
+                self.assertEqual(pp.read("Bree", text, known), [])
+
+    def test_a_lineage_word_stays_a_lineage(self) -> None:
+        self.assertEqual(
+            pp.read("Bree", "the Dwarven hold of Bree"), [Found(CULTURE, "dwarf", "strong")]
+        )
+
+    def test_the_stop_list_holds_no_name_and_its_key_is_the_migrations(self) -> None:
+        self.assertIn("northern", pp.STOP)
+        self.assertNotIn("illuskan", pp.STOP)
+        self.assertEqual(pp.culture_key("  Illuskan "), "illuskan")
+
+
 class Words(unittest.TestCase):
     def test_plain_adjectives_and_plurals_never_species(self) -> None:
         self.assertEqual(pp.words_of("dwarf", plural=False), "dwarven")
