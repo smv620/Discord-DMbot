@@ -14,7 +14,7 @@ What the graph should hold after the sample session is read: [the session transc
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered to the DM and never extracted · `needs_context` only readable with the lore or the recap ('she' is Keegan) · `recap_only` only in the 'Previously' recap on line 1: background, never this session's event · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history: true earlier in the session, not at its end.
 
-**Totals:** 30 entries, 33 connections (18 must-find), 6 events.
+**Totals:** 30 entries, 39 connections (18 must-find), 6 events, 2 road lengths.
 
 ## Connections
 
@@ -54,6 +54,11 @@ What the graph should hold after the sample session is read: [the session transc
 | s032 | Belleros Stormgrace | knows | Claude Ambere | by_rule | no | yes | 0 | player characters who play together know each other (#3036); the feeling words above are read from the lines |
 | s033 | Okthandom Korran | knows | Claude Ambere | by_rule | no | yes | 0 | player characters who play together know each other (#3036); the feeling words above are read from the lines |
 | s034 | Garret Velryn | associate | Dwarven Valley | stated | no | yes | 204 | the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b) |
+| s035 | Targos | route | Bryn Shander | stated | no | yes | 283 | the party's journey: 'You make it to Bryn Shander without any issues following the road' (#4255) |
+| s036 | Targos | route | Easthaven | stated | no | yes | 192 | the DM's other way: 'take the dogsled five hours to Easthaven' (not travelled this session; #4255) |
+| s037 | Easthaven | route | Good Mead | stated | no | yes | 183 | 'Those are the three connected towns to Easthaven' (#4255) |
+| s038 | Easthaven | route | Bryn Shander | stated | no | yes | 183 | 'Those are the three connected towns to Easthaven' (#4255) |
+| s039 | Easthaven | route | Caer-Konig | stated | no | yes | 183 | 'Those are the three connected towns to Easthaven' (#4255) |
 
 ## Events of this session
 
@@ -71,10 +76,16 @@ What the graph should hold after the sample session is read: [the session transc
 | from | to | fact | line |
 |---|---|---|---|
 | Targos | Kelvin's Cairn | twenty miles | 6 |
-| Targos | Bryn Shander | 1 hour by dogsled on the road | 283 |
 | Targos | Dwarven Valley | 2 hours to the branch toward Termalaine, then 5 hours: 7 hours by dogsled | 171 |
-| Targos | Easthaven | 5 hours by dogsled | 192 |
-| Easthaven | Good Mead / Bryn Shander / Caer-Konig | the three towns connected to Easthaven | 183 |
+
+## Road lengths
+
+How far a road is, as the session says it (#4255): a property of the road, never a tie. Scored as found (a road between the two places with that length: the same amount and unit, or the same words when they give none), missed, and extra (a length this list doesn't hold). A run that doesn't read the session doesn't score them. DMbot reads a length from the DM's words on a journey, so the second is found only if that journey is walked.
+
+| from | to | length | line | note |
+|---|---|---|---|---|
+| Targos | Bryn Shander | 1 hour | 283 | 'It's only 1 hour to Bryn Shander' on the party's journey |
+| Targos | Easthaven | five hours | 192 | 'take the dogsled five hours to Easthaven'; read only if that journey is walked |
 
 ## Entries
 

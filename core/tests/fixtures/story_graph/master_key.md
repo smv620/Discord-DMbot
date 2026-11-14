@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 97 entries, 141 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session), 2 languages (the lore).
+**Totals:** 97 entries, 146 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session), 2 languages (the lore), 2 road lengths (the session).
 
 ## Ties both documents say
 
@@ -165,6 +165,11 @@ These are the ties the check should find most surely: the session repeats or sha
 | m139 | Okthandom Korran | enemy_of | Fizzlebomb | stated | no | yes | lore | L99 | pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b) |
 | m140 | Cerric Vanya'elen | enemy_of | Fizzlebomb | stated | no | yes | lore | L99 | 'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b) |
 | m141 | Garret Velryn | associate | Dwarven Valley | stated | no | yes | session | S204 | the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b) |
+| m142 | Targos | route | Bryn Shander | stated | no | yes | session | S283 | the party's journey: 'You make it to Bryn Shander without any issues following the road' (#4255) |
+| m143 | Targos | route | Easthaven | stated | no | yes | session | S192 | the DM's other way: 'take the dogsled five hours to Easthaven' (not travelled this session; #4255) |
+| m144 | Easthaven | route | Good Mead | stated | no | yes | session | S183 | 'Those are the three connected towns to Easthaven' (#4255) |
+| m145 | Easthaven | route | Bryn Shander | stated | no | yes | session | S183 | 'Those are the three connected towns to Easthaven' (#4255) |
+| m146 | Easthaven | route | Caer-Konig | stated | no | yes | session | S183 | 'Those are the three connected towns to Easthaven' (#4255) |
 | m120 | Okthandom Korran | carries | Lantern of Greater Tracking | stated | yes | yes | session | S69 | 'my Lantern of Tracking' (also line 292); the lore calls it the Lantern of Greater Tracking |
 | m121 | Garret Velryn | owns | Garret's old sled | stated | yes | yes | session | S21 | 'you can take Garret's old sled' |
 | m122 | Garret Velryn | works_for | Garret's clients | stated | no | yes | session | S78 | 'He was hired as a guide' by people Keegan never met |
@@ -354,6 +359,15 @@ A language is a property of the character, never a tie (owner, 2026-11-14; #4229
 | Cerric Vanya'elen | Draconic | 21 | "earned him fluency in Draconic as well", from his studies of arcane texts |
 
 No other character's language is stated, so any other language row is extra.
+
+## Road lengths
+
+How far a road is, as the session says it (#4255): a property of the road, never a tie. Scored as found (a road between the two places with that length: the same amount and unit, or the same words when they give none), missed, and extra (a length this list doesn't hold). A run that doesn't read the session doesn't score them. DMbot reads a length from the DM's words on a journey, so the second is found only if that journey is walked.
+
+| from | to | length | line | note |
+|---|---|---|---|---|
+| Targos | Bryn Shander | 1 hour | 283 | 'It's only 1 hour to Bryn Shander' on the party's journey |
+| Targos | Easthaven | five hours | 192 | 'take the dogsled five hours to Easthaven'; read only if that journey is walked |
 
 ## Must not find
 
