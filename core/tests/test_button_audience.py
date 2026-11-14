@@ -97,6 +97,11 @@ AUDIENCE: dict[str, str] = {
             # gets "not yours" before anything is shown (#1957).
             "ui.looked_at.LookedButton",
             "ui.looked_at.OpenCard",
+            # Only the person who posted the map; read from the database on every press (#4344).
+            "ui.map_question.NoButton",
+            "ui.map_question.PosterUndoButton",  # their own change only, read from the log
+            "ui.map_question.TakeBackButton",
+            "ui.map_question.YesButton",
         ],
         SELF,
     ),
@@ -239,8 +244,6 @@ AUDIENCE: dict[str, str] = {
             "ui.map_answer.ActButton",
             "ui.map_answer.OpenButton",
             "ui.map_answer.UndoButton",
-            "ui.map_question.NoButton",
-            "ui.map_question.YesButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",

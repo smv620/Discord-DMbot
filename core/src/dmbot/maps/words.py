@@ -19,11 +19,11 @@ DM_YES_CHAT = "Kept as a map. DMbot can now use it. Everyone at the table saw it
 DM_YES_PRIVATE = "Kept as a map. Only you and the other DMs can see it."
 PLAYER_YES_CHAT = (
     "Kept. A DM has to say it can be used before DMbot reads it. Everyone at the table already saw "
-    "it. Only DMs can open the saved copy. You can take it back from the picture's page."
+    "it. Only DMs can open the saved copy. You can take it back with the button below."
 )
 PLAYER_YES_PRIVATE = (
     "Kept. Only the DMs can see it. A DM has to say it can be used before DMbot reads it. You can "
-    "take it back from the picture's page."
+    "take it back with the button below."
 )
 NO_CHAT = (
     "OK. DMbot didn't keep it. The picture is still in the chat, "
@@ -35,7 +35,7 @@ GONE = "That picture isn't kept any more."
 NO_CONSENT = "You've stopped DMbot recording pictures, so it isn't keeping this one."
 ANSWERED = "That's already answered."
 NOT_YOURS = "Only the person who posted it can answer this."
-FAILED = "That didn't go through. Try the button again, or open the picture's page."
+FAILED = "That didn't go through. Try the button again."
 FULL = "DMbot has no room to keep another map. Ask your DM to free some room."
 
 
@@ -110,3 +110,12 @@ def done_removed() -> str:
 UNDO_LABEL = "Undo"
 UNDONE = "↩️ Undone."
 UNDO_FAILED = "Couldn't undo: that map was changed again since."
+
+
+# The poster's side after a yes (slice 3b-2b): taking it back.
+TAKE_BACK_LABEL = "Take it back"
+TOOK_BACK = "OK. It's no longer a map. The picture is still kept."
+TAKE_BACK_UNDO_FAILED = "Couldn't undo: that was changed again since."
+NOT_YOUR_CHANGE = "Only the person who made this change can undo it."
+_NOT_USING = "Not answered yet, so DMbot isn't using this map."
+REMINDER = _NOT_USING + " You can still answer the question above."

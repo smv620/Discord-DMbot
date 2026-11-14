@@ -332,6 +332,23 @@ class Recalling(MemoryTest):
         after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
         self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
 
+    async def test_a_campaigns_own_two_way_kind_keeps_its_label(self) -> None:
+        """#4388: its rows carry the two-way mark now; the AI still reads the kind's own words."""
+        from dmbot.memory.ontology import PredicateTerm
+
+        term = PredicateTerm(
+            "oath_kin_of", "is oath-bound to", "Two sworn to each other.", ("character",),
+            ("character",), symmetric=True, core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD_A, self.c, term, examples=["Mira is oath-bound to Ulfgar."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        await self.fact(self.mira, "oath_kin_of", self.ulfgar)
+        text = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("is oath-bound to", text)
+        self.assertNotIn("are connected (“oath kin of”)", text)
+
     async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
         """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
         recall line carry the role from either side even though the link is not directional."""
