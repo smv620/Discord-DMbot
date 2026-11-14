@@ -138,7 +138,7 @@ describe("saving", () => {
     fireEvent.input(row.getByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
     await row.findByRole("button", { name: "Greywatch" }, { timeout: 2000 });
     // The old answer arrives late, with a place of its own; it must not appear.
-    const sample = await all("100.cmp1", { q: "Greywatch", kind: "place", sort: "name", page: 1 });
+    const sample = await all(DM.split("/").pop()!, { q: "Greywatch", kind: "place", sort: "name", page: 1 });
     held.answer!({ ...sample, names: sample.names.slice(0, 1).map((n) => ({ ...n, name: "Old Name" })) });
     await new Promise((r) => setTimeout(r, 0));
     expect(row.queryByRole("button", { name: "Old Name" })).toBeNull();
@@ -159,7 +159,7 @@ describe("when saving fails", () => {
     fireEvent.click(row.getByRole("button", { name: w.save }));
     expect(await row.findByText(w.failed)).toBeTruthy();
   });
-  it("a refused save says so in plain words and keeps the choice", async () => {
+  it("a refused save shows the refusal and keeps the choice", async () => {
     const { api, row } = await openRow("Saltmarsh");
     api.changeWebLink = async () => {
       throw new ApiError("bad-target");
