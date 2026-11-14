@@ -100,6 +100,7 @@ from dmbot.web import (
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
+from dmbot.web import maps as map_pages
 from dmbot.web import recap_audio as audio_links
 from dmbot.web import transcripts as transcript_pages
 from dmbot.web.accounts import (
@@ -2497,6 +2498,69 @@ def create_app(
             return {"answer": await met_list.queue(db, session, ref, met_id, body)}
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/maps")
+    async def me_maps_list(ref: str, signed: Signed) -> dict[str, Any]:
+        """A campaign's maps (#4347), cut by the player rule in the database door: a DM sees every
+        map, anyone else the maps shown to the table and usable plus their own."""
+        session, _token = signed
+        try:
+            return await map_pages.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/maps/{map_id}/use", status_code=202)
+    async def me_campaign_map_use(
+        ref: str, map_id: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """A DM's yes or no to using a map `{yes: bool}`; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await map_pages.queue_use(db, session, ref, map_id, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/maps/{map_id}/show", status_code=202)
+    async def me_campaign_map_show(
+        ref: str, map_id: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Show a map to the table, or hide it again `{shown: bool}` (a DM)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await map_pages.queue_show(db, session, ref, map_id, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/maps/{map_id}/remove", status_code=202)
+    async def me_campaign_map_remove(ref: str, map_id: str, signed: Signed) -> dict[str, str]:
+        """Take a picture's map status away; the picture stays (a DM)."""
+        session, _token = signed
+        try:
+            return {"answer": await map_pages.queue_remove(db, session, ref, map_id)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/maps/{batch}/undo", status_code=202)
+    async def me_campaign_map_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a Maps press by the change number its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await map_pages.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/world-notes")
