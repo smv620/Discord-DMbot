@@ -2057,6 +2057,46 @@ export interface WorldNotesResult {
   batch: number | null;
 }
 
+/** One picture on the Maps page (#4347). A DM sees every map; a player sees the maps shown to the table and usable, plus their own
+ * (`shown` and `state` only on their own rows). `via` says where it was added. */
+export interface MapItem {
+  id: string;
+  title: string;
+  addedBy: string;
+  via: "website" | "discord";
+  mine: boolean;
+  shown?: boolean;
+  state?: "usable" | "waiting" | "declined";
+  openUrl: string;
+}
+export interface MapsRead {
+  canManage: boolean;
+  maps: MapItem[];
+}
+/** One press on the Maps page: a DM's yes or no to read a map, show or hide it, remove it, a poster's take-back, or Undo by its batch. */
+export type MapsChange =
+  | { action: "use"; id: string; yes: boolean }
+  | { action: "show"; id: string; shown: boolean }
+  | { action: "remove"; id: string }
+  | { action: "takeback"; id: string }
+  | { action: "undo"; batch: number };
+/** What a press gave back: the change it made (for Undo; none when nothing changed). */
+export interface MapsResult {
+  batch: number | null;
+}
+/** A picture sent to be a map. `rights` is always true: the page sends nothing without the person's yes. */
+export interface MapUpload {
+  file: File;
+  title: string;
+  rights: true;
+}
+/** How an upload is going: the stage, how many seconds it has run, and how many seconds since it last moved. */
+export interface MapUploadLook {
+  stage: "sending" | "saving";
+  seconds: number;
+  quiet: number;
+}
+
 /** What a connection edit gave back: the edge as it now stands, and the `batch` that made the change (for Undo). */
 export type WebLinkResult = (WebEdge | { removed: true }) & { batch?: number | null };
 
@@ -3098,6 +3138,12 @@ export interface AccountApi {
   worldNotes?(ref: string): Promise<WorldNotes>;
   /** ✅ Keep, 🚫 Not right or ↩ Undo on World notes; waits for the bot. */
   changeWorldNotes?(ref: string, change: WorldNotesChange): Promise<WorldNotesResult>;
+  /** The Maps page (#4347): the maps the person may see, cut by the player rule at the door. */
+  maps?(ref: string): Promise<MapsRead>;
+  /** A DM's yes or no, show or hide, remove, a poster's take-back, or Undo; waits for the bot and gives back the change for Undo. */
+  changeMaps?(ref: string, change: MapsChange): Promise<MapsResult>;
+  /** A picture sent to be a map, with progress reported as it goes; gives back the new map and the batch for Undo. */
+  addMap?(ref: string, upload: MapUpload, onLook?: (look: MapUploadLook) => void): Promise<{ mapId: string; batch: number | null }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
    * from an API older than that. */
   transcriptCampaigns?(): Promise<TranscriptCampaign[]>;
@@ -3530,7 +3576,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "maps", "changeMaps", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

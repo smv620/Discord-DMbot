@@ -41,7 +41,7 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, HandOverQuestion, NodeSummary, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -555,6 +555,24 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { kept: typeof got.kept === "number" ? got.kept : null, batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // The Maps page (#4347): the list is read here; a press is queued for the bot, waited for, and gives back the change for Undo.
+    maps: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/maps`)) as MapsRead,
+    changeMaps: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued =
+        change.action === "use"
+          ? ((await call("POST", `${base}/maps/${encodeURIComponent(change.id)}/use`, { yes: change.yes })) as { answer: string })
+          : change.action === "show"
+            ? ((await call("POST", `${base}/maps/${encodeURIComponent(change.id)}/show`, { shown: change.shown })) as { answer: string })
+            : change.action === "remove"
+              ? ((await call("POST", `${base}/maps/${encodeURIComponent(change.id)}/remove`, {})) as { answer: string })
+              : change.action === "takeback"
+                ? ((await call("POST", `${base}/maps/${encodeURIComponent(change.id)}/takeback`, {})) as { answer: string })
+                : ((await call("POST", `${base}/maps/${encodeURIComponent(String(change.batch))}/undo`, {})) as { answer: string });
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/maps/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null } as MapsResult;
     },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;

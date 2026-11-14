@@ -20,6 +20,7 @@ import type {
   NameThemStep,
   NameKind,
   NameRow,
+  MapItem,
   NamesPage,
   NameSource,
   UploadNotice,
@@ -1045,6 +1046,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
   };
   const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
+  // The Maps page (#4347): the pictures a DM or a player added. A DM sees them all; a player sees the shown usable ones and their own.
+  let mapList: { id: string; title: string; addedBy: string; via: "website" | "discord"; mine: boolean; shown: boolean; state: "usable" | "waiting" | "declined" }[] = [
+    { id: "m1", title: "Icewind Dale", addedBy: "Ana", via: "discord", mine: false, shown: true, state: "usable" },
+    { id: "m2", title: "The Keep, floor 1", addedBy: "Ana", via: "website", mine: false, shown: false, state: "usable" },
+    { id: "m3", title: "Harbour sketch", addedBy: "Ben", via: "website", mine: true, shown: false, state: "waiting" },
+    { id: "m4", title: "Old road", addedBy: "Cy", via: "discord", mine: false, shown: false, state: "declined" },
+    { id: "m5", title: "Cave", addedBy: "Dee", via: "website", mine: false, shown: false, state: "waiting" },
+  ];
+  // What each Maps change did, to put back on Undo (by its batch number).
+  const mapBatches = new Map<number, () => void>();
+  let mapSeq = 5;
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
@@ -2714,6 +2726,76 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const batch = ++lastBatch;
       worldBatches.set(batch, { places, languages });
       return { kept: change.action === "keep" ? places.length + languages.length : null, batch };
+    },
+    // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
+    async maps(ref) {
+      calls.push(`maps:${ref}`);
+      const player = /\.player$/.test(ref);
+      const rows = mapList.filter((m) => !player || (m.shown && m.state === "usable") || m.mine);
+      return {
+        canManage: !player,
+        maps: rows.map((m) => {
+          const row: MapItem = { id: m.id, title: m.title, addedBy: m.addedBy, via: m.via, mine: m.mine, openUrl: `/account/pictures/${m.id}` };
+          if (!player || m.mine) {
+            row.shown = m.shown;
+            row.state = m.state;
+          }
+          return row;
+        }),
+      };
+    },
+    async changeMaps(ref, change) {
+      calls.push(`changeMaps:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = mapBatches.get(change.batch);
+        if (!back) throw new ApiError("gone");
+        mapBatches.delete(change.batch);
+        back();
+        return { batch: null };
+      }
+      // A player can only take back their own map; a map hidden from the table is not theirs to see, so it reads as gone.
+      const m = mapList.find((x) => x.id === change.id);
+      if (!m || (/\.player$/.test(ref) && !m.mine && !(m.shown && m.state === "usable"))) throw new ApiError("gone");
+      if (/\.player$/.test(ref) && change.action !== "takeback" && !(change.action === "remove" && m.mine)) throw new ApiError("not-allowed");
+      let undo: () => void;
+      if (change.action === "use") {
+        if (m.state !== "waiting") throw new ApiError("gone");
+        const was = m.state;
+        m.state = change.yes ? "usable" : "declined";
+        undo = () => {
+          m.state = was;
+        };
+      } else if (change.action === "show") {
+        const was = m.shown;
+        m.shown = change.shown;
+        undo = () => {
+          m.shown = was;
+        };
+      } else {
+        if (change.action === "takeback" && !m.mine) throw new ApiError("not-allowed");
+        const at = mapList.indexOf(m);
+        mapList = mapList.filter((x) => x !== m);
+        undo = () => {
+          mapList.splice(at, 0, m);
+        };
+      }
+      const batch = ++lastBatch;
+      mapBatches.set(batch, undo);
+      return { batch };
+    },
+    // A picture sent to be a map: the stages it goes through, then the map is added (a player's waits for a DM's yes).
+    async addMap(ref, upload, onLook) {
+      calls.push(`addMap:${ref}:${upload.title}`);
+      const player = /\.player$/.test(ref);
+      onLook?.({ stage: "sending", seconds: 1, quiet: 0 });
+      onLook?.({ stage: "saving", seconds: 2, quiet: 0 });
+      const id = `m${++mapSeq}`;
+      mapList = [...mapList, { id, title: upload.title, addedBy: player ? "Ben" : "Ana", via: "website", mine: true, shown: false, state: player ? "waiting" : "usable" }];
+      const batch = ++lastBatch;
+      mapBatches.set(batch, () => {
+        mapList = mapList.filter((x) => x.id !== id);
+      });
+      return { mapId: id, batch };
     },
     async placeWorldTable(ref, placeId) {
       calls.push(`placeWorldTable:${ref}:${placeId}`);
