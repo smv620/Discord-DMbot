@@ -17,18 +17,19 @@ from __future__ import annotations
 # changes.
 _READ_LEVEL = "is_dm OR p.place_level_from = 'dm'"
 _READ_FORM = "is_dm OR p.form_from = 'dm'"
+# The anchors are the fields' own text, not whole lines, so the swap holds whether or not 0459 split
+# `form` onto its own line (a test may run every migration but one, as `test_setting_from` does).
 _ALL_NAMES_SWAPS = (
     (
-        "                    'placeLevel', p.place_level, 'placeLevelFrom', p.place_level_from,\n",
-        f"                    'placeLevel', CASE WHEN {_READ_LEVEL} THEN p.place_level END,\n"
-        f"                    'placeLevelFrom', CASE WHEN {_READ_LEVEL} THEN p.place_level_from"
-        " END,\n",
+        "'placeLevel', p.place_level, 'placeLevelFrom', p.place_level_from,",
+        f"'placeLevel', CASE WHEN {_READ_LEVEL} THEN p.place_level END,"
+        f" 'placeLevelFrom', CASE WHEN {_READ_LEVEL} THEN p.place_level_from END,",
         1,
     ),
     (
-        "                    'form', p.form, 'formFrom', p.form_from,\n",
-        f"                    'form', CASE WHEN {_READ_FORM} THEN p.form END,\n"
-        f"                    'formFrom', CASE WHEN {_READ_FORM} THEN p.form_from END,\n",
+        "'form', p.form, 'formFrom', p.form_from,",
+        f"'form', CASE WHEN {_READ_FORM} THEN p.form END,"
+        f" 'formFrom', CASE WHEN {_READ_FORM} THEN p.form_from END,",
         1,
     ),
 )
