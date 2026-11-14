@@ -17,6 +17,7 @@ from unittest import mock
 
 from dmbot.ai import Reply
 from dmbot.devtools import lore_compare
+from dmbot.devtools.costs.prices import price_of
 from dmbot.memory import lore_read
 
 KEY = "sk-test-not-real"
@@ -35,6 +36,7 @@ class _Tier:
 
 class _Client:
     closed = False
+    made_with: dict[str, Any] = {}  # noqa: RUF012 (a stand-in's record, set per test)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         _Client.made_with = kwargs
@@ -90,7 +92,7 @@ class Harness(unittest.TestCase):
         self.assertIn("names: 1 kept (pass 1 listed 3", lines)
         self.assertIn("dropped: no_quote 1", lines)
         self.assertIn("1000 in (+cache write 2000, cache read 10000) / 100 out", lines)
-        cost_in, cost_out = lore_compare.price_of(_Tier.model)
+        cost_in, cost_out = price_of(_Tier.model)
         want = (
             cost_in.dollars * (1000 + 2000 * 1.25 + 10_000 * 0.10) + cost_out.dollars * 100
         ) / 1_000_000
