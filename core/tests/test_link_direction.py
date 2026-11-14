@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory.entity_text import _connection
 from dmbot.memory.gate import CONNECTION
 from dmbot.memory.link_words import (
@@ -19,7 +20,7 @@ from dmbot.memory.models import MemoryRuleError, Relation
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.memory.store import DIRECTION_DM_ONLY, ROLE_ONE_WAY
 from dmbot.web import relationships
-from tests.test_memory_store import GUILD_A, MemoryTest
+from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
 from tests.test_web_link_actions import Editing
 
 
@@ -410,7 +411,12 @@ class ACampaignsOwnKind(_StoreBase):
         # (#4388: the row says so, so the card and the search text agree from the start)
         r = await self.tie(await self.own(symmetric=True), self.cerric, self.wit)
         self.assertIs(r.both_ways, True)
-        self.assertTrue(reads_both_ways(r.predicate, r.detail, False, r.both_ways))
+        row = {
+            "id": r.id, "a": r.subject_id, "b": r.object_id, "predicate": r.predicate,
+            "detail": "", "secret": False, "at": 1, "both_ways": r.both_ways,
+        }  # fmt: skip
+        (edge,) = relationships.edges_from([row], can_edit=True, is_dm=True)
+        self.assertEqual(edge["links"][0]["direction"], "both")  # (the website, as the card)
         self.assertIsNotNone(self.text_of_other_end(r, symmetric=True))
 
     async def test_a_turned_own_kind_said_again_stays_one_and_turned(self) -> None:
@@ -423,3 +429,18 @@ class ACampaignsOwnKind(_StoreBase):
         await self.relate(self.cerric, key, self.wit, status="confirmed")
         (only,) = await self.live(key)
         self.assertEqual((only.id, only.subject_id), (turned.id, high))
+
+    async def test_a_backup_from_before_gives_the_mark(self) -> None:
+        # (#4388: a file made before has no mark on such a row; the restore gives it)
+        key = await self.own(symmetric=True)
+        await self.tie(key, self.cerric, self.wit)
+        data = decode_backup(encode_backup(await self.campaigns.export(GUILD_A, self.c)))
+        assert isinstance(data, dict)
+        for row in data["sections"]["memory"]:
+            if row["table"] == "relation":
+                row["both_ways"] = None
+        restored = await self.campaigns.import_backup(GUILD_B, data, DM)
+        (row,) = [
+            r for r in await self.memory.relations(GUILD_B, restored.id) if r.predicate == key
+        ]
+        self.assertIs(row.both_ways, True)
