@@ -65,3 +65,62 @@ class WhatThePageMaySend(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(world_notes.LINE_ID.fullmatch(PLACE))
         self.assertTrue(world_notes.LINE_ID.fullmatch(LANGUAGE))
         self.assertEqual(world_notes.KEEP_AT_MOST, 25)
+
+
+class WhatTheDoorsLinesBecome(unittest.TestCase):
+    """`_line` is given the door's literal rows (migration 0481): a place's line, a ruler's
+    line, and a language's, whose word the door calls `value`."""
+
+    def test_a_land_line(self) -> None:
+        row = {
+            "id": "place:" + "a" * 32,
+            "kind": "place",
+            "entityId": "e1",
+            "name": "Saltmarsh",
+            "layer": "terrain",
+            "value": "swamp",
+            "words": "",
+            "part": "",
+            "how": "partly",
+            "ruler": None,
+            "fromSession": 1700000000,
+            "from": "session",
+        }
+        got = world_notes._line("place", row)
+        self.assertEqual((got["layer"], got["value"], got["how"]), ("terrain", "swamp", "partly"))
+        self.assertEqual(
+            (got["fromSession"], got["from"], got["ruler"]), (1700000000, "session", None)
+        )
+
+    def test_a_rulers_line(self) -> None:
+        row = {
+            "id": "place:" + "c" * 32,
+            "kind": "place",
+            "entityId": "e1",
+            "name": "Greywatch",
+            "layer": "control",
+            "value": "f" * 32,
+            "words": "",
+            "how": "rules",
+            "ruler": "The Guard",
+            "fromSession": None,
+            "from": "lore",
+        }
+        got = world_notes._line("place", row)
+        self.assertEqual(
+            (got["how"], got["ruler"], got["fromSession"]), ("rules", "The Guard", None)
+        )
+
+    def test_a_language_line_reads_the_doors_value(self) -> None:
+        row = {
+            "id": "language:" + "b" * 32,
+            "kind": "language",
+            "entityId": "e2",
+            "name": "Brother Venn",
+            "value": "Giant",
+            "fromSession": None,
+            "from": "lore",
+        }
+        got = world_notes._line("language", row)
+        self.assertEqual(got["language"], "Giant")
+        self.assertNotIn("layer", got)

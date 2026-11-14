@@ -1137,7 +1137,6 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "error": got["error"],
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
-            "undone": got["action"] == "world-undo" and got["state"] == "done",
         }
     if str(got["action"]).startswith("reading-"):
         return _reading_answer(got)

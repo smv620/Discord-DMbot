@@ -40,7 +40,9 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
     } catch (error) {
       if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
       // a line checked meanwhile: say so, and show the list as it is now
-      setSaid({ ok: false, text: error instanceof ApiError && error.kind === "gone" ? w.gone : w.wrong, batch: null });
+      const kind = error instanceof ApiError ? error.kind : "";
+      const text = kind === "gone" ? w.gone : kind === "undo-late" ? w.tooLate : kind === "changed" ? w.notUndone : w.wrong;
+      setSaid({ ok: false, text, batch: null });
     } finally {
       flight.current = false;
       setBusy(false);
@@ -48,8 +50,10 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
     }
   }
 
-  const keepOne = (line: string, id: string) => press({ action: "keep", ids: [id] }, (m) => ({ ok: true, text: w.kept(line), batch: m.batch }));
-  const keepAll = (ids: string[]) => press({ action: "keep", ids }, (m) => ({ ok: true, text: w.keptMany(m.kept ?? ids.length), batch: m.batch }));
+  const keepOne = (line: string, id: string) =>
+    press({ action: "keep", ids: [id] }, (m) => (m.kept === 0 ? { ok: false, text: w.nothingKept, batch: null } : { ok: true, text: w.kept(line), batch: m.batch }));
+  const keepAll = (ids: string[]) =>
+    press({ action: "keep", ids }, (m) => (m.kept === 0 ? { ok: false, text: w.nothingKept, batch: null } : { ok: true, text: w.keptMany(m.kept ?? ids.length), batch: m.batch }));
   const notRight = (line: string, id: string, kind: "place" | "language") =>
     press({ action: "not", id }, (m) => ({ ok: true, text: `${w.takenOut(line)} ${kind === "place" ? w.placeNever : w.languageAgain}`, batch: m.batch }));
   const undo = (batch: number) => press({ action: "undo", batch }, () => ({ ok: true, text: w.undone, batch: null }));

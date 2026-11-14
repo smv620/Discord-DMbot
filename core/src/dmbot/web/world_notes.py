@@ -30,7 +30,8 @@ def _line(kind: str, r: dict[str, Any]) -> dict[str, Any]:
         "fromSession": int(r["fromSession"]) if r.get("fromSession") else None,
     }
     if kind == "language":
-        out["language"] = str(r["language"])
+        # the door names a language line's word `value` (a place's is its land or climate)
+        out["language"] = str(r.get("language") or r.get("value") or "")
         return out
     out["layer"] = str(r["layer"])
     out["value"] = str(r["value"])
