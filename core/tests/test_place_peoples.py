@@ -118,6 +118,10 @@ class NamedCultures(unittest.TestCase):
             ("the Harpers town of Bree", ("Harpers",)),  # (an entry the campaign knows)
             ("the illuskan town of Bree", ()),  # (not capitalised)
             ("the Illuskan smith of Bree", ()),  # (a person, never the place's culture)
+            ("The Market Town of Bree", ()),  # (a heading's capitals: the noun is capitalised)
+            ("the Market town of Bree", ()),
+            ("the Dock ward of Bree", ()),
+            ("the Smuggler's town of Bree", ()),  # (whose, never a culture)
         ):
             with self.subTest(text):
                 self.assertEqual(pp.read("Bree", text, known), [])
@@ -130,7 +134,8 @@ class NamedCultures(unittest.TestCase):
     def test_the_stop_list_holds_no_name_and_its_key_is_the_migrations(self) -> None:
         self.assertIn("northern", pp.STOP)
         self.assertNotIn("illuskan", pp.STOP)
-        self.assertEqual(pp.culture_key("  Illuskan "), "illuskan")
+        self.assertEqual(pp.culture_key("  Illuskan \t folk "), "illuskan folk")
+        self.assertEqual(pp.culture_name(" Illuskan  folk"), "Illuskan folk")
 
 
 class Words(unittest.TestCase):

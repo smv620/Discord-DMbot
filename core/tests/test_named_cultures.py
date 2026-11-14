@@ -89,7 +89,8 @@ class NamedCultures(MemoryTest):
         )
         notes = await self.memory.world_notes(GUILD_A, self.c)
         self.assertEqual(len(notes), 2)
-        await self.memory.turn_down_world_note(GUILD_A, self.c, notes[0].id, source=BY_DM)
+        done = await self.memory.turn_down_world_note(GUILD_A, self.c, notes[0].id, source=BY_DM)
+        self.assertTrue(done.value)  # (the name went, at every place: the screen says so)
         self.assertEqual(await self.facts(self.town), [])
         self.assertEqual(await self.facts(self.ruin), [])
         self.assertEqual(await self.memory.map_cultures(GUILD_A, self.c), [])
@@ -101,6 +102,27 @@ class NamedCultures(MemoryTest):
             source=BY_DM,
         )  # fmt: skip
         self.assertEqual([f.words for f in await self.facts(self.town)], ["Illuskan"])
+
+    async def test_keep_all_in_world_notes_keeps_the_name_too(self) -> None:
+        await self.read(Read(self.town, mf.CULTURE, "", "strong", culture="Reghed"))
+        notes = await self.memory.world_notes(GUILD_A, self.c)
+        await self.memory.keep_world_notes(GUILD_A, self.c, [n.id for n in notes], source=BY_DM)
+        [(_, _, status)] = await self.memory.map_cultures(GUILD_A, self.c)
+        self.assertEqual(status, CONFIRMED)
+
+    async def test_a_name_with_no_row_is_never_made(self) -> None:
+        counts = await self.read(Read(self.town, mf.CULTURE, "", "", culture="Illuskan"))
+        self.assertEqual(counts["not_allowed"], 1)  # (a culture always says how strong)
+        self.assertEqual(await self.memory.map_cultures(GUILD_A, self.c), [])
+
+    async def test_picking_a_read_name_makes_it_the_dms(self) -> None:
+        await self.read(Read(self.ruin, mf.CULTURE, "", "once", culture="Netherese"))
+        [(cid, _, _)] = await self.memory.map_cultures(GUILD_A, self.c)
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, self.town, mf.CULTURE, cid, how="traces", source=BY_DM
+        )
+        [(_, _, status)] = await self.memory.map_cultures(GUILD_A, self.c)
+        self.assertEqual(status, CONFIRMED)
 
     async def test_players_see_a_named_culture_only_once_kept_and_shown(self) -> None:
         await self.read(Read(self.town, mf.CULTURE, "", "strong", culture="Illuskan"))
@@ -169,14 +191,26 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
             (one, b, "culture", "dwarf", "", "some"),  # (a lineage: left alone)
             (one, a, "population", "other", "duergar", "most"),  # (who lives there: left alone)
             (two, c, "culture", "other", "Illuskan", "strong"),  # (its own campaign's)
+            (two, c, "culture", "other", "Reghed", "once"),  # (taken away: turned down below)
         ]
         async with self.db.guild(GUILD_A) as conn:
             for at, (campaign, place, layer, value, words, how) in enumerate(rows, 1):
                 await conn.execute(  # (the first one written gives the name its spelling)
                     "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer,"
                     " value, words, how, status, source, created_at) VALUES (%s, %s, %s, %s, %s,"
-                    " %s, %s, %s, 'confirmed', 'dm', %s)",
-                    (GUILD_A, campaign, new_id(), place, layer, value, words, how, at),
+                    " %s, %s, %s, %s, 'dm', %s)",
+                    (
+                        GUILD_A,
+                        campaign,
+                        new_id(),
+                        place,
+                        layer,
+                        value,
+                        words,
+                        how,
+                        "rejected" if words == "Reghed" else "confirmed",
+                        at,
+                    ),
                 )
         await self.db.migrate(MIGRATIONS)
         async with self.db.guild(GUILD_A) as conn:
@@ -195,12 +229,21 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             sorted(cultures),
             sorted([(one, "Illuskan", "illuskan", "confirmed", "dm"),
-                    (two, "Illuskan", "illuskan", "confirmed", "dm")]),
+                    (two, "Illuskan", "illuskan", "confirmed", "dm"),
+                    (two, "Reghed", "reghed", "rejected", "dm")]),
         )  # fmt: skip
         self.assertEqual(
             sorted(facts, key=str),
             sorted([(one, "culture", "", "", "Illuskan"), (one, "culture", "", "", "Illuskan"),
                     (one, "culture", "dwarf", "", None),
                     (one, "population", "other", "duergar", None),
-                    (two, "culture", "", "", "Illuskan")], key=str),
+                    (two, "culture", "", "", "Illuskan"), (two, "culture", "", "", "Reghed")],
+                   key=str),
         )  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:  # (the migration's own policies are gone)
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertEqual(found["n"], 0)

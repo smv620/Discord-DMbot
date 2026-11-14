@@ -96,6 +96,8 @@ STOP = frozenset(
         "Stone", "Frozen", "Burning", "Broken", "Twin", "Walled", "Fortified", "Capital", "Port",
         "Border", "Frontier", "Mountain", "River", "Sea", "Forest", "Desert", "Island", "Hill",
         "Coastal", "Trade", "Trading", "Mining", "Fishing", "Farming", "Merchant", "Temple",
+        "Market", "Dock", "Castle", "Field", "Noble", "Trades", "Harbor", "Harbour", "Crown",
+        "Pirate", "Jewel", "Quiet", "Sleepy", "Busy", "Rich", "Poor", "Wealthy",
         "Elven", "Dwarven", "Human", "Gnomish", "Orcish", "Halfling", "Tiefling", "Goliath",
         "Dragonborn",
     )
@@ -103,10 +105,20 @@ STOP = frozenset(
 _NAME = re.compile(r"[A-Z][a-z]+(?:['-][A-Za-z]+)?")
 
 
+def culture_of_possessive(word: str) -> bool:
+    """ "Smuggler's", "Kings'": whose it is, never a culture."""
+    return word.endswith(("'s", "'S", "’s", "'"))
+
+
 def culture_key(name: str) -> str:
-    """A named culture's key, one per campaign: its words, trimmed, in lower case (migration 0496
-    makes the same key from 3a's "other" words)."""
-    return name.strip().lower()
+    """A named culture's key, one per campaign: its words with any run of spaces as one, in lower
+    case (migration 0496 makes the same key from 3a's "other" words)."""
+    return " ".join(name.split()).lower()
+
+
+def culture_name(name: str) -> str:
+    """A named culture's name as kept: its words with any run of spaces as one."""
+    return " ".join(name.split())
 
 
 def words_of(value: str, words: str = "", *, plural: bool) -> str:
@@ -191,6 +203,8 @@ def _named(words: list[str], known: Collection[str]) -> Found | None:
         rest = rest[1:]
     if len(rest) < 2 or _NAME.fullmatch(rest[0]) is None:
         return None
+    if not rest[1][:1].islower() or culture_of_possessive(rest[0]):
+        return None  # ("The Market Town of Bree": a heading's capitals; "Smuggler's": whose)
     culture, noun = rest[0], rest[1].casefold()
     lowered = culture.casefold()
     if lowered in STOP or lowered in known or lowered in _ADJECTIVES or lowered in _PLURALS:

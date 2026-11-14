@@ -24,6 +24,10 @@ GONE = "That's gone. Open the card again to see it as it is now."
 BAD_WORD = "That isn't one of the choices."
 
 
+# What a World notes 🚫 turned down (`reject_row`): nothing (checked or gone already), the row, or
+# a named culture DMbot read with every row of it, at every place (#4257 slice 3b)
+GONE_ALREADY, ROW_ONLY, NAME_TOO = 0, 1, 2
+
 # Layers whose values sit side by side (#4257): a town can be strongly dwarven and a little elven,
 # and home to mostly halflings and some humans. A different lineage never corrects another.
 BESIDE = frozenset({mf.CULTURE, mf.POPULATION})
@@ -110,7 +114,7 @@ async def culture_for(w: Changes, name: str, *, by_dm: bool) -> str | None:
     """The id of the named culture `name`, made when the campaign has none of that name: as the
     DM's (confirmed) when the DM typed it, else as DMbot's read (`read`, for World notes). A name
     the DM turned down gives None to a reader, and comes back only by the DM's own word."""
-    name = " ".join(name.split())[: mf.WORDS_MAX]
+    name = place_peoples.culture_name(name)[: mf.WORDS_MAX]
     key = place_peoples.culture_key(name)
     if not key:
         raise MemoryRuleError(BAD_WORD)
@@ -344,6 +348,10 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             if str(place["status"]) == ENTRY_REJECTED:
                 raise MemoryRuleError(GONE)  # (a waiting name may hold them: they are DM-only)
             if f.culture and f.layer == mf.CULTURE:
+                if not mf.valid(f.layer, mf.OTHER, f.how) or not mf.allowed_on(
+                    f.layer, form=place.get("form"), level=place.get("place_level")
+                ):  # (checked before a new name is made, so none is left with no row)
+                    raise MemoryRuleError(BAD_WORD)
                 culture = await culture_for(w, f.culture, by_dm=False)
                 if culture is None:  # (a name the DM turned down: never read again)
                     counts["rejected_before"] += 1
@@ -504,13 +512,14 @@ async def keep_rows(w: Changes, ids: Collection[str]) -> int:
     return len(rows)
 
 
-async def reject_row(w: Changes, fact_id: str) -> bool:
+async def reject_row(w: Changes, fact_id: str) -> int:
     """The DM's 🚫 Not right on a World notes line (#4285): the row is turned down, so the same
-    reading is never read in again (`add_read` refuses a value the DM rejected). False when it
-    was checked or gone already."""
+    reading is never read in again (`add_read` refuses a value the DM rejected). A named culture
+    DMbot read and the DM never kept goes too, with all its rows (#4257 slice 3b). GONE_ALREADY,
+    ROW_ONLY or NAME_TOO."""
     rows = await w.select(MAP_FACTS, " AND id = %s AND status = 'read'" + _OPEN, [fact_id])
     if not rows:
-        return False
+        return GONE_ALREADY
     await w.update(MAP_FACTS, fact_id, {"status": mf.REJECTED})
     culture = rows[0].get("culture_id")
     if culture:  # (a name DMbot read and the DM never kept: turned down with all its rows)
@@ -519,4 +528,5 @@ async def reject_row(w: Changes, fact_id: str) -> bool:
             await w.update(CULTURES, str(culture), {"status": mf.REJECTED})
             others = await w.select(MAP_FACTS, " AND culture_id = %s" + _OPEN, [culture])
             await w.update_rows(MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in others})
-    return True
+            return NAME_TOO
+    return ROW_ONLY

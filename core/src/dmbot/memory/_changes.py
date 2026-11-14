@@ -391,7 +391,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
-    # (the database would delete these outside the log: deleting a culture deletes its rows)
+    # (a logged delete of a culture is refused while a row points at it: the database's cascade
+    # would delete those rows outside the log)
     "memory_cultures": (("memory_map_facts", "culture_id", False),),
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (

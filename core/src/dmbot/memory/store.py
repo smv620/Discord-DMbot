@@ -1651,13 +1651,14 @@ class MemoryStore:
 
     async def turn_down_world_note(
         self, guild_id: int, campaign_id: str, line_id: str, *, source: str
-    ) -> Written[None]:
-        """The DM's 🚫 Not right on one line: one change, so one Undo."""
+    ) -> Written[bool]:
+        """The DM's 🚫 Not right on one line: one change, so one Undo. True when a named culture
+        DMbot read went with it, at every place (#4257 slice 3b)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            await world_notes.turn_down(w, line_id)
-            return Written(None, w.batch)
+            everywhere = await world_notes.turn_down(w, line_id)
+            return Written(everywhere, w.batch)
 
     async def add_read_map_facts(
         self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str

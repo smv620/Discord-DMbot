@@ -72,24 +72,27 @@ SQL = (
 
     CREATE POLICY migrate_backfill ON memory_map_facts FOR ALL USING (true) WITH CHECK (true);
     CREATE POLICY migrate_backfill ON memory_cultures FOR ALL USING (true) WITH CHECK (true);
-    -- (one culture per campaign and name, whichever place first had it; the id is the name's own
-    -- md5, so two places with the same words point at the same culture)
+    -- (one culture per campaign and name, its spelling from the first row that had it; kept when
+    -- some open row has it, else turned down, as the DM had taken it away; the id is the name's
+    -- own md5. Spaces are made single, as `place_peoples.culture_key` does.)
     INSERT INTO memory_cultures
         (guild_id, campaign_id, id, name, name_key, lineage, status, source, created_at)
-    SELECT DISTINCT ON (f.guild_id, f.campaign_id, lower(btrim(f.words)))
-           f.guild_id, f.campaign_id,
-           md5(f.guild_id::text || '/' || f.campaign_id || '/' || lower(btrim(f.words))),
-           btrim(f.words), lower(btrim(f.words)), '', 'confirmed', 'dm', f.created_at
-      FROM memory_map_facts f
-     WHERE f.layer = 'culture' AND f.value = 'other' AND btrim(f.words) <> ''
-     ORDER BY f.guild_id, f.campaign_id, lower(btrim(f.words)), f.created_at
-    ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING;
+    SELECT n.guild_id, n.campaign_id, md5(n.guild_id::text || '/' || n.campaign_id || '/' || n.key),
+           (array_agg(n.name ORDER BY n.created_at, n.id))[1], n.key, '',
+           CASE WHEN bool_or(n.open) THEN 'confirmed' ELSE 'rejected' END, 'dm', min(n.created_at)
+      FROM (SELECT f.guild_id, f.campaign_id, f.id, f.created_at,
+                   regexp_replace(btrim(f.words, E' \t\r\n'), '\s+', ' ', 'g') AS name,
+                   lower(regexp_replace(btrim(f.words, E' \t\r\n'), '\s+', ' ', 'g')) AS key,
+                   f.status <> 'rejected' AND f.to_session_at IS NULL AS open
+              FROM memory_map_facts f
+             WHERE f.layer = 'culture' AND f.value = 'other' AND btrim(f.words) <> '') n
+     GROUP BY n.guild_id, n.campaign_id, n.key;
     UPDATE memory_map_facts f
        SET culture_id = c.id, value = '', words = ''
       FROM memory_cultures c
      WHERE f.layer = 'culture' AND f.value = 'other'
        AND c.guild_id = f.guild_id AND c.campaign_id = f.campaign_id
-       AND c.name_key = lower(btrim(f.words));
+       AND c.name_key = lower(regexp_replace(btrim(f.words, E' \t\r\n'), '\s+', ' ', 'g'));
     DROP POLICY migrate_backfill ON memory_cultures;
     DROP POLICY migrate_backfill ON memory_map_facts;
     """
