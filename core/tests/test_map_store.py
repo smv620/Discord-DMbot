@@ -313,3 +313,60 @@ class Maps(DatabaseTest):
         self.assertGreater(await rows(), 0)
         await self.pictures.delete(GUILD_A, self.one.id, pic)
         self.assertEqual(await rows(), 0)
+
+    async def test_the_waiting_list_holds_only_unanswered_maps_of_this_campaign(self) -> None:
+        mine = await self.add(await self.picture(self.one.id, 1), dm=False)
+        theirs = await self.add(await self.picture(self.two.id, 2), dm=False, campaign=self.two.id)
+        self.assertEqual(
+            [m.id for m in await self.maps.waiting_for_a_dm(GUILD_A, self.one.id)], [mine]
+        )
+        await self.maps.answer_use(GUILD_A, self.one.id, mine, dm_id=DM, yes=False)
+        self.assertEqual(await self.maps.waiting_for_a_dm(GUILD_A, self.one.id), [])
+        self.assertEqual(
+            [m.id for m in await self.maps.waiting_for_a_dm(GUILD_A, self.two.id)], [theirs]
+        )
+
+    async def test_a_player_viewer_never_sees_a_dm_only_map_even_when_it_is_usable(self) -> None:
+        mid = await self.add(await self.picture(self.one.id, 1), dm=True)
+        got = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
+        assert got is not None
+        self.assertTrue(may_use_map(got))
+        self.assertEqual(
+            await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW, usable_only=True), []
+        )
+        self.assertIsNone(await self.maps.get(GUILD_A, self.one.id, mid, TABLE_VIEW))
+        await self.maps.set_audience(GUILD_A, self.one.id, mid, "table")
+        self.assertEqual(
+            [
+                m.id
+                for m in await self.maps.maps(GUILD_A, self.one.id, TABLE_VIEW, usable_only=True)
+            ],
+            [mid],
+        )
+        self.assertIsNotNone(await self.maps.get(GUILD_A, self.one.id, mid, TABLE_VIEW))
+
+    async def test_a_removed_map_can_be_added_again_as_a_new_map(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        first = await self.add(pic, dm=True)
+        await self.maps.remove_map(GUILD_A, self.one.id, first)
+        second = await self.add(pic, dm=True)
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            [m.id for m in await self.maps.maps(GUILD_A, self.one.id, DM_VIEW)], [second]
+        )
+
+    async def test_a_title_is_cut_to_120_characters(self) -> None:
+        # a prefix and a suffix that differ, so a cut from the wrong end would fail
+        mid = await self.add(await self.picture(self.one.id, 1), dm=True,
+                             title="a" * 120 + "b" * 80)  # fmt: skip
+        got = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
+        assert got is not None
+        self.assertEqual(got.title, "a" * 120)
+
+    async def test_an_import_names_its_tool_and_starts_as_dm_only(self) -> None:
+        mid = await self.add(
+            await self.picture(self.one.id, 1), dm=True, came_from="import", import_tool="azgaar"
+        )
+        got = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
+        assert got is not None
+        self.assertEqual((got.came_from, got.import_tool, got.audience), ("import", "azgaar", "dm"))
