@@ -25,7 +25,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 from dmbot.memory import backstory_keep
-from dmbot.memory.backstory_links import BackstoryLinks
+from dmbot.memory.backstory_links import BackstoryLinks, Waiting
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import (
     CONFIRMED,
@@ -42,6 +42,22 @@ from dmbot.names.not_names import CREATURE_KINDS
 log = logging.getLogger(__name__)
 
 NAMES, OTHER_NAMES, CONNECTIONS = "names", "other names", "connections"
+# Why a connection waits for the DM (#4382, so a count can say it): an end that isn't a kept entry
+# yet, one DMbot worked out (#2959 item 5), or a hand-over, which ends what someone else holds
+# (#4115). Each is a question for the DM, never kept here.
+ON_A_NAME, WORKED_OUT, HAND_OVER = "waiting on a name", "worked out by DMbot", "an item handed over"
+WHY_WAITING = (ON_A_NAME, WORKED_OUT, HAND_OVER)
+
+
+def why_waiting(link: Waiting) -> str | None:
+    """Why this waiting connection stays a question, or None when it is ready to keep."""
+    if not link.ready:
+        return ON_A_NAME
+    if link.inferred:
+        return WORKED_OUT
+    if link.hand_over:
+        return HAND_OVER
+    return None
 
 
 def _words(text: str) -> str:
@@ -63,6 +79,7 @@ class Tally:
 
     accepted: Counter[str] = field(default_factory=Counter)
     waiting: Counter[str] = field(default_factory=Counter)  # left for a person to answer
+    waiting_why: Counter[str] = field(default_factory=Counter)  # connections, by `why_waiting`
     refused: Counter[str] = field(default_factory=Counter)  # a rule said no (it stays waiting)
     batches: list[int] = field(default_factory=list)  # the changes made, to undo them together
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
@@ -175,7 +192,13 @@ async def accept_connections(
     ]
     # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5;
     # nor a hand-over, which ends what someone else holds, #4115)
-    ready = [w for w in every if w.ready and not w.inferred and not w.hand_over]
+    ready = []
+    for w in every:
+        why = why_waiting(w)
+        if why is None:
+            ready.append(w)
+        else:
+            tally.waiting_why[why] += 1
     tally.waiting[CONNECTIONS] += len(every) - len(ready)
     if dry_run:
         tally.accepted[CONNECTIONS] += len(ready)

@@ -550,15 +550,23 @@ class Steps(DatabaseTest):
             await accept(self.db, GUILD, other.id)
 
     async def test_the_sure_step_says_what_is_left_waiting(self) -> None:
-        # (#4382: "accepted 0, left waiting 42" said nothing of what the 42 were)
+        # (#4382: "accepted 0, left waiting 42" said nothing of what the 42 were; the reasons
+        # themselves are tested in test_auto_accept)
         camp = await self.made()
-        got = await cli._sure()(self.db, GUILD, camp.id)
-        for key in (
-            "names kept before", "waiting names", "waiting other names", "waiting connections",
-            "connections: an end not kept", "connections: worked out", "connections: a hand-over",
-        ):  # fmt: skip
-            self.assertEqual(got[key], 0, key)
-        self.assertEqual(got["left waiting"], 0)
+        sure = cli._sure()
+        got = await sure(self.db, GUILD, camp.id)
+        self.assertEqual(
+            {k: v for k, v in got.items() if k.startswith(("waiting", "connections", "names"))},
+            {
+                "names kept so far": 0, "waiting names": 0, "waiting other names": 0,
+                "waiting connections": 0, "connections waiting on a name": 0,
+                "connections worked out by DMbot": 0, "connections an item handed over": 0,
+            },
+        )  # fmt: skip
+        after_ai = await sure(self.db, GUILD, camp.id, connections_only=True)
+        self.assertEqual(
+            sorted(after_ai), ["accepted", "changes", "left waiting", "refused by a rule"]
+        )
 
     async def test_the_backup_goes_to_a_private_file_and_scores_with_counts_only(self) -> None:
         camp = await self.made()
