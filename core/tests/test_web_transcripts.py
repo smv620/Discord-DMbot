@@ -97,6 +97,14 @@ class Transcripts(Base):
         )
         self.bob = await self.session_of(BOB)
         self.carol = await self.session_of(CAROL)
+        # These tests read the pages as a plain member of the server (Carol). Since #3891 a
+        # campaign's transcripts are its people's unless its channels are open to everyone, so
+        # they say so; `test_web_transcript_people.py` tests the rule itself.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
 
     async def session_of(self, user: Any, guilds: Any = None) -> Any:
         token = await sessions.sign_in(
