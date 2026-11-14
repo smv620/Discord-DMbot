@@ -298,6 +298,7 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.maps import store as maps_store
+from dmbot.maps.pending import PendingMaps
 from dmbot.maps.store import Map as MapRow
 from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
@@ -566,6 +567,7 @@ from dmbot.ui import (
     looked_at,
     map_answer,
     map_question,
+    map_send,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -1557,6 +1559,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.picture_actions: PictureActions | None = None
         self.picture_store: PictureStore | None = None
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
+        self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
@@ -1841,6 +1844,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
         )
         self.add_dynamic_items(map_question.YesButton, map_question.NoButton)  # #4344
+        self.add_dynamic_items(
+            map_send.PickButton, map_send.MenuSelect, map_send.YesButton, map_send.NoButton
+        )  # a map sent to DMbot, #4372
         self.add_dynamic_items(
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
@@ -4672,7 +4678,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_id=guild.id,
             voice_channel_id=saved.voice_channel_id,
             screen_channel_id=screen_id,
-            dm_user_id=saved.started_by,
+            dm_user_id=dm_for_resume(saved.started_by, campaign.dm_user_ids),
             segmenter=Segmenter(guild.id),
             notice_posted=saved.notice_posted,
             campaign_id=campaign.id,
@@ -13489,6 +13495,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     self._image_replies.setdefault(message_id, []).append(reply)
         return got.picture.id
 
+    async def take_private_map(self, message: discord.Message) -> bool:
+        """A picture sent to DMbot in a private chat is a map to keep (#4372): True when it took
+        it, so the sidebar says nothing more. Nothing is stored before the sender's yes."""
+        if self.map_store is None or self.picture_keeper is None:
+            return False
+        return await map_send.from_private_message(self, message)
+
     async def _tell_pictures_removed(self, guild_id: int, campaign_id: str, count: int) -> None:
         """The DMs hear once (a run of the bot) that old pictures were removed to make room."""
         if campaign_id in self._pictures_told:
@@ -15355,6 +15368,15 @@ def _free_bytes(root: Path) -> int:
 
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
+
+
+def dm_for_resume(started_by: int, dm_user_ids: frozenset[int]) -> int:
+    """The DM a resumed session runs for. Whoever started it, unless that person has deleted their
+    account (their number is 0 then, #4148): then the campaign's lowest-numbered DM, or 0 when it
+    has none, so nothing looks up a user 0."""
+    if started_by > 0:
+        return started_by
+    return min(dm_user_ids) if dm_user_ids else 0
 
 
 def register_commands(tree: app_commands.CommandTree[Any]) -> None:

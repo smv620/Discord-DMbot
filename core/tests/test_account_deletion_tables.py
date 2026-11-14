@@ -21,12 +21,16 @@ FORGET_PERSON = import_module("dmbot.migrations.0431_forget_person")
 FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
 FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
 FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
+FORGET_DECISIONS_2 = import_module("dmbot.migrations.0493_forget_decisions_2")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
-    FORGET_PERSON.ZEROED + FORGET_AUTHORSHIP.ZEROED + FORGET_DECISIONS.ZEROED
+    FORGET_PERSON.ZEROED
+    + FORGET_AUTHORSHIP.ZEROED
+    + FORGET_DECISIONS.ZEROED
+    + FORGET_DECISIONS_2.ZEROED
 )
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -94,6 +98,14 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("speaker_removals", "requested_by"),
         ("transcript_suggestions", "decided_by"),
         ("waiting_name_questions", "decided_by"),
+        ("name_not_same", "decided_by"),
+        ("plan_same_as", "decided_by"),
+        ("plan_position", "set_by"),
+        ("pack_suggestions", "resolved_by"),
+        ("rule_set_suggestions", "resolved_by"),
+        ("plot_issues", "answered_by"),
+        ("adventure_reads", "started_by"),
+        ("active_sessions", "started_by"),
     )
 )
 
@@ -107,6 +119,17 @@ ALREADY_COVERED = frozenset(
         "rule_sets",
         "rule_set_versions",
         "rule_set_follows",
+        # 0493 (#4148): their parents and keys (an entry pair, a plan, a rule set, one row for a
+        # server) clash when two people share a campaign, so each person gets a campaign in a
+        # server of their own in test_forget_decisions_2.py.
+        "name_not_same",
+        "plan_same_as",
+        "plan_position",
+        "pack_suggestions",
+        "rule_set_suggestions",
+        "plot_issues",
+        "adventure_reads",
+        "active_sessions",
     }
 )
 
