@@ -74,7 +74,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
+import type { WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1035,6 +1035,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   // What each connection edit changed, for Undo (the numbers only go up).
   let lastBatch = 0;
+  // DMbot's guesses for the DM to check (#4285): a few lines of each kind, ids shaped as the door's are.
+  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[] } = {
+    places: [
+      { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a3".repeat(16)}`, entityId: "n25", name: "Greywatch", layer: "control", value: "", words: "", how: "rules", rulerId: "g1", ruler: "The Greywatch Guard", from: "lore", fromSession: null },
+    ],
+    languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
+  };
+  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
   const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
@@ -2679,6 +2689,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+    },
+    async worldNotes(ref) {
+      calls.push(`worldNotes:${ref}`);
+      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })) };
+    },
+    // ✅, 🚫 and ↩ Undo on World notes (#4285): a line checked meanwhile is "gone", as the real bot says.
+    async changeWorldNotes(ref, change) {
+      calls.push(`changeWorldNotes:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = worldBatches.get(change.batch);
+        if (!back) throw new ApiError("gone");
+        worldBatches.delete(change.batch);
+        worldNotes.places.push(...back.places);
+        worldNotes.languages.push(...back.languages);
+        return { kept: null, batch: null };
+      }
+      const ids = change.action === "keep" ? change.ids : [change.id];
+      const places = worldNotes.places.filter((n) => ids.includes(n.id));
+      const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
+      if (places.length + languages.length === 0) throw new ApiError("gone");
+      worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
+      worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
+      const batch = ++lastBatch;
+      worldBatches.set(batch, { places, languages });
+      return { kept: change.action === "keep" ? places.length + languages.length : null, batch };
     },
     async placeWorldTable(ref, placeId) {
       calls.push(`placeWorldTable:${ref}:${placeId}`);
