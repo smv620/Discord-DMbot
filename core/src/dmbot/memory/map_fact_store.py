@@ -24,6 +24,11 @@ GONE = "That's gone. Open the card again to see it as it is now."
 BAD_WORD = "That isn't one of the choices."
 
 
+# Layers whose values sit side by side (#4257): a town can be strongly dwarven and a little elven,
+# and home to mostly halflings and some humans. A different lineage never corrects another.
+BESIDE = frozenset({mf.CULTURE, mf.POPULATION})
+
+
 def _fact(r: Mapping[str, Any]) -> mf.Fact:
     return mf.Fact(
         id=str(r["id"]),
@@ -134,7 +139,9 @@ async def set_by_dm(
     replaces is rejected (the DM says what it is: a correction, §7.3):
     - land and climate: every other open value of the layer;
     - who rules it: another group that "rules" it when this one now rules it, and this group's own
-      row; a different group that only claims, occupies or protects it stays beside it (§6).
+      row; a different group that only claims, occupies or protects it stays beside it (§6);
+    - culture and who lives there (#4257): only this lineage's own row; another lineage stays
+      beside it ("strongly dwarven, a little elven", "mostly halflings, some humans").
     None ("Not sure") clears the whole layer. The same value again only confirms it, with its new
     shade. Whether players see it follows the place's other rows (one 🙈 / 👁️ for the place)."""
     place = await _place(w, onto, place_id)
@@ -142,11 +149,19 @@ async def set_by_dm(
         await _check_value(w, onto, place, layer, value, how, words)
     every = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
     known = any(bool(r["table_knows"]) for r in every)
-    now = [r for r in every if r["layer"] == layer and r["part"] == ""]
+    # (a part's row, "the dwarven quarter", is read only: the DM's set acts on the whole place, but
+    # "Not sure" for culture or who lives there clears every row of the layer, parts too; #4257)
+    now = [
+        r
+        for r in every
+        if r["layer"] == layer and (r["part"] == "" or (value is None and layer in BESIDE))
+    ]
 
     def replaced(f: mf.Fact) -> bool:
-        if value is None or layer != mf.CONTROL:
+        if value is None or layer in (mf.TERRAIN, mf.CLIMATE):
             return True
+        if layer in BESIDE:
+            return f.value == value
         return f.value == value or (how == "rules" and f.how == "rules")
 
     keeps = value is not None and any(_fact(r).value == value for r in now)
@@ -207,11 +222,21 @@ async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) 
     return len(changed)
 
 
-async def keep_read(w: Changes, onto: Ontology, place_id: str) -> int:
-    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place becomes the DM's word,
-    keeping whether players see it. How many."""
+async def keep_read(
+    w: Changes, onto: Ontology, place_id: str, layers: Collection[str] | None = None
+) -> int:
+    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place, in `layers` (all when
+    None), becomes the DM's word, keeping whether players see it. How many. Each screen keeps only
+    the layers it shows: a confirmed row the table knows reaches players, so ✅ never keeps what
+    the DM didn't see (#4257)."""
     await _place(w, onto, place_id)
-    rows = await w.select(MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id])
+    rows = [
+        r
+        for r in await w.select(
+            MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id]
+        )
+        if layers is None or r["layer"] in layers
+    ]
     await w.update_rows(
         MAP_FACTS,
         {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
@@ -228,6 +253,7 @@ class Read(NamedTuple):
     value: str
     how: str = ""
     session_at: int | None = None  # the session it was read from: said at the table
+    part: str = ""  # only part of the place: "the dwarven quarter" (#4257)
 
 
 async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter[str]:
@@ -247,7 +273,9 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             counts["not_allowed"] += 1
             continue
         rows = await w.select(
-            MAP_FACTS, " AND entity_id = %s AND layer = %s AND part = ''", [f.place_id, f.layer]
+            MAP_FACTS,
+            " AND entity_id = %s AND layer = %s AND lower(part) = lower(%s)",
+            [f.place_id, f.layer, f.part],
         )
         if any(
             r["status"] == mf.REJECTED and _fact(r).value == f.value for r in rows
@@ -271,6 +299,8 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
                 counts["noted"] += 1
                 continue
             others: list[mf.Fact] = []
+        elif f.layer in BESIDE:  # (another lineage sits beside it: never a correction, #4257)
+            others = []
         else:
             others = now
         outcome = mf.KEEP
@@ -288,7 +318,8 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             MAP_FACTS,
             {
                 "id": new_id(), "entity_id": f.place_id, "layer": f.layer,
-                **_row_value(f.layer, f.value), "words": "", "how": f.how, "part": "",
+                **_row_value(f.layer, f.value), "words": "", "how": f.how,
+                "part": f.part[: mf.WORDS_MAX],
                 "from_session_at": f.session_at, "to_session_at": None,
                 "from_game_time": None, "to_game_time": None, "status": mf.READ,
                 "source": mf.FROM_TEXT, "also_text": True,

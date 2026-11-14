@@ -1579,15 +1579,18 @@ class MemoryStore:
         value: str | None,
         *,
         how: str = "",
+        words: str = "",
         source: str,
     ) -> Written[None]:
-        """The DM's word for a place's land, climate or ruler (the edit screen): one change, so one
-        Undo. None is "Not sure" and clears it. For control, `value` is the group's id."""
+        """The DM's word for a place's land, climate, ruler, culture or who lives there (the edit
+        screens): one change, so one Undo. None is "Not sure" and clears the layer (for culture and
+        who lives there, every lineage). For control, `value` is the group's id; `words` are the
+        DM's own for "other" ("duergar", #4257)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how)
+            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how, words=words)
             return Written(None, w.batch)
 
     async def show_map_facts(
@@ -1603,14 +1606,21 @@ class MemoryStore:
             return Written(changed, w.batch)
 
     async def keep_map_facts(
-        self, guild_id: int, campaign_id: str, place_id: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        *,
+        source: str,
+        layers: Collection[str] | None = None,
     ) -> Written[int]:
-        """The DM's ✅ Keep what DMbot read, for one place: one change, so one Undo."""
+        """The DM's ✅ Keep what DMbot read, for one place, in `layers` (all when None): one
+        change, so one Undo."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            kept = await map_fact_store.keep_read(w, onto, place_id)
+            kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
