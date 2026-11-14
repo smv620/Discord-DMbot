@@ -10,7 +10,7 @@
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)",
-  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line}; scored as found, missed, and extra (a language the key does not list)"
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",

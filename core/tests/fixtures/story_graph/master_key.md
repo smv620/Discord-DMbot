@@ -6,7 +6,7 @@ What the graph should hold after the [sample lore](https://docs.google.com/docum
 
 **Tiers:** `stated` the words are in a document · `needs_context` only readable with the other document or the recap · `inferred` only implied, offered to the DM and never extracted · `recap_only` only in the session's 'Previously' recap · `by_rule` made by a rule. **Must find: no** means a good find if present, not a miss if absent. **Current: no** is history.
 
-**Totals:** 97 entries, 136 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session).
+**Totals:** 97 entries, 141 connections (88 must-find, 19 said by both documents), 25 events (19 in the lore, 6 in the session), 2 languages (the lore).
 
 ## Ties both documents say
 

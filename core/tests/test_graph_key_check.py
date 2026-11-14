@@ -7,6 +7,7 @@ import io
 import json
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
@@ -717,9 +718,21 @@ class Languages(unittest.TestCase):
         self.assertIn("Languages: found 1, missed 1, extra 2", gkc.render(report))
         self.assertEqual(gkc.summarize(report)["languages"]["extra"], 2)
 
-    def test_a_key_without_languages_prints_nothing(self) -> None:
-        report = gkc.check(backup([("n", "Norrin", "person")], []), {"nodes": [], "pairs": []})
+    def test_a_key_without_languages_scores_none_even_with_rows(self) -> None:
+        row = {
+            "table": "story_language", "id": "a", "entity_id": "n", "name": "Elvish",
+            "name_key": "elvish", "given_by": "read",
+        }  # fmt: skip
+        report = gkc.check(backup([("n", "Norrin", "person")], [row]), {"nodes": [], "pairs": []})
+        self.assertEqual(report.languages, Counter())
         self.assertNotIn("Languages:", gkc.render(report))
+        self.assertNotIn("languages", gkc.summarize(report))
+
+    def test_a_session_only_run_never_scores_the_lores_languages(self) -> None:
+        report = gkc.check(backup([], []), load("master_key.json"), docs="session")
+        self.assertEqual(report.languages, Counter())
+        both = gkc.check(backup([], []), load("master_key.json"), docs="both")
+        self.assertEqual(both.languages["missed"], 2)
 
     def test_the_sample_keys_give_cerric_two_languages_and_no_tie(self) -> None:
         for name in ("lore_key.json", "master_key.json"):

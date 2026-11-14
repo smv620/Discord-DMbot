@@ -15,7 +15,7 @@
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "in": "which documents say it: lore, session, or both (a both tie is checked twice: once in each document, and the master counts it once)",
   "sources": "for each document that says it: the key id there and the line of its plain-text export",
-  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line}; scored as found, missed, and extra (a language the key does not list)"
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",

@@ -13,7 +13,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 
 **Tiers:** `stated` the words are in the text · `inferred` only implied, offered as a suggestion and never extracted · `by_rule` made by a rule, not read. **Must find: no** means a good find if present, not a miss if absent. An `inferred` tie marked must-find is scored on whether DMbot *offers* it to the DM. **Current: no** is history: it was true and is not now.
 
-**Totals:** 89 entries, 122 connections (80 must-find), 19 events.
+**Totals:** 89 entries, 126 connections (80 must-find), 19 events, 2 languages.
 
 ## Connections
 

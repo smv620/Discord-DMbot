@@ -496,24 +496,34 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
     _score_map_facts(report, graph, key, names)
-    _score_languages(report, graph, key, names)
+    _score_languages(report, graph, key, names, wanted)
     return report
 
 
 def _score_languages(
-    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
 ) -> None:
     """The key's `languages` (#4229): {character, language}. A backup language row on that
     character with that language (compared as `name_key`, so "elvish" is "Elvish") is found; none
     is missed. Every other row is extra: a language the document never gives that character, such
     as runes on an item read as a language. Whoever gave it (DMbot's read or the DM) counts alike:
     the check scores what the graph holds, as for ties. A key with no `languages` list (the
-    session key, a key from before #4229) is not scored, so its report is unchanged."""
-    if "languages" not in key:
+    session key, a key from before #4229) is not scored, so its report is unchanged; nor is a run
+    that scores none of the documents its languages come from (`doc`, lore when not given), so a
+    session-only run never counts the lore's languages as missed. Two things this does not judge:
+    a row on an entry turned down since is still extra, and a character with a sheet gets no story
+    languages at all (its languages are the sheet's), so a run that sets one before the lore is
+    read scores its languages as missed."""
+    langs = [x for x in key.get("languages", []) if x.get("doc", "lore") in wanted]
+    if not langs:
         return
     rows = list(graph.tables.get("story_language", []))
     used: set[int] = set()
-    for lang in key.get("languages", []):
+    for lang in langs:
         who = graph.ids(names.get(lang["character"], [lang["character"]]))
         want = name_key(str(lang["language"]))
         hit = [
@@ -592,7 +602,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
-        "languages": dict(report.languages),
+        **({"languages": dict(report.languages)} if report.languages else {}),
     }
 
 
