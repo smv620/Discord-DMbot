@@ -175,7 +175,9 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         self.schema = f"t_{uuid.uuid4().hex[:16]}"
         self.db = await Database.open(
             TEST_URL, schema=self.schema, max_size=2,
-            migrations=tuple(m for m in MIGRATIONS if m[0] != self.NAME),
+            # (every migration before 0459, so 0459 and those after it then run in their own
+            # order: a later one may change the door lines 0459 finds, #4356)
+            migrations=tuple(m for m in MIGRATIONS if m[0] < self.NAME),
         )  # fmt: skip
         self.c = (await CampaignStore(self.db).create(GUILD_A, "Frostmaiden", DM)).id
 
