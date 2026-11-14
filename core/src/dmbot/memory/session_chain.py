@@ -28,7 +28,7 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import place_levels, route_words
+from dmbot.memory import place_levels, route_length, route_words
 from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.story_chain import LIST_PLACES, Place
 
@@ -59,6 +59,7 @@ class Leg:
     start: str
     end: str
     means: str
+    length: str = ""  # how far the DM's words said, by `route_length`'s set phrases (#4255 1b)
 
 
 @dataclass(slots=True)
@@ -129,6 +130,8 @@ def walk(
     usable = [p for p in found if p.level in place_levels.RANK]
     ranks = {p.entity_id: place_levels.RANK[p.level] for p in usable}
     route_ids = {r.entity_id for r in routes}
+    # each place's spellings, so a journey's length is tied to its own two ends (#4255 slice 1b)
+    spelled = {p.entity_id: p.spellings for p in (*found, *routes)}
     out = Walked({k: [e for e in v if e in ranks] for k, v in chains.items()})
     given = set(stated)
     # The party's journeys (Supervisor's ruling on part 3, 2026-11-13): only on the party's own
@@ -205,7 +208,9 @@ def walk(
                     arrived = moved.get(p.entity_id) == ARRIVE  # (the AI said so, not a default)
                     if arrived and town is not None and town != p.entity_id:
                         words = way_words if away else [*way_words, line.text]
-                        out.legs.append(Leg(town, p.entity_id, _way(words)))
+                        ends = (*spelled.get(town, ()), *p.spellings)  # (the journey's two ends)
+                        length = route_length.find_on_way(words, ends)
+                        out.legs.append(Leg(town, p.entity_id, _way(words), length))
                     if arrived or town is None:
                         town, way_words = p.entity_id, []
     out.town = town

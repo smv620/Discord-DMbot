@@ -6,16 +6,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot import credits, images, table_chat
-from dmbot.ai import OUTPUT_FLOOR, Image
+from dmbot.ai import AIOutOfFunds, Image
 from dmbot.campaigns.models import SHARED_STORY
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
-from dmbot.map_notes import MapNoteStore
+from dmbot.map_notes import MapNoteStore, close_of
 from dmbot.pictures.keeper import Result
 from dmbot.transcript.models import Line
 from tests import test_table_chat as chat
@@ -150,28 +151,19 @@ class TableImages(chat.AtTheTableTyped):
         self.assertTrue(line.text.startswith("a map: "))  # the transcript says it is a map
         self.assertNotIn("Harrowmere", line.text)  # and carries no more than the short description
 
-    async def test_the_dms_map_is_read_closely_and_a_players_is_not(self) -> None:
-        # (#4173 slice 6b-1, Supervisor's test: the one check, `map_use.may_use_map`)
+    async def test_no_map_is_read_closely_when_it_is_posted(self) -> None:
+        # (#4349, MapBot 6b-2: the close read waits for both yeses on the kept map, by the sweep;
+        # neither the DM's picture nor a player's is read closely in chat)
         await self.confirm_right_to_use()
         self.bot.map_notes = MapNoteStore(self.db)
         vision = MapVision()
         self.bot.image_desk = self.make_desk(vision=vision)
         await self.hear(picture())  # (the DM's)
-        [note] = await self.bot.map_notes.notes(GUILD_A, self.a.id)
-        assert note.close is not None
-        self.assertEqual(note.close["level"], "region")
-        self.assertEqual(
-            note.close["links"],
-            [{"a": "Harrowmere", "kind": "next_to", "b": "Grey Sound",
-              "word": "on the coast of", "sure": True}],
-        )  # fmt: skip
-        self.assertEqual(vision.max_tokens, OUTPUT_FLOOR)  # (background work: the floor)
         self.bot.consent.has_image_consent = lambda guild_id, user_id: True  # type: ignore[method-assign]
         await self.hear(picture(author=PLAYER))
-        newest = (await self.bot.map_notes.notes(GUILD_A, self.a.id))[0]
-        self.assertEqual(newest.user_id, PLAYER)
-        self.assertIsNone(newest.close)  # (no close read, no links: a DM's yes is needed)
-        self.assertEqual(vision.closely, 1)
+        notes = await self.bot.map_notes.notes(GUILD_A, self.a.id)
+        self.assertEqual([n.close for n in notes], [None, None])
+        self.assertEqual(getattr(vision, "closely", 0), 0)
 
     async def test_a_map_read_is_charged_as_ai_credits(self) -> None:
         seen: list[Any] = []
@@ -195,9 +187,25 @@ class TableImages(chat.AtTheTableTyped):
         assert scope is not None
         self.assertEqual((scope.campaign_id, scope.job_kind), (self.a.id, "map"))
 
-    async def test_a_cut_close_read_keeps_the_description_and_no_note(self) -> None:
-        await self.confirm_right_to_use()
-        self.bot.map_notes = MapNoteStore(self.db)
+    async def test_a_close_read_out_of_credits_gives_its_place_back_and_looks_once(self) -> None:
+        # (the reviewer's case, #4349: no first look on a kept map, and a read put off for AI
+        # credits keeps the table's own pictures their place that day)
+        class Broke(MapVision):
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                self.calls += 1
+                raise AIOutOfFunds("no funds")
+
+        vision = Broke()
+        desk = self.make_desk(vision=vision)
+        png = Image("image/png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        with self.assertRaises(AIOutOfFunds):
+            await desk.read_closely(GUILD_A, self.a.id, png, nullcontext)
+        self.assertEqual(vision.calls, 1)  # (the metered close read only: no first look)
+        self.assertEqual(await ImageUseStore(self.db).used(GUILD_A, self.a.id, desk.day()), 0)
+
+    async def test_a_cut_close_read_gives_no_close_read(self) -> None:
+        # (#4349: the close read is the sweep's, `ImageDesk.read_closely`; a cut answer keeps no
+        # places, so the sweep counts it as a failed try and reads again, never "nothing found")
         vision = MapVision()
         real = vision.complete
 
@@ -210,13 +218,13 @@ class TableImages(chat.AtTheTableTyped):
             )
 
         vision.complete = cut  # type: ignore[method-assign]
-        self.bot.image_desk = self.make_desk(vision=vision)
+        desk = self.make_desk(vision=vision)
+        png = Image("image/png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
         with self.assertLogs("dmbot.images", "INFO") as logs:
-            await self.hear(picture())
+            read = await desk.read_closely(GUILD_A, self.a.id, png, nullcontext)
         self.assertIn("(cut)", " ".join(logs.output))
-        self.assertEqual(await self.bot.map_notes.notes(GUILD_A, self.a.id), [])
-        [line] = self.lines()
-        self.assertEqual(line.text, "a map: A map of the coast.")
+        assert read is not None
+        self.assertIsNone(close_of(read))  # (nothing a note could keep as a close read)
 
     async def test_a_poster_who_stops_after_the_reading_but_before_the_write_leaves_no_note(
         self,
