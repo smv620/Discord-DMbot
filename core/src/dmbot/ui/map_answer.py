@@ -17,7 +17,7 @@ from typing import Any
 import discord
 
 from dmbot.maps import words
-from dmbot.maps.store import GONE, MapError, Viewer
+from dmbot.maps.store import GONE, AlreadyAnswered, MapError, Viewer
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 from dmbot.ui.family_ties import _dm_campaign
 
@@ -47,7 +47,7 @@ async def _card(bot: Any, campaign: Any, waiting: Any) -> tuple[str, discord.ui.
     """The question for one waiting map, with its three buttons."""
     player = _name(bot, campaign.guild_id, waiting.right_by)
     text = f"**{words.dm_title(player)}**\n{words.dm_body(player)}"
-    picture = await bot.picture_store.by_id(campaign.guild_id, waiting.picture_id)
+    picture = await bot.picture_store.get(campaign.guild_id, campaign.id, waiting.picture_id)
     if picture is not None and not picture.gone and bot.settings.site_url:
         text += f"\n🖼️ {bot.settings.site_url}/pictures/{picture.code}"
     out = discord.ui.View(timeout=None)
@@ -105,20 +105,26 @@ class OpenButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
         await _show_next(interaction, campaign, edit=False)
 
 
-async def _show_next(interaction: discord.Interaction, campaign: Any, *, edit: bool) -> None:
+async def _show_next(
+    interaction: discord.Interaction, campaign: Any, *, edit: bool, note: str = ""
+) -> None:
     """The first map still waiting, as a card; or "nothing waiting". `edit`: replace the card the
     DM pressed on (after an answer), else send a new private message."""
     bot = _bot(interaction)
     maps = bot.map_store
     waiting = await maps.waiting_for_a_dm(campaign.guild_id, campaign.id) if maps else []
+    lead = f"{note}\n\n" if note else ""
     if not waiting:
         if edit:
             with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(content=words.NOTHING_WAITING, view=None)
+                await interaction.edit_original_response(
+                    content=f"{lead}{words.NOTHING_WAITING}", view=None
+                )
         else:
             await _tell(interaction, words.NOTHING_WAITING)
         return
     text, view = await _card(bot, campaign, waiting[0])
+    text = lead + text
     if edit:
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(content=text, view=view)
@@ -146,15 +152,23 @@ async def _answer(
             await _show_next(interaction, campaign, edit=False)
             return
         if act == "r":
-            picture = await bot.picture_store.by_id(campaign.guild_id, found.picture_id)
+            picture = await bot.picture_store.get(campaign.guild_id, campaign.id, found.picture_id)
             if picture is not None:
                 await keeper.discard(campaign.guild_id, campaign.id, picture)
             log.info("A map was removed by a DM")
+            note = words.done_removed()
         else:
             await maps.answer_use(
-                campaign.guild_id, campaign.id, map_id, dm_id=interaction.user.id, yes=act == "y"
-            )
+                campaign.guild_id, campaign.id, map_id, dm_id=interaction.user.id,
+                yes=act == "y", first_only=True,
+            )  # fmt: skip
             log.info("A DM answered a map question (%s)", "yes" if act == "y" else "no")
+            note = words.done_yes() if act == "y" else words.done_no()
+    except AlreadyAnswered as late:  # (the first answer stands, whoever pressed a moment later)
+        dm = _name(bot, campaign.guild_id, late.map.use_by or 0)
+        await _edit(interaction, words.answered_by(dm, bool(late.map.use_ok)))
+        await _show_next(interaction, campaign, edit=False)
+        return
     except MapError as exc:
         await _edit(interaction, str(exc))
         return
@@ -162,7 +176,7 @@ async def _answer(
         log.warning("A map answer failed (%s)", type(exc).__name__)
         await _edit(interaction, words.FAILED)
         return
-    await _show_next(interaction, campaign, edit=True)
+    await _show_next(interaction, campaign, edit=True, note=note)
 
 
 async def _edit(interaction: discord.Interaction, text: str) -> None:

@@ -14,7 +14,7 @@ import discord
 
 from dmbot.campaigns import CampaignStore
 from dmbot.maps import words
-from dmbot.maps.store import GONE, MapStore, Viewer, may_use_map
+from dmbot.maps.store import GONE, AlreadyAnswered, MapStore, Viewer, may_use_map
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.keeper import PictureKeeper
 from dmbot.pictures.store import MB, PictureStore
@@ -127,7 +127,8 @@ class Answering(DatabaseTest):
         kept = await self.maps.get(GUILD, self.campaign.id, only, Viewer(dm=True))
         assert kept is not None
         self.assertFalse(may_use_map(kept))
-        self.assertEqual(self.shown(it), words.NOTHING_WAITING)
+        self.assertTrue(self.shown(it).endswith(words.NOTHING_WAITING))
+        self.assertTrue(self.shown(it).startswith(words.done_no()))
 
     async def test_remove_deletes_the_map_and_its_picture(self) -> None:
         only = await self.waiting_map()
@@ -153,3 +154,25 @@ class Answering(DatabaseTest):
     async def test_a_gone_map_says_so(self) -> None:
         it = await self.act(DM, "y", "0" * 32)
         self.assertEqual(self.shown(it), GONE)
+
+    async def test_the_store_leaves_the_first_answer_when_two_dms_press_at_once(self) -> None:
+        only = await self.waiting_map()
+        first = await self.maps.answer_use(
+            GUILD, self.campaign.id, only, dm_id=DM, yes=True, first_only=True
+        )
+        self.assertTrue(may_use_map(first.value))
+        with self.assertRaises(AlreadyAnswered) as late:
+            await self.maps.answer_use(
+                GUILD, self.campaign.id, only, dm_id=DM2, yes=False, first_only=True
+            )
+        self.assertEqual((late.exception.map.use_by, late.exception.map.use_ok), (DM, True))
+        kept = await self.maps.get(GUILD, self.campaign.id, only, Viewer(dm=True))
+        assert kept is not None
+        self.assertTrue(may_use_map(kept))  # (the late no did not turn the yes round)
+
+    async def test_the_dm_sees_what_their_answer_did(self) -> None:
+        a, b = await self.waiting_map(), await self.waiting_map()
+        yes = await self.act(DM, "y", a)
+        self.assertTrue(self.shown(yes).startswith(words.done_yes()))
+        removed = await self.act(DM, "r", b)
+        self.assertTrue(self.shown(removed).startswith(words.done_removed()))
