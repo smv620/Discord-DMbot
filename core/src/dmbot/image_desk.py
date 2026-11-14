@@ -34,6 +34,10 @@ StillOk = Callable[[], bool]
 OnImage = Callable[[int, Image, Read | None], Awaitable[None]]
 
 
+class DayLimit(Exception):
+    """The day's picture limit is used (or can't be counted): a later sweep reads it."""
+
+
 class Stopped(Exception):
     """The poster's yes is gone (or the session ended): nothing more of the message is read."""
 
@@ -115,6 +119,22 @@ class ImageDesk:
     def day(self) -> int:
         return int(self._clock() // DAY_S)
 
+    async def read_closely(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        image: Image,
+        meter: Callable[[], AbstractContextManager[Any]],
+    ) -> Read | None:
+        """A kept map's close read (#4349, MapBot 6b-2): only once DMbot may use it, which the
+        caller asked `maps.store.may_use_map`. Counts against the day's pictures like any read;
+        raises DayLimit past it. AI errors (no credits) are the caller's, as for `images.read`."""
+        if self.counter is None:
+            raise DayLimit
+        if not await self.counter.take(guild_id, campaign_id, self.day(), self._per_day):
+            raise DayLimit
+        return await images.read(image, self._fast, self._careful, close=True, meter=meter)
+
     async def describe(
         self,
         guild_id: int,
@@ -123,14 +143,14 @@ class ImageDesk:
         still_ok: StillOk = lambda: True,
         on_image: OnImage | None = None,
         *,
-        close: bool = False,
         meter: Callable[[], AbstractContextManager[Any]] | None = None,
     ) -> list[Read | None]:
         """What was made of each link (at most `MAX_PER_MESSAGE`), in order; None where it was not
         described. `still_ok` is asked before each download and each AI call; once it says no the
         rest of the message is dropped (a shorter list: those pictures get no line at all, since
-        the poster no longer agrees). Never raises for one image's trouble. `close` and `meter`:
-        a map's close read and its AI credits (`images.read`, #4173 slice 6b-1)."""
+        the poster no longer agrees). Never raises for one image's trouble. `meter`: a map read's
+        AI credits (`images.read`). A map's close read is not made here: it waits for both yeses
+        on the kept map (`read_closely`, #4349)."""
         out: list[Read | None] = []
         if self.counter is None:
             return out
@@ -154,7 +174,7 @@ class ImageDesk:
                 image = await self._fetch(link)
                 if not still_ok():
                     raise Stopped
-                read = await images.read(image, fast, careful, close=close, meter=meter)
+                read = await images.read(image, fast, careful, meter=meter)
                 out.append(read)
                 if on_image is not None and still_ok():
                     # Keeping a picture (#3274) must never cost the picture its line: its own

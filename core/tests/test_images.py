@@ -342,13 +342,5 @@ class CloseRead(unittest.TestCase):
         self.assertIsNone(images.parse_close_map(json.dumps({"places": [], "layout": ""})))
 
 
-class MayUse(unittest.TestCase):
-    def test_only_the_dms_own_map_today(self) -> None:
-        from dmbot.map_use import may_use_map
-
-        self.assertTrue(may_use_map((7, 9), 7))
-        self.assertFalse(may_use_map((7,), 8))
-
-
 if __name__ == "__main__":
     unittest.main()

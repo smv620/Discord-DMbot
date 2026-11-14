@@ -50,11 +50,11 @@ from dmbot import (
     fightbot,
     hand_over_answer,
     hours,
+    image_desk,
     images,
     install,
     lore_upload,
     mail,
-    map_use,
     member_lookups,
     member_names,
     owner_presence,
@@ -77,9 +77,11 @@ from dmbot.ai import (
     FEATURE_TIERS,
     OUTPUT_FLOOR,
     AIModelTier,
+    AIOutOfFunds,
     AnthropicClient,
     Feature,
     GeminiClient,
+    Image,
 )
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -295,6 +297,8 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps import store as maps_store
+from dmbot.maps.store import Map as MapRow
 from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
@@ -666,6 +670,9 @@ CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
+# How often the map close-read sweep looks for maps to read (#4349): a kept map waits at most
+# this long for its close read, which nobody is waiting on at the table.
+MAP_CLOSE_EVERY_S = 600
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
 WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
@@ -1552,6 +1559,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
+        self._map_close_task: asyncio.Task[None] | None = None
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -5675,12 +5684,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         # A map's careful read is charged as AI credits only when its note can be kept (the Shared
         # story confirmation, asked again under the save lock below): a read thrown away costs
-        # nothing. It is read closely only when DMbot may also use it (the one check, `map_use`:
-        # today, a map the DM posted) (#4173 slice 6b-1).
+        # nothing. Its close read waits for both yeses on the kept map: the sweep makes it
+        # (`run_map_close_reads`, #4349).
         kept = self.map_notes is not None and await self._maps_may_be_kept(gid, cid)
         reads = await desk.describe(
             gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None,
-            close=kept and map_use.may_use_map(campaign.dm_user_ids, user_id),
             meter=(lambda: credits.preparing(gid, cid, "map")) if kept else None,
         )  # fmt: skip
         if not still_ok():
@@ -13491,6 +13499,82 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self._closing:
                 return
             await actions.run_once(guild.id)
+
+    async def run_map_close_reads(self) -> None:
+        """Every `MAP_CLOSE_EVERY_S`, read closely each kept map DMbot may now use (#4349, MapBot
+        6b-2; Supervisor's ruling): as one background task, so the poll loop never waits for the
+        AI. Nobody is told: the read goes quietly into the map's note (counts only in the log)."""
+        if None in (self.map_store, self.image_desk, self.map_notes, self.picture_store,
+                    self.picture_bucket):  # fmt: skip
+            return
+        task = self._map_close_task
+        if (task is not None and not task.done()) or (
+            time.time() - self._map_close_swept < MAP_CLOSE_EVERY_S
+        ):
+            return
+        self._map_close_swept = time.time()
+        self._map_close_task = self._track(self._map_close_reads(), "map-close-reads")
+
+    async def _map_close_reads(self) -> None:
+        store = self.map_store
+        assert store is not None
+        done: Counter[str] = Counter()
+        for guild in list(self.guilds):
+            if self._closing:
+                break
+            for campaign_id, a_map in await store.close_read_waiting(guild.id):
+                if self._closing:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    done[await self._close_read_one(guild.id, campaign_id, a_map)] += 1
+        if done:
+            log.info("Map close reads: %s", ", ".join(f"{k} {v}" for k, v in sorted(done.items())))
+
+    async def _close_read_one(self, gid: int, cid: str, a_map: MapRow) -> str:
+        """One kept map's close read, every check asked again now (Supervisor's ruling): DMbot may
+        use it, the plan has AI, the DM confirmed the right to use shared material, the picture is
+        still there and its poster still agrees to pictures. What to count it as in the log."""
+        store, desk, notes = self.map_store, self.image_desk, self.map_notes
+        pictures, bucket = self.picture_store, self.picture_bucket
+        assert store and desk and notes and pictures and bucket
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not maps_store.may_use_map(a_map):
+            return "not allowed"
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return "no AI on the plan"
+        if not await self._maps_may_be_kept(gid, cid):
+            return "no right-to-use record"
+        picture = await pictures.get(gid, cid, a_map.picture_id)
+        if picture is None or picture.gone:
+            return "picture gone"
+        if not self.consent.has_image_consent(gid, picture.poster_id):
+            return "poster stopped"
+        if not await store.claim_close_read(gid, cid, a_map.id):
+            return "taken"  # (another sweep has it, or it changed since it was listed)
+        try:
+            data = await bucket.get(picture.object_key)
+            media = images.sniff(data)
+            if media is None:
+                raise images.ImageError("not a picture")
+            read = await desk.read_closely(
+                gid, cid, Image(media, data), lambda: credits.preparing(gid, cid, "map")
+            )
+        except (image_desk.DayLimit, AIOutOfFunds):  # put off, not failed: read when it can be
+            await store.close_read_failed(gid, cid, a_map.id, counted=False)
+            return "put off"
+        except Exception as exc:
+            log.info("Map close read: failed (%s)", type(exc).__name__)
+            await store.close_read_failed(gid, cid, a_map.id)
+            return "failed"
+        if read is None or read.kind != images.MAP:
+            await store.close_read_failed(gid, cid, a_map.id)
+            return "not read"
+        if not await notes.set_close(gid, cid, picture.poster_id, read, picture.message_id):
+            # (a cut or empty answer: tried again, never kept as "nothing found", CLAUDE.md)
+            await store.close_read_failed(gid, cid, a_map.id)
+            return "not read"
+        await store.close_read_done(gid, cid, a_map.id)
+        return "read"
 
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""

@@ -295,6 +295,8 @@ class RecapFeatures:
         async def run_web_backups(self) -> None: ...
         async def run_picture_actions(self) -> None: ...
         async def run_picture_sweep(self) -> None: ...
+
+        async def run_map_close_reads(self) -> None: ...
         async def run_web_line_deletions(self) -> None: ...
 
         async def run_speaker_removals(self) -> None: ...
@@ -2084,6 +2086,10 @@ class RecapFeatures:
                 await self.run_picture_sweep()
             except Exception as exc:
                 log.warning("The picture sweep failed: %s", type(exc).__name__)
+            try:
+                await self.run_map_close_reads()
+            except Exception as exc:
+                log.warning("The map close-read sweep failed: %s", type(exc).__name__)
             try:
                 await self.run_web_settings()
             except Exception as exc:

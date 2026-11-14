@@ -94,8 +94,9 @@ MAP_SYSTEM = "\n".join(
     ]
 )
 
-# The close read of a map (#4173 slice 6b-1; Supervisor's ruling, 2026-11-13): only for a map DMbot
-# may use (`map_use.may_use_map`: today, one the campaign's DM posted). Each place's size and form,
+# The close read of a map (#4173 slice 6b-1; Supervisor's ruling, 2026-11-13): only for a kept map
+# DMbot may use (`maps.store.may_use_map`), by the bot's sweep once both yeses are on it (#4349,
+# 6b-2), never when the picture is posted. Each place's size and form,
 # and how pairs of drawn places relate, each with how sure; stored with the map's note, and nothing
 # is written to the story yet (6b-2).
 CLOSE_LEVELS = ("plane", "world", "region", "settlement", "district", "street", "building", "room")
@@ -441,8 +442,9 @@ async def read(
     described)"). A failed map reading keeps the description and leaves the places out. AI errors
     are the caller's to handle (a limit, funds). Counts only in the log, never the words.
 
-    `close` (#4173 slice 6b-1): the map may be used (`map_use.may_use_map`), so it gets the close
-    read (sizes, forms, links) instead. `meter`: the map's call is charged as AI credits inside it
+    `close` (#4173 slice 6b-1): the kept map may be used (`maps.store.may_use_map`; only the
+    sweep, `ImageDesk.read_closely`, asks), so it gets the close read (sizes, forms, links)
+    instead. `meter`: the map's call is charged as AI credits inside it
     (Supervisor's ruling, 2026-11-13: map reads are metered; the first look at a picture stays as
     it was). The plain map read keeps its 4000 (as before this slice: it is kept only as words)."""
     reply = await fast.complete(

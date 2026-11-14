@@ -136,6 +136,28 @@ class MapNoteStore:
             )
         return True
 
+    async def set_close(
+        self, guild_id: int, campaign_id: str, user_id: int, read: Read, message_id: int = 0
+    ) -> bool:
+        """A kept map's close read (#4349), quietly onto its note: the newest note of that chat
+        message gets it; a map with no note (none was kept at posting, or a website upload with no
+        message, `message_id` 0) gets a new one, by the rules `add` keeps. False when the read had
+        nothing to keep."""
+        close = close_of(read)
+        if close is None:
+            return False
+        if message_id:
+            async with self._db.guild(guild_id) as conn:
+                cur = await conn.execute(
+                    "UPDATE map_notes SET close_read = %s::jsonb WHERE id = (SELECT id FROM"
+                    " map_notes WHERE guild_id = %s AND campaign_id = %s AND message_id = %s"
+                    " ORDER BY id DESC LIMIT 1) RETURNING id",
+                    (json.dumps(close), guild_id, campaign_id, message_id),
+                )
+                if await cur.fetchone() is not None:
+                    return True
+        return await self.add(guild_id, campaign_id, user_id, read, message_id)
+
     async def forget_message(self, guild_id: int, message_id: int) -> int:
         """The picture was deleted: so are the notes made from it. How many went."""
         if message_id <= 0:
