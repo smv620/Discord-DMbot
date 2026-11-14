@@ -45,6 +45,8 @@ class Note:
     how: str = ""
     session_at: int | None = None
     made_at: int = 0
+    fact: mf.Fact | None = None  # a place's reading itself (its words, "partly", dry or wet)
+    ruler: str = ""  # who rules it, by name, for a ruler line
 
 
 def note_id(kind: str, row_id: str) -> str:
@@ -94,7 +96,8 @@ async def read(scope: Scope) -> list[Note]:
             out.append(
                 Note(
                     note_id(PLACE, fact.id), PLACE, fact.place_id, names[fact.place_id],
-                    fact.value, fact.layer, fact.how, session_at, made_at,
+                    fact.value, fact.layer, fact.how, session_at, made_at, fact,
+                    names.get(fact.value, "") if fact.layer == mf.CONTROL else "",
                 )
             )  # fmt: skip
     for r in await scope.select(STORY_LANGUAGES, _LANGUAGE_NOTES, []):
