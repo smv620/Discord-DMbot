@@ -78,6 +78,14 @@ def _focus(facts: Sequence[mf.Fact], value: str | None) -> mf.Fact | None:
 # The campaign's kept named cultures shown in the menu (#4257 slice 3b): Supervisor's "at most 15",
 # less one so the nine lineages, "Something else…" and "Not sure" fit Discord's 25 a menu
 NAMED_SHOWN = 14
+LABEL_MAX = 25  # a phone cuts a menu label after about this many letters (#112)
+
+
+def _label(name: str) -> str:
+    """A named culture's menu label: capitalised like the lineages beside it, cut for a phone
+    (the whole name is then its description). The saved name stays as typed."""
+    label = name[:1].upper() + name[1:]
+    return label if len(label) <= LABEL_MAX else label[: LABEL_MAX - 1] + "…"
 
 
 def culture_options(
@@ -90,9 +98,12 @@ def culture_options(
     if focus is not None and mf.is_named(mf.CULTURE, focus.value):
         shown = [(focus.value, focus.words)] + [n for n in shown if n[0] != focus.value]
     out = [
-        discord.SelectOption(label=name[:100], value=cid, default=cid == chosen)
+        discord.SelectOption(
+            label=_label(name), value=cid, default=cid == chosen,
+            description=name[:100] if len(name) > LABEL_MAX else None,
+        )
         for cid, name in shown[:NAMED_SHOWN]
-    ]
+    ]  # fmt: skip
     out += [
         discord.SelectOption(label=adjective.capitalize(), value=key, default=key == chosen)
         for key, (adjective, _) in place_peoples.LINEAGES.items()
@@ -309,13 +320,21 @@ class PeoplesMenu(_Menu):
         try:
             await memory.set_map_fact(
                 campaign.guild_id, campaign.id, self.entity_id, layer, value, how=how,
-                words=words, source=DM,
+                # (only "other" carries words: a named culture's are its name, not the DM's)
+                words=words if value == mf.OTHER else "", source=DM,
             )  # fmt: skip
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change it. {exc} Tap {BACK_BUTTON} to see it.")
             return
         changed(interaction, campaign)
         self.stop()
+        if layer == mf.CULTURE and value == mf.OTHER:
+            # (the store kept the typed words as a named culture: focus on it, so the strength
+            # buttons act on it and not on another culture of the place; ux-critic, #4257 3b)
+            key = place_peoples.culture_key(words)
+            for cid, name, _ in await memory.map_cultures(campaign.guild_id, campaign.id):
+                if place_peoples.culture_key(name) == key:
+                    value = cid
         focus = {"culture": value} if layer == mf.CULTURE else {"people": value}
         await show_peoples(interaction, self.campaign_id, self.entity_id, note, **focus)
 
@@ -456,9 +475,10 @@ class OwnWordsForm(discord.ui.Modal):
         super().__init__(title="Whose culture?" if culture else "Who lives here?")
         self.menu, self.layer = menu, layer
         self.words: discord.ui.TextInput[OwnWordsForm] = discord.ui.TextInput(
-            label="Its name, like “Illuskan” or “duergar”"
+            label="Its name, like “Illuskan” or “Calishite”"
             if culture
             else "Their name, like “duergar” or “half-elves”",
+            placeholder="Kept in the list for every place" if culture else None,
             max_length=mf.WORDS_MAX,
         )
         self.add_item(self.words)
@@ -471,7 +491,10 @@ class OwnWordsForm(discord.ui.Modal):
         menu = self.menu
         if self.layer == mf.CULTURE:
             how = "strong"
-            note = menu.culture_note(mf.OTHER, how, words)
+            note = (
+                menu.culture_note(mf.OTHER, how, words)
+                + f" “{_md(words)}” is now in the culture list for every place."
+            )
         else:
             how = ""
             note = menu.people_note(mf.OTHER, how, words)

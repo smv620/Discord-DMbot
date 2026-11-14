@@ -142,6 +142,26 @@ class OnTheScreen(NamesTest):
         self.assertIn("🏛️ **Culture:** a little dwarven", card)
         self.assertIn("🏘️ **Who lives here:** mostly halflings", card)
 
+    async def test_a_typed_culture_is_named_and_the_screen_focuses_on_it(self) -> None:
+        """#4257 slice 3b: "Something else…" makes a named culture, and the strength buttons then
+        act on it, never on the lineage the place already had (ux-critic)."""
+        _, view = await self.screen()
+        view.culture_pick._values = ["dwarf"]
+        it = self.it()
+        await view._culture_picked(it)
+        _, view = it.response.edited[-1]
+        form = pp.OwnWordsForm(view, mf.CULTURE)
+        form.words._value = "Illuskan"
+        it = self.it()
+        await form.on_submit(it)
+        text, view = it.response.edited[-1]
+        self.assertIn("“Illuskan” is now in the culture list for every place.", text)
+        self.assertEqual(view.culture.words, "Illuskan")
+        it = self.it()
+        await view._strength("once")(it)
+        card, _ = await self.card()
+        self.assertIn("🏛️ **Culture:** once Illuskan, strongly dwarven", card)
+
     async def test_players_never_see_a_read_and_keep_makes_it_the_dms(self) -> None:
         await self.memory.add_read_map_facts(
             GUILD, self.campaign.id, [Read(self.bree.id, mf.POPULATION, "elf", "many")],
