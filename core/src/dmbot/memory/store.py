@@ -61,6 +61,7 @@ from dmbot.memory import (
     states,
     told,
     whereabouts,
+    world_notes,
 )
 from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
@@ -1490,6 +1491,35 @@ class MemoryStore:
             onto = await _load_ontology(w)
             kept = await map_fact_store.keep_read(w, onto, place_id)
             return Written(kept, w.batch)
+
+    # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
+
+    async def world_notes(self, guild_id: int, campaign_id: str) -> list[world_notes.Note]:
+        """Every open World note of the campaign: the DM's own list (the caller checks it is a DM
+        of the campaign asking), never a player's."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await world_notes.read(scope)
+
+    async def keep_world_notes(
+        self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ on one line, or ✅ Keep all for a group: one change, so one Undo. Keep all
+        passes the ids the DM was shown (`world_notes.of_kind` over the list they saw), so a line
+        DMbot added after the list was drawn is never kept unseen."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await world_notes.keep(w, line_ids), w.batch)
+
+    async def turn_down_world_note(
+        self, guild_id: int, campaign_id: str, line_id: str, *, source: str
+    ) -> Written[None]:
+        """The DM's 🚫 Not right on one line: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            await world_notes.turn_down(w, line_id)
+            return Written(None, w.batch)
 
     async def add_read_map_facts(
         self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str

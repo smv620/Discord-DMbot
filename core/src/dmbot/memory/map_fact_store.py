@@ -359,3 +359,39 @@ async def drop_on_kind_change(
     for r in rows:
         if (not to_place and r["entity_id"] in ids) or (not to_group and r["faction_id"] in ids):
             await w.delete(MAP_FACTS, str(r["id"]))
+
+
+async def read_notes(dm: Scope) -> list[tuple[mf.Fact, int | None, int]]:
+    """Every open row DMbot read and the DM hasn't checked, for the DM's World notes (#4285):
+    (the fact, the session it was read from, when it was kept), oldest first. The DM's own list,
+    never a player's (the caller checks; `facts_for` stays the one read for a viewer, so the scope
+    is named for who it is)."""
+    rows = await dm.select(
+        MAP_FACTS, " AND status = 'read'" + _OPEN + " ORDER BY created_at, id", []
+    )
+    return [(_fact(r), r["from_session_at"], int(r["created_at"])) for r in rows]
+
+
+async def keep_rows(w: Changes, ids: Collection[str]) -> int:
+    """The DM's ✅ on World notes lines (#4285): each open row DMbot read becomes the DM's word,
+    keeping whether players see it, as `keep_read` does for one place. A row already checked or
+    gone is left (a second press). How many."""
+    if not ids:
+        return 0
+    rows = await w.select(MAP_FACTS, " AND id = ANY(%s) AND status = 'read'" + _OPEN, [sorted(ids)])
+    await w.update_rows(
+        MAP_FACTS,
+        {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
+    )
+    return len(rows)
+
+
+async def reject_row(w: Changes, fact_id: str) -> bool:
+    """The DM's 🚫 Not right on a World notes line (#4285): the row is turned down, so the same
+    reading is never read in again (`add_read` refuses a value the DM rejected). False when it
+    was checked or gone already."""
+    rows = await w.select(MAP_FACTS, " AND id = %s AND status = 'read'" + _OPEN, [fact_id])
+    if not rows:
+        return False
+    await w.update(MAP_FACTS, fact_id, {"status": mf.REJECTED})
+    return True
