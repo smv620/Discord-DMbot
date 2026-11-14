@@ -4678,7 +4678,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_id=guild.id,
             voice_channel_id=saved.voice_channel_id,
             screen_channel_id=screen_id,
-            dm_user_id=saved.started_by,
+            dm_user_id=dm_for_resume(saved.started_by, campaign.dm_user_ids),
             segmenter=Segmenter(guild.id),
             notice_posted=saved.notice_posted,
             campaign_id=campaign.id,
@@ -15368,6 +15368,15 @@ def _free_bytes(root: Path) -> int:
 
 def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
+
+
+def dm_for_resume(started_by: int, dm_user_ids: frozenset[int]) -> int:
+    """The DM a resumed session runs for. Whoever started it, unless that person has deleted their
+    account (their number is 0 then, #4148): then the campaign's lowest-numbered DM, or 0 when it
+    has none, so nothing looks up a user 0."""
+    if started_by > 0:
+        return started_by
+    return min(dm_user_ids) if dm_user_ids else 0
 
 
 def register_commands(tree: app_commands.CommandTree[Any]) -> None:
