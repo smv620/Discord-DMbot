@@ -292,6 +292,9 @@ async def settle_kind(
         if r.get("form") is not None and not onto.is_a(type_key, "place"):
             undo["form"] = None  # only a place has a form (#4173 slice 6a)
             undo["form_from"] = None
+            if r.get("length_words") is not None:  # and only a route has a length (#4255)
+                undo |= {"length_words": None, "length_amount": None, "length_unit": None,
+                         "length_approx": False, "length_from": None}  # fmt: skip
         if r.get("setting") and not onto.is_a(type_key, "place"):
             undo["setting"] = False  # only a place is the campaign's setting (#4173)
             undo["setting_from"] = None

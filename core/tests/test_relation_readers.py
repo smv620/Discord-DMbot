@@ -153,6 +153,7 @@ STORE = {
     "group_hints": "confirmed member_of ties for the DM's name question; names only",
     "_confirm_group_memberships": "writes: confirms the DM's own proposed member_of; no reading",
     "_settle_whereabouts": "writes: ends an item's other whereabouts; shows players nothing",
+    "_route_target": DM_ONLY + ": the live route a stated length is set on (#4255); shows nothing",
     "pinned_connections": CONFIRMED_ONLY,
     "_view": CONFIRMED_ONLY + ": the party's and the DM's views",
     "relation": DM_ONLY + ": one connection by id",
