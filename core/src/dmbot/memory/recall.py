@@ -807,8 +807,12 @@ class _Found:
         a, b = walk.entities[f.subject_id]["name"], walk.entities[f.object_id]["name"]
         # (a kind that reads one way, made two-way by the DM, #4164: the AI is given the card's own
         # pair words, "A and B are connected (“sworn to”)", never one-way words that leave B out)
+        # (a campaign's own two-way kind reads two way by its own nature, mark or not: it keeps its
+        # label, as before #4388 stored its mark, "Cerric is oath-bound to Wit")
+        own = self.onto.predicates.get(f.predicate)
         if (
             f.both_ways
+            and not (own is not None and not own.core and own.symmetric)
             and not link_words.reads_both_ways(f.predicate, detail, f.directional)
             and link_words.reads_both_ways(f.predicate, detail, f.directional, True)
         ):
