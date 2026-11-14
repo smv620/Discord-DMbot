@@ -42,7 +42,7 @@ def _policy_sql() -> str:
     out = ["    DO $do$\n    BEGIN\n"]
     seen: set[str] = set()
     for table, _column in ZEROED:
-        # a table with two such columns (rule_set_follows) gets one pair of policies, over both
+        # a table with two such columns would get one pair of policies, over both (none here yet)
         if table in seen:
             continue
         seen.add(table)
@@ -92,7 +92,7 @@ def _relax_sql() -> str:
 
 def _body() -> str:
     """One UPDATE for each table, setting every column that holds the person at once: a table with
-    two such columns (`rule_set_follows`: followed_by and taken_by, often the same person) would
+    two such columns (often the same person) would
     otherwise be refused by its own policy half way, and a NULL column stays NULL."""
     out = []
     for table in dict.fromkeys(t for t, _ in ZEROED):
