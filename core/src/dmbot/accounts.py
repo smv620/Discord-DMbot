@@ -215,6 +215,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         await conn.execute("SELECT dmbot_forget_lookups()")
         # Who decided or set a campaign's records goes to 0; the records stay (#4148).
         await conn.execute("SELECT dmbot_forget_decisions()")
+        # The same for the next set: name decisions, the plan's, suggestions, plot answers and who
+        # started a reading or a session (#4148).
+        await conn.execute("SELECT dmbot_forget_decisions_2()")
         # The DM's list of players they remember, and every list that names the person (#4226).
         await conn.execute("SELECT dmbot_forget_dm_players()")
         # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash

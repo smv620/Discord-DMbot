@@ -381,7 +381,7 @@ async def keep_all(
             and c.quote
             and made.created_at >= now
         ):
-            words = route_length.find(c.quote)
+            words = route_length.find(c.quote, places=(c.subject, c.object))
             if words:
                 try:
                     said = await memory.set_route_length(
