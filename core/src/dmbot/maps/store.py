@@ -321,8 +321,9 @@ class MapStore:
             await w.update(MAPS, str(other["id"]), {"replaces": None})
         await w.delete(MAPS, map_id)
         await w.conn.execute(
-            "UPDATE campaign_pictures SET permanent = FALSE WHERE id = %s",
-            (int(row["picture_id"]),),
+            "UPDATE campaign_pictures SET permanent = FALSE WHERE guild_id = %s"
+            " AND campaign_id = %s AND id = %s",
+            (w.guild_id, w.campaign_id, int(row["picture_id"])),
         )
         return _map(row)
 
