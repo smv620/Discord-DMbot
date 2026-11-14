@@ -346,8 +346,9 @@ async def _show(
         await interaction.edit_original_response(content=text, view=view)
 
 
-@dmbot_group.command(name="map", description=words.COMMAND_DESCRIPTION)
-@app_commands.describe(picture=words.PICTURE_OPTION, name=words.NAME_OPTION)
+# (plain strings, not constants: the help index reads the command from the code)
+@dmbot_group.command(name="map", description="Keep a map picture for your campaign")
+@app_commands.describe(picture="Attach the map picture", name="What is it called?")
 async def dmbot_map(
     interaction: discord.Interaction, picture: discord.Attachment, name: str | None = None
 ) -> None:

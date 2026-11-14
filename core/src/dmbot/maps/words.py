@@ -130,9 +130,6 @@ EXPIRED = "DMbot let that picture go. Send it again."
 WRONG_TYPE = "DMbot can only keep pictures: PNG, JPG, WebP or GIF."
 SAVING = "Saving your map…"
 FIRST_25 = "Showing the first 25."
-COMMAND_DESCRIPTION = "Keep a map picture for your campaign"
-PICTURE_OPTION = "Attach the map picture"
-NAME_OPTION = "What is it called?"
 
 
 def too_big(mb: int) -> str:
