@@ -571,7 +571,7 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
                 ? ((await call("POST", `${base}/maps/${encodeURIComponent(change.id)}/takeback`, {})) as { answer: string })
                 : ((await call("POST", `${base}/maps/${encodeURIComponent(String(change.batch))}/undo`, {})) as { answer: string });
       if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/maps/answers/${encodeURIComponent(queued.answer)}`);
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null } as MapsResult;
     },
     changeWebLink: async (ref, change) => {
