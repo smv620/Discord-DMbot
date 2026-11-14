@@ -133,6 +133,9 @@ MATCH_ACTIONS = ("match-confirm", "match-undo")
 # A place's land, climate and ruler, and the switch for showing them to players (#4287): the text is
 # "<value> <shade>", or "<group id> <how>" for the ruler, or blank for "Not sure".
 MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
+# World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
+# one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
+WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 
 
 async def _map_fact(
@@ -383,6 +386,20 @@ class ActionStore:
             row = await cur.fetchone()
         return [int(b) for b in row["result_batches"]] if row is not None else []
 
+    async def world_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done World notes ✅ or 🚫 made from the
+        website (#4285), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action IN ('world-keep', 'world-not')"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
     ) -> bool:
@@ -504,6 +521,10 @@ async def apply(
         return await _confirm(memory, actions, guild_id, cid, action)
     if action.action in MATCH_ACTIONS:
         return await _match(memory, guild_id, cid, action)
+    if action.action in WORLD_ACTIONS:
+        if actions is None and action.action == "world-undo":
+            return _failed(FAILED)
+        return await _world(memory, actions, guild_id, cid, action)
     if action.action == LINK_UNDO:
         if actions is None:
             return _failed(FAILED)
@@ -856,6 +877,52 @@ async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
             await memory.undo(guild_id, cid, batch)
     except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
         return _failed(NOT_FOUND if str(exc) in (STORE_NOT_FOUND, ALREADY_UNDONE) else GONE)
+    return Outcome()
+
+
+async def _world(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """World notes from the page (#4285), the same store calls as Discord's screen: ✅ keeps the
+    lines the page showed (never one added since: the ids are the page's own), 🚫 takes one out,
+    each one change, so one Undo. The store checks every line again, so one checked meanwhile (in
+    Discord, or a second press) is `gone`. ↩ Undo takes back only a change this DM's own World
+    notes action made, read again here (a made-up number must never reach `undo`)."""
+    if a.action == "world-undo":
+        assert actions is not None  # (checked by the caller)
+        return await _world_undo(memory, actions, guild_id, cid, a)
+    try:
+        if a.action == "world-keep":
+            written = await memory.keep_world_notes(guild_id, cid, a.text.split(), source=DM)
+            return Outcome(
+                counts=f"kept:{written.value}",
+                batches=(written.batch,) if written.batch is not None else (),
+            )
+        done = await memory.turn_down_world_note(guild_id, cid, a.text, source=DM)
+    except MemoryRuleError:
+        return _failed(GONE)
+    return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+async def _world_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """↩ Undo of one World notes ✅ or 🚫 from the page, as `_link_undo` does it: the number is read
+    again in this DM's own done rows (the queue keeps them about an hour, so the page's Undo lasts
+    that long, then says `gone`). A retried Undo is done; `changed`/`too_late` as there."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.text)
+    if not await actions.world_batch_made(guild_id, cid, a.user_id, batch):
+        return _failed(GONE)
+    try:
+        await memory.undo(guild_id, cid, batch)
+    except TooLateToUndo:
+        return _failed(TOO_LATE)
+    except MemoryRuleError as exc:
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (taken back already: a retried Undo)
+        return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
     return Outcome()
 
 
