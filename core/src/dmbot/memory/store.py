@@ -6181,6 +6181,10 @@ class MemoryStore:
             raise MemoryRuleError(TWO_ENTRIES)
         onto = await _load_ontology(w)
         pred = onto.active_predicate(predicate)
+        if both_ways is None and not pred.core and pred.symmetric:
+            # (a campaign's own two-way kind: its default is in its own table, which the card's
+            # words never read, so its row says it, as migration 0485 did for the older rows, #4388)
+            both_ways = True
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError(SAY_WHO_PLAYS)

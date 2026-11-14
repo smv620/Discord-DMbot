@@ -404,4 +404,22 @@ class ACampaignsOwnKind(_StoreBase):
         self.assertEqual([x.id for x in await self.live(key)], [new.id])
         await self.memory.undo(GUILD_A, self.c, done.batch)
         (back,) = await self.live(key)
-        self.assertEqual((back.id, back.both_ways), (r.id, None))
+        self.assertEqual((back.id, back.both_ways), (r.id, True))  # (its own mark, #4388)
+
+    async def test_a_new_two_way_own_kind_reads_two_way_everywhere(self) -> None:
+        # (#4388: the row says so, so the card and the search text agree from the start)
+        r = await self.tie(await self.own(symmetric=True), self.cerric, self.wit)
+        self.assertIs(r.both_ways, True)
+        self.assertTrue(reads_both_ways(r.predicate, r.detail, False, r.both_ways))
+        self.assertIsNotNone(self.text_of_other_end(r, symmetric=True))
+
+    async def test_a_turned_own_kind_said_again_stays_one_and_turned(self) -> None:
+        # (#4388, as `test_a_turned_rivalry_said_again_stays_one_and_turned` for a core kind)
+        key = await self.own(symmetric=True)
+        r = await self.tie(key, self.cerric, self.wit)
+        _low, high = sorted((self.cerric, self.wit))
+        turned = (await self.turn(r.id, high)).value
+        self.assertEqual((turned.subject_id, turned.both_ways), (high, False))
+        await self.relate(self.cerric, key, self.wit, status="confirmed")
+        (only,) = await self.live(key)
+        self.assertEqual((only.id, only.subject_id), (turned.id, high))
