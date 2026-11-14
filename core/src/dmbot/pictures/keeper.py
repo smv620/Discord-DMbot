@@ -82,12 +82,16 @@ class PictureKeeper:
             except BucketError as exc:
                 log.warning("Pictures: couldn't delete a file (%s)", exc)
 
-    async def discard(self, guild_id: int, campaign_id: str, picture: Picture) -> None:
+    async def discard(
+        self, guild_id: int, campaign_id: str, picture: Picture, *, unless_map: bool = False
+    ) -> bool:
         """Take back a picture just kept (its poster stopped, or deleted the message, while it was
-        being stored): the row keeps its link so the link says it was removed, the files go."""
-        gone = await self._store.delete(guild_id, campaign_id, picture.id)
+        being stored): the row keeps its link so the link says it was removed, the files go. True
+        when it went. `unless_map`: leave it when it has become a map meanwhile (#4344)."""
+        gone = await self._store.delete(guild_id, campaign_id, picture.id, unless_map=unless_map)
         if gone is not None:
             await self._delete(gone.object_key, gone.preview_key)
+        return gone is not None
 
     async def forget_message(self, guild_id: int, message_id: int) -> int:
         """The poster deleted the Discord message a picture was in: the kept picture goes too,
