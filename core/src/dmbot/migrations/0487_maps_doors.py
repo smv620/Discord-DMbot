@@ -15,8 +15,9 @@ from __future__ import annotations
 # sent a row for a map hidden from them that they did not add, nor a sign that one exists.
 # "Anyone in the server" is the gallery's own rule (`dmbot_web_pictures`: a picture is private to
 # the campaign, not to its game masters); the poster's name is the one the session kept (a
-# website upload has none: "Someone"). A removed picture is not listed. Words, ids and the
-# picture's open code only; no file key leaves this door.
+# website upload has none: "Someone"; and `via` is "discord" for a picture from the chat and
+# "website" for any other, an import or a document included). A removed picture is not listed.
+# Words, ids and the picture's open code only; no file key leaves this door.
 #
 # The five actions go on the queue door as `world-keep` did (0481), filed under no name, no
 # target, no flag; the door checks only each text's shape and the bot rechecks everything (the

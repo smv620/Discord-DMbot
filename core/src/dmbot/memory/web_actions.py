@@ -144,7 +144,7 @@ WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
 # Only a DM may use, show or remove; the poster alone may take their own map back, so these run
-# before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` below
+# before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` above
 # is the place's land, climate and ruler.)
 MAPS_PAGE_ACTIONS = ("maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo")
 
@@ -946,7 +946,12 @@ async def _maps(
     it and remove it; only a map's poster takes it back; ↩ Undo takes back only a change this
     person's own done Maps action made, read again here. The store rechecks the map, so one gone
     meanwhile answers `gone`. Words and ids only."""
-    from dmbot.maps.store import AlreadyAnswered, MapError, Viewer  # (a late import: no cycle)
+    from dmbot.maps.store import (  # (a late import: no cycle)
+        NOT_YOURS,
+        AlreadyAnswered,
+        MapError,
+        Viewer,
+    )
 
     if maps is None or actions is None:
         return _failed(FAILED)
@@ -993,7 +998,7 @@ async def _maps(
         return Outcome()  # (the first answer stands: done, with no change to undo)
     except MapError as exc:
         # a map gone meanwhile, or not the sender's to take back
-        return _failed(NOT_ALLOWED if "posted it" in str(exc) else GONE)
+        return _failed(NOT_ALLOWED if str(exc) == NOT_YOURS else GONE)
     return Outcome(batches=(made,) if made is not None else ())
 
 
