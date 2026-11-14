@@ -189,13 +189,17 @@ class TakeBackButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
         log.info("A poster took a map back")
         undo = discord.ui.View(timeout=None)
         if gone.batch is not None:
+            await store.mark_map_taken_back(
+                self.guild_id, picture.campaign_id, picture.id, gone.batch
+            )
             undo.add_item(PosterUndoButton(self.guild_id, picture.campaign_id, gone.batch))
         await _finish(interaction, words.TOOK_BACK, undo)
 
 
 class PosterUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_UNDO):
-    """↩️ Undo after Take it back. Guarded to the poster's own change: the batch must be a change to
-    maps this person uploaded, and nothing else, read from the change log on every press."""
+    """↩️ Undo after Take it back. Guarded to the poster's own take-back: the batch must be the one
+    recorded on their picture when they took it back, read on every press, so it never undoes a
+    DM's Remove, Yes or No."""
 
     def __init__(self, guild_id: int, campaign_id: str, batch: int) -> None:
         super().__init__(
@@ -216,12 +220,12 @@ class PosterUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
         await _answer_first(interaction, in_place=True)
-        maps, memory = bot.map_store, bot.memory
-        if maps is None or memory is None:
+        store, memory = bot.picture_store, bot.memory
+        if store is None or memory is None:
             await _finish(interaction, words.FAILED)
             return
         try:
-            if not await maps.batch_is_theirs(
+            if not await store.taken_back_by(
                 self.guild_id, self.campaign_id, self.batch, interaction.user.id
             ):
                 await interaction.followup.send(words.NOT_YOUR_CHANGE, ephemeral=True)

@@ -285,32 +285,6 @@ class MapStore:
             )
             return Written(_map(row), w.batch)
 
-    async def batch_is_theirs(
-        self, guild_id: int, campaign_id: str, batch: int, user_id: int
-    ) -> bool:
-        """Whether this change-log batch is a change to a map this person uploaded: the guard on a
-        poster's own Undo (#4344), so a card forwarded to someone else, or a batch number made up,
-        undoes nothing. A removal also clears facts that pointed at the map and `replaces` links
-        (`remove_map`), so those rows ride in the same batch and do not make it someone else's;
-        any other table does. A DM's removal of the poster's own map passes too: Undo only puts
-        that map back as it was, and a DM can remove it again."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                """SELECT count(*) AS n,
-                          count(*) FILTER (WHERE table_name = 'campaign_maps'
-                              AND COALESCE(before->>'right_by', after->>'right_by') = %s) AS mine,
-                          count(*) FILTER (WHERE table_name = 'campaign_maps') AS maps,
-                          count(*) FILTER (WHERE table_name = %s) AS side
-                   FROM memory_changes
-                   WHERE guild_id = %s AND campaign_id = %s AND batch = %s""",
-                (str(user_id), MAP_FACTS.name, guild_id, campaign_id, batch),
-            )
-            row = await cur.fetchone()
-        if row is None or int(row["mine"]) == 0:
-            return False
-        # Every row is a map row of theirs, a `replaces` link on another map, or a fact cleared.
-        return int(row["n"]) == int(row["maps"]) + int(row["side"])
-
     async def maps(
         self,
         guild_id: int,

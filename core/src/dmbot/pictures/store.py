@@ -390,6 +390,32 @@ class PictureStore:
                 (int(self._clock()), guild_id, campaign_id, picture_id),
             )
 
+    async def mark_map_taken_back(
+        self, guild_id: int, campaign_id: str, picture_id: int, batch: int
+    ) -> None:
+        """The poster just took their map back, as this change-log batch (#4344): the one batch
+        their own Undo accepts (`taken_back_by`). A later take-back replaces it."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_pictures SET map_taken_back_batch = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (batch, guild_id, campaign_id, picture_id),
+            )
+
+    async def taken_back_by(
+        self, guild_id: int, campaign_id: str, batch: int, user_id: int
+    ) -> bool:
+        """Whether this batch is a take-back this person made of their own picture's map: the guard
+        on the poster's Undo, so a card forwarded to someone else, a made-up batch, or a batch that
+        was a DM's Remove, Yes or No undoes nothing."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND map_taken_back_batch = %s AND poster_id = %s AND deleted_at IS NULL",
+                (guild_id, campaign_id, batch, user_id),
+            )
+            return await cur.fetchone() is not None
+
     async def delete(
         self, guild_id: int, campaign_id: str, picture_id: int, *, unless_map: bool = False
     ) -> Picture | None:

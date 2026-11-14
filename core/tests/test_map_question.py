@@ -225,21 +225,15 @@ class Asking(DatabaseTest):
         made_up = await self.undo_press(PLAYER, 999_999)
         self.assertEqual(self.call(made_up.followup.send).args[0], words.NOT_YOUR_CHANGE)
 
-    async def test_only_the_uploader_passes_the_undo_guard_even_for_a_dms_removal(self) -> None:
+    async def test_a_dms_removal_is_not_the_posters_to_undo(self) -> None:
         pic = await self.picture(PLAYER)
         await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
         [kept] = await self.kept_maps()
-        gone = await self.maps.remove_map(GUILD, self.campaign.id, kept.id)  # (a DM's removal)
+        gone = await self.maps.remove_map(GUILD, self.campaign.id, kept.id)  # (a DM's Remove)
         assert gone.batch is not None
-        # (a change to the poster's own map is theirs to undo, a DM's removal included: Undo only
-        # puts the map back as it was; a stranger is refused, and so is a made-up batch)
-        self.assertTrue(
-            await self.maps.batch_is_theirs(GUILD, self.campaign.id, gone.batch, PLAYER)
-        )
-        self.assertFalse(
-            await self.maps.batch_is_theirs(GUILD, self.campaign.id, gone.batch, STRANGER)
-        )
-        self.assertFalse(await self.maps.batch_is_theirs(GUILD, self.campaign.id, 99999, PLAYER))
+        it = await self.undo_press(PLAYER, gone.batch)  # (their own map, but not their change)
+        self.assertEqual(self.call(it.followup.send).args[0], words.NOT_YOUR_CHANGE)
+        self.assertEqual(await self.kept_maps(), [])
 
     async def test_asking_marks_the_picture_and_the_reminder_goes_once(self) -> None:
         pic = await self.picture(PLAYER)
