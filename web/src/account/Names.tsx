@@ -17,6 +17,7 @@ import { MET_LIST_LIVE } from "../content/met-list-switch";
 import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
+import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
 import { PLACE_FACTS_LIVE } from "../content/place-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
@@ -1011,6 +1012,10 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
 
       {PLACE_FACTS_LIVE && row.kind === "place" && row.placeLevel !== undefined && (
         <LazyPanel load={() => import("./PlaceFacts")} what="the place's size" props={{ row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+
+      {PLACE_ROUTES_LIVE && row.kind === "place" && api.changeWebLink && api.allNames && (
+        <LazyPanel load={() => import("./PlaceRoutes")} what="the place's next-to and travel links" props={{ api, refId, row }} />
       )}
 
       {PLAYERS_LINE_LIVE && row.playersText !== undefined && (
