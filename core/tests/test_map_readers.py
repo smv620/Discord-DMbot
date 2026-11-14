@@ -18,6 +18,10 @@ ALLOWED = {
     "lineage.py",
     "pictures/store.py",
     "memory/_changes.py",  # (the change log and its Undo, #4346: existence checks, never content)
+    # The Maps page's read door (#4347): a definer function that applies the player rule inside
+    # the database (its shown-and-usable test is `may_use_map`'s, tested in test_web_maps.py),
+    # because the website's role has no right on the table. Words, ids and the open code only.
+    "migrations/0487_maps_doors.py",
 }
 
 

@@ -2501,7 +2501,7 @@ def create_app(
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/maps")
-    async def me_campaign_maps(ref: str, signed: Signed) -> dict[str, Any]:
+    async def me_maps_list(ref: str, signed: Signed) -> dict[str, Any]:
         """A campaign's maps (#4347), cut by the player rule in the database door: a DM sees every
         map, anyone else the maps shown to the table and usable plus their own."""
         session, _token = signed
