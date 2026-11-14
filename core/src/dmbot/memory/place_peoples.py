@@ -119,10 +119,13 @@ def _culture(words: list[str]) -> Found | None:
 _SHARE = r"(?P<share>almost entirely|almost all|mostly|mainly|largely|many|a few)"
 _PEOPLE = r"(?P<people>" + "|".join(sorted(_PLURALS, key=len, reverse=True)) + r")"
 _LEAD = r"^,?\s*(?:(?:is|was|are|were)\s+)?"
+# A bare share and plural needs "is" or "was": after a comma it is the next clause's subject
+# ("After the battle at Bree, many dwarves fled north" says nothing of who lives in Bree)
+_VERB = r"^\s*(?:is|was|are|were)\s+"
 _POPULATION = (
     re.compile(_LEAD + rf"(?:home to|populated by|inhabited by)\s+(?:{_SHARE}\s+)?{_PEOPLE}\b"),
     re.compile(_LEAD + rf"(?:populated|inhabited)\s+{_SHARE}\s+by\s+{_PEOPLE}\b"),
-    re.compile(_LEAD + rf"{_SHARE}\s+{_PEOPLE}\b"),
+    re.compile(_VERB + rf"{_SHARE}\s+{_PEOPLE}\b"),
     # (a number is never kept: "a town of 2,000 dwarves" says who, not how many)
     re.compile(
         _LEAD + r"an?\s+(?:" + "|".join(_SETTLEMENTS) + r")\s+of\s+(?:[\d,]+\s+)?" + rf"{_PEOPLE}\b"

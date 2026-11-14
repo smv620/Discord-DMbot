@@ -46,7 +46,7 @@ class TheLines(unittest.TestCase):
         held = {mf.POPULATION: mf.Held((fact(mf.POPULATION, "elf", "many", mf.READ),))}
         dm = pw.card_lines(held, {}, dm=True)
         self.assertIn("many elves (DMbot read this)", dm)
-        self.assertIn(f"Tap {pw.PEOPLES_BUTTON} to check.", dm)
+        self.assertIn(f"Tap **{pw.PEOPLES_BUTTON}** to check.", dm)
         self.assertNotIn(f"Tap {pw.BUTTON}", dm)  # (nothing on the 🗺️ screen to check)
         self.assertNotIn("DMbot read", pw.card_lines(held, {}, dm=False))
 
@@ -100,17 +100,17 @@ class OnTheScreen(NamesTest):
         it = self.it()
         await view._culture_picked(it)
         text, view = it.response.edited[-1]
-        self.assertIn("🏛️ Noted: **Bree**'s culture: strongly dwarven.", text)
+        self.assertIn("🏛️ Noted: **Bree**'s culture is strongly dwarven.", text)
         self.assertIn("A little", self.labels(view))
         it = self.it()
         await view._strength("traces")(it)
         text, view = it.response.edited[-1]
-        self.assertIn("culture: a little dwarven.", text)
+        self.assertIn("culture is a little dwarven.", text)
         view.people_pick._values = ["halfling"]
         it = self.it()
         await view._people_picked(it)
         text, view = it.response.edited[-1]
-        self.assertIn("🏘️ Noted: who lives in **Bree**: halflings.", text)
+        self.assertIn("🏘️ Noted: who lives in **Bree** is halflings.", text)
         view.share_pick._values = ["most"]
         it = self.it()
         await view._share_picked(it)
@@ -131,7 +131,7 @@ class OnTheScreen(NamesTest):
         it = self.it()
         await view._keep(it)
         text, _view = it.response.edited[-1]
-        self.assertIn("✅ Noted: what DMbot read about **Bree** is right.", text)
+        self.assertIn("✅ Noted: everything DMbot read about **Bree** is right", text)
         dm_card, _ = await self.card()
         self.assertNotIn("DMbot read", dm_card)
 

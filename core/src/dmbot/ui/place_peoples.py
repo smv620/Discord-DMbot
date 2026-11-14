@@ -21,12 +21,10 @@ from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Se
 from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.place_world import (
     BACK_BUTTON,
-    HIDE_BUTTON,
     KEEP_BUTTON,
     NOT_SURE,
     PEOPLES_BUTTON,
     READ_MARK,
-    SHOW_BUTTON,
     STRENGTH,
     culture_words,
     people_words,
@@ -39,9 +37,14 @@ ONLY_DM = "Only the DM can change a place's culture or who lives there."
 SOMETHING_ELSE = "other"  # a menu's value for "Something else…" (the DM types the words)
 HELP = (
     "Culture = whose ways it shows (buildings, customs). Who lives here = who's there now. "
-    "A dwarven town can be mostly human."
+    "A dwarven town can be mostly humans."
+    " To remove one, pick Not sure and set the rest again."
 )
 ONCE_HINT = "Once = only what they left behind, like ruins."
+# This screen's hide/show covers every layer of the place (`show_map_facts`), so it says "all":
+# a DM hiding a ruler mustn't show it by a press on the culture screen (ux-critic, #4257)
+SHOW_ALL = "👁️ Show all to players"
+HIDE_ALL = "🙈 Hide all from players"
 STRENGTH_BUTTONS = {"strong": "Strongly", "some": "Somewhat", "traces": "A little", "once": "Once"}
 SHARE_LABELS = {"all": "Almost all", "most": "Most", "many": "Many", "some": "Some", "few": "A few"}
 Handler = Callable[[discord.Interaction], Awaitable[None]]
@@ -54,7 +57,9 @@ def _own(held: Mapping[str, mf.Held], layer: str) -> list[mf.Fact]:
 
 def _focus(facts: Sequence[mf.Fact], value: str | None) -> mf.Fact | None:
     """The one the buttons and the second menu act on: the one just picked, else the DM's own
-    first, else the first."""
+    first, else the first. Never a part's row ("the gnomish quarter"): the DM's set acts on the
+    whole place, so a part's row is shown, kept or cleared, never reshaded (#4257)."""
+    facts = [f for f in facts if not f.part]
     if value is not None:
         for f in facts:
             if f.value == value:
@@ -77,7 +82,7 @@ def culture_options(focus: mf.Fact | None) -> list[discord.SelectOption]:
     )
     out.append(
         discord.SelectOption(
-            label="Not sure", description="DMbot won't guess", value=NOT_SURE, default=not chosen
+            label="Not sure", description="Clears all set here", value=NOT_SURE, default=not chosen
         )
     )
     return out
@@ -96,10 +101,19 @@ def people_options(focus: mf.Fact | None) -> list[discord.SelectOption]:
     )
     out.append(
         discord.SelectOption(
-            label="Not sure", description="DMbot won't guess", value=NOT_SURE, default=not chosen
+            label="Not sure", description="Clears all set here", value=NOT_SURE, default=not chosen
         )
     )
     return out
+
+
+def _how_many(focus: mf.Fact | None) -> str:
+    """ "How many here are halflings?": names the people picked, so it can't read as a total."""
+    if focus is None:
+        return "How many live here?"
+    return f"How many here are {place_peoples.words_of(focus.value, focus.words, plural=True)}?"[
+        :150
+    ]
 
 
 def share_options(focus: mf.Fact) -> list[discord.SelectOption]:
@@ -134,9 +148,10 @@ def screen_text(name: str, held: Mapping[str, mf.Held], *, hidden: bool, note: s
     if culture:
         lines.append(ONCE_HINT)
     lines.append(
-        "Hidden from players."
+        "Hidden from players, with its land, climate and ruler."
         if hidden
-        else "Players who can see this place see it too, unless you hide it."
+        else "Players who can see this place see all of it: culture, who lives here, land, climate"
+        " and ruler. Tap 🙈 to hide."
     )
     return "\n".join(lines)
 
@@ -216,7 +231,7 @@ class PeoplesMenu(_Menu):
         self.add_item(self.people_pick)
         if self.people is not None:
             self.share_pick: _Select | None = _Select(
-                self._share_picked, placeholder="How many of them?",
+                self._share_picked, placeholder=_how_many(self.people),
                 options=share_options(self.people), row=3,
             )  # fmt: skip
             self.add_item(self.share_pick)
@@ -224,7 +239,7 @@ class PeoplesMenu(_Menu):
             self.share_pick = None
         self.hidden = hidden
         self.has_own = bool(cultures or peoples)
-        self.add_item(_Button(self._shown, label=SHOW_BUTTON if hidden else HIDE_BUTTON, row=4))
+        self.add_item(_Button(self._shown, label=SHOW_ALL if hidden else HIDE_ALL, row=4))
         if any(f.status == mf.READ for f in (*cultures, *peoples)):
             self.add_item(
                 _Button(self._keep, label=KEEP_BUTTON, style=discord.ButtonStyle.success, row=4)
@@ -279,15 +294,15 @@ class PeoplesMenu(_Menu):
 
     def culture_note(self, value: str | None, how: str, words: str = "") -> str:
         if value is None:
-            return f"🏛️ Noted: no culture set for {self._named()}."
+            return f"🏛️ Noted: {self._named()}'s culture is left open."
         said = culture_words(_fact(mf.CULTURE, value, how, words))
-        return f"🏛️ Noted: {self._named()}'s culture: {_md(said)}."
+        return f"🏛️ Noted: {self._named()}'s culture is {_md(said)}."
 
     def people_note(self, value: str | None, how: str, words: str = "") -> str:
         if value is None:
-            return f"🏘️ Noted: nobody set as living in {self._named()}."
+            return f"🏘️ Noted: who lives in {self._named()} is left open."
         said = people_words(_fact(mf.POPULATION, value, how, words))
-        return f"🏘️ Noted: who lives in {self._named()}: {_md(said)}."
+        return f"🏘️ Noted: who lives in {self._named()} is {_md(said)}."
 
     async def _culture_picked(self, interaction: discord.Interaction) -> None:
         value = self.culture_pick.values[0]
@@ -360,9 +375,11 @@ class PeoplesMenu(_Menu):
         changed(interaction, campaign)
         self.stop()
         note = (
-            f"👁️ Noted: players who can see {self._named()} see what you set for it."
+            f"👁️ Noted: players who can see {self._named()} now see everything you set for it, "
+            "its land, climate and ruler too."
             if show
-            else f"🙈 Noted: players can't see what you set for {self._named()}."
+            else f"🙈 Noted: players can't see anything you set for {self._named()}, "
+            "its land, climate and ruler included."
         )
         await show_peoples(interaction, self.campaign_id, self.entity_id, note)
 
@@ -373,13 +390,19 @@ class PeoplesMenu(_Menu):
             return
         campaign, memory = allowed
         try:  # every one DMbot read becomes the DM's word, in one change (one Undo)
-            await memory.keep_map_facts(campaign.guild_id, campaign.id, self.entity_id, source=DM)
+            await memory.keep_map_facts(
+                campaign.guild_id, campaign.id, self.entity_id, source=DM,
+                layers=(mf.CULTURE, mf.POPULATION),
+            )  # fmt: skip
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change it. {exc} Tap {BACK_BUTTON} to see it.")
             return
         changed(interaction, campaign)
         self.stop()
-        note = f"✅ Noted: what DMbot read about {self._named()} is right."
+        note = (
+            f"✅ Noted: everything DMbot read about {self._named()} is right, "
+            "its land, climate and ruler too."
+        )
         await show_peoples(interaction, self.campaign_id, self.entity_id, note)
 
     async def _back(self, interaction: discord.Interaction) -> None:

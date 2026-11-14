@@ -74,6 +74,37 @@ class CulturePopulation(MemoryTest):
             GUILD_A, self.c, [Read(self.town, mf.POPULATION, "elf", "few")], source="background"
         )
         self.assertEqual(again.value["written"], 1)  # (never a correction between lineages)
+        human = [f for f in await self.facts(self.town) if f.value == "human"]
+        self.assertEqual([(f.status, f.how) for f in human], [(mf.CONFIRMED, "most")])
+
+    async def test_not_sure_clears_a_parts_culture_too(self) -> None:
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c,
+            [Read(self.town, mf.CULTURE, "gnome", "strong", None, "the gnomish quarter")],
+            source="background",
+        )  # fmt: skip
+        await self.set(mf.CULTURE, "dwarf", "strong")  # (the whole town's: the part's stays)
+        self.assertEqual(len(await self.facts(self.town)), 2)
+        await self.set(mf.CULTURE, None)
+        self.assertEqual(await self.facts(self.town), [])
+
+    async def test_keep_keeps_only_the_layers_its_screen_shows(self) -> None:
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c,
+            [Read(self.realm, mf.TERRAIN, "mountain", "mostly"),
+             Read(self.realm, mf.CULTURE, "dwarf", "strong")],
+            source="background",
+        )  # fmt: skip
+        await self.memory.keep_map_facts(
+            GUILD_A, self.c, self.realm, source=BY_DM, layers=(mf.CULTURE, mf.POPULATION)
+        )
+        status = {f.layer: f.status for f in await self.facts(self.realm)}
+        self.assertEqual(status, {mf.CULTURE: mf.CONFIRMED, mf.TERRAIN: mf.READ})
+        await self.memory.keep_map_facts(
+            GUILD_A, self.c, self.realm, source=BY_DM, layers=mf.UP_TREE
+        )
+        status = {f.layer: f.status for f in await self.facts(self.realm)}
+        self.assertEqual(status, {mf.CULTURE: mf.CONFIRMED, mf.TERRAIN: mf.CONFIRMED})
 
     async def test_never_read_up_the_tree(self) -> None:
         await self.set(mf.CULTURE, "dwarf", "strong", place=self.realm)

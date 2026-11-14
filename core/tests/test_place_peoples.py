@@ -82,6 +82,10 @@ class Population(unittest.TestCase):
             "Bree trades with Tunnelhold, home to many dwarves.",
             "Some halflings came to Bree last year.",
             "Bree sent mostly humans to the war.",
+            # (a comma then a share and a plural is the next clause's subject, not who lives there)
+            "After the battle at Bree, many dwarves fled north.",
+            "Near Bree, a few elves were seen.",
+            "The road from Bree, mostly humans walk it.",
         ):
             with self.subTest(text):
                 self.assertEqual(pp.read("Bree", text), [])

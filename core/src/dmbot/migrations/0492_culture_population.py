@@ -18,7 +18,7 @@ SQL = r"""
     DECLARE
         d text;
     BEGIN
-        SELECT pg_get_constraintdef(c.oid) INTO d FROM pg_constraint c
+        SELECT pg_get_constraintdef(c.oid) INTO STRICT d FROM pg_constraint c
             WHERE c.conrelid = 'memory_map_facts'::regclass AND c.contype = 'c'
               AND pg_get_constraintdef(c.oid) LIKE '%layer%'
               AND pg_get_constraintdef(c.oid) LIKE '%control%'

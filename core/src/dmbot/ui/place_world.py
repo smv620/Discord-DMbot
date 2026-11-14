@@ -145,9 +145,9 @@ def card_lines(
         )
 
     if to_check(mf.UP_TREE):
-        lines.append(f"\nTap {BUTTON} to check.")
+        lines.append(f"\nTap **{BUTTON}** to check.")
     if to_check(frozenset({mf.CULTURE, mf.POPULATION})):
-        lines.append(f"\nTap {PEOPLES_BUTTON} to check.")
+        lines.append(f"\nTap **{PEOPLES_BUTTON}** to check.")
     return "".join(lines)
 
 
@@ -388,7 +388,7 @@ class WorldMenu(_Menu):
         self.hidden = hidden
         self.has_own = any(_own(held, layer) for layer in mf.LAYERS)
         self.add_item(_Button(self._shown, label=SHOW_BUTTON if hidden else HIDE_BUTTON, row=4))
-        if any(f.status == mf.READ for layer in mf.LAYERS for f in _own(held, layer)):
+        if any(f.status == mf.READ for layer in mf.UP_TREE for f in _own(held, layer)):
             # (picking what a menu already shows may send nothing: this keeps DMbot's read)
             self.add_item(
                 _Button(self._keep, label=KEEP_BUTTON, style=discord.ButtonStyle.success, row=4)
@@ -516,8 +516,10 @@ class WorldMenu(_Menu):
         if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
             await _tell(interaction, ONLY_DM)
             return
-        try:  # every one DMbot read becomes the DM's word, in one change (one Undo)
-            await memory.keep_map_facts(campaign.guild_id, campaign.id, self.entity_id, source=DM)
+        try:  # every one DMbot read here becomes the DM's word, in one change (one Undo)
+            await memory.keep_map_facts(
+                campaign.guild_id, campaign.id, self.entity_id, source=DM, layers=mf.UP_TREE
+            )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change it. {exc} Tap {BACK_BUTTON} to see it.")
             return

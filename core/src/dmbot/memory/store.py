@@ -1606,14 +1606,21 @@ class MemoryStore:
             return Written(changed, w.batch)
 
     async def keep_map_facts(
-        self, guild_id: int, campaign_id: str, place_id: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_id: str,
+        *,
+        source: str,
+        layers: Collection[str] | None = None,
     ) -> Written[int]:
-        """The DM's ✅ Keep what DMbot read, for one place: one change, so one Undo."""
+        """The DM's ✅ Keep what DMbot read, for one place, in `layers` (all when None): one
+        change, so one Undo."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            kept = await map_fact_store.keep_read(w, onto, place_id)
+            kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------

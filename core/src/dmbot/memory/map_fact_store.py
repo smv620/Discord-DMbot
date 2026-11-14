@@ -149,7 +149,13 @@ async def set_by_dm(
         await _check_value(w, onto, place, layer, value, how, words)
     every = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
     known = any(bool(r["table_knows"]) for r in every)
-    now = [r for r in every if r["layer"] == layer and r["part"] == ""]
+    # (a part's row, "the dwarven quarter", is read only: the DM's set acts on the whole place, but
+    # "Not sure" for culture or who lives there clears every row of the layer, parts too; #4257)
+    now = [
+        r
+        for r in every
+        if r["layer"] == layer and (r["part"] == "" or (value is None and layer in BESIDE))
+    ]
 
     def replaced(f: mf.Fact) -> bool:
         if value is None or layer in (mf.TERRAIN, mf.CLIMATE):
@@ -216,11 +222,21 @@ async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) 
     return len(changed)
 
 
-async def keep_read(w: Changes, onto: Ontology, place_id: str) -> int:
-    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place becomes the DM's word,
-    keeping whether players see it. How many."""
+async def keep_read(
+    w: Changes, onto: Ontology, place_id: str, layers: Collection[str] | None = None
+) -> int:
+    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place, in `layers` (all when
+    None), becomes the DM's word, keeping whether players see it. How many. Each screen keeps only
+    the layers it shows: a confirmed row the table knows reaches players, so ✅ never keeps what
+    the DM didn't see (#4257)."""
     await _place(w, onto, place_id)
-    rows = await w.select(MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id])
+    rows = [
+        r
+        for r in await w.select(
+            MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id]
+        )
+        if layers is None or r["layer"] in layers
+    ]
     await w.update_rows(
         MAP_FACTS,
         {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
