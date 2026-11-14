@@ -263,3 +263,50 @@ class TheRulesAddedIds(People):
             DAN.id, DAN.id,
         )  # fmt: skip
         self.assertEqual(await self.refused(self.dan), "not_found")
+
+
+# The website doors whose body reads `transcript_lines` and need no call to the rule, each with
+# the reason. Every other one must call `dmbot_web_reads_campaign` (#4404): a door added later that
+# returns a transcript's words fails here until it asks the rule or is listed with its reason.
+NEEDS_NO_RULE = {
+    "dmbot_web_reads_campaign": "the rule itself",
+    "dmbot_web_transcript_choose": "a DM's write, and the door answers a DM only",
+    "dmbot_web_line_fix_add": "a line's own speaker or a DM fixes it: the door checks who",
+    "dmbot_web_my_lines": "a person's own lines, only theirs",
+    "dmbot_web_my_lines_delete": "a person's own lines, only theirs",
+    "dmbot_web_entity_places": "the clean-up page's lines for a DM alone (0384: 'the DM's alone')",
+}
+
+
+class TheCatalog(People):
+    async def test_every_door_that_reads_transcript_lines_asks_the_rule_or_says_why_not(
+        self,
+    ) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT p.proname, p.prosrc FROM pg_proc p"
+                " WHERE p.pronamespace = current_schema()::regnamespace"
+                " AND p.proname ~ '^dmbot_web_' AND p.prosrc ~* 'transcript_lines'"
+            )
+            doors = {str(r["proname"]): str(r["prosrc"]) for r in await cur.fetchall()}
+        self.assertTrue(doors, "no website door reads transcript_lines: the query is wrong")
+        unguarded = sorted(
+            name
+            for name, body in doors.items()
+            if "dmbot_web_reads_campaign" not in body and name not in NEEDS_NO_RULE
+        )
+        self.assertEqual(
+            unguarded,
+            [],
+            "these doors read transcript_lines without asking dmbot_web_reads_campaign: ask it, or"
+            " list them in NEEDS_NO_RULE with the reason",
+        )
+
+    async def test_the_list_of_exceptions_has_no_door_that_is_gone(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT p.proname FROM pg_proc p"
+                " WHERE p.pronamespace = current_schema()::regnamespace"
+            )
+            present = {str(r["proname"]) for r in await cur.fetchall()}
+        self.assertEqual(sorted(set(NEEDS_NO_RULE) - present), [])
