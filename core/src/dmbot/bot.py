@@ -295,6 +295,7 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
     backstory_keep,
@@ -559,6 +560,8 @@ from dmbot.ui import (
     kept_pictures,
     kind_offer,
     looked_at,
+    map_answer,
+    map_question,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -1544,6 +1547,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.picture_keeper: PictureKeeper | None = None
         self.picture_actions: PictureActions | None = None
         self.picture_store: PictureStore | None = None
+        self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
         self.picture_bucket: Bucket | None = None
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
@@ -1822,6 +1826,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(  # Make private / Delete under a kept picture's link (#3274)
             kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
         )
+        self.add_dynamic_items(map_question.YesButton, map_question.NoButton)  # #4344
+        self.add_dynamic_items(
+            map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
+        )  # the DM's side, #4344
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -13432,6 +13440,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The poster stopped, or the message went, while it was stored: take it back.
             await keeper.discard(gid, cid, got.picture)
             return
+        if got.new and read is not None and read.kind == images.MAP and self.map_store is not None:
+            # A map: its poster is asked, once and in private, whether they may use and save it
+            # (#4344). Not answered, it stays a picture as before.
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and still_ok():  # (the poster's yes, checked once more)
+                await map_question.ask(self, gid, campaign, got.picture)
         if got.new and channel_id and self.settings.site_url:
             # The link under the description: anyone with it can open the picture (the poster or a
             # DM can make it private or delete it on the website). The picture, its files and this
@@ -15476,6 +15490,8 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if bot.memory is not None:
+                bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
                 db, pictures, bot.picture_bucket, settings.picture_storage_mb
             )

@@ -40,6 +40,7 @@ class Sources:
     db: Database
     memory: Any | None = None  # MemoryStore
     claims: Any | None = None  # ClaimStore, only when the claim reader is on
+    maps: Any | None = None  # MapStore, with the kept pictures
     backstory: Any | None = None  # BackstoryLinks
     heard: Any | None = None  # WaitingQuestionStore
     rule_sets: Any | None = None  # RuleSetStore
@@ -196,6 +197,14 @@ async def _world(src: Sources, g: int, c: str) -> Counted:
     return Counted(len(notes), min((n.made_at for n in notes), default=None))
 
 
+async def _maps(src: Sources, g: int, c: str) -> Counted:
+    """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
+    if src.maps is None:
+        return Counted(0)
+    waiting = await src.maps.waiting_for_a_dm(g, c)
+    return Counted(len(waiting), min((m.created_at for m in waiting), default=None))
+
+
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
     kinds.HEARD: _heard,
@@ -205,6 +214,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.FAMILY: _family,
     kinds.TRAITS: _traits,
     kinds.WORLD: _world,
+    kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
     kinds.PLOT: _plot,
