@@ -80,7 +80,7 @@ What the graph should hold after the sample session is read: [the session transc
 
 ## Road lengths
 
-How far a road is, as the session says it (#4255): a property of the road, never a tie. Scored as found (a road between the two places with that length: the same amount and unit, or the same words when they give none), missed, and extra (a length this list doesn't hold). A run that doesn't read the session doesn't score them. DMbot reads a length from the DM's words on a journey, so the second is found only if that journey is walked.
+How far a road is, as the session says it (#4255): a property of the road, never a tie. Scored as found (a road between the two places with that length: the same amount and unit, or the same words when they give none), missed, and extra (a length this list doesn't hold). A run that doesn't read the session doesn't score them. DMbot reads a length from the DM's words on a journey, and only from a line that names one of its two ends, so the second (a way the DM offers, not travelled this session) is expected to stay missed: it is listed so a later reader that keeps the DM's offered ways is scored too.
 
 | from | to | length | line | note |
 |---|---|---|---|---|

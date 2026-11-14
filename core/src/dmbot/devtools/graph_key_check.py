@@ -554,6 +554,11 @@ def _same_length(stored: Mapping[str, Any], words: str) -> bool:
     return name_key(str(stored.get("length_words") or "")) == name_key(want.words)
 
 
+def _joins(s: str, o: str, a: set[str], b: set[str]) -> bool:
+    """The road runs between the two places, either way round (never a road with one end only)."""
+    return (s in a and o in b) or (s in b and o in a)
+
+
 def _score_route_lengths(
     report: Report,
     graph: Graph,
@@ -577,8 +582,7 @@ def _score_route_lengths(
         hit = [
             i
             for i, r in enumerate(roads)
-            if {str(r["subject_id"]), str(r["object_id"])} & a
-            and {str(r["subject_id"]), str(r["object_id"])} & b
+            if _joins(str(r["subject_id"]), str(r["object_id"]), a, b)
             and _same_length(r, str(want["words"]))
         ]
         used.update(hit)

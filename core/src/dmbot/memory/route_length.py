@@ -23,7 +23,7 @@ Discord, no database."""
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import NamedTuple
 
 HOURS, DAYS, MILES = "hours", "days", "miles"
@@ -115,8 +115,10 @@ _LEAD = r"(?:(?:about|roughly|nearly|some|around|almost|approximately)\s+)?"
 _AMOUNT = rf"{_LEAD}(?:half\s+an?\s+{_UNIT}|{_NUMBER}(?:\s*(?:or|to|-|–)\s*{_NUMBER})?\s+{_UNIT})"
 _HOW = (
     r"(?:['’]s?\s+(?:ride|walk|march|sail|journey|travel|trek|flight)"
-    r"|\s+(?:by|on)\s+(?:the\s+)?"
+    r"|\s+(?:by|on)\s+"
     r"(?:cart|wagon|horse|horseback|foot|boat|ship|sled|dogsled|road|river|sea|air)"
+    # ("on the road" is travel; "by the river" is mostly beside it: a camp, not a way)
+    r"|\s+on\s+the\s+(?:road|river|sea)"
     r"|\s+of\s+(?:road|river|travel|walking|riding|sailing))"
 )
 # With how it is travelled, the length may lead to the place ("a day by cart to"); a bare amount
@@ -128,21 +130,55 @@ _PHRASE = re.compile(
 )
 
 
+_NAME_END = r"(?=[\s,.;:!?)]|$)"  # (not \b: "Bryn Shander's festival" is no way to Bryn Shander)
+
+
+def _ends(places: Collection[str]) -> str:
+    names = sorted({" ".join(p.split()) for p in places if p.strip()}, key=len, reverse=True)
+    return "|".join(re.escape(n) for n in names)
+
+
+def _lengths(text: str, ends: str) -> list[tuple[str, bool]]:
+    """Every length phrase in `text`, each with whether it is tied to an end by name ("five hours
+    to Easthaven"). The name-tied form adds only what the set phrases don't already cover."""
+    found = [(m.span(), m["words"] or m["bare"]) for m in _PHRASE.finditer(text)]
+    out = [(words, False) for _, words in found]
+    if ends:
+        to_end = re.compile(rf"\b(?P<to>{_AMOUNT})\s+to\s+(?:{ends}){_NAME_END}", re.I)
+        for m in to_end.finditer(text):
+            if not any(m.start() < e and s < m.end() for (s, e), _ in found):  # (no overlap)
+                out.append((m["to"], True))
+    return [(words.strip(), tied) for words, tied in out]
+
+
 def find(quote: str, places: Collection[str] = ()) -> str:
     """The length's words a route's quote states by a set phrase, or "" when it states none, or
     more than one: a sentence with two lengths may be about two routes, and which is which is a
     guess this never makes. `places`: the route's own ends by name. A bare amount leading to one
     of them ("five hours to Easthaven") is a length too: "to" and a name the route ends at, never
     "to reach" (a deadline) or a place this route doesn't go to."""
-    text = " ".join(quote.split())
-    found = [(m.start(), m["words"] or m["bare"]) for m in _PHRASE.finditer(text)]
-    names = sorted({" ".join(p.split()) for p in places if p.strip()}, key=len, reverse=True)
-    if names:
-        ends = "|".join(re.escape(n) for n in names)
-        to_end = re.compile(rf"\b(?P<to>{_AMOUNT})\s+to\s+(?:{ends})\b", re.I)
-        seen = {at for at, _ in found}
-        found += [(m.start(), m["to"]) for m in to_end.finditer(text) if m.start() not in seen]
-    return found[0][1].strip() if len(found) == 1 else ""
+    found = _lengths(" ".join(quote.split()), _ends(places))
+    return found[0][0] if len(found) == 1 else ""
 
 
-__all__ = ["DAYS", "HOURS", "MILES", "UNITS", "WORDS_MAX", "Length", "find", "parse"]
+def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
+    """A journey's length from the DM's lines on the way (#4255 slice 1b): unlike a route's own
+    quote, a stretch of narration can speak of other places ("Kelvin's Cairn is twenty miles from
+    here"), so a line's set phrase counts only when that line names one of the journey's ends,
+    and the name-tied form ("1 hour to Bryn Shander") anywhere. Exactly one across the stretch,
+    as `find` asks of one quote; each line read on its own, so one line's end is never another's."""
+    ends = _ends(places)
+    if not ends:
+        return ""
+    names_end = re.compile(rf"\b(?:{ends}){_NAME_END}", re.I)
+    got: list[str] = []
+    for line in lines:
+        text = " ".join(line.split())
+        named = names_end.search(text) is not None
+        got += [words for words, tied in _lengths(text, ends) if tied or named]
+    return got[0] if len(got) == 1 else ""
+
+
+__all__ = [
+    "DAYS", "HOURS", "MILES", "UNITS", "WORDS_MAX", "Length", "find", "find_on_way", "parse",
+]  # fmt: skip

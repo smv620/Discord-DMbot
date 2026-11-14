@@ -15,6 +15,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
 ALLOWED = {
+    "devtools/graph_key_check.py": "scores a backup against the sample key; shows players nothing",
     "memory/models.py": "the fields on Entity and Relation",
     "memory/store.py": "reads and writes the columns; the shown-to-players choice is the caller's",
     "memory/_changes.py": "the change log's description of the columns (Undo, merges)",

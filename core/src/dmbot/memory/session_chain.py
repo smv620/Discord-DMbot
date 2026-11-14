@@ -130,6 +130,8 @@ def walk(
     usable = [p for p in found if p.level in place_levels.RANK]
     ranks = {p.entity_id: place_levels.RANK[p.level] for p in usable}
     route_ids = {r.entity_id for r in routes}
+    # each place's spellings, so a journey's length is tied to its own two ends (#4255 slice 1b)
+    spelled = {p.entity_id: p.spellings for p in (*found, *routes)}
     out = Walked({k: [e for e in v if e in ranks] for k, v in chains.items()})
     given = set(stated)
     # The party's journeys (Supervisor's ruling on part 3, 2026-11-13): only on the party's own
@@ -206,8 +208,8 @@ def walk(
                     arrived = moved.get(p.entity_id) == ARRIVE  # (the AI said so, not a default)
                     if arrived and town is not None and town != p.entity_id:
                         words = way_words if away else [*way_words, line.text]
-                        text = " ".join(words)  # (one find over the stretch: two lengths, none)
-                        length = route_length.find(text, places=p.spellings)
+                        ends = (*spelled.get(town, ()), *p.spellings)  # (the journey's two ends)
+                        length = route_length.find_on_way(words, ends)
                         out.legs.append(Leg(town, p.entity_id, _way(words), length))
                     if arrived or town is None:
                         town, way_words = p.entity_id, []
