@@ -11,7 +11,9 @@ Who is in a campaign, on account deletion (#4148; Supervisor's ruling on the iss
   (each is named in the pull request and tested).
 - `campaign_handover_offers`: an **open** offer from or to the person is cancelled (deleted); an
   answered one keeps its row with the person's ID at 0 ("someone who has left") **and their display
-  name on the offer (`from_name` / `to_name`, put there by 0022) blanked**. The check
+  name on the offer (`from_name` / `to_name`, put there by 0022) blanked**, and an ended one still
+  waiting to tell its owner (`end_told_at`) is marked told, so the end-notice sweep never tries to
+  name a person who has left. The check
   `to_user_id <> from_user_id` is relaxed so that two people who have both left (both 0) can still
   stand in one row.
 """
@@ -68,7 +70,8 @@ def _body() -> str:
         DELETE FROM {table} WHERE status = 'open'
             AND ({a} = dmbot_current_user() OR {b} = dmbot_current_user());
         UPDATE {table}
-            SET from_name = CASE WHEN {a} = dmbot_current_user() THEN '' ELSE from_name END,
+            SET end_told_at = COALESCE(end_told_at, extract(epoch FROM now())::BIGINT),
+                from_name = CASE WHEN {a} = dmbot_current_user() THEN '' ELSE from_name END,
                 to_name = CASE WHEN {b} = dmbot_current_user() THEN '' ELSE to_name END,
                 {a} = CASE WHEN {a} = dmbot_current_user() THEN 0 ELSE {a} END,
                 {b} = CASE WHEN {b} = dmbot_current_user() THEN 0 ELSE {b} END

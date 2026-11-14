@@ -113,6 +113,19 @@ class ForgetMembership(DatabaseTest):
             [("", f"name{BOB}"), (f"name{CARA}", ""), (f"name{BOB}", f"name{CARA}")],
         )
 
+    async def test_an_ended_offer_still_to_be_told_is_marked_told(self) -> None:
+        await self.offer(self.pair.id, ALICE, BOB, "expired")
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT end_told_at FROM campaign_handover_offers")
+            row: Any = await cur.fetchone()
+            self.assertIsNone(row["end_told_at"])  # (the sweep would name her)
+        await accounts.delete_person(self.db, ALICE, now=NOW + 5)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT end_told_at FROM campaign_handover_offers")
+            row = await cur.fetchone()
+            self.assertIsNotNone(row["end_told_at"])  # (so the sweep skips it)
+        self.assertEqual(await self.store.offers_to_end(GUILD, NOW + 6), [])
+
     async def test_two_people_who_have_both_left_can_share_an_answered_offer(self) -> None:
         await self.offer(self.pair.id, ALICE, CARA, "accepted")
         await accounts.delete_person(self.db, ALICE, now=NOW + 5)
